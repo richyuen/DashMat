@@ -5,7 +5,7 @@ from io import BytesIO, StringIO
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import pandas as pd
-from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL
+from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback
 from dash.exceptions import PreventUpdate
 
 from utils.parsing import detect_periodicity, parse_uploaded_file
@@ -67,24 +67,96 @@ def json_to_df(json_str: str) -> pd.DataFrame:
 
 layout = dmc.Container(
     size="xl",
-    py="xl",
+    py="md",
     children=[
-        dmc.Group(
-            justify="space-between",
-            mb="xl",
+        # Menu Bar
+        dmc.Paper(
+            shadow="xs",
+            p="xs",
+            mb="md",
+            withBorder=True,
             children=[
-                dmc.Box(
+                dmc.Group(
+                    gap="xs",
                     children=[
-                        dmc.Title("Dashboard", order=1, mb="xs"),
-                        dmc.Text(
-                            "Market Returns Time Series Analysis",
-                            c="dimmed",
+                        # File Menu (left)
+                        dmc.Menu(
+                            trigger="hover",
+                            openDelay=100,
+                            closeDelay=200,
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button("File", variant="subtle", size="sm"),
+                                ),
+                                dmc.MenuDropdown(
+                                    children=[
+                                        dcc.Upload(
+                                            id="upload-data",
+                                            children=dmc.MenuItem("Add series from file"),
+                                            multiple=False,
+                                            accept=".csv,.xlsx,.xls",
+                                            style={"cursor": "pointer"},
+                                        ),
+                                        dmc.MenuItem(
+                                            "Download Excel",
+                                            id="menu-download-excel",
+                                            disabled=True,
+                                        ),
+                                        dmc.MenuDivider(),
+                                        dmc.MenuItem(
+                                            "Exit",
+                                            id="menu-exit",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        # Edit Menu (left)
+                        dmc.Menu(
+                            trigger="hover",
+                            openDelay=100,
+                            closeDelay=200,
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button("Edit", variant="subtle", size="sm"),
+                                ),
+                                dmc.MenuDropdown(
+                                    children=[
+                                        dmc.MenuItem("(No actions available)", disabled=True),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        # Spacer
+                        dmc.Box(style={"flexGrow": 1}),
+                        # Help Menu (right)
+                        dmc.Menu(
+                            trigger="hover",
+                            openDelay=100,
+                            closeDelay=200,
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button("Help", variant="subtle", size="sm"),
+                                ),
+                                dmc.MenuDropdown(
+                                    children=[
+                                        dmc.MenuItem("(No help topics available)", disabled=True),
+                                    ],
+                                ),
+                            ],
                         ),
                     ],
                 ),
-                dmc.Anchor(
-                    dmc.Button("Back to Home", variant="subtle"),
-                    href="/",
+            ],
+        ),
+        # Title
+        dmc.Box(
+            mb="md",
+            children=[
+                dmc.Title("Dashboard", order=1, mb="xs"),
+                dmc.Text(
+                    "Market Returns Time Series Analysis",
+                    c="dimmed",
                 ),
             ],
         ),
@@ -98,15 +170,6 @@ layout = dmc.Container(
                 dmc.Text("Controls", fw=500, mb="sm"),
                 dmc.Group(
                     children=[
-                        dcc.Upload(
-                            id="upload-data",
-                            children=dmc.Button(
-                                "Upload Excel/CSV",
-                                variant="filled",
-                            ),
-                            multiple=False,
-                            accept=".csv,.xlsx,.xls",
-                        ),
                         dmc.Select(
                             id="periodicity-select",
                             label="Periodicity",
@@ -125,13 +188,6 @@ layout = dmc.Container(
                             value="total",
                             w=200,
                         ),
-                        dmc.Button(
-                            "Download Excel",
-                            id="download-button",
-                            variant="outline",
-                            disabled=True,
-                        ),
-                        dcc.Download(id="download-excel"),
                     ],
                 ),
             ],
@@ -229,7 +285,26 @@ layout = dmc.Container(
         dcc.Store(id="raw-data-store", data=None),
         dcc.Store(id="original-periodicity-store", data="daily"),
         dcc.Store(id="benchmark-assignments-store", data={}),
+        dcc.Store(id="download-enabled-store", data=False),
+        dcc.Download(id="download-excel"),
+        dcc.Location(id="url-location", refresh=True),
     ],
+)
+
+
+# Clientside callback to navigate to home on Exit
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            window.location.href = '/';
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("url-location", "pathname"),
+    Input("menu-exit", "n_clicks"),
+    prevent_initial_call=True,
 )
 
 
@@ -383,7 +458,7 @@ def update_benchmark_assignments(benchmark_values, selected_series):
 @callback(
     Output("returns-grid", "columnDefs"),
     Output("returns-grid", "rowData"),
-    Output("download-button", "disabled"),
+    Output("menu-download-excel", "disabled"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "value"),
@@ -519,7 +594,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 @callback(
     Output("download-excel", "data"),
-    Input("download-button", "n_clicks"),
+    Input("menu-download-excel", "n_clicks"),
     State("raw-data-store", "data"),
     State("periodicity-select", "value"),
     State("series-select", "value"),
