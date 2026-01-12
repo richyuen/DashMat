@@ -274,10 +274,13 @@ layout = dmc.Container(
                 ),
             ],
         ),
-        # Hidden stores for state management
-        dcc.Store(id="raw-data-store", data=None),
-        dcc.Store(id="original-periodicity-store", data="daily"),
-        dcc.Store(id="benchmark-assignments-store", data={}),
+        # Hidden stores for state management (using local storage for persistence)
+        dcc.Store(id="raw-data-store", data=None, storage_type="local"),
+        dcc.Store(id="original-periodicity-store", data="daily", storage_type="local"),
+        dcc.Store(id="benchmark-assignments-store", data={}, storage_type="local"),
+        dcc.Store(id="periodicity-value-store", data="daily", storage_type="local"),
+        dcc.Store(id="returns-type-value-store", data="total", storage_type="local"),
+        dcc.Store(id="series-select-value-store", data=[], storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
         dcc.Download(id="download-excel"),
         dcc.Location(id="url-location", refresh=True),
@@ -335,6 +338,74 @@ clientside_callback(
 
 
 @callback(
+    Output("periodicity-select", "data", allow_duplicate=True),
+    Output("periodicity-select", "value", allow_duplicate=True),
+    Output("periodicity-select", "disabled", allow_duplicate=True),
+    Output("series-select", "data", allow_duplicate=True),
+    Output("series-select", "value", allow_duplicate=True),
+    Output("returns-type-select", "value", allow_duplicate=True),
+    Input("raw-data-store", "data"),
+    State("original-periodicity-store", "data"),
+    State("periodicity-value-store", "data"),
+    State("series-select-value-store", "data"),
+    State("returns-type-value-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def restore_state_from_storage(raw_data, original_periodicity, stored_periodicity, stored_series, stored_returns_type):
+    """Restore UI state from local storage on page load."""
+    if raw_data is None:
+        return [], "daily", True, [], [], "total"
+
+    try:
+        df = json_to_df(raw_data)
+        all_series = [{"value": col, "label": col} for col in df.columns]
+
+        # Get available periodicities
+        from utils.returns import get_available_periodicities
+        periodicity_options = get_available_periodicities(original_periodicity or "daily")
+
+        # Validate stored values
+        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else (original_periodicity or "daily")
+        valid_series = [s for s in (stored_series or []) if s in df.columns]
+        valid_returns_type = stored_returns_type if stored_returns_type in ["total", "excess"] else "total"
+
+        return periodicity_options, valid_periodicity, False, all_series, valid_series, valid_returns_type
+
+    except Exception:
+        return [], "daily", True, [], [], "total"
+
+
+@callback(
+    Output("periodicity-value-store", "data"),
+    Input("periodicity-select", "value"),
+    prevent_initial_call=True,
+)
+def save_periodicity(value):
+    """Save periodicity selection to local storage."""
+    return value
+
+
+@callback(
+    Output("returns-type-value-store", "data"),
+    Input("returns-type-select", "value"),
+    prevent_initial_call=True,
+)
+def save_returns_type(value):
+    """Save returns type selection to local storage."""
+    return value
+
+
+@callback(
+    Output("series-select-value-store", "data"),
+    Input("series-select", "value"),
+    prevent_initial_call=True,
+)
+def save_series_selection(value):
+    """Save series selection to local storage."""
+    return value or []
+
+
+@callback(
     Output("raw-data-store", "data"),
     Output("original-periodicity-store", "data"),
     Output("periodicity-select", "data"),
@@ -345,6 +416,8 @@ clientside_callback(
     Output("alert-message", "children"),
     Output("alert-message", "color"),
     Output("alert-message", "hide"),
+    Output("periodicity-value-store", "data", allow_duplicate=True),
+    Output("series-select-value-store", "data", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     State("raw-data-store", "data"),
@@ -374,6 +447,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                     "Cannot append daily data to monthly data. Monthly data cannot be upsampled.",
                     "red",
                     False,
+                    no_update, no_update,
                 )
 
             # If new data is monthly but existing is daily, convert existing to monthly
@@ -411,6 +485,8 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename}",
             "green",
             False,
+            default_periodicity,
+            updated_selection,
         )
 
     except Exception as e:
@@ -420,6 +496,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             f"Error loading file: {str(e)}",
             "red",
             False,
+            no_update, no_update,
         )
 
 
