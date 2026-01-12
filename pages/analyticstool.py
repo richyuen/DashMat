@@ -1,4 +1,4 @@
-"""Dashboard page - Market Returns Time Series Dashboard."""
+"""Analytics tool page - Market Returns Time Series Dashboard."""
 
 from io import BytesIO, StringIO
 import hashlib
