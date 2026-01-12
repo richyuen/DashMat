@@ -1,6 +1,7 @@
 """Dashboard page - Market Returns Time Series Dashboard."""
 
 from io import BytesIO, StringIO
+import hashlib
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
@@ -11,6 +12,7 @@ from plotly.subplots import make_subplots
 from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback
 from dash.exceptions import PreventUpdate
 
+from app import cache
 from utils.parsing import detect_periodicity, parse_uploaded_file
 from utils.returns import (
     get_available_periodicities,
@@ -20,6 +22,9 @@ from utils.returns import (
 from utils.statistics import calculate_all_statistics
 
 register_page(__name__, path="/dashboard", name="Dashboard", title="DashMat - Dashboard")
+
+# Performance optimization constants
+MAX_SCATTER_MATRIX_SIZE = 10  # Maximum series for scatter matrix (creates n² subplots)
 
 # Statistics row order and formatting
 STATS_CONFIG = [
@@ -60,12 +65,63 @@ def df_to_json(df: pd.DataFrame) -> str:
     return df.to_json(date_format="iso", orient="split")
 
 
-def json_to_df(json_str: str) -> pd.DataFrame:
-    """Convert JSON string back to DataFrame."""
+def _hash_json(json_str: str) -> str:
+    """Create a hash of JSON string for cache key."""
+    return hashlib.md5(json_str.encode()).hexdigest()
+
+
+@cache.memoize(timeout=300)
+def json_to_df_cached(json_str: str) -> pd.DataFrame:
+    """Convert JSON string back to DataFrame with caching.
+
+    This is the primary performance bottleneck - caching this operation
+    prevents repeated deserialization of the same data.
+    """
     df = pd.read_json(StringIO(json_str), orient="split")
     df.index = pd.to_datetime(df.index)
     df.index.name = "Date"
     return df
+
+
+def json_to_df(json_str: str) -> pd.DataFrame:
+    """Convert JSON string back to DataFrame (cached wrapper)."""
+    return json_to_df_cached(json_str)
+
+
+@cache.memoize(timeout=300)
+def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
+    """Resample returns with caching to avoid repeated computation."""
+    df = json_to_df(json_str)
+    if periodicity == "daily":
+        return df
+    return resample_returns(df, periodicity)
+
+
+@cache.memoize(timeout=300)
+def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
+                             benchmark_assignments: str, returns_type: str) -> pd.DataFrame:
+    """Calculate excess returns with caching."""
+    df = resample_returns_cached(json_str, periodicity)
+
+    # Filter to selected series only
+    available_series = [s for s in selected_series if s in df.columns]
+    if not available_series:
+        return pd.DataFrame()
+
+    display_df = df[available_series].copy()
+
+    # Calculate excess returns if requested
+    if returns_type == "excess":
+        benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
+        for series in available_series:
+            benchmark = benchmark_dict.get(series, available_series[0])
+            if benchmark == series:
+                display_df[series] = 0.0
+            elif benchmark in df.columns:
+                # Vectorized operation instead of per-series assignment
+                display_df.loc[:, series] = df[series] - df[benchmark]
+
+    return display_df
 
 
 layout = dmc.Container(
@@ -214,6 +270,7 @@ layout = dmc.Container(
         ),
         # Tabs with AG Grid and Statistics
         dmc.Tabs(
+            id="main-tabs",
             value="returns",
             children=[
                 dmc.TabsList(
@@ -227,20 +284,26 @@ layout = dmc.Container(
                     value="returns",
                     pt="md",
                     children=[
-                        dag.AgGrid(
-                            id="returns-grid",
-                            columnDefs=[],
-                            rowData=[],
-                            defaultColDef={
-                                "sortable": True,
-                                "resizable": True,
-                            },
-                            style={"height": "600px"},
-                            dashGridOptions={
-                                "animateRows": True,
-                                "pagination": True,
-                                "paginationPageSize": 100,
-                            },
+                        dcc.Loading(
+                            id="loading-returns",
+                            type="default",
+                            children=[
+                                dag.AgGrid(
+                                    id="returns-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "600px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -248,17 +311,23 @@ layout = dmc.Container(
                     value="statistics",
                     pt="md",
                     children=[
-                        dag.AgGrid(
-                            id="statistics-grid",
-                            columnDefs=[],
-                            rowData=[],
-                            defaultColDef={
-                                "resizable": True,
-                            },
-                            style={"height": "700px"},
-                            dashGridOptions={
-                                "animateRows": True,
-                            },
+                        dcc.Loading(
+                            id="loading-statistics",
+                            type="default",
+                            children=[
+                                dag.AgGrid(
+                                    id="statistics-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "resizable": True,
+                                    },
+                                    style={"height": "700px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                    },
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -266,9 +335,15 @@ layout = dmc.Container(
                     value="correlogram",
                     pt="md",
                     children=[
-                        dcc.Graph(
-                            id="correlogram-graph",
-                            style={"height": "700px"},
+                        dcc.Loading(
+                            id="loading-correlogram",
+                            type="default",
+                            children=[
+                                dcc.Graph(
+                                    id="correlogram-graph",
+                                    style={"height": "700px"},
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -570,33 +645,22 @@ def update_benchmark_assignments(benchmark_values, selected_series):
     prevent_initial_call=True,
 )
 def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
-    """Update the AG Grid based on selections."""
+    """Update the AG Grid based on selections (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], [], True
 
     try:
-        df = json_to_df(raw_data)
+        # Use cached function to avoid repeated deserialization and computation
+        display_df = calculate_excess_returns(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series),  # Convert to tuple for cache key
+            str(benchmark_assignments),  # Convert to string for cache key
+            returns_type
+        )
 
-        # Resample if needed
-        if periodicity and periodicity != "daily":
-            df = resample_returns(df, periodicity)
-
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
+        if display_df.empty:
             return [], [], True
-
-        display_df = df[available_series].copy()
-
-        # Calculate excess returns if requested
-        if returns_type == "excess":
-            for series in available_series:
-                benchmark = benchmark_assignments.get(series, available_series[0]) if benchmark_assignments else available_series[0]
-                if benchmark == series:
-                    # Excess return vs itself is 0
-                    display_df[series] = 0.0
-                elif benchmark in df.columns:
-                    display_df[series] = df[series] - df[benchmark]
 
         # Create column definitions
         column_defs = [
@@ -626,6 +690,21 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
         return [], [], True
 
 
+@cache.memoize(timeout=300)
+def calculate_statistics_cached(json_str: str, periodicity: str, selected_series: tuple,
+                                benchmark_assignments: str) -> list:
+    """Calculate statistics with caching."""
+    df = resample_returns_cached(json_str, periodicity)
+    benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
+
+    return calculate_all_statistics(
+        df,
+        list(selected_series),
+        benchmark_dict,
+        periodicity,
+    )
+
+
 @callback(
     Output("statistics-grid", "columnDefs"),
     Output("statistics-grid", "rowData"),
@@ -636,23 +715,17 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
     prevent_initial_call=True,
 )
 def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments):
-    """Update the Statistics grid with transposed data (series as columns)."""
+    """Update the Statistics grid with transposed data (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], []
 
     try:
-        df = json_to_df(raw_data)
-
-        # Resample if needed
-        if periodicity and periodicity != "daily":
-            df = resample_returns(df, periodicity)
-
-        # Calculate statistics for all selected series
-        stats = calculate_all_statistics(
-            df,
-            selected_series,
-            benchmark_assignments,
+        # Use cached function to avoid repeated computation
+        stats = calculate_statistics_cached(
+            raw_data,
             periodicity or "daily",
+            tuple(selected_series),
+            str(benchmark_assignments)
         )
 
         if not stats:
@@ -695,8 +768,34 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         return [], []
 
 
+@cache.memoize(timeout=300)
+def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
+                                returns_type: str, benchmark_assignments: str):
+    """Generate correlogram with caching."""
+    display_df = calculate_excess_returns(
+        json_str, periodicity, selected_series, benchmark_assignments, returns_type
+    )
+
+    if display_df.empty:
+        return None
+
+    available_series = list(display_df.columns)
+    n = len(available_series)
+
+    # Calculate correlation matrix
+    corr_matrix = display_df.corr()
+
+    return {
+        'display_df': display_df,
+        'corr_matrix': corr_matrix,
+        'available_series': available_series,
+        'n': n
+    }
+
+
 @callback(
     Output("correlogram-graph", "figure"),
+    Input("main-tabs", "value"),  # Lazy loading: only update when tab is active
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "value"),
@@ -704,8 +803,8 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
     Input("benchmark-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
-    """Update the Correlogram with custom pairs plot."""
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
+    """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     empty_fig = go.Figure()
     empty_fig.add_annotation(
         text="Select at least 2 series to view correlogram",
@@ -718,35 +817,49 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
     )
 
+    # Lazy loading: only generate when correlogram tab is active
+    if active_tab != "correlogram":
+        raise PreventUpdate
+
     if raw_data is None or not selected_series or len(selected_series) < 2:
         return empty_fig
 
+    # Size limit: warn if too many series
+    if len(selected_series) > MAX_SCATTER_MATRIX_SIZE:
+        warning_fig = go.Figure()
+        warning_fig.add_annotation(
+            text=f"Too many series selected ({len(selected_series)}). Please select {MAX_SCATTER_MATRIX_SIZE} or fewer series to view the scatter matrix.<br>Large scatter matrices can cause performance issues.",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=14, color="#fa5252"),
+            align="center",
+        )
+        warning_fig.update_layout(
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        )
+        return warning_fig
+
     try:
-        df = json_to_df(raw_data)
+        # Use cached function to avoid repeated computation
+        result = generate_correlogram_cached(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series),
+            returns_type,
+            str(benchmark_assignments)
+        )
 
-        # Resample if needed
-        if periodicity and periodicity != "daily":
-            df = resample_returns(df, periodicity)
-
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        n = len(available_series)
-        if n < 2:
+        if result is None:
             return empty_fig
 
-        display_df = df[available_series].copy()
+        display_df = result['display_df']
+        corr_matrix = result['corr_matrix']
+        available_series = result['available_series']
+        n = result['n']
 
-        # Calculate excess returns if requested
-        if returns_type == "excess":
-            for series in available_series:
-                benchmark = benchmark_assignments.get(series, available_series[0]) if benchmark_assignments else available_series[0]
-                if benchmark == series:
-                    display_df[series] = 0.0
-                elif benchmark in df.columns:
-                    display_df[series] = df[series] - df[benchmark]
-
-        # Calculate correlation matrix
-        corr_matrix = display_df.corr()
+        if n < 2:
+            return empty_fig
 
         # Create subplots
         fig = make_subplots(
@@ -770,15 +883,21 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
                             marker_color='#228be6',
                             opacity=0.7,
                             showlegend=False,
+                            nbinsx=30,  # Limit bins for performance
                         ),
                         row=row_idx, col=col_idx
                     )
                 elif i > j:
-                    # Lower triangle: scatter plot
+                    # Lower triangle: scatter plot with sampling for large datasets
+                    series_data = display_df[[col_series, row_series]].dropna()
+                    if len(series_data) > 1000:
+                        # Sample for performance if > 1000 points
+                        series_data = series_data.sample(n=1000, random_state=42)
+
                     fig.add_trace(
-                        go.Scatter(
-                            x=display_df[col_series],
-                            y=display_df[row_series],
+                        go.Scattergl(  # Use Scattergl for better performance
+                            x=series_data[col_series],
+                            y=series_data[row_series],
                             mode='markers',
                             marker=dict(size=3, opacity=0.5, color='#228be6'),
                             showlegend=False,
@@ -858,39 +977,28 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
     prevent_initial_call=True,
 )
 def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
-    """Generate Excel file with Returns, Statistics, and Correlogram sheets."""
+    """Generate Excel file with Returns, Statistics, and Correlogram sheets (optimized)."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
 
-    df = json_to_df(raw_data)
+    # Use cached functions to get data
+    returns_df = calculate_excess_returns(
+        raw_data,
+        periodicity or "daily",
+        tuple(selected_series),
+        str(benchmark_assignments),
+        returns_type
+    )
 
-    # Resample if needed
-    if periodicity and periodicity != "daily":
-        df = resample_returns(df, periodicity)
-
-    # Filter to selected series
-    available_series = [s for s in selected_series if s in df.columns]
-    if not available_series:
+    if returns_df.empty:
         raise PreventUpdate
 
-    # Prepare returns data
-    returns_df = df[available_series].copy()
-
-    # Calculate excess returns if requested
-    if returns_type == "excess":
-        for series in available_series:
-            benchmark = benchmark_assignments.get(series, available_series[0]) if benchmark_assignments else available_series[0]
-            if benchmark == series:
-                returns_df[series] = 0.0
-            elif benchmark in df.columns:
-                returns_df[series] = df[series] - df[benchmark]
-
-    # Prepare statistics data
-    stats = calculate_all_statistics(
-        df,
-        available_series,
-        benchmark_assignments,
+    # Get cached statistics
+    stats = calculate_statistics_cached(
+        raw_data,
         periodicity or "daily",
+        tuple(selected_series),
+        str(benchmark_assignments)
     )
 
     # Build statistics DataFrame (transposed: statistics as rows, series as columns)

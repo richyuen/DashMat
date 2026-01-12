@@ -101,16 +101,22 @@ def calculate_statistics(
     periodicity: str,
     series_name: str,
 ) -> dict:
-    """Calculate all statistics for a single series."""
+    """Calculate all statistics for a single series (optimized for performance)."""
     periods_per_year = annualization_factor(periodicity)
 
-    # Align returns and benchmark
-    aligned = pd.concat([returns, benchmark_returns], axis=1).dropna()
-    if len(aligned) == 0:
-        return {"Series": series_name}
+    # Align returns and benchmark more efficiently
+    if returns.name == benchmark_returns.name:
+        # Same series - avoid unnecessary concatenation
+        ret = returns.dropna()
+        bench = ret.copy()
+    else:
+        aligned = pd.concat([returns, benchmark_returns], axis=1).dropna()
+        if len(aligned) == 0:
+            return {"Series": series_name}
+        ret = aligned.iloc[:, 0]
+        bench = aligned.iloc[:, 1]
 
-    ret = aligned.iloc[:, 0]
-    bench = aligned.iloc[:, 1]
+    # Calculate excess once for reuse
     excess = ret - bench
 
     result = {
