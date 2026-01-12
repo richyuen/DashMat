@@ -90,12 +90,9 @@ layout = dmc.Container(
                                 ),
                                 dmc.MenuDropdown(
                                     children=[
-                                        dcc.Upload(
-                                            id="upload-data",
-                                            children=dmc.MenuItem("Add series from file"),
-                                            multiple=False,
-                                            accept=".csv,.xlsx,.xls",
-                                            style={"cursor": "pointer"},
+                                        dmc.MenuItem(
+                                            "Add series from file",
+                                            id="menu-add-series",
                                         ),
                                         dmc.MenuItem(
                                             "Download Excel",
@@ -288,6 +285,16 @@ layout = dmc.Container(
         dcc.Store(id="download-enabled-store", data=False),
         dcc.Download(id="download-excel"),
         dcc.Location(id="url-location", refresh=True),
+        # Hidden file upload (triggered by menu item)
+        html.Div(
+            dcc.Upload(
+                id="upload-data",
+                children=html.Div(id="upload-trigger"),
+                multiple=False,
+                accept=".csv,.xlsx,.xls",
+            ),
+            style={"display": "none"},
+        ),
     ],
 )
 
@@ -304,6 +311,29 @@ clientside_callback(
     """,
     Output("url-location", "pathname"),
     Input("menu-exit", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Clientside callback to trigger file upload from menu
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            // Find the hidden upload input and click it
+            var uploadDiv = document.getElementById('upload-data');
+            if (uploadDiv) {
+                var input = uploadDiv.querySelector('input[type="file"]');
+                if (input) {
+                    input.click();
+                }
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("upload-trigger", "children"),
+    Input("menu-add-series", "n_clicks"),
     prevent_initial_call=True,
 )
 
