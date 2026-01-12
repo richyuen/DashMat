@@ -146,8 +146,9 @@ layout = dmc.Container(
                 ),
             ],
         ),
-        # Controls Section (Collapsible)
+        # Controls Section (Collapsible, starts expanded)
         dmc.Accordion(
+            value="controls",
             mb="md",
             variant="contained",
             children=[
