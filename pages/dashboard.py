@@ -146,60 +146,41 @@ layout = dmc.Container(
                 ),
             ],
         ),
-        # Title
-        dmc.Box(
-            mb="md",
-            children=[
-                dmc.Title("Dashboard", order=1, mb="xs"),
-                dmc.Text(
-                    "Market Returns Time Series Analysis",
-                    c="dimmed",
-                ),
-            ],
-        ),
-        # Controls Section
-        dmc.Paper(
-            shadow="sm",
-            p="md",
-            mb="md",
-            withBorder=True,
-            children=[
-                dmc.Text("Controls", fw=500, mb="sm"),
-                dmc.Group(
-                    children=[
-                        dmc.Select(
-                            id="periodicity-select",
-                            label="Periodicity",
-                            data=[{"value": "daily", "label": "Daily"}],
-                            value="daily",
-                            w=200,
-                            disabled=True,
-                        ),
-                        dmc.Select(
-                            id="returns-type-select",
-                            label="Returns Type",
-                            data=[
-                                {"value": "total", "label": "Total Returns"},
-                                {"value": "excess", "label": "Excess Returns"},
-                            ],
-                            value="total",
-                            w=200,
-                        ),
-                    ],
-                ),
-            ],
-        ),
-        # Series Selection Section (Collapsible)
+        # Controls Section (Collapsible)
         dmc.Accordion(
             mb="md",
             variant="contained",
             children=[
                 dmc.AccordionItem(
-                    value="series-selection",
+                    value="controls",
                     children=[
-                        dmc.AccordionControl("Series Selection"),
+                        dmc.AccordionControl("Controls"),
                         dmc.AccordionPanel(
                             children=[
+                                dmc.Group(
+                                    mb="md",
+                                    children=[
+                                        dmc.Select(
+                                            id="periodicity-select",
+                                            label="Periodicity",
+                                            data=[{"value": "daily", "label": "Daily"}],
+                                            value="daily",
+                                            w=200,
+                                            disabled=True,
+                                        ),
+                                        dmc.Select(
+                                            id="returns-type-select",
+                                            label="Returns Type",
+                                            data=[
+                                                {"value": "total", "label": "Total Returns"},
+                                                {"value": "excess", "label": "Excess Returns"},
+                                            ],
+                                            value="total",
+                                            w=200,
+                                        ),
+                                    ],
+                                ),
+                                dmc.Divider(mb="md"),
                                 dmc.MultiSelect(
                                     id="series-select",
                                     label="Select series to include in analysis",
