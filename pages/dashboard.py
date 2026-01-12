@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback
 from dash.exceptions import PreventUpdate
 
-from app import cache
+import cache_config
 from utils.parsing import detect_periodicity, parse_uploaded_file
 from utils.returns import (
     get_available_periodicities,
@@ -70,7 +70,7 @@ def _hash_json(json_str: str) -> str:
     return hashlib.md5(json_str.encode()).hexdigest()
 
 
-@cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=300)
 def json_to_df_cached(json_str: str) -> pd.DataFrame:
     """Convert JSON string back to DataFrame with caching.
 
@@ -88,7 +88,7 @@ def json_to_df(json_str: str) -> pd.DataFrame:
     return json_to_df_cached(json_str)
 
 
-@cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=300)
 def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
     """Resample returns with caching to avoid repeated computation."""
     df = json_to_df(json_str)
@@ -97,7 +97,7 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
     return resample_returns(df, periodicity)
 
 
-@cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=300)
 def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
                              benchmark_assignments: str, returns_type: str) -> pd.DataFrame:
     """Calculate excess returns with caching."""
@@ -690,7 +690,7 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
         return [], [], True
 
 
-@cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=300)
 def calculate_statistics_cached(json_str: str, periodicity: str, selected_series: tuple,
                                 benchmark_assignments: str) -> list:
     """Calculate statistics with caching."""
@@ -768,7 +768,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         return [], []
 
 
-@cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=300)
 def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
                                 returns_type: str, benchmark_assignments: str):
     """Generate correlogram with caching."""
