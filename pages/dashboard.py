@@ -858,7 +858,7 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
     prevent_initial_call=True,
 )
 def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
-    """Generate Excel file for download."""
+    """Generate Excel file with Returns, Statistics, and Correlogram sheets."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
 
@@ -870,27 +870,57 @@ def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_typ
 
     # Filter to selected series
     available_series = [s for s in selected_series if s in df.columns]
-    display_df = df[available_series].copy()
+    if not available_series:
+        raise PreventUpdate
+
+    # Prepare returns data
+    returns_df = df[available_series].copy()
 
     # Calculate excess returns if requested
     if returns_type == "excess":
         for series in available_series:
             benchmark = benchmark_assignments.get(series, available_series[0]) if benchmark_assignments else available_series[0]
             if benchmark == series:
-                # Excess return vs itself is 0
-                display_df[series] = 0.0
+                returns_df[series] = 0.0
             elif benchmark in df.columns:
-                display_df[series] = df[series] - df[benchmark]
+                returns_df[series] = df[series] - df[benchmark]
 
-    # Create Excel file in memory
+    # Prepare statistics data
+    stats = calculate_all_statistics(
+        df,
+        available_series,
+        benchmark_assignments,
+        periodicity or "daily",
+    )
+
+    # Build statistics DataFrame (transposed: statistics as rows, series as columns)
+    stats_data = {"Statistic": [stat_name for stat_name, _ in STATS_CONFIG]}
+    for series_stats in stats:
+        series_name = series_stats["Series"]
+        stats_data[series_name] = [series_stats.get(stat_name) for stat_name, _ in STATS_CONFIG]
+    stats_df = pd.DataFrame(stats_data)
+
+    # Prepare correlogram data (correlation matrix)
+    corr_df = returns_df.corr()
+    corr_df.index.name = "Series"
+
+    # Create Excel file in memory with multiple sheets
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        display_df.to_excel(writer, sheet_name="Returns")
+        # Sheet 1: Returns
+        returns_df.to_excel(writer, sheet_name="Returns")
+
+        # Sheet 2: Statistics
+        stats_df.to_excel(writer, sheet_name="Statistics", index=False)
+
+        # Sheet 3: Correlogram
+        corr_df.to_excel(writer, sheet_name="Correlogram")
+
     output.seek(0)
 
     # Generate filename
     periodicity_suffix = periodicity.replace("_", "-") if periodicity else "returns"
     returns_suffix = "excess" if returns_type == "excess" else "total"
-    filename = f"returns_{periodicity_suffix}_{returns_suffix}.xlsx"
+    filename = f"dashmat_{periodicity_suffix}_{returns_suffix}.xlsx"
 
     return dcc.send_bytes(output.getvalue(), filename)
