@@ -6,6 +6,8 @@ import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback
 from dash.exceptions import PreventUpdate
 
@@ -626,8 +628,18 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
     prevent_initial_call=True,
 )
 def update_correlogram(raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
-    """Update the Correlogram with scatter matrix (pairs plot)."""
-    empty_fig = px.scatter(title="Select at least 2 series to view correlogram")
+    """Update the Correlogram with custom pairs plot."""
+    empty_fig = go.Figure()
+    empty_fig.add_annotation(
+        text="Select at least 2 series to view correlogram",
+        xref="paper", yref="paper",
+        x=0.5, y=0.5, showarrow=False,
+        font=dict(size=16, color="gray"),
+    )
+    empty_fig.update_layout(
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    )
 
     if raw_data is None or not selected_series or len(selected_series) < 2:
         return empty_fig
@@ -641,7 +653,8 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
 
         # Filter to selected series only
         available_series = [s for s in selected_series if s in df.columns]
-        if len(available_series) < 2:
+        n = len(available_series)
+        if n < 2:
             return empty_fig
 
         display_df = df[available_series].copy()
@@ -655,24 +668,101 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
                 elif benchmark in df.columns:
                     display_df[series] = df[series] - df[benchmark]
 
-        # Create scatter matrix (pairs plot)
-        fig = px.scatter_matrix(
-            display_df,
-            dimensions=available_series,
-            title=f"Scatter Matrix ({returns_type.title()} Returns)",
+        # Calculate correlation matrix
+        corr_matrix = display_df.corr()
+
+        # Create subplots
+        fig = make_subplots(
+            rows=n, cols=n,
+            horizontal_spacing=0.02,
+            vertical_spacing=0.02,
         )
 
-        # Update layout for better appearance
-        fig.update_traces(
-            diagonal_visible=True,
-            showupperhalf=True,
-            marker=dict(size=3, opacity=0.5),
-        )
+        # Populate the grid
+        for i, row_series in enumerate(available_series):
+            for j, col_series in enumerate(available_series):
+                row_idx = i + 1
+                col_idx = j + 1
 
+                if i == j:
+                    # Diagonal: density chart (histogram with KDE-like appearance)
+                    fig.add_trace(
+                        go.Histogram(
+                            x=display_df[row_series].dropna(),
+                            histnorm='probability density',
+                            marker_color='#228be6',
+                            opacity=0.7,
+                            showlegend=False,
+                        ),
+                        row=row_idx, col=col_idx
+                    )
+                elif i > j:
+                    # Lower triangle: scatter plot
+                    fig.add_trace(
+                        go.Scatter(
+                            x=display_df[col_series],
+                            y=display_df[row_series],
+                            mode='markers',
+                            marker=dict(size=3, opacity=0.5, color='#228be6'),
+                            showlegend=False,
+                        ),
+                        row=row_idx, col=col_idx
+                    )
+                else:
+                    # Upper triangle: correlation value
+                    corr_val = corr_matrix.loc[row_series, col_series]
+                    # Color based on correlation
+                    if corr_val >= 0.7:
+                        color = '#1971c2'
+                    elif corr_val >= 0.3:
+                        color = '#228be6'
+                    elif corr_val <= -0.7:
+                        color = '#c92a2a'
+                    elif corr_val <= -0.3:
+                        color = '#e03131'
+                    else:
+                        color = '#868e96'
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[0.5], y=[0.5],
+                            mode='text',
+                            text=[f'{corr_val:.2f}'],
+                            textfont=dict(size=14, color=color),
+                            showlegend=False,
+                        ),
+                        row=row_idx, col=col_idx
+                    )
+                    # Hide axes for correlation cells
+                    fig.update_xaxes(
+                        showticklabels=False, showgrid=False,
+                        zeroline=False, range=[0, 1],
+                        row=row_idx, col=col_idx
+                    )
+                    fig.update_yaxes(
+                        showticklabels=False, showgrid=False,
+                        zeroline=False, range=[0, 1],
+                        row=row_idx, col=col_idx
+                    )
+
+        # Update axis labels
+        for i, series in enumerate(available_series):
+            # Bottom row x-axis labels
+            fig.update_xaxes(title_text=series, row=n, col=i+1, title_font=dict(size=10))
+            # Left column y-axis labels
+            fig.update_yaxes(title_text=series, row=i+1, col=1, title_font=dict(size=10))
+
+        # Update layout
         fig.update_layout(
-            height=700,
-            margin=dict(l=50, r=50, t=50, b=50),
+            title=f"Scatter Matrix ({returns_type.title()} Returns)",
+            height=max(500, 150 * n),
+            margin=dict(l=60, r=30, t=50, b=60),
+            showlegend=False,
         )
+
+        # Hide tick labels for inner plots
+        fig.update_xaxes(showticklabels=False)
+        fig.update_yaxes(showticklabels=False)
 
         return fig
 
