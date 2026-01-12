@@ -5,6 +5,7 @@ from io import BytesIO, StringIO
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import pandas as pd
+import plotly.express as px
 from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback
 from dash.exceptions import PreventUpdate
 
@@ -263,17 +264,9 @@ layout = dmc.Container(
                     value="correlogram",
                     pt="md",
                     children=[
-                        dag.AgGrid(
-                            id="correlogram-grid",
-                            columnDefs=[],
-                            rowData=[],
-                            defaultColDef={
-                                "resizable": True,
-                            },
-                            style={"height": "600px"},
-                            dashGridOptions={
-                                "animateRows": True,
-                            },
+                        dcc.Graph(
+                            id="correlogram-graph",
+                            style={"height": "700px"},
                         ),
                     ],
                 ),
@@ -624,8 +617,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 
 @callback(
-    Output("correlogram-grid", "columnDefs"),
-    Output("correlogram-grid", "rowData"),
+    Output("correlogram-graph", "figure"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "value"),
@@ -634,9 +626,11 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
     prevent_initial_call=True,
 )
 def update_correlogram(raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
-    """Update the Correlogram grid with correlation matrix."""
+    """Update the Correlogram with scatter matrix (pairs plot)."""
+    empty_fig = px.scatter(title="Select at least 2 series to view correlogram")
+
     if raw_data is None or not selected_series or len(selected_series) < 2:
-        return [], []
+        return empty_fig
 
     try:
         df = json_to_df(raw_data)
@@ -648,7 +642,7 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
         # Filter to selected series only
         available_series = [s for s in selected_series if s in df.columns]
         if len(available_series) < 2:
-            return [], []
+            return empty_fig
 
         display_df = df[available_series].copy()
 
@@ -661,45 +655,29 @@ def update_correlogram(raw_data, periodicity, selected_series, returns_type, ben
                 elif benchmark in df.columns:
                     display_df[series] = df[series] - df[benchmark]
 
-        # Calculate correlation matrix
-        corr_matrix = display_df.corr()
+        # Create scatter matrix (pairs plot)
+        fig = px.scatter_matrix(
+            display_df,
+            dimensions=available_series,
+            title=f"Scatter Matrix ({returns_type.title()} Returns)",
+        )
 
-        # Create column definitions
-        column_defs = [
-            {"field": "Series", "pinned": "left", "width": 150},
-        ]
+        # Update layout for better appearance
+        fig.update_traces(
+            diagonal_visible=True,
+            showupperhalf=True,
+            marker=dict(size=3, opacity=0.5),
+        )
 
-        for col in available_series:
-            column_defs.append({
-                "field": col,
-                "width": 100,
-                "valueFormatter": {"function": "params.value != null ? d3.format('.2f')(params.value) : ''"},
-                "cellStyle": {
-                    "function": """
-                        if (params.value == null) return {};
-                        const val = params.value;
-                        if (val === 1) return {backgroundColor: '#228be6', color: 'white'};
-                        if (val >= 0.7) return {backgroundColor: '#a5d8ff'};
-                        if (val >= 0.3) return {backgroundColor: '#d0ebff'};
-                        if (val <= -0.7) return {backgroundColor: '#ffc9c9'};
-                        if (val <= -0.3) return {backgroundColor: '#ffe3e3'};
-                        return {};
-                    """
-                },
-            })
+        fig.update_layout(
+            height=700,
+            margin=dict(l=50, r=50, t=50, b=50),
+        )
 
-        # Convert to row data
-        row_data = []
-        for series in available_series:
-            row = {"Series": series}
-            for other_series in available_series:
-                row[other_series] = corr_matrix.loc[series, other_series]
-            row_data.append(row)
-
-        return column_defs, row_data
+        return fig
 
     except Exception:
-        return [], []
+        return empty_fig
 
 
 @callback(
