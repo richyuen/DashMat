@@ -178,7 +178,10 @@ layout = dmc.Container(
                                 ),
                                 dmc.MenuDropdown(
                                     children=[
-                                        dmc.MenuItem("(No actions available)", disabled=True),
+                                        dmc.MenuItem(
+                                            "Clear all series",
+                                            id="menu-clear-all-series",
+                                        ),
                                     ],
                                 ),
                             ],
@@ -410,6 +413,25 @@ clientside_callback(
     Input("menu-add-series", "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+@callback(
+    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("original-periodicity-store", "data", allow_duplicate=True),
+    Output("benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("periodicity-value-store", "data", allow_duplicate=True),
+    Output("returns-type-value-store", "data", allow_duplicate=True),
+    Output("series-select-value-store", "data", allow_duplicate=True),
+    Input("menu-clear-all-series", "n_clicks"),
+    prevent_initial_call=True,
+)
+def clear_all_series(n_clicks):
+    """Clear all loaded series and reset application state."""
+    if n_clicks is None:
+        raise PreventUpdate
+
+    # Reset all stores to initial state
+    return None, "daily", {}, None, None, []
 
 
 @callback(
