@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback
+from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback, callback_context
 from dash.exceptions import PreventUpdate
 
 import cache_config
@@ -99,9 +99,14 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
 
 @cache_config.cache.memoize(timeout=300)
 def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
-                             benchmark_assignments: str, returns_type: str, long_short_assignments: str) -> pd.DataFrame:
+                             benchmark_assignments: str, returns_type: str, long_short_assignments: str,
+                             date_range_str: str) -> pd.DataFrame:
     """Calculate excess returns with caching."""
     df = resample_returns_cached(json_str, periodicity)
+
+    # Parse assignments
+    benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
+    long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
 
     # Filter to selected series only
     available_series = [s for s in selected_series if s in df.columns]
@@ -109,10 +114,6 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
         return pd.DataFrame()
 
     display_df = df[available_series].copy()
-
-    # Parse assignments
-    benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
-    long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
 
     # Calculate long-short returns for series with long-short enabled
     for series in available_series:
@@ -136,6 +137,13 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
                 elif benchmark in df.columns:
                     # Vectorized operation instead of per-series assignment
                     display_df.loc[:, series] = df[series] - df[benchmark]
+
+    # Apply date range filter if provided (after all calculations)
+    date_range = eval(date_range_str) if date_range_str and date_range_str != "None" else None
+    if date_range:
+        start_date = pd.to_datetime(date_range["start"])
+        end_date = pd.to_datetime(date_range["end"])
+        display_df = display_df[(display_df.index >= start_date) & (display_df.index <= end_date)]
 
     return display_df
 
@@ -259,6 +267,50 @@ layout = dmc.Container(
                                         ),
                                     ],
                                 ),
+                                html.Div([
+                                    html.Div(
+                                        id="date-picker-wrapper",
+                                        children=[
+                                            html.Div([
+                                                dmc.Text("Start Date", size="sm", mb=5, c="dimmed"),
+                                                dmc.DateInput(
+                                                    id="start-date-picker",
+                                                    value=None,
+                                                    w=200,
+                                                    valueFormat="YYYY-MM-DD",
+                                                ),
+                                            ], style={"marginRight": "15px"}),
+                                            html.Div([
+                                                dmc.Text("End Date", size="sm", mb=5, c="dimmed"),
+                                                dmc.DateInput(
+                                                    id="end-date-picker",
+                                                    value=None,
+                                                    w=200,
+                                                    valueFormat="YYYY-MM-DD",
+                                                ),
+                                            ], style={"marginRight": "15px"}),
+                                            html.Div([
+                                                dmc.Button(
+                                                    "Common Range",
+                                                    id="common-range-button",
+                                                    size="xs",
+                                                    variant="outline",
+                                                    disabled=True,
+                                                ),
+                                            ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
+                                            html.Div([
+                                                dmc.Button(
+                                                    "Maximum Range",
+                                                    id="maximum-range-button",
+                                                    size="xs",
+                                                    variant="outline",
+                                                    disabled=True,
+                                                ),
+                                            ], style={"alignSelf": "flex-end", "marginBottom": "2px"}),
+                                        ],
+                                        style={"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"},
+                                    ),
+                                ], style={"marginBottom": "1rem"}),
                                 dmc.Divider(mb="md"),
                                 dmc.MultiSelect(
                                     id="series-select",
@@ -376,6 +428,7 @@ layout = dmc.Container(
         dcc.Store(id="periodicity-value-store", data="daily", storage_type="local"),
         dcc.Store(id="returns-type-value-store", data="total", storage_type="local"),
         dcc.Store(id="series-select-value-store", data=[], storage_type="local"),
+        dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
         dcc.Download(id="download-excel"),
         dcc.Location(id="url-location", refresh=True),
@@ -701,6 +754,108 @@ def update_long_short_assignments(checkbox_values, selected_series):
 
 
 @callback(
+    Output("start-date-picker", "value"),
+    Output("end-date-picker", "value"),
+    Output("date-picker-wrapper", "style"),
+    Output("common-range-button", "disabled"),
+    Output("maximum-range-button", "disabled"),
+    Output("date-range-store", "data", allow_duplicate=True),
+    Input("raw-data-store", "data"),
+    Input("periodicity-select", "value"),
+    Input("series-select", "value"),
+    prevent_initial_call="initial_duplicate",
+)
+def initialize_date_range(raw_data, periodicity, selected_series):
+    """Initialize date range to maximum range when data is loaded."""
+    disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
+    enabled_style = {"display": "flex", "alignItems": "flex-start"}
+
+    if raw_data is None or not selected_series:
+        return None, None, disabled_style, True, True, None
+
+    try:
+        df = resample_returns_cached(raw_data, periodicity or "daily")
+
+        # Filter to selected series
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            return None, None, disabled_style, True, True, None
+
+        # Get maximum range (earliest start, latest end)
+        start_date = df.index.min().strftime("%Y-%m-%d")
+        end_date = df.index.max().strftime("%Y-%m-%d")
+
+        date_range = {"start": start_date, "end": end_date}
+
+        return start_date, end_date, enabled_style, False, False, date_range
+
+    except Exception:
+        return None, None, disabled_style, True, True, None
+
+
+@callback(
+    Output("start-date-picker", "value", allow_duplicate=True),
+    Output("end-date-picker", "value", allow_duplicate=True),
+    Output("date-range-store", "data"),
+    Input("common-range-button", "n_clicks"),
+    Input("maximum-range-button", "n_clicks"),
+    State("raw-data-store", "data"),
+    State("periodicity-select", "value"),
+    State("series-select", "value"),
+    prevent_initial_call=True,
+)
+def update_date_range_buttons(common_clicks, max_clicks, raw_data, periodicity, selected_series):
+    """Update date range based on button clicks."""
+    if raw_data is None or not selected_series:
+        raise PreventUpdate
+
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    try:
+        df = resample_returns_cached(raw_data, periodicity or "daily")
+
+        # Filter to selected series
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            raise PreventUpdate
+
+        if button_id == "common-range-button":
+            # Common range: only dates where ALL selected series have data
+            subset_df = df[available_series].dropna()
+            if len(subset_df) == 0:
+                raise PreventUpdate
+            start_date = subset_df.index.min().strftime("%Y-%m-%d")
+            end_date = subset_df.index.max().strftime("%Y-%m-%d")
+        else:  # maximum-range-button
+            # Maximum range: earliest start to latest end across all selected series
+            start_date = df.index.min().strftime("%Y-%m-%d")
+            end_date = df.index.max().strftime("%Y-%m-%d")
+
+        date_range = {"start": start_date, "end": end_date}
+        return start_date, end_date, date_range
+
+    except Exception:
+        raise PreventUpdate
+
+
+@callback(
+    Output("date-range-store", "data", allow_duplicate=True),
+    Input("start-date-picker", "value"),
+    Input("end-date-picker", "value"),
+    prevent_initial_call=True,
+)
+def update_date_range_store(start_date, end_date):
+    """Store date range when user manually changes dates."""
+    if start_date and end_date:
+        return {"start": start_date, "end": end_date}
+    return no_update
+
+
+@callback(
     Output("returns-grid", "columnDefs"),
     Output("returns-grid", "rowData"),
     Output("menu-download-excel", "disabled"),
@@ -710,9 +865,10 @@ def update_long_short_assignments(checkbox_values, selected_series):
     Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments):
+def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update the AG Grid based on selections (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], [], True
@@ -725,7 +881,8 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
             tuple(selected_series),  # Convert to tuple for cache key
             str(benchmark_assignments),  # Convert to string for cache key
             returns_type,
-            str(long_short_assignments)  # Convert to string for cache key
+            str(long_short_assignments),  # Convert to string for cache key
+            str(date_range)  # Convert to string for cache key
         )
 
         if display_df.empty:
@@ -761,9 +918,17 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
 
 @cache_config.cache.memoize(timeout=300)
 def calculate_statistics_cached(json_str: str, periodicity: str, selected_series: tuple,
-                                benchmark_assignments: str, long_short_assignments: str) -> list:
+                                benchmark_assignments: str, long_short_assignments: str, date_range_str: str) -> list:
     """Calculate statistics with caching."""
     df = resample_returns_cached(json_str, periodicity)
+
+    # Apply date range filter if provided
+    date_range = eval(date_range_str) if date_range_str and date_range_str != "None" else None
+    if date_range:
+        start_date = pd.to_datetime(date_range["start"])
+        end_date = pd.to_datetime(date_range["end"])
+        df = df[(df.index >= start_date) & (df.index <= end_date)]
+
     benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
     long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
 
@@ -784,9 +949,10 @@ def calculate_statistics_cached(json_str: str, periodicity: str, selected_series
     Input("series-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments):
+def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], []
@@ -798,7 +964,8 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             periodicity or "daily",
             tuple(selected_series),
             str(benchmark_assignments),
-            str(long_short_assignments)
+            str(long_short_assignments),
+            str(date_range)
         )
 
         if not stats:
@@ -843,10 +1010,11 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 @cache_config.cache.memoize(timeout=300)
 def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
-                                returns_type: str, benchmark_assignments: str, long_short_assignments: str):
+                                returns_type: str, benchmark_assignments: str, long_short_assignments: str,
+                                date_range_str: str):
     """Generate correlogram with caching."""
     display_df = calculate_excess_returns(
-        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments
+        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str
     )
 
     if display_df.empty:
@@ -875,9 +1043,10 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
     Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments):
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     empty_fig = go.Figure()
     empty_fig.add_annotation(
@@ -922,7 +1091,8 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             tuple(selected_series),
             returns_type,
             str(benchmark_assignments),
-            str(long_short_assignments)
+            str(long_short_assignments),
+            str(date_range)
         )
 
         if result is None:
@@ -1050,9 +1220,10 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     State("returns-type-select", "value"),
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
+    State("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments):
+def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Generate Excel file with Returns, Statistics, and Correlogram sheets (optimized)."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -1064,7 +1235,8 @@ def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_typ
         tuple(selected_series),
         str(benchmark_assignments),
         returns_type,
-        str(long_short_assignments)
+        str(long_short_assignments),
+        str(date_range)
     )
 
     if returns_df.empty:
@@ -1076,7 +1248,8 @@ def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_typ
         periodicity or "daily",
         tuple(selected_series),
         str(benchmark_assignments),
-        str(long_short_assignments)
+        str(long_short_assignments),
+        str(date_range)
     )
 
     # Build statistics DataFrame (transposed: statistics as rows, series as columns)
