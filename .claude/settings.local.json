@@ -17,7 +17,8 @@
       "Bash(C:/ProgramData/miniconda3/condabin/conda.bat init bash)",
       "Bash(source ~/.bash_profile)",
       "Bash(conda --version:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(pkill:*)"
     ]
   }
 }

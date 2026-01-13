@@ -122,6 +122,9 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
             benchmark = benchmark_dict.get(series, available_series[0])
             if benchmark == series:
                 display_df[series] = 0.0
+            elif benchmark == "None":
+                # None benchmark: keep the series returns as-is (vs zero)
+                display_df.loc[:, series] = df[series]
             elif benchmark in df.columns:
                 # Long-short: always show difference, regardless of returns_type
                 display_df.loc[:, series] = df[series] - df[benchmark]
@@ -134,6 +137,9 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
                 benchmark = benchmark_dict.get(series, available_series[0])
                 if benchmark == series:
                     display_df[series] = 0.0
+                elif benchmark == "None":
+                    # None benchmark: keep the series returns as-is (vs zero)
+                    display_df.loc[:, series] = df[series]
                 elif benchmark in df.columns:
                     # Vectorized operation instead of per-series assignment
                     display_df.loc[:, series] = df[series] - df[benchmark]
@@ -349,6 +355,7 @@ layout = dmc.Container(
                         dmc.TabsTab("Returns", value="returns"),
                         dmc.TabsTab("Statistics", value="statistics"),
                         dmc.TabsTab("Correlogram", value="correlogram"),
+                        dmc.TabsTab("Growth of $1", value="growth"),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -414,6 +421,19 @@ layout = dmc.Container(
                                     id="correlogram-graph",
                                     style={"height": "700px"},
                                 ),
+                            ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="growth",
+                    pt="md",
+                    children=[
+                        dcc.Loading(
+                            id="loading-growth",
+                            type="default",
+                            children=[
+                                html.Div(id="growth-charts-container"),
                             ],
                         ),
                     ],
@@ -684,6 +704,9 @@ def update_benchmark_selectors(selected_series, raw_data, current_assignments, l
     all_series = list(df.columns)
     default_benchmark = all_series[0] if all_series else None
 
+    # Create benchmark options with "None" as first option
+    benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
+
     # Create a dropdown and checkbox for each selected series
     benchmark_selectors = []
     for series in selected_series:
@@ -696,8 +719,8 @@ def update_benchmark_selectors(selected_series, raw_data, current_assignments, l
                     dmc.Text(series, size="sm", w=150, style={"fontFamily": "monospace"}),
                     dmc.Select(
                         id={"type": "benchmark-select", "series": series},
-                        data=[{"value": s, "label": s} for s in all_series],
-                        value=current_benchmark if current_benchmark in all_series else default_benchmark,
+                        data=benchmark_options,
+                        value=current_benchmark if current_benchmark in all_series or current_benchmark == "None" else default_benchmark,
                         size="xs",
                         w=200,
                         placeholder="Select benchmark",
@@ -1209,6 +1232,187 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
 
     except Exception:
         return empty_fig
+
+
+@callback(
+    Output("growth-charts-container", "children"),
+    Input("main-tabs", "value"),
+    Input("raw-data-store", "data"),
+    Input("periodicity-select", "value"),
+    Input("series-select", "value"),
+    Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
+    prevent_initial_call=True,
+)
+def update_growth_charts(active_tab, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+    """Update Growth of $1 charts (lazy loaded)."""
+    # Lazy loading: only generate when growth tab is active
+    if active_tab != "growth":
+        raise PreventUpdate
+
+    if raw_data is None or not selected_series:
+        return dmc.Text("Select series to view growth charts", size="sm", c="dimmed")
+
+    try:
+        df = resample_returns_cached(raw_data, periodicity or "daily")
+
+        # Apply date range filter if provided
+        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+        if date_range_dict:
+            start_date = pd.to_datetime(date_range_dict["start"])
+            end_date = pd.to_datetime(date_range_dict["end"])
+            df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+        # Filter to selected series only
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            return dmc.Text("No data available for selected series", size="sm", c="dimmed")
+
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.DateOffset(months=1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
+
+        # Create the main growth chart
+        main_chart_data = {}
+        for series in available_series:
+            is_long_short = long_short_dict.get(series, False)
+            benchmark = benchmark_dict.get(series, available_series[0])
+
+            if is_long_short:
+                # For long-short, use the difference
+                if benchmark == "None":
+                    returns = df[series]
+                elif benchmark == series:
+                    returns = pd.Series(0.0, index=df.index)
+                elif benchmark in df.columns:
+                    returns = df[series] - df[benchmark]
+                else:
+                    returns = df[series]
+            else:
+                # For non-long-short, use total returns
+                returns = df[series]
+
+            # Calculate cumulative growth (compounded)
+            growth = (1 + returns).cumprod()
+
+            # Prepend starting value of 1.0 at one period before first date
+            if len(growth) > 0:
+                first_date = growth.index[0]
+                # Create a series with 1.0 at the start, one full period earlier
+                start_date = first_date - period_offset
+                start_value = pd.Series([1.0], index=[start_date])
+                growth = pd.concat([start_value, growth])
+
+            main_chart_data[series] = growth
+
+        # Create main growth figure
+        main_fig = go.Figure()
+        for series, growth in main_chart_data.items():
+            main_fig.add_trace(go.Scatter(
+                x=growth.index,
+                y=growth,
+                mode='lines',
+                name=series,
+                line=dict(width=2),
+            ))
+
+        main_fig.update_layout(
+            title="Growth of $1 - All Series",
+            xaxis_title="Date",
+            yaxis_title="Growth of $1",
+            height=500,
+            hovermode='x unified',
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+        )
+
+        # Create individual series vs benchmark charts
+        individual_charts = []
+        for series in available_series:
+            benchmark = benchmark_dict.get(series, available_series[0])
+            is_long_short = long_short_dict.get(series, False)
+
+            # Skip if benchmark is None or same as series
+            if benchmark == "None" or benchmark == series:
+                continue
+
+            if benchmark not in df.columns:
+                continue
+
+            # Calculate growth for series
+            series_returns = df[series]
+            series_growth = (1 + series_returns).cumprod()
+
+            # Calculate growth for benchmark
+            benchmark_returns = df[benchmark]
+            benchmark_growth = (1 + benchmark_returns).cumprod()
+
+            # Prepend starting value of 1.0 for both series, one full period earlier
+            if len(series_growth) > 0:
+                first_date = series_growth.index[0]
+                start_date = first_date - period_offset
+                start_value = pd.Series([1.0], index=[start_date])
+                series_growth = pd.concat([start_value, series_growth])
+                benchmark_growth = pd.concat([start_value, benchmark_growth])
+
+            # Create figure for this pair
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=series_growth.index,
+                y=series_growth,
+                mode='lines',
+                name=series,
+                line=dict(width=2),
+            ))
+            fig.add_trace(go.Scatter(
+                x=benchmark_growth.index,
+                y=benchmark_growth,
+                mode='lines',
+                name=benchmark,
+                line=dict(width=2, dash='dash'),
+            ))
+
+            suffix = " (Long-Short)" if is_long_short else ""
+            fig.update_layout(
+                title=f"Growth of $1: {series} vs {benchmark}{suffix}",
+                xaxis_title="Date",
+                yaxis_title="Growth of $1",
+                height=400,
+                hovermode='x unified',
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                ),
+            )
+
+            individual_charts.append(dcc.Graph(figure=fig, style={"marginBottom": "2rem"}))
+
+        # Combine all charts
+        charts = [dcc.Graph(figure=main_fig, style={"marginBottom": "3rem"})] + individual_charts
+
+        return html.Div(charts)
+
+    except Exception as e:
+        return dmc.Text(f"Error generating growth charts: {str(e)}", size="sm", c="red")
 
 
 @callback(

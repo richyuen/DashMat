@@ -221,14 +221,22 @@ def calculate_all_statistics(
             continue
 
         benchmark = benchmark_assignments.get(series, selected_series[0]) if benchmark_assignments else selected_series[0]
-        if benchmark not in df.columns:
+
+        # Handle "None" benchmark as zero returns
+        if benchmark == "None":
+            # Create a zero returns series with the same index
+            benchmark_returns = pd.Series(0.0, index=df.index, name="None")
+        elif benchmark not in df.columns:
             benchmark = series
+            benchmark_returns = df[benchmark]
+        else:
+            benchmark_returns = df[benchmark]
 
         is_long_short = long_short_assignments.get(series, False)
 
         stats_dict = calculate_statistics(
             df[series],
-            df[benchmark],
+            benchmark_returns,
             periodicity,
             series,
             is_long_short,
