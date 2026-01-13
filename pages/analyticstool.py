@@ -99,7 +99,7 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
 
 @cache_config.cache.memoize(timeout=300)
 def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
-                             benchmark_assignments: str, returns_type: str) -> pd.DataFrame:
+                             benchmark_assignments: str, returns_type: str, long_short_assignments: str) -> pd.DataFrame:
     """Calculate excess returns with caching."""
     df = resample_returns_cached(json_str, periodicity)
 
@@ -110,16 +110,32 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
 
     display_df = df[available_series].copy()
 
-    # Calculate excess returns if requested
-    if returns_type == "excess":
-        benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
-        for series in available_series:
+    # Parse assignments
+    benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
+    long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
+
+    # Calculate long-short returns for series with long-short enabled
+    for series in available_series:
+        is_long_short = long_short_dict.get(series, False)
+        if is_long_short:
             benchmark = benchmark_dict.get(series, available_series[0])
             if benchmark == series:
                 display_df[series] = 0.0
             elif benchmark in df.columns:
-                # Vectorized operation instead of per-series assignment
+                # Long-short: always show difference, regardless of returns_type
                 display_df.loc[:, series] = df[series] - df[benchmark]
+
+    # Calculate excess returns if requested (for non-long-short series)
+    if returns_type == "excess":
+        for series in available_series:
+            is_long_short = long_short_dict.get(series, False)
+            if not is_long_short:  # Only apply to non-long-short series
+                benchmark = benchmark_dict.get(series, available_series[0])
+                if benchmark == series:
+                    display_df[series] = 0.0
+                elif benchmark in df.columns:
+                    # Vectorized operation instead of per-series assignment
+                    display_df.loc[:, series] = df[series] - df[benchmark]
 
     return display_df
 
@@ -356,6 +372,7 @@ layout = dmc.Container(
         dcc.Store(id="raw-data-store", data=None, storage_type="local"),
         dcc.Store(id="original-periodicity-store", data="daily", storage_type="local"),
         dcc.Store(id="benchmark-assignments-store", data={}, storage_type="local"),
+        dcc.Store(id="long-short-store", data={}, storage_type="local"),
         dcc.Store(id="periodicity-value-store", data="daily", storage_type="local"),
         dcc.Store(id="returns-type-value-store", data="total", storage_type="local"),
         dcc.Store(id="series-select-value-store", data=[], storage_type="local"),
@@ -419,6 +436,7 @@ clientside_callback(
     Output("raw-data-store", "data", allow_duplicate=True),
     Output("original-periodicity-store", "data", allow_duplicate=True),
     Output("benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("long-short-store", "data", allow_duplicate=True),
     Output("periodicity-value-store", "data", allow_duplicate=True),
     Output("returns-type-value-store", "data", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True),
@@ -431,7 +449,7 @@ def clear_all_series(n_clicks):
         raise PreventUpdate
 
     # Reset all stores to initial state
-    return None, "daily", {}, None, None, []
+    return None, "daily", {}, {}, None, None, []
 
 
 @callback(
@@ -562,7 +580,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 
         # Get available periodicities
         periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily" if combined_periodicity == "daily" else "monthly"
+        default_periodicity = "monthly"
 
         # Update series selection options
         all_series = [{"value": col, "label": col} for col in merged_df.columns]
@@ -602,8 +620,9 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Input("series-select", "value"),
     State("raw-data-store", "data"),
     State("benchmark-assignments-store", "data"),
+    State("long-short-store", "data"),
 )
-def update_benchmark_selectors(selected_series, raw_data, current_assignments):
+def update_benchmark_selectors(selected_series, raw_data, current_assignments, long_short_assignments):
     """Create benchmark dropdown for each selected series."""
     if not selected_series or raw_data is None:
         return dmc.Text("Select series to assign benchmarks", size="sm", c="dimmed")
@@ -612,10 +631,11 @@ def update_benchmark_selectors(selected_series, raw_data, current_assignments):
     all_series = list(df.columns)
     default_benchmark = all_series[0] if all_series else None
 
-    # Create a dropdown for each selected series
+    # Create a dropdown and checkbox for each selected series
     benchmark_selectors = []
     for series in selected_series:
         current_benchmark = current_assignments.get(series, default_benchmark) if current_assignments else default_benchmark
+        is_long_short = long_short_assignments.get(series, False) if long_short_assignments else False
         benchmark_selectors.append(
             dmc.Group(
                 mb="xs",
@@ -628,6 +648,12 @@ def update_benchmark_selectors(selected_series, raw_data, current_assignments):
                         size="xs",
                         w=200,
                         placeholder="Select benchmark",
+                    ),
+                    dmc.Checkbox(
+                        id={"type": "long-short-checkbox", "series": series},
+                        label="Long-Short",
+                        checked=is_long_short,
+                        size="xs",
                     ),
                 ],
             )
@@ -656,6 +682,25 @@ def update_benchmark_assignments(benchmark_values, selected_series):
 
 
 @callback(
+    Output("long-short-store", "data"),
+    Input({"type": "long-short-checkbox", "series": ALL}, "checked"),
+    State("series-select", "value"),
+    prevent_initial_call=True,
+)
+def update_long_short_assignments(checkbox_values, selected_series):
+    """Store long-short checkbox assignments."""
+    if not selected_series or checkbox_values is None:
+        return {}
+
+    assignments = {}
+    for i, series in enumerate(selected_series):
+        if i < len(checkbox_values):
+            assignments[series] = checkbox_values[i] or False
+
+    return assignments
+
+
+@callback(
     Output("returns-grid", "columnDefs"),
     Output("returns-grid", "rowData"),
     Output("menu-download-excel", "disabled"),
@@ -664,9 +709,10 @@ def update_benchmark_assignments(benchmark_values, selected_series):
     Input("series-select", "value"),
     Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
+def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments):
     """Update the AG Grid based on selections (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], [], True
@@ -678,7 +724,8 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
             periodicity or "daily",
             tuple(selected_series),  # Convert to tuple for cache key
             str(benchmark_assignments),  # Convert to string for cache key
-            returns_type
+            returns_type,
+            str(long_short_assignments)  # Convert to string for cache key
         )
 
         if display_df.empty:
@@ -714,16 +761,18 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
 
 @cache_config.cache.memoize(timeout=300)
 def calculate_statistics_cached(json_str: str, periodicity: str, selected_series: tuple,
-                                benchmark_assignments: str) -> list:
+                                benchmark_assignments: str, long_short_assignments: str) -> list:
     """Calculate statistics with caching."""
     df = resample_returns_cached(json_str, periodicity)
     benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
+    long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
 
     return calculate_all_statistics(
         df,
         list(selected_series),
         benchmark_dict,
         periodicity,
+        long_short_dict,
     )
 
 
@@ -734,9 +783,10 @@ def calculate_statistics_cached(json_str: str, periodicity: str, selected_series
     Input("periodicity-select", "value"),
     Input("series-select", "value"),
     Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments):
+def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], []
@@ -747,7 +797,8 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             raw_data,
             periodicity or "daily",
             tuple(selected_series),
-            str(benchmark_assignments)
+            str(benchmark_assignments),
+            str(long_short_assignments)
         )
 
         if not stats:
@@ -792,10 +843,10 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 @cache_config.cache.memoize(timeout=300)
 def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
-                                returns_type: str, benchmark_assignments: str):
+                                returns_type: str, benchmark_assignments: str, long_short_assignments: str):
     """Generate correlogram with caching."""
     display_df = calculate_excess_returns(
-        json_str, periodicity, selected_series, benchmark_assignments, returns_type
+        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments
     )
 
     if display_df.empty:
@@ -823,9 +874,10 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
     Input("series-select", "value"),
     Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     empty_fig = go.Figure()
     empty_fig.add_annotation(
@@ -869,7 +921,8 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             periodicity or "daily",
             tuple(selected_series),
             returns_type,
-            str(benchmark_assignments)
+            str(benchmark_assignments),
+            str(long_short_assignments)
         )
 
         if result is None:
@@ -996,9 +1049,10 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     State("series-select", "value"),
     State("returns-type-select", "value"),
     State("benchmark-assignments-store", "data"),
+    State("long-short-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_type, benchmark_assignments):
+def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments):
     """Generate Excel file with Returns, Statistics, and Correlogram sheets (optimized)."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -1009,7 +1063,8 @@ def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_typ
         periodicity or "daily",
         tuple(selected_series),
         str(benchmark_assignments),
-        returns_type
+        returns_type,
+        str(long_short_assignments)
     )
 
     if returns_df.empty:
@@ -1020,7 +1075,8 @@ def download_excel(n_clicks, raw_data, periodicity, selected_series, returns_typ
         raw_data,
         periodicity or "daily",
         tuple(selected_series),
-        str(benchmark_assignments)
+        str(benchmark_assignments),
+        str(long_short_assignments)
     )
 
     # Build statistics DataFrame (transposed: statistics as rows, series as columns)

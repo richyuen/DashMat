@@ -100,6 +100,7 @@ def calculate_statistics(
     benchmark_returns: pd.Series,
     periodicity: str,
     series_name: str,
+    is_long_short: bool = False,
 ) -> dict:
     """Calculate all statistics for a single series (optimized for performance)."""
     periods_per_year = annualization_factor(periodicity)
@@ -119,44 +120,87 @@ def calculate_statistics(
     # Calculate excess once for reuse
     excess = ret - bench
 
-    result = {
-        "Series": series_name,
-        "Start Date": ret.index.min().strftime("%Y-%m-%d") if len(ret) > 0 else "",
-        "End Date": ret.index.max().strftime("%Y-%m-%d") if len(ret) > 0 else "",
-        "Number of Periods": len(ret),
-        "Cumulative Return": cumulative_return(ret),
-        "Annualized Return": annualized_return(ret, periods_per_year),
-        "Annualized Excess Return": annualized_return(excess, periods_per_year),
-        "Annualized Volatility": annualized_volatility(ret, periods_per_year),
-        "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year),
-        "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
-        "Information Ratio": information_ratio(ret, bench, periods_per_year),
-        "Hit Rate": hit_rate(ret),
-        "Hit Rate (vs Benchmark)": hit_rate_vs_benchmark(ret, bench),
-        "Best Period Return": ret.max() if len(ret) > 0 else np.nan,
-        "Worst Period Return": ret.min() if len(ret) > 0 else np.nan,
-        "Maximum Drawdown": maximum_drawdown(ret),
-        "Skewness": stats.skew(ret) if len(ret) > 2 else np.nan,
-        "Kurtosis": stats.kurtosis(ret) if len(ret) > 3 else np.nan,
-    }
+    # For long-short mode, calculate returns based on the period-by-period difference
+    if is_long_short:
+        # Long-short returns are the excess returns (difference)
+        ls_returns = excess
 
-    # Calculate trailing period statistics
-    for years, label in [(1, "1Y"), (3, "3Y"), (5, "5Y")]:
-        n_periods = int(years * periods_per_year)
-        if len(ret) >= n_periods:
-            trailing_ret = ret.iloc[-n_periods:]
-            trailing_bench = bench.iloc[-n_periods:]
-            trailing_excess = trailing_ret - trailing_bench
+        result = {
+            "Series": series_name,
+            "Start Date": ls_returns.index.min().strftime("%Y-%m-%d") if len(ls_returns) > 0 else "",
+            "End Date": ls_returns.index.max().strftime("%Y-%m-%d") if len(ls_returns) > 0 else "",
+            "Number of Periods": len(ls_returns),
+            "Cumulative Return": cumulative_return(ls_returns),
+            "Annualized Return": annualized_return(ls_returns, periods_per_year),
+            "Annualized Excess Return": annualized_return(ls_returns, periods_per_year),  # Same as Annualized Return
+            "Annualized Volatility": annualized_volatility(ls_returns, periods_per_year),
+            "Annualized Tracking Error": annualized_volatility(ls_returns, periods_per_year),  # Same as volatility for long-short
+            "Sharpe Ratio": sharpe_ratio(ls_returns, periods_per_year),
+            "Information Ratio": sharpe_ratio(ls_returns, periods_per_year),  # Same as Sharpe for long-short
+            "Hit Rate": hit_rate(ls_returns),
+            "Hit Rate (vs Benchmark)": hit_rate(ls_returns),  # Same as Hit Rate for long-short
+            "Best Period Return": ls_returns.max() if len(ls_returns) > 0 else np.nan,
+            "Worst Period Return": ls_returns.min() if len(ls_returns) > 0 else np.nan,
+            "Maximum Drawdown": maximum_drawdown(ls_returns),
+            "Skewness": stats.skew(ls_returns) if len(ls_returns) > 2 else np.nan,
+            "Kurtosis": stats.kurtosis(ls_returns) if len(ls_returns) > 3 else np.nan,
+        }
 
-            result[f"{label} Annualized Return"] = annualized_return(trailing_ret, periods_per_year)
-            result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
-            result[f"{label} Excess Return"] = annualized_return(trailing_excess, periods_per_year)
-            result[f"{label} Information Ratio"] = information_ratio(trailing_ret, trailing_bench, periods_per_year)
-        else:
-            result[f"{label} Annualized Return"] = np.nan
-            result[f"{label} Sharpe Ratio"] = np.nan
-            result[f"{label} Excess Return"] = np.nan
-            result[f"{label} Information Ratio"] = np.nan
+        # Calculate trailing period statistics for long-short
+        for years, label in [(1, "1Y"), (3, "3Y"), (5, "5Y")]:
+            n_periods = int(years * periods_per_year)
+            if len(ls_returns) >= n_periods:
+                trailing_ls = ls_returns.iloc[-n_periods:]
+
+                result[f"{label} Annualized Return"] = annualized_return(trailing_ls, periods_per_year)
+                result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)
+                result[f"{label} Excess Return"] = annualized_return(trailing_ls, periods_per_year)  # Same as annualized return
+                result[f"{label} Information Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)  # Same as Sharpe
+            else:
+                result[f"{label} Annualized Return"] = np.nan
+                result[f"{label} Sharpe Ratio"] = np.nan
+                result[f"{label} Excess Return"] = np.nan
+                result[f"{label} Information Ratio"] = np.nan
+    else:
+        # Normal mode (non-long-short)
+        result = {
+            "Series": series_name,
+            "Start Date": ret.index.min().strftime("%Y-%m-%d") if len(ret) > 0 else "",
+            "End Date": ret.index.max().strftime("%Y-%m-%d") if len(ret) > 0 else "",
+            "Number of Periods": len(ret),
+            "Cumulative Return": cumulative_return(ret),
+            "Annualized Return": annualized_return(ret, periods_per_year),
+            "Annualized Excess Return": annualized_return(excess, periods_per_year),
+            "Annualized Volatility": annualized_volatility(ret, periods_per_year),
+            "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year),
+            "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
+            "Information Ratio": information_ratio(ret, bench, periods_per_year),
+            "Hit Rate": hit_rate(ret),
+            "Hit Rate (vs Benchmark)": hit_rate_vs_benchmark(ret, bench),
+            "Best Period Return": ret.max() if len(ret) > 0 else np.nan,
+            "Worst Period Return": ret.min() if len(ret) > 0 else np.nan,
+            "Maximum Drawdown": maximum_drawdown(ret),
+            "Skewness": stats.skew(ret) if len(ret) > 2 else np.nan,
+            "Kurtosis": stats.kurtosis(ret) if len(ret) > 3 else np.nan,
+        }
+
+        # Calculate trailing period statistics
+        for years, label in [(1, "1Y"), (3, "3Y"), (5, "5Y")]:
+            n_periods = int(years * periods_per_year)
+            if len(ret) >= n_periods:
+                trailing_ret = ret.iloc[-n_periods:]
+                trailing_bench = bench.iloc[-n_periods:]
+                trailing_excess = trailing_ret - trailing_bench
+
+                result[f"{label} Annualized Return"] = annualized_return(trailing_ret, periods_per_year)
+                result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
+                result[f"{label} Excess Return"] = annualized_return(trailing_excess, periods_per_year)
+                result[f"{label} Information Ratio"] = information_ratio(trailing_ret, trailing_bench, periods_per_year)
+            else:
+                result[f"{label} Annualized Return"] = np.nan
+                result[f"{label} Sharpe Ratio"] = np.nan
+                result[f"{label} Excess Return"] = np.nan
+                result[f"{label} Information Ratio"] = np.nan
 
     return result
 
@@ -166,9 +210,11 @@ def calculate_all_statistics(
     selected_series: list[str],
     benchmark_assignments: dict,
     periodicity: str,
+    long_short_assignments: dict = None,
 ) -> list[dict]:
     """Calculate statistics for all selected series."""
     results = []
+    long_short_assignments = long_short_assignments or {}
 
     for series in selected_series:
         if series not in df.columns:
@@ -178,11 +224,14 @@ def calculate_all_statistics(
         if benchmark not in df.columns:
             benchmark = series
 
+        is_long_short = long_short_assignments.get(series, False)
+
         stats_dict = calculate_statistics(
             df[series],
             df[benchmark],
             periodicity,
             series,
+            is_long_short,
         )
         results.append(stats_dict)
 
