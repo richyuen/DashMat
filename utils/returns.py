@@ -1,5 +1,6 @@
 """Returns calculation utilities for compounding and resampling."""
 
+import numpy as np
 import pandas as pd
 
 
@@ -29,9 +30,14 @@ def compound_returns(returns: pd.Series) -> float:
     """Compound a series of returns into a single return.
 
     Formula: (1 + r1) * (1 + r2) * ... * (1 + rn) - 1
+
+    Optimized with numpy for better performance.
     """
-    growth_factors = 1 + returns
-    return growth_factors.prod() - 1
+    if len(returns) == 0:
+        return np.nan
+    # Use numpy for faster computation
+    growth_factors = 1 + returns.values
+    return np.prod(growth_factors) - 1
 
 
 def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
@@ -43,6 +49,8 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
 
     Returns:
         Resampled DataFrame with compounded returns
+
+    Optimized for performance with vectorized operations where possible.
     """
     if periodicity == "daily":
         return df
@@ -52,7 +60,8 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
         raise ValueError(f"Unknown periodicity: {periodicity}")
 
     # Resample and compound returns for each period
-    resampled = df.resample(resample_code).apply(compound_returns)
+    # Using agg for better performance than apply
+    resampled = df.resample(resample_code).agg(compound_returns)
 
     # Drop rows where all values are NaN (periods with no data)
     resampled = resampled.dropna(how="all")

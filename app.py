@@ -2,9 +2,13 @@
 
 import dash_mantine_components as dmc
 from dash import Dash, page_container
+from cache_config import init_cache
 
 # Initialize the app with multi-page support
 app = Dash(__name__, use_pages=True)
+
+# Initialize cache for performance optimization (after app creation)
+cache = init_cache(app.server)
 
 # Layout wraps page content with MantineProvider
 app.layout = dmc.MantineProvider(
