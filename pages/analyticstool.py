@@ -318,18 +318,13 @@ layout = dmc.Container(
                                     ),
                                 ], style={"marginBottom": "1rem"}),
                                 dmc.Divider(mb="md"),
-                                dmc.MultiSelect(
-                                    id="series-select",
-                                    label="Select series to include in analysis",
-                                    data=[],
-                                    value=[],
-                                    placeholder="Upload data to select series",
-                                    searchable=True,
-                                    clearable=True,
-                                    mb="md",
+                                dmc.Text("Series Selection", size="sm", c="dimmed", mb="xs"),
+                                html.Div(
+                                    id="series-selection-container",
+                                    children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
                                 ),
-                                dmc.Text("Benchmark Assignment", size="sm", c="dimmed", mb="xs"),
-                                html.Div(id="benchmark-assignment-container"),
+                                # Hidden store for series-select value (driven by checkboxes)
+                                dcc.Store(id="series-select", data=[]),
                             ]
                         ),
                     ],
@@ -513,6 +508,7 @@ clientside_callback(
     Output("periodicity-value-store", "data", allow_duplicate=True),
     Output("returns-type-value-store", "data", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True),
+    Output("series-select", "data", allow_duplicate=True),
     Input("menu-clear-all-series", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -522,7 +518,7 @@ def clear_all_series(n_clicks):
         raise PreventUpdate
 
     # Reset all stores to initial state
-    return None, "daily", {}, {}, None, None, []
+    return None, "daily", {}, {}, None, None, [], []
 
 
 @callback(
@@ -530,7 +526,6 @@ def clear_all_series(n_clicks):
     Output("periodicity-select", "value", allow_duplicate=True),
     Output("periodicity-select", "disabled", allow_duplicate=True),
     Output("series-select", "data", allow_duplicate=True),
-    Output("series-select", "value", allow_duplicate=True),
     Output("returns-type-select", "value", allow_duplicate=True),
     Input("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
@@ -542,11 +537,10 @@ def clear_all_series(n_clicks):
 def restore_state_from_storage(raw_data, original_periodicity, stored_periodicity, stored_series, stored_returns_type):
     """Restore UI state from local storage on page load."""
     if raw_data is None:
-        return [], "daily", True, [], [], "total"
+        return [], "daily", True, [], "total"
 
     try:
         df = json_to_df(raw_data)
-        all_series = [{"value": col, "label": col} for col in df.columns]
 
         # Get available periodicities
         from utils.returns import get_available_periodicities
@@ -557,10 +551,10 @@ def restore_state_from_storage(raw_data, original_periodicity, stored_periodicit
         valid_series = [s for s in (stored_series or []) if s in df.columns]
         valid_returns_type = stored_returns_type if stored_returns_type in ["total", "excess"] else "total"
 
-        return periodicity_options, valid_periodicity, False, all_series, valid_series, valid_returns_type
+        return periodicity_options, valid_periodicity, False, valid_series, valid_returns_type
 
     except Exception:
-        return [], "daily", True, [], [], "total"
+        return [], "daily", True, [], "total"
 
 
 @callback(
@@ -585,7 +579,7 @@ def save_returns_type(value):
 
 @callback(
     Output("series-select-value-store", "data"),
-    Input("series-select", "value"),
+    Input("series-select", "data"),
     prevent_initial_call=True,
 )
 def save_series_selection(value):
@@ -599,8 +593,7 @@ def save_series_selection(value):
     Output("periodicity-select", "data"),
     Output("periodicity-select", "value"),
     Output("periodicity-select", "disabled"),
-    Output("series-select", "data"),
-    Output("series-select", "value"),
+    Output("series-select", "data", allow_duplicate=True),
     Output("alert-message", "children"),
     Output("alert-message", "color"),
     Output("alert-message", "hide"),
@@ -610,7 +603,7 @@ def save_series_selection(value):
     State("upload-data", "filename"),
     State("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
-    State("series-select", "value"),
+    State("series-select", "data"),
     prevent_initial_call=True,
 )
 def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection):
@@ -631,7 +624,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 return (
                     no_update, no_update, no_update, no_update, no_update,
-                    no_update, no_update,
+                    no_update,
                     "Cannot append daily data to monthly data. Monthly data cannot be upsampled.",
                     "red",
                     False,
@@ -655,9 +648,6 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
         periodicity_options = get_available_periodicities(combined_periodicity)
         default_periodicity = "monthly"
 
-        # Update series selection options
-        all_series = [{"value": col, "label": col} for col in merged_df.columns]
-
         # Keep current selection and add new series
         new_series = [col for col in new_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
@@ -668,7 +658,6 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             periodicity_options,
             default_periodicity,
             False,
-            all_series,
             updated_selection,
             f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename}",
             "green",
@@ -680,7 +669,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     except Exception as e:
         return (
             no_update, no_update, no_update, no_update, no_update,
-            no_update, no_update,
+            no_update,
             f"Error loading file: {str(e)}",
             "red",
             False,
@@ -689,68 +678,165 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 
 
 @callback(
-    Output("benchmark-assignment-container", "children"),
-    Input("series-select", "value"),
-    State("raw-data-store", "data"),
+    Output("series-selection-container", "children"),
+    Input("raw-data-store", "data"),
+    Input("series-select", "data"),
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
 )
-def update_benchmark_selectors(selected_series, raw_data, current_assignments, long_short_assignments):
-    """Create benchmark dropdown for each selected series."""
-    if not selected_series or raw_data is None:
-        return dmc.Text("Select series to assign benchmarks", size="sm", c="dimmed")
+def update_series_selectors(raw_data, selected_series, current_assignments, long_short_assignments):
+    """Create series selection rows with checkbox, benchmark dropdown, long-short, and delete button."""
+    if raw_data is None:
+        return []
 
     df = json_to_df(raw_data)
     all_series = list(df.columns)
+
+    if not all_series:
+        return []
+
     default_benchmark = all_series[0] if all_series else None
+    selected_series = selected_series or []
 
     # Create benchmark options with "None" as first option
     benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
 
-    # Create a dropdown and checkbox for each selected series
-    benchmark_selectors = []
-    for series in selected_series:
+    # Create a row for each series in the data
+    series_rows = []
+    for series in all_series:
         current_benchmark = current_assignments.get(series, default_benchmark) if current_assignments else default_benchmark
         is_long_short = long_short_assignments.get(series, False) if long_short_assignments else False
-        benchmark_selectors.append(
+        is_selected = series in selected_series
+
+        series_rows.append(
             dmc.Group(
                 mb="xs",
                 children=[
-                    dmc.Text(series, size="sm", w=150, style={"fontFamily": "monospace"}),
+                    # Checkbox to include series in analysis
+                    dmc.Checkbox(
+                        id={"type": "series-include-checkbox", "series": series},
+                        checked=is_selected,
+                        size="xs",
+                    ),
+                    # Series name
+                    dmc.Text(series, size="sm", w=120, style={"fontFamily": "monospace"}),
+                    # Benchmark dropdown
                     dmc.Select(
                         id={"type": "benchmark-select", "series": series},
                         data=benchmark_options,
                         value=current_benchmark if current_benchmark in all_series or current_benchmark == "None" else default_benchmark,
                         size="xs",
-                        w=200,
-                        placeholder="Select benchmark",
+                        w=150,
+                        placeholder="Benchmark",
                     ),
+                    # Long-Short checkbox
                     dmc.Checkbox(
                         id={"type": "long-short-checkbox", "series": series},
-                        label="Long-Short",
+                        label="L/S",
                         checked=is_long_short,
                         size="xs",
+                    ),
+                    # Trash button to delete series
+                    dmc.ActionIcon(
+                        dmc.Text("X", size="xs", fw=700),
+                        id={"type": "delete-series-button", "series": series},
+                        variant="subtle",
+                        color="red",
+                        size="sm",
                     ),
                 ],
             )
         )
 
-    return benchmark_selectors
+    return series_rows
+
+
+@callback(
+    Output("series-select", "data", allow_duplicate=True),
+    Input({"type": "series-include-checkbox", "series": ALL}, "checked"),
+    State("raw-data-store", "data"),
+    prevent_initial_call=True,
+)
+def update_series_selection_from_checkboxes(checkbox_values, raw_data):
+    """Update series selection based on checkbox states."""
+    if raw_data is None or checkbox_values is None:
+        return []
+
+    df = json_to_df(raw_data)
+    all_series = list(df.columns)
+
+    selected = []
+    for i, series in enumerate(all_series):
+        if i < len(checkbox_values) and checkbox_values[i]:
+            selected.append(series)
+
+    return selected
+
+
+@callback(
+    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("series-select", "data", allow_duplicate=True),
+    Input({"type": "delete-series-button", "series": ALL}, "n_clicks"),
+    State("raw-data-store", "data"),
+    State("series-select", "data"),
+    prevent_initial_call=True,
+)
+def delete_series(n_clicks_list, raw_data, selected_series):
+    """Delete a series from the raw data when trash icon is clicked."""
+    if raw_data is None or not n_clicks_list or all(n is None for n in n_clicks_list):
+        raise PreventUpdate
+
+    # Find which button was clicked
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered_id = ctx.triggered[0]["prop_id"]
+    # Parse the pattern-matching ID to get series name
+    import json
+    try:
+        id_dict = json.loads(triggered_id.rsplit(".", 1)[0])
+        series_to_delete = id_dict.get("series")
+    except (json.JSONDecodeError, KeyError):
+        raise PreventUpdate
+
+    if not series_to_delete:
+        raise PreventUpdate
+
+    df = json_to_df(raw_data)
+
+    if series_to_delete not in df.columns:
+        raise PreventUpdate
+
+    # Remove the series
+    df = df.drop(columns=[series_to_delete])
+
+    # If no series left, return None
+    if df.empty or len(df.columns) == 0:
+        return None, []
+
+    # Update selected series to remove deleted one
+    new_selected = [s for s in (selected_series or []) if s != series_to_delete]
+
+    return df_to_json(df), new_selected
 
 
 @callback(
     Output("benchmark-assignments-store", "data"),
     Input({"type": "benchmark-select", "series": ALL}, "value"),
-    State("series-select", "value"),
+    State("raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_benchmark_assignments(benchmark_values, selected_series):
-    """Store benchmark assignments."""
-    if not selected_series or not benchmark_values:
+def update_benchmark_assignments(benchmark_values, raw_data):
+    """Store benchmark assignments for all series."""
+    if raw_data is None or not benchmark_values:
         return {}
 
+    df = json_to_df(raw_data)
+    all_series = list(df.columns)
+
     assignments = {}
-    for i, series in enumerate(selected_series):
+    for i, series in enumerate(all_series):
         if i < len(benchmark_values) and benchmark_values[i]:
             assignments[series] = benchmark_values[i]
 
@@ -760,16 +846,19 @@ def update_benchmark_assignments(benchmark_values, selected_series):
 @callback(
     Output("long-short-store", "data"),
     Input({"type": "long-short-checkbox", "series": ALL}, "checked"),
-    State("series-select", "value"),
+    State("raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_long_short_assignments(checkbox_values, selected_series):
-    """Store long-short checkbox assignments."""
-    if not selected_series or checkbox_values is None:
+def update_long_short_assignments(checkbox_values, raw_data):
+    """Store long-short checkbox assignments for all series."""
+    if raw_data is None or checkbox_values is None:
         return {}
 
+    df = json_to_df(raw_data)
+    all_series = list(df.columns)
+
     assignments = {}
-    for i, series in enumerate(selected_series):
+    for i, series in enumerate(all_series):
         if i < len(checkbox_values):
             assignments[series] = checkbox_values[i] or False
 
@@ -785,7 +874,7 @@ def update_long_short_assignments(checkbox_values, selected_series):
     Output("date-range-store", "data", allow_duplicate=True),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
-    Input("series-select", "value"),
+    Input("series-select", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def initialize_date_range(raw_data, periodicity, selected_series):
@@ -824,7 +913,7 @@ def initialize_date_range(raw_data, periodicity, selected_series):
     Input("maximum-range-button", "n_clicks"),
     State("raw-data-store", "data"),
     State("periodicity-select", "value"),
-    State("series-select", "value"),
+    State("series-select", "data"),
     prevent_initial_call=True,
 )
 def update_date_range_buttons(common_clicks, max_clicks, raw_data, periodicity, selected_series):
@@ -884,7 +973,7 @@ def update_date_range_store(start_date, end_date):
     Output("menu-download-excel", "disabled"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
-    Input("series-select", "value"),
+    Input("series-select", "data"),
     Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
@@ -969,7 +1058,7 @@ def calculate_statistics_cached(json_str: str, periodicity: str, selected_series
     Output("statistics-grid", "rowData"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
-    Input("series-select", "value"),
+    Input("series-select", "data"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
@@ -1062,7 +1151,7 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
     Input("main-tabs", "value"),  # Lazy loading: only update when tab is active
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
-    Input("series-select", "value"),
+    Input("series-select", "data"),
     Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
@@ -1090,21 +1179,51 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     if raw_data is None or not selected_series or len(selected_series) < 2:
         return empty_fig
 
-    # Size limit: warn if too many series
+    # Size limit: show simple correlation matrix heatmap if too many series
     if len(selected_series) > MAX_SCATTER_MATRIX_SIZE:
-        warning_fig = go.Figure()
-        warning_fig.add_annotation(
-            text=f"Too many series selected ({len(selected_series)}). Please select {MAX_SCATTER_MATRIX_SIZE} or fewer series to view the scatter matrix.<br>Large scatter matrices can cause performance issues.",
-            xref="paper", yref="paper",
-            x=0.5, y=0.5, showarrow=False,
-            font=dict(size=14, color="#fa5252"),
-            align="center",
-        )
-        warning_fig.update_layout(
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        )
-        return warning_fig
+        try:
+            result = generate_correlogram_cached(
+                raw_data,
+                periodicity or "daily",
+                tuple(selected_series),
+                returns_type,
+                str(benchmark_assignments),
+                str(long_short_assignments),
+                str(date_range)
+            )
+
+            if result is None:
+                return empty_fig
+
+            corr_matrix = result['corr_matrix']
+            available_series = result['available_series']
+
+            # Create a simple heatmap for correlation matrix
+            heatmap_fig = go.Figure(data=go.Heatmap(
+                z=corr_matrix.values,
+                x=available_series,
+                y=available_series,
+                colorscale='RdBu_r',
+                zmid=0,
+                zmin=-1,
+                zmax=1,
+                text=corr_matrix.values.round(2),
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>',
+            ))
+
+            heatmap_fig.update_layout(
+                title=f"Correlation Matrix ({returns_type.title()} Returns)",
+                height=max(500, 30 * len(available_series) + 150),
+                xaxis=dict(tickangle=45),
+                yaxis=dict(autorange='reversed'),
+            )
+
+            return heatmap_fig
+
+        except Exception:
+            return empty_fig
 
     try:
         # Use cached function to avoid repeated computation
@@ -1239,7 +1358,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     Input("main-tabs", "value"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
-    Input("series-select", "value"),
+    Input("series-select", "data"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
@@ -1420,7 +1539,7 @@ def update_growth_charts(active_tab, raw_data, periodicity, selected_series, ben
     Input("menu-download-excel", "n_clicks"),
     State("raw-data-store", "data"),
     State("periodicity-select", "value"),
-    State("series-select", "value"),
+    State("series-select", "data"),
     State("returns-type-select", "value"),
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
