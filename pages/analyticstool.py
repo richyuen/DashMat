@@ -5,6 +5,7 @@ import hashlib
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -348,6 +349,7 @@ layout = dmc.Container(
                 dmc.TabsList(
                     children=[
                         dmc.TabsTab("Returns", value="returns"),
+                        dmc.TabsTab("Rolling", value="rolling"),
                         dmc.TabsTab("Statistics", value="statistics"),
                         dmc.TabsTab("Correlogram", value="correlogram"),
                         dmc.TabsTab("Growth of $1", value="growth"),
@@ -370,6 +372,62 @@ layout = dmc.Container(
                                         "resizable": True,
                                     },
                                     style={"height": "600px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="rolling",
+                    pt="md",
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.Select(
+                                    id="rolling-window-select",
+                                    data=[
+                                        {"value": "3m", "label": "3-month"},
+                                        {"value": "6m", "label": "6-month"},
+                                        {"value": "1y", "label": "1-year"},
+                                        {"value": "3y", "label": "3-year"},
+                                        {"value": "5y", "label": "5-year"},
+                                        {"value": "10y", "label": "10-year"},
+                                    ],
+                                    value="1y",
+                                    w=120,
+                                    size="sm",
+                                ),
+                                dmc.Select(
+                                    id="rolling-return-type-select",
+                                    data=[
+                                        {"value": "annualized", "label": "Annualized"},
+                                        {"value": "cumulative", "label": "Cumulative"},
+                                    ],
+                                    value="annualized",
+                                    w=120,
+                                    size="sm",
+                                ),
+                            ],
+                        ),
+                        dcc.Loading(
+                            id="loading-rolling",
+                            type="default",
+                            children=[
+                                dag.AgGrid(
+                                    id="rolling-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "550px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -1026,6 +1084,140 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
 
     except Exception:
         return [], [], True
+
+
+@callback(
+    Output("rolling-grid", "columnDefs"),
+    Output("rolling-grid", "rowData"),
+    Input("main-tabs", "value"),
+    Input("raw-data-store", "data"),
+    Input("periodicity-select", "value"),
+    Input("series-select", "data"),
+    Input("rolling-window-select", "value"),
+    Input("rolling-return-type-select", "value"),
+    Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
+    prevent_initial_call=True,
+)
+def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, benchmark_assignments, long_short_assignments, date_range):
+    """Update the Rolling Returns grid with rolling window calculations."""
+    # Lazy loading: only calculate when rolling tab is active
+    if active_tab != "rolling":
+        raise PreventUpdate
+
+    if raw_data is None or not selected_series:
+        return [], []
+
+    try:
+        from utils.statistics import annualization_factor
+
+        # Get the resampled data
+        df = resample_returns_cached(raw_data, periodicity or "daily")
+
+        # Apply date range filter if provided
+        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+        if date_range_dict:
+            start_date = pd.to_datetime(date_range_dict["start"])
+            end_date = pd.to_datetime(date_range_dict["end"])
+            df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+        # Parse assignments
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+        # Filter to selected series only
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            return [], []
+
+        # Calculate periods per year and window size
+        periods_per_year = annualization_factor(periodicity or "daily")
+
+        # Map rolling window to number of periods
+        window_map = {
+            "3m": int(periods_per_year / 4),      # 3 months
+            "6m": int(periods_per_year / 2),      # 6 months
+            "1y": int(periods_per_year),          # 1 year
+            "3y": int(periods_per_year * 3),      # 3 years
+            "5y": int(periods_per_year * 5),      # 5 years
+            "10y": int(periods_per_year * 10),    # 10 years
+        }
+        window_size = window_map.get(rolling_window, int(periods_per_year))
+
+        # Ensure minimum window size of 1
+        window_size = max(1, window_size)
+
+        # Calculate rolling returns for each series
+        rolling_df = pd.DataFrame(index=df.index)
+
+        for series in available_series:
+            is_long_short = long_short_dict.get(series, False)
+            benchmark = benchmark_dict.get(series, available_series[0])
+
+            # Get series returns
+            if is_long_short:
+                if benchmark == "None":
+                    series_returns = df[series]
+                elif benchmark == series:
+                    series_returns = pd.Series(0.0, index=df.index)
+                elif benchmark in df.columns:
+                    series_returns = df[series] - df[benchmark]
+                else:
+                    series_returns = df[series]
+            else:
+                series_returns = df[series]
+
+            # Calculate rolling returns
+            def calc_rolling_return(window):
+                if len(window) < window_size:
+                    return np.nan
+                cum_ret = (1 + window).prod() - 1
+                if rolling_return_type == "annualized":
+                    years = len(window) / periods_per_year
+                    if years > 0:
+                        return (1 + cum_ret) ** (1 / years) - 1
+                    return np.nan
+                else:  # cumulative
+                    return cum_ret
+
+            rolling_returns = series_returns.rolling(window=window_size, min_periods=window_size).apply(
+                calc_rolling_return, raw=False
+            )
+            rolling_df[series] = rolling_returns
+
+        # Drop rows with all NaN values
+        rolling_df = rolling_df.dropna(how='all')
+
+        if rolling_df.empty:
+            return [], []
+
+        # Create column definitions
+        column_defs = [
+            {
+                "field": "Date",
+                "pinned": "left",
+                "valueFormatter": {"function": "d3.timeFormat('%Y-%m-%d')(new Date(params.value))"},
+                "width": 120,
+            }
+        ]
+
+        for col in rolling_df.columns:
+            column_defs.append({
+                "field": col,
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "width": 120,
+            })
+
+        # Convert to row data
+        df_reset = rolling_df.reset_index()
+        df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
+        row_data = df_reset.to_dict("records")
+
+        return column_defs, row_data
+
+    except Exception:
+        return [], []
 
 
 @cache_config.cache.memoize(timeout=300)
