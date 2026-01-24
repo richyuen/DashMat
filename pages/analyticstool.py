@@ -547,6 +547,7 @@ layout = dmc.Container(
         dcc.Store(id="periodicity-value-store", data="daily", storage_type="local"),
         dcc.Store(id="returns-type-value-store", data="total", storage_type="local"),
         dcc.Store(id="series-select-value-store", data=[], storage_type="local"),
+        dcc.Store(id="series-order-store", data=[], storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
         dcc.Download(id="download-excel"),
@@ -605,6 +606,55 @@ clientside_callback(
 
 
 @callback(
+    Output("series-order-store", "data", allow_duplicate=True),
+    Input({"type": "move-up-button", "series": ALL}, "n_clicks"),
+    Input({"type": "move-down-button", "series": ALL}, "n_clicks"),
+    State("series-order-store", "data"),
+    State("raw-data-store", "data"),
+    prevent_initial_call=True,
+)
+def reorder_series(up_clicks, down_clicks, current_order, raw_data):
+    """Reorder series when up/down buttons are clicked."""
+    if raw_data is None or not current_order:
+        raise PreventUpdate
+
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    # Find which button was clicked
+    triggered_id = ctx.triggered[0]["prop_id"]
+
+    if not triggered_id:
+        raise PreventUpdate
+
+    # Parse the button ID (it will be like '{"type":"move-up-button","series":"SPY"}.n_clicks')
+    try:
+        button_data = eval(triggered_id.rsplit(".", 1)[0])
+        button_type = button_data["type"]
+        series_name = button_data["series"]
+    except (SyntaxError, KeyError, ValueError):
+        raise PreventUpdate
+
+    # Find current index
+    if series_name not in current_order:
+        raise PreventUpdate
+
+    current_idx = current_order.index(series_name)
+    new_order = current_order.copy()
+
+    # Move up or down
+    if button_type == "move-up-button" and current_idx > 0:
+        new_order[current_idx], new_order[current_idx - 1] = new_order[current_idx - 1], new_order[current_idx]
+    elif button_type == "move-down-button" and current_idx < len(new_order) - 1:
+        new_order[current_idx], new_order[current_idx + 1] = new_order[current_idx + 1], new_order[current_idx]
+    else:
+        raise PreventUpdate
+
+    return new_order
+
+
+@callback(
     Output("raw-data-store", "data", allow_duplicate=True),
     Output("original-periodicity-store", "data", allow_duplicate=True),
     Output("benchmark-assignments-store", "data", allow_duplicate=True),
@@ -612,6 +662,7 @@ clientside_callback(
     Output("periodicity-value-store", "data", allow_duplicate=True),
     Output("returns-type-value-store", "data", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True),
+    Output("series-order-store", "data", allow_duplicate=True),
     Output("series-select", "data", allow_duplicate=True),
     Input("menu-clear-all-series", "n_clicks"),
     prevent_initial_call=True,
@@ -622,7 +673,7 @@ def clear_all_series(n_clicks):
         raise PreventUpdate
 
     # Reset all stores to initial state
-    return None, "daily", {}, {}, None, None, [], []
+    return None, "daily", {}, {}, None, None, [], [], []
 
 
 @callback(
@@ -783,21 +834,35 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 
 @callback(
     Output("series-selection-container", "children"),
+    Output("series-order-store", "data", allow_duplicate=True),
     Input("raw-data-store", "data"),
     Input("series-select", "data"),
+    Input("series-order-store", "data"),
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
+    prevent_initial_call="initial_duplicate",
 )
-def update_series_selectors(raw_data, selected_series, current_assignments, long_short_assignments):
-    """Create series selection rows with checkbox, benchmark dropdown, long-short, and delete button."""
+def update_series_selectors(raw_data, selected_series, series_order, current_assignments, long_short_assignments):
+    """Create series selection rows with checkbox, benchmark dropdown, long-short, reorder buttons, and delete button."""
     if raw_data is None:
-        return []
+        return [], []
 
     df = json_to_df(raw_data)
     all_series = list(df.columns)
 
     if not all_series:
-        return []
+        return [], []
+
+    # Initialize or update series order
+    if not series_order:
+        series_order = all_series
+    else:
+        # Add any new series to the end
+        for series in all_series:
+            if series not in series_order:
+                series_order.append(series)
+        # Remove any deleted series
+        series_order = [s for s in series_order if s in all_series]
 
     default_benchmark = all_series[0] if all_series else None
     selected_series = selected_series or []
@@ -805,9 +870,9 @@ def update_series_selectors(raw_data, selected_series, current_assignments, long
     # Create benchmark options with "None" as first option
     benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
 
-    # Create a row for each series in the data
+    # Create a row for each series in the order specified
     series_rows = []
-    for series in all_series:
+    for idx, series in enumerate(series_order):
         current_benchmark = current_assignments.get(series, default_benchmark) if current_assignments else default_benchmark
         is_long_short = long_short_assignments.get(series, False) if long_short_assignments else False
         is_selected = series in selected_series
@@ -815,7 +880,32 @@ def update_series_selectors(raw_data, selected_series, current_assignments, long
         series_rows.append(
             dmc.Group(
                 mb="xs",
+                gap="xs",
                 children=[
+                    # Up/Down arrows for reordering
+                    dmc.Stack(
+                        gap=0,
+                        children=[
+                            dmc.ActionIcon(
+                                "▲",
+                                id={"type": "move-up-button", "series": series},
+                                variant="subtle",
+                                color="gray",
+                                size="xs",
+                                disabled=(idx == 0),
+                                style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
+                            ),
+                            dmc.ActionIcon(
+                                "▼",
+                                id={"type": "move-down-button", "series": series},
+                                variant="subtle",
+                                color="gray",
+                                size="xs",
+                                disabled=(idx == len(series_order) - 1),
+                                style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
+                            ),
+                        ],
+                    ),
                     # Checkbox to include series in analysis
                     dmc.Checkbox(
                         id={"type": "series-include-checkbox", "series": series},
@@ -852,25 +942,29 @@ def update_series_selectors(raw_data, selected_series, current_assignments, long
             )
         )
 
-    return series_rows
+    return series_rows, series_order
 
 
 @callback(
     Output("series-select", "data", allow_duplicate=True),
     Input({"type": "series-include-checkbox", "series": ALL}, "checked"),
     State("raw-data-store", "data"),
+    State("series-order-store", "data"),
     prevent_initial_call=True,
 )
-def update_series_selection_from_checkboxes(checkbox_values, raw_data):
-    """Update series selection based on checkbox states."""
+def update_series_selection_from_checkboxes(checkbox_values, raw_data, series_order):
+    """Update series selection based on checkbox states, preserving order."""
     if raw_data is None or checkbox_values is None:
         return []
 
     df = json_to_df(raw_data)
     all_series = list(df.columns)
 
+    # Use series_order if available, otherwise use DataFrame column order
+    ordered_series = series_order if series_order else all_series
+
     selected = []
-    for i, series in enumerate(all_series):
+    for i, series in enumerate(ordered_series):
         if i < len(checkbox_values) and checkbox_values[i]:
             selected.append(series)
 
