@@ -109,7 +109,8 @@ def calculate_statistics(
     periods_per_year = annualization_factor(periodicity)
 
     # Align returns and benchmark more efficiently
-    if returns.name == benchmark_returns.name:
+    same_series = returns.name == benchmark_returns.name
+    if same_series:
         # Same series - avoid unnecessary concatenation
         ret = returns.dropna()
         bench = ret.copy()
@@ -173,13 +174,13 @@ def calculate_statistics(
             "Number of Periods": len(ret),
             "Cumulative Return": cumulative_return(ret),
             "Annualized Return": annualized_return(ret, periods_per_year),
-            "Annualized Excess Return": annualized_return(ret, periods_per_year) - annualized_return(bench, periods_per_year),
+            "Annualized Excess Return": np.nan if same_series else (annualized_return(ret, periods_per_year) - annualized_return(bench, periods_per_year)),
             "Annualized Volatility": annualized_volatility(ret, periods_per_year),
-            "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year),
+            "Annualized Tracking Error": np.nan if same_series else tracking_error(ret, bench, periods_per_year),
             "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
-            "Information Ratio": information_ratio(ret, bench, periods_per_year),
+            "Information Ratio": np.nan if same_series else information_ratio(ret, bench, periods_per_year),
             "Hit Rate": hit_rate(ret),
-            "Hit Rate (vs Benchmark)": hit_rate_vs_benchmark(ret, bench),
+            "Hit Rate (vs Benchmark)": np.nan if same_series else hit_rate_vs_benchmark(ret, bench),
             "Best Period Return": ret.max() if len(ret) > 0 else np.nan,
             "Worst Period Return": ret.min() if len(ret) > 0 else np.nan,
             "Maximum Drawdown": maximum_drawdown(ret),
@@ -196,8 +197,8 @@ def calculate_statistics(
 
                 result[f"{label} Annualized Return"] = annualized_return(trailing_ret, periods_per_year)
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
-                result[f"{label} Excess Return"] = annualized_return(trailing_ret, periods_per_year) - annualized_return(trailing_bench, periods_per_year)
-                result[f"{label} Information Ratio"] = information_ratio(trailing_ret, trailing_bench, periods_per_year)
+                result[f"{label} Excess Return"] = np.nan if same_series else (annualized_return(trailing_ret, periods_per_year) - annualized_return(trailing_bench, periods_per_year))
+                result[f"{label} Information Ratio"] = np.nan if same_series else information_ratio(trailing_ret, trailing_bench, periods_per_year)
             else:
                 result[f"{label} Annualized Return"] = np.nan
                 result[f"{label} Sharpe Ratio"] = np.nan

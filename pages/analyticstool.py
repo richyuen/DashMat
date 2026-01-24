@@ -122,7 +122,7 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
         if is_long_short:
             benchmark = benchmark_dict.get(series, available_series[0])
             if benchmark == series:
-                display_df[series] = 0.0
+                display_df[series] = np.nan
             elif benchmark == "None":
                 # None benchmark: keep the series returns as-is (vs zero)
                 display_df.loc[:, series] = df[series]
@@ -137,7 +137,7 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
             if not is_long_short:  # Only apply to non-long-short series
                 benchmark = benchmark_dict.get(series, available_series[0])
                 if benchmark == series:
-                    display_df[series] = 0.0
+                    display_df[series] = np.nan
                 elif benchmark == "None":
                     # None benchmark: keep the series returns as-is (vs zero)
                     display_df.loc[:, series] = df[series]
@@ -1177,7 +1177,8 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
                 if benchmark == "None":
                     series_returns = df[series]
                 elif benchmark == series:
-                    series_returns = pd.Series(0.0, index=df.index)
+                    rolling_df[series] = np.nan
+                    continue
                 elif benchmark in df.columns:
                     series_returns = df[series] - df[benchmark]
                 else:
@@ -1197,7 +1198,7 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
                         )
                         rolling_df[series] = rolling_returns
                     elif benchmark == series:
-                        rolling_df[series] = pd.Series(0.0, index=df.index)
+                        rolling_df[series] = np.nan
                     elif benchmark in df.columns:
                         # Calculate rolling returns for series and benchmark separately
                         rolling_series = df[series].rolling(window=window_size, min_periods=window_size).apply(
@@ -1338,9 +1339,12 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
                 if fmt is None:
                     row[series_name] = value
                 else:
-                    row[series_name] = format(value, fmt)
-                if row[series_name] == "nan":
-                    row[series_name] = ""
+                    formatted_value = format(value, fmt)
+                    # Check if the formatted value contains "nan" (e.g., "nan", "nan%", "nan.00")
+                    if isinstance(formatted_value, str) and "nan" in formatted_value.lower():
+                        row[series_name] = ""
+                    else:
+                        row[series_name] = formatted_value
 
             row_data.append(row)
             
@@ -1643,7 +1647,8 @@ def update_growth_charts(active_tab, raw_data, periodicity, selected_series, ben
                 if benchmark == "None":
                     returns = df[series]
                 elif benchmark == series:
-                    returns = pd.Series(0.0, index=df.index)
+                    # Skip series where benchmark is itself for long-short
+                    continue
                 elif benchmark in df.columns:
                     returns = df[series] - df[benchmark]
                 else:
