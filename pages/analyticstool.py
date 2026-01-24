@@ -415,26 +415,47 @@ layout = dmc.Container(
                                     w=120,
                                     size="sm",
                                 ),
+                                dmc.Switch(
+                                    id="rolling-chart-switch",
+                                    label="Chart",
+                                    checked=False,
+                                    size="sm",
+                                ),
                             ],
                         ),
                         dcc.Loading(
                             id="loading-rolling",
                             type="default",
                             children=[
-                                dag.AgGrid(
-                                    id="rolling-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                    },
-                                    style={"height": "550px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
-                                    },
+                                html.Div(
+                                    id="rolling-grid-container",
+                                    children=[
+                                        dag.AgGrid(
+                                            id="rolling-grid",
+                                            columnDefs=[],
+                                            rowData=[],
+                                            defaultColDef={
+                                                "sortable": True,
+                                                "resizable": True,
+                                            },
+                                            style={"height": "550px"},
+                                            dashGridOptions={
+                                                "animateRows": True,
+                                                "pagination": True,
+                                                "paginationPageSize": 100,
+                                            },
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    id="rolling-chart-container",
+                                    style={"display": "none"},
+                                    children=[
+                                        dcc.Graph(
+                                            id="rolling-chart",
+                                            style={"height": "550px"},
+                                        ),
+                                    ],
                                 ),
                             ],
                         ),
@@ -551,6 +572,7 @@ layout = dmc.Container(
         dcc.Store(id="active-tab-store", data="statistics", storage_type="local"),
         dcc.Store(id="rolling-window-store", data="1y", storage_type="local"),
         dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="local"),
+        dcc.Store(id="rolling-chart-switch-store", data=False, storage_type="local"),
         dcc.Store(id="monthly-view-store", data=False, storage_type="local"),
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
@@ -802,6 +824,41 @@ def restore_rolling_options(raw_data, stored_window, stored_return_type):
     window = stored_window if stored_window else "1y"
     return_type = stored_return_type if stored_return_type else "annualized"
     return window, return_type
+
+
+@callback(
+    Output("rolling-chart-switch-store", "data"),
+    Input("rolling-chart-switch", "checked"),
+    prevent_initial_call=True,
+)
+def save_rolling_chart_switch(value):
+    """Save rolling chart switch state to local storage."""
+    return value if value is not None else False
+
+
+@callback(
+    Output("rolling-chart-switch", "checked"),
+    Input("raw-data-store", "data"),
+    State("rolling-chart-switch-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def restore_rolling_chart_switch(raw_data, stored_chart_switch):
+    """Restore rolling chart switch from local storage on page load."""
+    return stored_chart_switch if stored_chart_switch is not None else False
+
+
+@callback(
+    Output("rolling-grid-container", "style"),
+    Output("rolling-chart-container", "style"),
+    Input("rolling-chart-switch", "checked"),
+    prevent_initial_call=True,
+)
+def toggle_rolling_view(chart_checked):
+    """Toggle between grid and chart view for rolling returns."""
+    if chart_checked:
+        return {"display": "none"}, {"display": "block"}
+    else:
+        return {"display": "block"}, {"display": "none"}
 
 
 @callback(
@@ -1557,6 +1614,265 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
 
     except Exception:
         return [], []
+
+
+@callback(
+    Output("rolling-chart", "figure"),
+    Input("main-tabs", "value"),
+    Input("rolling-chart-switch", "checked"),
+    Input("raw-data-store", "data"),
+    Input("periodicity-select", "value"),
+    Input("series-select", "data"),
+    Input("rolling-window-select", "value"),
+    Input("rolling-return-type-select", "value"),
+    Input("returns-type-select", "value"),
+    Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
+    prevent_initial_call=True,
+)
+def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, returns_type, benchmark_assignments, long_short_assignments, date_range):
+    """Update the Rolling Returns chart with rolling window calculations."""
+    # Create empty figure
+    empty_fig = go.Figure()
+    empty_fig.update_layout(
+        title="",
+        xaxis_title="",
+        yaxis_title="",
+        template="plotly_white",
+    )
+
+    # Lazy loading: only calculate when rolling tab is active and chart is checked
+    if active_tab != "rolling" or not chart_checked:
+        return empty_fig
+
+    if raw_data is None or not selected_series:
+        return empty_fig
+
+    try:
+        from utils.statistics import annualization_factor
+
+        # Get the resampled data
+        df = resample_returns_cached(raw_data, periodicity or "daily")
+
+        # Apply date range filter if provided
+        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+        if date_range_dict:
+            start_date = pd.to_datetime(date_range_dict["start"])
+            end_date = pd.to_datetime(date_range_dict["end"])
+            df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+        # Parse assignments
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+        # Filter to selected series only
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            return empty_fig
+
+        # Calculate periods per year and window size
+        periods_per_year = annualization_factor(periodicity or "daily")
+
+        # For daily data, use calendar days; for other periodicities, use number of periods
+        use_calendar_days = (periodicity or "daily") == "daily"
+
+        if use_calendar_days:
+            # Map rolling window to calendar days
+            window_map_days = {
+                "3m": "91D",
+                "6m": "183D",
+                "1y": "365D",
+                "3y": "1096D",
+                "5y": "1826D",
+                "10y": "3652D",
+            }
+            window_spec = window_map_days.get(rolling_window, "365D")
+
+            # Extract the number of days from the window spec
+            window_days_map = {
+                "3m": 91,
+                "6m": 183,
+                "1y": 365,
+                "3y": 1096,
+                "5y": 1826,
+                "10y": 3652,
+            }
+            min_calendar_days = window_days_map.get(rolling_window, 365)
+            window_size = None
+        else:
+            # Map rolling window to number of periods
+            window_map = {
+                "3m": int(periods_per_year / 4),
+                "6m": int(periods_per_year / 2),
+                "1y": int(periods_per_year),
+                "3y": int(periods_per_year * 3),
+                "5y": int(periods_per_year * 5),
+                "10y": int(periods_per_year * 10),
+            }
+            window_size = window_map.get(rolling_window, int(periods_per_year))
+            window_size = max(1, window_size)
+            window_spec = window_size
+
+        # Map rolling window to number of years for annualization
+        window_years_map = {
+            "3m": 0.25,
+            "6m": 0.5,
+            "1y": 1.0,
+            "3y": 3.0,
+            "5y": 5.0,
+            "10y": 10.0,
+        }
+        window_years = window_years_map.get(rolling_window, 1.0)
+
+        # Calculate rolling returns for each series (same logic as grid)
+        rolling_df = pd.DataFrame(index=df.index)
+
+        for series in available_series:
+            is_long_short = long_short_dict.get(series, False)
+            benchmark = benchmark_dict.get(series, available_series[0])
+
+            # Calculate rolling returns
+            def calc_rolling_return(window):
+                if len(window) == 0:
+                    return np.nan
+                if not use_calendar_days and len(window) < window_size:
+                    return np.nan
+                cum_ret = (1 + window).prod() - 1
+                if rolling_return_type == "annualized":
+                    if window_years <= 1.0:
+                        return cum_ret
+                    return (1 + cum_ret) ** (1 / window_years) - 1
+                else:
+                    return cum_ret
+
+            if is_long_short:
+                if benchmark == "None":
+                    series_returns = df[series]
+                elif benchmark == series:
+                    rolling_df[series] = np.nan
+                    continue
+                elif benchmark in df.columns:
+                    series_returns = df[series] - df[benchmark]
+                else:
+                    series_returns = df[series]
+
+                if use_calendar_days:
+                    rolling_returns = series_returns.rolling(window=window_spec).apply(
+                        calc_rolling_return, raw=False
+                    )
+                else:
+                    rolling_returns = series_returns.rolling(window=window_spec, min_periods=window_size).apply(
+                        calc_rolling_return, raw=False
+                    )
+                rolling_df[series] = rolling_returns
+            else:
+                if returns_type == "excess":
+                    if benchmark == "None":
+                        if use_calendar_days:
+                            rolling_returns = df[series].rolling(window=window_spec).apply(
+                                calc_rolling_return, raw=False
+                            )
+                        else:
+                            rolling_returns = df[series].rolling(window=window_spec, min_periods=window_size).apply(
+                                calc_rolling_return, raw=False
+                            )
+                        rolling_df[series] = rolling_returns
+                    elif benchmark == series:
+                        rolling_df[series] = np.nan
+                    elif benchmark in df.columns:
+                        if use_calendar_days:
+                            rolling_series = df[series].rolling(window=window_spec).apply(
+                                calc_rolling_return, raw=False
+                            )
+                            rolling_bench = df[benchmark].rolling(window=window_spec).apply(
+                                calc_rolling_return, raw=False
+                            )
+                        else:
+                            rolling_series = df[series].rolling(window=window_spec, min_periods=window_size).apply(
+                                calc_rolling_return, raw=False
+                            )
+                            rolling_bench = df[benchmark].rolling(window=window_spec, min_periods=window_size).apply(
+                                calc_rolling_return, raw=False
+                            )
+                        rolling_df[series] = rolling_series - rolling_bench
+                    else:
+                        if use_calendar_days:
+                            rolling_returns = df[series].rolling(window=window_spec).apply(
+                                calc_rolling_return, raw=False
+                            )
+                        else:
+                            rolling_returns = df[series].rolling(window=window_spec, min_periods=window_size).apply(
+                                calc_rolling_return, raw=False
+                            )
+                        rolling_df[series] = rolling_returns
+                else:
+                    if use_calendar_days:
+                        rolling_returns = df[series].rolling(window=window_spec).apply(
+                            calc_rolling_return, raw=False
+                        )
+                    else:
+                        rolling_returns = df[series].rolling(window=window_spec, min_periods=window_size).apply(
+                            calc_rolling_return, raw=False
+                        )
+                    rolling_df[series] = rolling_returns
+
+        # For calendar-based windows, filter out periods that don't have enough calendar days
+        if use_calendar_days and len(rolling_df) > 0:
+            first_date = df.index.min()
+            valid_dates_mask = (rolling_df.index - first_date).days >= min_calendar_days - 1
+            rolling_df = rolling_df[valid_dates_mask]
+
+        # Drop rows with all NaN values
+        rolling_df = rolling_df.dropna(how='all')
+
+        if rolling_df.empty:
+            return empty_fig
+
+        # Create the line chart
+        fig = go.Figure()
+
+        for col in rolling_df.columns:
+            fig.add_trace(go.Scatter(
+                x=rolling_df.index,
+                y=rolling_df[col],
+                mode='lines',
+                name=col,
+                hovertemplate='%{y:.2%}<extra></extra>',
+            ))
+
+        # Update layout
+        window_label_map = {
+            "3m": "3-Month",
+            "6m": "6-Month",
+            "1y": "1-Year",
+            "3y": "3-Year",
+            "5y": "5-Year",
+            "10y": "10-Year",
+        }
+        window_label = window_label_map.get(rolling_window, "1-Year")
+        return_type_label = "Annualized" if rolling_return_type == "annualized" else "Cumulative"
+
+        fig.update_layout(
+            title=f"Rolling {window_label} {return_type_label} Returns",
+            xaxis_title="Date",
+            yaxis_title="Return",
+            yaxis_tickformat=".2%",
+            template="plotly_white",
+            hovermode="x unified",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+        )
+
+        return fig
+
+    except Exception:
+        return empty_fig
 
 
 @cache_config.cache.memoize(timeout=300)
