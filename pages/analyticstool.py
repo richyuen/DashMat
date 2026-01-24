@@ -345,7 +345,7 @@ layout = dmc.Container(
         # Tabs with AG Grid and Statistics
         dmc.Tabs(
             id="main-tabs",
-            value="returns",
+            value="statistics",
             children=[
                 dmc.TabsList(
                     children=[
@@ -548,6 +548,7 @@ layout = dmc.Container(
         dcc.Store(id="returns-type-value-store", data="total", storage_type="local"),
         dcc.Store(id="series-select-value-store", data=[], storage_type="local"),
         dcc.Store(id="series-order-store", data=[], storage_type="local"),
+        dcc.Store(id="active-tab-store", data="statistics", storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
         dcc.Download(id="download-excel"),
@@ -740,6 +741,28 @@ def save_returns_type(value):
 def save_series_selection(value):
     """Save series selection to local storage."""
     return value or []
+
+
+@callback(
+    Output("active-tab-store", "data"),
+    Input("main-tabs", "value"),
+    prevent_initial_call=True,
+)
+def save_active_tab(value):
+    """Save active tab to local storage."""
+    return value or "statistics"
+
+
+@callback(
+    Output("main-tabs", "value"),
+    Input("raw-data-store", "data"),
+    State("active-tab-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def restore_active_tab(raw_data, stored_tab):
+    """Restore active tab from local storage on page load."""
+    # Return stored tab if available, otherwise default to statistics
+    return stored_tab if stored_tab else "statistics"
 
 
 @callback(
