@@ -549,6 +549,10 @@ layout = dmc.Container(
         dcc.Store(id="series-select-value-store", data=[], storage_type="local"),
         dcc.Store(id="series-order-store", data=[], storage_type="local"),
         dcc.Store(id="active-tab-store", data="statistics", storage_type="local"),
+        dcc.Store(id="rolling-window-store", data="1y", storage_type="local"),
+        dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="local"),
+        dcc.Store(id="monthly-view-store", data=False, storage_type="local"),
+        dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
         dcc.Download(id="download-excel"),
@@ -763,6 +767,72 @@ def restore_active_tab(raw_data, stored_tab):
     """Restore active tab from local storage on page load."""
     # Return stored tab if available, otherwise default to statistics
     return stored_tab if stored_tab else "statistics"
+
+
+@callback(
+    Output("rolling-window-store", "data"),
+    Input("rolling-window-select", "value"),
+    prevent_initial_call=True,
+)
+def save_rolling_window(value):
+    """Save rolling window selection to local storage."""
+    return value or "1y"
+
+
+@callback(
+    Output("rolling-return-type-store", "data"),
+    Input("rolling-return-type-select", "value"),
+    prevent_initial_call=True,
+)
+def save_rolling_return_type(value):
+    """Save rolling return type to local storage."""
+    return value or "annualized"
+
+
+@callback(
+    Output("rolling-window-select", "value"),
+    Output("rolling-return-type-select", "value"),
+    Input("raw-data-store", "data"),
+    State("rolling-window-store", "data"),
+    State("rolling-return-type-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def restore_rolling_options(raw_data, stored_window, stored_return_type):
+    """Restore rolling options from local storage on page load."""
+    window = stored_window if stored_window else "1y"
+    return_type = stored_return_type if stored_return_type else "annualized"
+    return window, return_type
+
+
+@callback(
+    Output("monthly-view-store", "data"),
+    Input("monthly-view-checkbox", "checked"),
+    prevent_initial_call=True,
+)
+def save_monthly_view(value):
+    """Save monthly view checkbox state to local storage."""
+    return value if value is not None else False
+
+
+@callback(
+    Output("monthly-series-store", "data"),
+    Input("monthly-series-select", "value"),
+    prevent_initial_call=True,
+)
+def save_monthly_series(value):
+    """Save monthly series selection to local storage."""
+    return value
+
+
+@callback(
+    Output("monthly-view-checkbox", "checked"),
+    Input("raw-data-store", "data"),
+    State("monthly-view-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def restore_monthly_view(raw_data, stored_monthly_view):
+    """Restore monthly view checkbox from local storage on page load."""
+    return stored_monthly_view if stored_monthly_view is not None else False
 
 
 @callback(
@@ -1638,12 +1708,13 @@ def create_monthly_view(df, series_name, original_periodicity, returns_type, ben
 @callback(
     Output("monthly-series-select", "style"),
     Output("monthly-series-select", "data"),
-    Output("monthly-series-select", "value"),
+    Output("monthly-series-select", "value", allow_duplicate=True),
     Input("monthly-view-checkbox", "checked"),
     Input("series-select", "data"),
+    State("monthly-series-store", "data"),
     prevent_initial_call=True,
 )
-def update_monthly_series_select(monthly_checked, selected_series):
+def update_monthly_series_select(monthly_checked, selected_series, stored_monthly_series):
     """Show/hide monthly series select and populate with available series."""
     if not monthly_checked:
         return {"display": "none"}, [], None
@@ -1654,8 +1725,11 @@ def update_monthly_series_select(monthly_checked, selected_series):
     # Create dropdown options from selected series
     options = [{"value": s, "label": s} for s in selected_series]
 
-    # Default to first series
-    default_value = selected_series[0] if selected_series else None
+    # Use stored value if available and still valid, otherwise default to first series
+    if stored_monthly_series and stored_monthly_series in selected_series:
+        default_value = stored_monthly_series
+    else:
+        default_value = selected_series[0] if selected_series else None
 
     return {"display": "block"}, options, default_value
 
