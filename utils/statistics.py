@@ -39,6 +39,41 @@ def annualized_return(returns: pd.Series, periods_per_year: float) -> float:
     return (1 + cum_ret) ** (1 / years) - 1
 
 
+def annualized_return_calendar_days(returns: pd.Series, periodicity: str) -> float:
+    """Calculate annualized return based on calendar days for daily/weekly data.
+
+    For weekly data, the starting day is the first period's date minus 6 days.
+    Returns cumulative return if period <= 1 year.
+    """
+    if len(returns) == 0:
+        return np.nan
+
+    cum_ret = cumulative_return(returns)
+
+    # Get start and end dates
+    end_date = returns.index.max()
+    start_date = returns.index.min()
+
+    # For weekly data, adjust start date to be 6 days earlier
+    if periodicity.startswith("weekly_"):
+        start_date = start_date - pd.Timedelta(days=6)
+
+    # Calculate calendar days (inclusive)
+    calendar_days = (end_date - start_date).days + 1
+
+    if calendar_days <= 0:
+        return np.nan
+
+    # Calculate years
+    years = calendar_days / 365.25
+
+    # If period is 1 year or less, return cumulative return (don't annualize)
+    if years <= 1.0:
+        return cum_ret
+
+    return (1 + cum_ret) ** (1 / years) - 1
+
+
 def annualized_volatility(returns: pd.Series, periods_per_year: float) -> float:
     """Calculate annualized volatility (standard deviation)."""
     if len(returns) < 2:
@@ -129,14 +164,22 @@ def calculate_statistics(
         # Long-short returns are the excess returns (difference)
         ls_returns = excess
 
+        # Use calendar-based annualization for daily/weekly data
+        use_calendar_days = periodicity == "daily" or periodicity.startswith("weekly_")
+
+        if use_calendar_days:
+            ls_ann_ret = annualized_return_calendar_days(ls_returns, periodicity)
+        else:
+            ls_ann_ret = annualized_return(ls_returns, periods_per_year)
+
         result = {
             "Series": series_name,
             "Start Date": ls_returns.index.min().strftime("%Y-%m-%d") if len(ls_returns) > 0 else "",
             "End Date": ls_returns.index.max().strftime("%Y-%m-%d") if len(ls_returns) > 0 else "",
             "Number of Periods": len(ls_returns),
             "Cumulative Return": cumulative_return(ls_returns),
-            "Annualized Return": annualized_return(ls_returns, periods_per_year),
-            "Annualized Excess Return": annualized_return(ls_returns, periods_per_year),  # Same as Annualized Return
+            "Annualized Return": ls_ann_ret,
+            "Annualized Excess Return": ls_ann_ret,  # Same as Annualized Return
             "Annualized Volatility": annualized_volatility(ls_returns, periods_per_year),
             "Annualized Tracking Error": annualized_volatility(ls_returns, periods_per_year),  # Same as volatility for long-short
             "Sharpe Ratio": sharpe_ratio(ls_returns, periods_per_year),
@@ -156,9 +199,14 @@ def calculate_statistics(
             if len(ls_returns) >= n_periods:
                 trailing_ls = ls_returns.iloc[-n_periods:]
 
-                result[f"{label} Annualized Return"] = annualized_return(trailing_ls, periods_per_year)
+                if use_calendar_days:
+                    trailing_ls_ann_ret = annualized_return_calendar_days(trailing_ls, periodicity)
+                else:
+                    trailing_ls_ann_ret = annualized_return(trailing_ls, periods_per_year)
+
+                result[f"{label} Annualized Return"] = trailing_ls_ann_ret
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)
-                result[f"{label} Excess Return"] = annualized_return(trailing_ls, periods_per_year)  # Same as annualized return
+                result[f"{label} Excess Return"] = trailing_ls_ann_ret  # Same as annualized return
                 result[f"{label} Information Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)  # Same as Sharpe
             else:
                 result[f"{label} Annualized Return"] = np.nan
@@ -167,14 +215,24 @@ def calculate_statistics(
                 result[f"{label} Information Ratio"] = np.nan
     else:
         # Normal mode (non-long-short)
+        # Use calendar-based annualization for daily/weekly data
+        use_calendar_days = periodicity == "daily" or periodicity.startswith("weekly_")
+
+        if use_calendar_days:
+            ann_ret = annualized_return_calendar_days(ret, periodicity)
+            ann_bench = annualized_return_calendar_days(bench, periodicity)
+        else:
+            ann_ret = annualized_return(ret, periods_per_year)
+            ann_bench = annualized_return(bench, periods_per_year)
+
         result = {
             "Series": series_name,
             "Start Date": ret.index.min().strftime("%Y-%m-%d") if len(ret) > 0 else "",
             "End Date": ret.index.max().strftime("%Y-%m-%d") if len(ret) > 0 else "",
             "Number of Periods": len(ret),
             "Cumulative Return": cumulative_return(ret),
-            "Annualized Return": annualized_return(ret, periods_per_year),
-            "Annualized Excess Return": np.nan if same_series else (annualized_return(ret, periods_per_year) - annualized_return(bench, periods_per_year)),
+            "Annualized Return": ann_ret,
+            "Annualized Excess Return": np.nan if same_series else (ann_ret - ann_bench),
             "Annualized Volatility": annualized_volatility(ret, periods_per_year),
             "Annualized Tracking Error": np.nan if same_series else tracking_error(ret, bench, periods_per_year),
             "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
@@ -195,9 +253,16 @@ def calculate_statistics(
                 trailing_ret = ret.iloc[-n_periods:]
                 trailing_bench = bench.iloc[-n_periods:]
 
-                result[f"{label} Annualized Return"] = annualized_return(trailing_ret, periods_per_year)
+                if use_calendar_days:
+                    trailing_ann_ret = annualized_return_calendar_days(trailing_ret, periodicity)
+                    trailing_ann_bench = annualized_return_calendar_days(trailing_bench, periodicity)
+                else:
+                    trailing_ann_ret = annualized_return(trailing_ret, periods_per_year)
+                    trailing_ann_bench = annualized_return(trailing_bench, periods_per_year)
+
+                result[f"{label} Annualized Return"] = trailing_ann_ret
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
-                result[f"{label} Excess Return"] = np.nan if same_series else (annualized_return(trailing_ret, periods_per_year) - annualized_return(trailing_bench, periods_per_year))
+                result[f"{label} Excess Return"] = np.nan if same_series else (trailing_ann_ret - trailing_ann_bench)
                 result[f"{label} Information Ratio"] = np.nan if same_series else information_ratio(trailing_ret, trailing_bench, periods_per_year)
             else:
                 result[f"{label} Annualized Return"] = np.nan
