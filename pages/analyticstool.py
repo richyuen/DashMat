@@ -468,6 +468,25 @@ layout = dmc.Container(
                     value="calendar",
                     pt="md",
                     children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.Checkbox(
+                                    id="monthly-view-checkbox",
+                                    label="Monthly",
+                                    checked=False,
+                                ),
+                                dmc.Select(
+                                    id="monthly-series-select",
+                                    data=[],
+                                    value=None,
+                                    w=200,
+                                    size="sm",
+                                    placeholder="Select series",
+                                    style={"display": "none"},
+                                ),
+                            ],
+                        ),
                         dcc.Loading(
                             id="loading-calendar",
                             type="default",
@@ -1378,6 +1397,152 @@ def calculate_statistics_cached(json_str: str, periodicity: str, selected_series
     )
 
 
+def create_monthly_view(df, series_name, original_periodicity, returns_type, benchmark_dict, long_short_dict, available_series):
+    """Create monthly view with Jan-Dec columns plus Year column."""
+    # Determine if series is long-short
+    is_long_short = long_short_dict.get(series_name, False)
+    benchmark = benchmark_dict.get(series_name, available_series[0])
+
+    # Get series returns based on returns_type and long-short
+    if is_long_short:
+        if benchmark == "None":
+            series_returns = df[series_name]
+        elif benchmark == series_name:
+            # Return empty for self-benchmark
+            return [], []
+        elif benchmark in df.columns:
+            series_returns = df[series_name] - df[benchmark]
+        else:
+            series_returns = df[series_name]
+    else:
+        if returns_type == "excess":
+            if benchmark == "None":
+                series_returns = df[series_name]
+            elif benchmark == series_name:
+                # Return empty for self-benchmark
+                return [], []
+            elif benchmark in df.columns:
+                series_returns = df[series_name] - df[benchmark]
+            else:
+                series_returns = df[series_name]
+        else:  # total returns
+            series_returns = df[series_name]
+
+    # Convert to DataFrame for processing
+    series_data = series_returns.to_frame(name='returns')
+
+    # Determine if we need to resample to monthly
+    if original_periodicity == "daily":
+        # For daily data, resample to monthly and only include full months
+        # Add year and month columns
+        series_data['year'] = series_data.index.year
+        series_data['month'] = series_data.index.month
+
+        # Group by year and month, compound returns
+        monthly_data = series_data.groupby(['year', 'month'])['returns'].apply(
+            lambda x: (1 + x).prod() - 1
+        ).reset_index()
+
+        # Count days in each month to filter out partial months
+        days_per_month = series_data.groupby(['year', 'month']).size().reset_index(name='days')
+        monthly_data = monthly_data.merge(days_per_month, on=['year', 'month'])
+
+        # Only keep months with reasonable number of days (assume full month has at least 15 trading days)
+        monthly_data = monthly_data[monthly_data['days'] >= 15]
+        monthly_data = monthly_data.drop('days', axis=1)
+
+    elif original_periodicity == "monthly":
+        # Already monthly, just add year and month columns
+        monthly_data = pd.DataFrame({
+            'year': series_data.index.year,
+            'month': series_data.index.month,
+            'returns': series_data['returns']
+        }).reset_index(drop=True)
+    else:
+        # For other periodicities, return empty
+        return [], []
+
+    if monthly_data.empty:
+        return [], []
+
+    # Pivot to get months as columns
+    pivot_data = monthly_data.pivot(index='year', columns='month', values='returns')
+
+    # Rename columns to month names
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
+
+    # Calculate Annual column (compound all months in the row)
+    pivot_data['Ann'] = pivot_data.apply(
+        lambda row: (1 + row.dropna()).prod() - 1 if row.notna().any() else None,
+        axis=1
+    )
+
+    # Reset index to make year a column
+    pivot_data = pivot_data.reset_index()
+    pivot_data = pivot_data.rename(columns={'year': 'Year_Label'})
+
+    # Reorder columns: Year_Label, Jan, Feb, ..., Dec, Ann
+    month_cols = [m for m in month_names if m in pivot_data.columns]
+    col_order = ['Year_Label'] + month_cols + ['Ann']
+    pivot_data = pivot_data[col_order]
+
+    # Create column definitions for monthly view
+    column_defs = [
+        {
+            "field": "Year_Label",
+            "headerName": "Year",
+            "pinned": "left",
+            "width": 80,
+        }
+    ]
+
+    # Add month columns
+    for month in month_cols:
+        column_defs.append({
+            "field": month,
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+            "width": 90,
+        })
+
+    # Add Annual column
+    column_defs.append({
+        "field": "Ann",
+        "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+        "width": 90,
+    })
+
+    # Convert to row data
+    row_data = pivot_data.to_dict("records")
+
+    return column_defs, row_data
+
+
+@callback(
+    Output("monthly-series-select", "style"),
+    Output("monthly-series-select", "data"),
+    Output("monthly-series-select", "value"),
+    Input("monthly-view-checkbox", "checked"),
+    Input("series-select", "data"),
+    prevent_initial_call=True,
+)
+def update_monthly_series_select(monthly_checked, selected_series):
+    """Show/hide monthly series select and populate with available series."""
+    if not monthly_checked:
+        return {"display": "none"}, [], None
+
+    if not selected_series:
+        return {"display": "block"}, [], None
+
+    # Create dropdown options from selected series
+    options = [{"value": s, "label": s} for s in selected_series]
+
+    # Default to first series
+    default_value = selected_series[0] if selected_series else None
+
+    return {"display": "block"}, options, default_value
+
+
 @callback(
     Output("calendar-grid", "columnDefs"),
     Output("calendar-grid", "rowData"),
@@ -1390,9 +1555,11 @@ def calculate_statistics_cached(json_str: str, periodicity: str, selected_series
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("monthly-view-checkbox", "checked"),
+    Input("monthly-series-select", "value"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, monthly_view, monthly_series):
     """Update the Calendar Year Returns grid (lazy loaded)."""
     # Lazy loading: only calculate when calendar tab is active
     if active_tab != "calendar":
@@ -1425,7 +1592,6 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
 
             df = df[(df.index >= start_date) & (df.index <= end_date)]
 
-
         # Parse assignments
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
@@ -1434,6 +1600,18 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         available_series = [s for s in selected_series if s in df.columns]
         if not available_series:
             return [], []
+
+        # Handle monthly view if checkbox is checked
+        if monthly_view and monthly_series and monthly_series in available_series:
+            return create_monthly_view(
+                df,
+                monthly_series,
+                original_periodicity,
+                returns_type,
+                benchmark_dict,
+                long_short_dict,
+                available_series
+            )
 
         # Calculate calendar year returns
         calendar_returns = {}
