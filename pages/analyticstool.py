@@ -1176,6 +1176,9 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
                 if rolling_return_type == "annualized":
                     years = len(window) / periods_per_year
                     if years > 0:
+                        # If period is 1 year or less, return cumulative return (don't annualize)
+                        if years <= 1.0:
+                            return cum_ret
                         return (1 + cum_ret) ** (1 / years) - 1
                     return np.nan
                 else:  # cumulative

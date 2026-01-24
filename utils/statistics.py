@@ -25,7 +25,7 @@ def cumulative_return(returns: pd.Series) -> float:
 
 
 def annualized_return(returns: pd.Series, periods_per_year: float) -> float:
-    """Calculate annualized return."""
+    """Calculate annualized return. Returns cumulative return if period <= 1 year."""
     n_periods = len(returns)
     if n_periods == 0:
         return np.nan
@@ -33,6 +33,9 @@ def annualized_return(returns: pd.Series, periods_per_year: float) -> float:
     years = n_periods / periods_per_year
     if years == 0:
         return np.nan
+    # If period is 1 year or less, return cumulative return (don't annualize)
+    if years <= 1.0:
+        return cum_ret
     return (1 + cum_ret) ** (1 / years) - 1
 
 
