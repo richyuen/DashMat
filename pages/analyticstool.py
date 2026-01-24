@@ -39,8 +39,8 @@ STATS_CONFIG = [
     ("Annualized Tracking Error", ".2%"),
     ("Sharpe Ratio", ".2f"),
     ("Information Ratio", ".2f"),
-    ("Hit Rate", ".1%"),
-    ("Hit Rate (vs Benchmark)", ".1%"),
+    ("Hit Rate", ".2%"),
+    ("Hit Rate (vs Benchmark)", ".2%"),
     ("Best Period Return", ".2%"),
     ("Worst Period Return", ".2%"),
     ("Maximum Drawdown", ".2%"),
@@ -1071,7 +1071,7 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
         for col in display_df.columns:
             column_defs.append({
                 "field": col,
-                "valueFormatter": {"function": "params.value != null ? d3.format('.4%')(params.value) : ''"},
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                 "width": 120,
             })
 
@@ -1279,8 +1279,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         # First column is "Statistic" (pinned), then one column per series
         column_defs = [
             {"field": "Statistic", "pinned": "left", "width": 200},
-        ]
-
+        ]           
         for series_stats in stats:
             series_name = series_stats["Series"]
             column_defs.append({
@@ -1297,15 +1296,22 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
                 },
             })
 
-        # Build transposed rows
+        # Build transposed rows - keep raw values, format will be applied per-row
         row_data = []
         for stat_name, fmt in STATS_CONFIG:
             row = {"Statistic": stat_name, "_format": fmt}
             for series_stats in stats:
                 series_name = series_stats["Series"]
-                row[series_name] = series_stats.get(stat_name)
-            row_data.append(row)
+                value = series_stats.get(stat_name)
+                if fmt is None:
+                    row[series_name] = value
+                else:
+                    row[series_name] = format(value, fmt)
+                if row[series_name] == "nan":
+                    row[series_name] = ""
 
+            row_data.append(row)
+            
         return column_defs, row_data
 
     except Exception:
