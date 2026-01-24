@@ -66,6 +66,37 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
     # Drop rows where all values are NaN (periods with no data)
     resampled = resampled.dropna(how="all")
 
+    # For weekly periodicity, exclude partial weeks at start and end
+    if periodicity.startswith("weekly_") and len(resampled) > 0:
+        # Count the number of observations in each period
+        counts = df.resample(resample_code).count()
+
+        # Align counts with resampled data (in case some periods were dropped)
+        counts = counts.reindex(resampled.index, fill_value=0)
+
+        # Get the typical week size (mode of the counts, excluding zeros)
+        # Use the first column to determine count
+        first_col = counts.columns[0]
+        non_zero_counts = counts[first_col][counts[first_col] > 0]
+        if len(non_zero_counts) > 0:
+            typical_week_size = non_zero_counts.mode().iloc[0] if len(non_zero_counts.mode()) > 0 else 5
+
+            # Identify periods to keep (not partial weeks)
+            periods_to_keep = []
+            for i, idx in enumerate(resampled.index):
+                count = counts.loc[idx, first_col]
+                # Keep if it's a full week, or if it's a middle period (not first or last)
+                if count >= typical_week_size:
+                    periods_to_keep.append(True)
+                elif i == 0 or i == len(resampled) - 1:
+                    # Drop partial first or last period
+                    periods_to_keep.append(False)
+                else:
+                    # Keep middle periods even if partial (e.g., holidays)
+                    periods_to_keep.append(True)
+
+            resampled = resampled[periods_to_keep]
+
     return resampled
 
 
