@@ -173,7 +173,7 @@ def calculate_statistics(
             "Number of Periods": len(ret),
             "Cumulative Return": cumulative_return(ret),
             "Annualized Return": annualized_return(ret, periods_per_year),
-            "Annualized Excess Return": annualized_return(excess, periods_per_year),
+            "Annualized Excess Return": annualized_return(ret, periods_per_year) - annualized_return(bench, periods_per_year),
             "Annualized Volatility": annualized_volatility(ret, periods_per_year),
             "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year),
             "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
@@ -193,11 +193,10 @@ def calculate_statistics(
             if len(ret) >= n_periods:
                 trailing_ret = ret.iloc[-n_periods:]
                 trailing_bench = bench.iloc[-n_periods:]
-                trailing_excess = trailing_ret - trailing_bench
 
                 result[f"{label} Annualized Return"] = annualized_return(trailing_ret, periods_per_year)
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
-                result[f"{label} Excess Return"] = annualized_return(trailing_excess, periods_per_year)
+                result[f"{label} Excess Return"] = annualized_return(trailing_ret, periods_per_year) - annualized_return(trailing_bench, periods_per_year)
                 result[f"{label} Information Ratio"] = information_ratio(trailing_ret, trailing_bench, periods_per_year)
             else:
                 result[f"{label} Annualized Return"] = np.nan

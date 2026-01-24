@@ -1095,12 +1095,13 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
     Input("series-select", "data"),
     Input("rolling-window-select", "value"),
     Input("rolling-return-type-select", "value"),
+    Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, benchmark_assignments, long_short_assignments, date_range):
+def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update the Rolling Returns grid with rolling window calculations."""
     # Lazy loading: only calculate when rolling tab is active
     if active_tab != "rolling":
@@ -1155,19 +1156,6 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
             is_long_short = long_short_dict.get(series, False)
             benchmark = benchmark_dict.get(series, available_series[0])
 
-            # Get series returns
-            if is_long_short:
-                if benchmark == "None":
-                    series_returns = df[series]
-                elif benchmark == series:
-                    series_returns = pd.Series(0.0, index=df.index)
-                elif benchmark in df.columns:
-                    series_returns = df[series] - df[benchmark]
-                else:
-                    series_returns = df[series]
-            else:
-                series_returns = df[series]
-
             # Calculate rolling returns
             def calc_rolling_return(window):
                 if len(window) < window_size:
@@ -1184,10 +1172,51 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
                 else:  # cumulative
                     return cum_ret
 
-            rolling_returns = series_returns.rolling(window=window_size, min_periods=window_size).apply(
-                calc_rolling_return, raw=False
-            )
-            rolling_df[series] = rolling_returns
+            if is_long_short:
+                # Long-short: always calculate period-by-period difference, then compound
+                if benchmark == "None":
+                    series_returns = df[series]
+                elif benchmark == series:
+                    series_returns = pd.Series(0.0, index=df.index)
+                elif benchmark in df.columns:
+                    series_returns = df[series] - df[benchmark]
+                else:
+                    series_returns = df[series]
+
+                rolling_returns = series_returns.rolling(window=window_size, min_periods=window_size).apply(
+                    calc_rolling_return, raw=False
+                )
+                rolling_df[series] = rolling_returns
+            else:
+                # Non-long-short: apply returns_type logic
+                if returns_type == "excess":
+                    # For excess returns: compound(series) - compound(benchmark)
+                    if benchmark == "None":
+                        rolling_returns = df[series].rolling(window=window_size, min_periods=window_size).apply(
+                            calc_rolling_return, raw=False
+                        )
+                        rolling_df[series] = rolling_returns
+                    elif benchmark == series:
+                        rolling_df[series] = pd.Series(0.0, index=df.index)
+                    elif benchmark in df.columns:
+                        # Calculate rolling returns for series and benchmark separately
+                        rolling_series = df[series].rolling(window=window_size, min_periods=window_size).apply(
+                            calc_rolling_return, raw=False
+                        )
+                        rolling_bench = df[benchmark].rolling(window=window_size, min_periods=window_size).apply(
+                            calc_rolling_return, raw=False
+                        )
+                        rolling_df[series] = rolling_series - rolling_bench
+                    else:
+                        rolling_returns = df[series].rolling(window=window_size, min_periods=window_size).apply(
+                            calc_rolling_return, raw=False
+                        )
+                        rolling_df[series] = rolling_returns
+                else:  # total returns
+                    rolling_returns = df[series].rolling(window=window_size, min_periods=window_size).apply(
+                        calc_rolling_return, raw=False
+                    )
+                    rolling_df[series] = rolling_returns
 
         # Drop rows with all NaN values
         rolling_df = rolling_df.dropna(how='all')
