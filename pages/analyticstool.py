@@ -2731,9 +2731,13 @@ def calculate_growth_of_dollar(returns_df):
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
     State("date-range-store", "data"),
+    State("rolling-window-store", "data"),
+    State("rolling-return-type-store", "data"),
+    State("monthly-view-store", "data"),
+    State("monthly-series-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, original_periodicity, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def download_excel(n_clicks, raw_data, original_periodicity, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series):
     """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, and Correlogram sheets."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -2782,8 +2786,12 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
         # Sheet 2: Returns
         returns_df.to_excel(writer, sheet_name="Returns")
 
-        # Sheet 3: Rolling (1-year annualized by default)
+        # Sheet 3: Rolling (use current settings)
         try:
+            # Use stored rolling options, default to 1y annualized if not set
+            window = rolling_window if rolling_window else "1y"
+            return_type = rolling_return_type if rolling_return_type else "annualized"
+
             rolling_df = calculate_rolling_returns(
                 raw_data,
                 periodicity,
@@ -2792,28 +2800,74 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
                 benchmark_assignments,
                 long_short_assignments,
                 date_range,
-                "1y",
-                "annualized"
+                window,
+                return_type
             )
             if not rolling_df.empty:
-                rolling_df.to_excel(writer, sheet_name="Rolling (1Y)")
+                # Create sheet name based on window and type
+                window_label_map = {
+                    "3m": "3M",
+                    "6m": "6M",
+                    "1y": "1Y",
+                    "3y": "3Y",
+                    "5y": "5Y",
+                    "10y": "10Y",
+                }
+                window_label = window_label_map.get(window, "1Y")
+                type_label = "Ann" if return_type == "annualized" else "Cum"
+                sheet_name = f"Rolling ({window_label} {type_label})"
+                rolling_df.to_excel(writer, sheet_name=sheet_name)
         except Exception:
             pass  # Skip if rolling calculation fails
 
         # Sheet 4: Calendar Year Returns
         if original_periodicity in ["daily", "monthly"]:
             try:
-                calendar_df = calculate_calendar_year_returns(
-                    raw_data,
-                    original_periodicity,
-                    selected_series,
-                    returns_type,
-                    benchmark_assignments,
-                    long_short_assignments,
-                    date_range
-                )
-                if not calendar_df.empty:
-                    calendar_df.to_excel(writer, sheet_name="Calendar Year")
+                # Check if monthly view is enabled
+                if monthly_view and monthly_series and monthly_series in selected_series:
+                    # Use monthly view (Jan-Dec columns + Ann)
+                    df = json_to_df(raw_data)
+
+                    # Apply date range filter if provided
+                    date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+                    if date_range_dict:
+                        start_date = pd.to_datetime(date_range_dict["start"])
+                        end_date = pd.to_datetime(date_range_dict["end"])
+                        df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+                    benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+                    long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+                    # Get monthly view data
+                    column_defs, row_data = create_monthly_view(
+                        df,
+                        monthly_series,
+                        original_periodicity,
+                        returns_type,
+                        benchmark_dict,
+                        long_short_dict,
+                        selected_series
+                    )
+
+                    if row_data:
+                        # Convert row data to DataFrame
+                        calendar_df = pd.DataFrame(row_data)
+                        calendar_df = calendar_df.set_index('Year_Label')
+                        calendar_df.index.name = 'Year'
+                        calendar_df.to_excel(writer, sheet_name="Calendar Year")
+                else:
+                    # Use standard calendar year returns (all series, one row per year)
+                    calendar_df = calculate_calendar_year_returns(
+                        raw_data,
+                        original_periodicity,
+                        selected_series,
+                        returns_type,
+                        benchmark_assignments,
+                        long_short_assignments,
+                        date_range
+                    )
+                    if not calendar_df.empty:
+                        calendar_df.to_excel(writer, sheet_name="Calendar Year")
             except Exception:
                 pass  # Skip if calendar calculation fails
 
