@@ -2,6 +2,7 @@
 
 from io import BytesIO, StringIO
 import hashlib
+import json
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
@@ -351,6 +352,7 @@ layout = dmc.Container(
                         dmc.TabsTab("Returns", value="returns"),
                         dmc.TabsTab("Rolling", value="rolling"),
                         dmc.TabsTab("Statistics", value="statistics"),
+                        dmc.TabsTab("Calendar Year", value="calendar"),
                         dmc.TabsTab("Correlogram", value="correlogram"),
                         dmc.TabsTab("Growth of $1", value="growth"),
                     ],
@@ -454,6 +456,31 @@ layout = dmc.Container(
                                         "resizable": True,
                                     },
                                     style={"height": "700px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="calendar",
+                    pt="md",
+                    children=[
+                        dcc.Loading(
+                            id="loading-calendar",
+                            type="default",
+                            children=[
+                                dag.AgGrid(
+                                    id="calendar-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                     },
@@ -1349,6 +1376,172 @@ def calculate_statistics_cached(json_str: str, periodicity: str, selected_series
         periodicity,
         long_short_dict,
     )
+
+
+@callback(
+    Output("calendar-grid", "columnDefs"),
+    Output("calendar-grid", "rowData"),
+    Input("main-tabs", "value"),
+    Input("raw-data-store", "data"),
+    Input("original-periodicity-store", "data"),
+    Input("periodicity-select", "value"),
+    Input("series-select", "data"),
+    Input("returns-type-select", "value"),
+    Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
+    prevent_initial_call=True,
+)
+def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+    """Update the Calendar Year Returns grid (lazy loaded)."""
+    # Lazy loading: only calculate when calendar tab is active
+    if active_tab != "calendar":
+        raise PreventUpdate
+
+    if raw_data is None or not selected_series:
+        return [], []
+
+    # Only calculate for daily or monthly original data
+    if original_periodicity not in ["daily", "monthly"]:
+        # Weekly data - don't calculate calendar year returns
+        return [], []
+
+    try:
+        # Use raw data (original periodicity) regardless of selected periodicity
+        df = json_to_df(raw_data)
+
+        # Apply date range filter if provided
+        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+        if date_range_dict:
+            start_date = pd.to_datetime(date_range_dict["start"])
+            end_date = pd.to_datetime(date_range_dict["end"])
+
+            if selected_periodicity == "monthly":
+                # Fall back to beginning of month (e.g., 1/31 -> 1/1)
+                start_date = start_date.replace(day=1)
+            elif selected_periodicity and selected_periodicity.startswith("weekly_"):
+                # Fall back 6 days (e.g., 1/8 -> 1/2)
+                start_date = start_date - pd.Timedelta(days=6)
+
+            df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+
+        # Parse assignments
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+        # Filter to selected series only
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            return [], []
+
+        # Calculate calendar year returns
+        calendar_returns = {}
+
+        for series in available_series:
+            is_long_short = long_short_dict.get(series, False)
+            benchmark = benchmark_dict.get(series, available_series[0])
+
+            # Get series returns based on returns_type and long-short
+            if is_long_short:
+                if benchmark == "None":
+                    series_returns = df[series]
+                elif benchmark == series:
+                    continue  # Skip if benchmark equals series
+                elif benchmark in df.columns:
+                    series_returns = df[series] - df[benchmark]
+                else:
+                    series_returns = df[series]
+            else:
+                if returns_type == "excess":
+                    if benchmark == "None":
+                        series_returns = df[series]
+                    elif benchmark == series:
+                        continue  # Skip if benchmark equals series
+                    elif benchmark in df.columns:
+                        series_returns = df[series] - df[benchmark]
+                    else:
+                        series_returns = df[series]
+                else:  # total returns
+                    series_returns = df[series]
+
+            # Group by year and compound returns
+            series_returns_df = series_returns.to_frame(name='returns')
+            series_returns_df['year'] = series_returns.index.year
+
+            # Calculate annual returns
+            annual_returns = series_returns_df.groupby('year')['returns'].apply(
+                lambda x: (1 + x).prod() - 1
+            )
+
+            # Filter out partial years (exclude first and last year if partial)
+            if len(annual_returns) > 0:
+                first_year = annual_returns.index.min()
+                last_year = annual_returns.index.max()
+
+                # Check if first year is complete
+                first_year_data = series_returns[series_returns.index.year == first_year]
+                if len(first_year_data) > 0:
+                    if original_periodicity == "daily":
+                        # For daily data, check if it starts in January
+                        first_date = first_year_data.index.min()
+                        if not first_date.is_year_start:  # Allow some tolerance
+                            annual_returns = annual_returns.drop(first_year, errors='ignore')
+                    else:  # monthly
+                        # For monthly data, check if all 12 months are present
+                        if len(first_year_data) < 12:
+                            annual_returns = annual_returns.drop(first_year, errors='ignore')
+
+                # Check if last year is complete
+                last_year_data = series_returns[series_returns.index.year == last_year]
+                if len(last_year_data) > 0:
+                    last_date = last_year_data.index.max()
+                    if not last_date.is_year_end:  # Allow some tolerance
+                        annual_returns = annual_returns.drop(last_year, errors='ignore')
+
+            calendar_returns[series] = annual_returns
+
+        if not calendar_returns:
+            return [], []
+
+        # Get all years that have data for at least one series
+        all_years = sorted(set().union(*[set(cr.index) for cr in calendar_returns.values()]))
+
+        if not all_years:
+            return [], []
+
+        # Create column definitions
+        column_defs = [
+            {
+                "field": "Year",
+                "pinned": "left",
+                "width": 100,
+            }
+        ]
+
+        for series in available_series:
+            if series in calendar_returns:
+                column_defs.append({
+                    "field": series,
+                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                    "width": 120,
+                })
+
+        # Build row data
+        row_data = []
+        for year in all_years:
+            row = {"Year": int(year)}
+            for series in available_series:
+                if series in calendar_returns and year in calendar_returns[series].index:
+                    row[series] = calendar_returns[series].loc[year]
+                else:
+                    row[series] = None
+            row_data.append(row)
+
+        return column_defs, row_data
+
+    except Exception:
+        return [], []
 
 
 @callback(
