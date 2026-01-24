@@ -39,6 +39,7 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # Project specific
 *.xlsx
