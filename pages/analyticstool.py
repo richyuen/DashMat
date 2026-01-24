@@ -1510,7 +1510,29 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         if not all_years:
             return [], []
 
-        # Create column definitions
+        # Build row data first to calculate max absolute value
+        row_data = []
+        for year in all_years:
+            row = {"Year": int(year)}
+            for series in available_series:
+                if series in calendar_returns and year in calendar_returns[series].index:
+                    row[series] = calendar_returns[series].loc[year]
+                else:
+                    row[series] = None
+            row_data.append(row)
+
+        # Calculate maximum absolute value for gradient scaling
+        max_abs_value = 0
+        for row in row_data:
+            for series in available_series:
+                if series in row and row[series] is not None:
+                    max_abs_value = max(max_abs_value, abs(row[series]))
+
+        # Prevent division by zero
+        if max_abs_value == 0:
+            max_abs_value = 1
+
+        # Create column definitions with conditional formatting
         column_defs = [
             {
                 "field": "Year",
@@ -1525,18 +1547,30 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                     "field": series,
                     "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                     "width": 120,
-                })
+                    "cellStyle": {
+                        "function": f"""
+                            if (params.value == null) return {{}};
+                            const maxAbs = {max_abs_value};
+                            const value = params.value;
+                            const intensity = Math.min(Math.abs(value) / maxAbs, 1);
 
-        # Build row data
-        row_data = []
-        for year in all_years:
-            row = {"Year": int(year)}
-            for series in available_series:
-                if series in calendar_returns and year in calendar_returns[series].index:
-                    row[series] = calendar_returns[series].loc[year]
-                else:
-                    row[series] = None
-            row_data.append(row)
+                            if (value > 0) {{
+                                // Green gradient from white to emerald-600
+                                const r = Math.round(255 - (255 - 22) * intensity);
+                                const g = Math.round(255 - (255 - 163) * intensity);
+                                const b = Math.round(255 - (255 - 74) * intensity);
+                                return {{'backgroundColor': `rgb(${{r}}, ${{g}}, ${{b}})`}};
+                            }} else if (value < 0) {{
+                                // Red gradient from white to red-600
+                                const r = Math.round(255 - (255 - 220) * intensity);
+                                const g = Math.round(255 - (255 - 38) * intensity);
+                                const b = Math.round(255 - (255 - 38) * intensity);
+                                return {{'backgroundColor': `rgb(${{r}}, ${{g}}, ${{b}})`}};
+                            }}
+                            return {{}};
+                        """
+                    }
+                })
 
         return column_defs, row_data
 
