@@ -3406,20 +3406,27 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
                     returns = df[series] - df[benchmark]
                 else:
                     returns = df[series]
+                
+                # Drop NaNs before calculation to handle different start dates
+                returns = returns.dropna()
 
                 # Calculate cumulative growth
                 growth = (1 + returns).cumprod()
             elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
                 # For excess returns, calculate drawdown of series relative to benchmark
                 # Compound each separately, then calculate relative performance
-                series_growth = (1 + df[series]).cumprod()
-                benchmark_growth = (1 + df[benchmark]).cumprod()
+                
+                # Align data first by dropping NaNs where either series or benchmark is missing
+                aligned_df = df[[series, benchmark]].dropna()
+                
+                series_growth = (1 + aligned_df[series]).cumprod()
+                benchmark_growth = (1 + aligned_df[benchmark]).cumprod()
 
                 # Relative growth (series vs benchmark)
                 growth = series_growth / benchmark_growth
             else:
                 # For total returns, use series returns directly
-                returns = df[series]
+                returns = df[series].dropna()
                 growth = (1 + returns).cumprod()
 
             # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
@@ -3538,20 +3545,27 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
                     returns = df[series] - df[benchmark]
                 else:
                     returns = df[series]
+                
+                # Drop NaNs before calculation to handle different start dates
+                returns = returns.dropna()
 
                 # Calculate cumulative growth
                 growth = (1 + returns).cumprod()
             elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
                 # For excess returns, calculate drawdown of series relative to benchmark
                 # Compound each separately, then calculate relative performance
-                series_growth = (1 + df[series]).cumprod()
-                benchmark_growth = (1 + df[benchmark]).cumprod()
+                
+                # Align data first by dropping NaNs where either series or benchmark is missing
+                aligned_df = df[[series, benchmark]].dropna()
+                
+                series_growth = (1 + aligned_df[series]).cumprod()
+                benchmark_growth = (1 + aligned_df[benchmark]).cumprod()
 
                 # Relative growth (series vs benchmark)
                 growth = series_growth / benchmark_growth
             else:
                 # For total returns, use series returns directly
-                returns = df[series]
+                returns = df[series].dropna()
                 growth = (1 + returns).cumprod()
 
             # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
@@ -3952,20 +3966,27 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
                     returns = df[series] - df[benchmark]
                 else:
                     returns = df[series]
+                
+                # Drop NaNs before calculation to handle different start dates
+                returns = returns.dropna()
 
                 # Calculate cumulative growth
                 growth = (1 + returns).cumprod()
             elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
                 # For excess returns, calculate drawdown of series relative to benchmark
                 # Compound each separately, then calculate relative performance
-                series_growth = (1 + df[series]).cumprod()
-                benchmark_growth = (1 + df[benchmark]).cumprod()
+                
+                # Align data first by dropping NaNs where either series or benchmark is missing
+                aligned_df = df[[series, benchmark]].dropna()
+                
+                series_growth = (1 + aligned_df[series]).cumprod()
+                benchmark_growth = (1 + aligned_df[benchmark]).cumprod()
 
                 # Relative growth (series vs benchmark)
                 growth = series_growth / benchmark_growth
             else:
                 # For total returns, use series returns directly
-                returns = df[series]
+                returns = df[series].dropna()
                 growth = (1 + returns).cumprod()
 
             # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
