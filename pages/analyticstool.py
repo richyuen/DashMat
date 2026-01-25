@@ -264,16 +264,18 @@ layout = dmc.Container(
                                             w=200,
                                             disabled=True,
                                         ),
-                                        dmc.Select(
-                                            id="returns-type-select",
-                                            label="Returns Type",
-                                            data=[
-                                                {"value": "total", "label": "Total Returns"},
-                                                {"value": "excess", "label": "Excess Returns"},
-                                            ],
-                                            value="total",
-                                            w=200,
-                                        ),
+                                        html.Div([
+                                            dmc.Text("Returns Type", size="sm", mb=5, c="dimmed"),
+                                            dmc.SegmentedControl(
+                                                id="returns-type-select",
+                                                data=[
+                                                    {"value": "total", "label": "Total"},
+                                                    {"value": "excess", "label": "Excess"},
+                                                ],
+                                                value="total",
+                                                w=200,
+                                            ),
+                                        ]),
                                     ],
                                 ),
                                 html.Div([
