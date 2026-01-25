@@ -329,7 +329,7 @@ layout = dmc.Container(
                                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
                                 ),
                                 # Hidden store for series-select value (driven by checkboxes)
-                                dcc.Store(id="series-select", data=[]),
+                                dcc.Store(id="series-select", data=[], storage_type="local"),
                             ]
                         ),
                     ],
@@ -1196,10 +1196,10 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
     benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
 
     # Calculate dynamic width based on longest series name
-    # Use approximately 8 pixels per character in monospace font, with minimum of 80px
+    # Use approximately 8 pixels per character in monospace font, with minimum of 150px
     max_series_length = max(len(s) for s in all_series) if all_series else 10
-    series_width = max(80, max_series_length * 8 + 20)  # Add padding
-    benchmark_width = series_width  # Same width for consistency
+    series_width = max(150, max_series_length * 8 + 20)  # Add padding
+    benchmark_width = int(series_width * 1.3)  # Make benchmark wider to prevent cutoff
 
     # Create column headers
     header_row = dmc.Group(
@@ -1224,9 +1224,28 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
     # Create a row for each series in the order specified
     series_rows = [header_row]
     for idx, series in enumerate(series_order):
-        current_benchmark = current_assignments.get(series, default_benchmark) if current_assignments else default_benchmark
-        is_long_short = long_short_assignments.get(series, False) if long_short_assignments else False
+        # Pre-compute ALL conditional values to avoid serialization issues
+        if current_assignments:
+            current_benchmark = current_assignments.get(series, default_benchmark)
+        else:
+            current_benchmark = default_benchmark
+
+        if long_short_assignments:
+            is_long_short = long_short_assignments.get(series, False)
+        else:
+            is_long_short = False
+
         is_selected = series in selected_series
+
+        # Pre-compute benchmark value
+        if current_benchmark in all_series or current_benchmark == "None":
+            benchmark_value = current_benchmark
+        else:
+            benchmark_value = default_benchmark
+
+        # Pre-compute disabled states for move buttons
+        up_disabled = (idx == 0)
+        down_disabled = (idx == len(series_order) - 1)
 
         series_rows.append(
             dmc.Group(
@@ -1243,7 +1262,7 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
                                 variant="subtle",
                                 color="gray",
                                 size="xs",
-                                disabled=(idx == 0),
+                                disabled=up_disabled,
                                 style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
                             ),
                             dmc.ActionIcon(
@@ -1252,7 +1271,7 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
                                 variant="subtle",
                                 color="gray",
                                 size="xs",
-                                disabled=(idx == len(series_order) - 1),
+                                disabled=down_disabled,
                                 style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
                             ),
                         ],
@@ -1269,7 +1288,7 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
                     dmc.Select(
                         id={"type": "benchmark-select", "series": series},
                         data=benchmark_options,
-                        value=current_benchmark if current_benchmark in all_series or current_benchmark == "None" else default_benchmark,
+                        value=benchmark_value,
                         size="xs",
                         w=benchmark_width,
                         placeholder="Benchmark",
@@ -2427,6 +2446,24 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         if max_abs_value == 0:
             max_abs_value = 1
 
+        # Add color data to each row for cellStyle
+        for row in row_data:
+            for series in available_series:
+                if series in row and row[series] is not None:
+                    value = row[series]
+                    intensity = min(abs(value) / max_abs_value, 1)
+                    if value > 0:
+                        # Green gradient
+                        r = int(255 - (255 - 22) * intensity)
+                        g = int(255 - (255 - 163) * intensity)
+                        b = int(255 - (255 - 74) * intensity)
+                    else:
+                        # Red gradient
+                        r = int(255 - (255 - 220) * intensity)
+                        g = int(255 - (255 - 38) * intensity)
+                        b = int(255 - (255 - 38) * intensity)
+                    row[f"{series}_color"] = f"rgb({r}, {g}, {b})"
+
         # Create column definitions with conditional formatting
         column_defs = [
             {
@@ -2442,29 +2479,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                     "field": series,
                     "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                     "width": 120,
-                    "cellStyle": {
-                        "function": f"""
-                            if (params.value == null) return {{}};
-                            const maxAbs = {max_abs_value};
-                            const value = params.value;
-                            const intensity = Math.min(Math.abs(value) / maxAbs, 1);
-
-                            if (value > 0) {{
-                                // Green gradient from white to emerald-600
-                                const r = Math.round(255 - (255 - 22) * intensity);
-                                const g = Math.round(255 - (255 - 163) * intensity);
-                                const b = Math.round(255 - (255 - 74) * intensity);
-                                return {{'backgroundColor': `rgb(${{r}}, ${{g}}, ${{b}})`}};
-                            }} else if (value < 0) {{
-                                // Red gradient from white to red-600
-                                const r = Math.round(255 - (255 - 220) * intensity);
-                                const g = Math.round(255 - (255 - 38) * intensity);
-                                const b = Math.round(255 - (255 - 38) * intensity);
-                                return {{'backgroundColor': `rgb(${{r}}, ${{g}}, ${{b}})`}};
-                            }}
-                            return {{}};
-                        """
-                    }
+                    "cellStyle": {"function": f"params.data.{series}_color ? {{'backgroundColor': params.data.{series}_color}} : {{}}"}
                 })
 
         return column_defs, row_data
@@ -2513,33 +2528,25 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             column_defs.append({
                 "field": series_name,
                 "width": 120,
-                # Dynamic formatting based on row
+                # Dynamic formatting based on row - use expression instead of statements
                 "valueFormatter": {
-                    "function": """
-                        const fmt = params.data._format;
-                        if (!fmt || params.value == null) return params.value;
-                        if (fmt.includes('%')) return d3.format(fmt)(params.value);
-                        return d3.format(fmt)(params.value);
-                    """
+                    "function": "(!params.data._format || params.value == null) ? params.value : d3.format(params.data._format)(params.value)"
                 },
             })
 
-        # Build transposed rows - keep raw values, format will be applied per-row
+        # Build transposed rows - keep raw values for JavaScript formatting
         row_data = []
         for stat_name, fmt in STATS_CONFIG:
             row = {"Statistic": stat_name, "_format": fmt}
             for series_stats in stats:
                 series_name = series_stats["Series"]
                 value = series_stats.get(stat_name)
-                if fmt is None:
-                    row[series_name] = value
+                # Check if value is NaN and replace with empty string
+                if value is None or (isinstance(value, float) and pd.isna(value)):
+                    row[series_name] = None
                 else:
-                    formatted_value = format(value, fmt)
-                    # Check if the formatted value contains "nan" (e.g., "nan", "nan%", "nan.00")
-                    if isinstance(formatted_value, str) and "nan" in formatted_value.lower():
-                        row[series_name] = ""
-                    else:
-                        row[series_name] = formatted_value
+                    # Keep raw numeric values for JavaScript formatting
+                    row[series_name] = value
 
             row_data.append(row)
             
