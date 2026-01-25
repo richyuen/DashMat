@@ -6,6 +6,7 @@ import json
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -1262,7 +1263,7 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
                     ),
                     # Trash button to delete series
                     dmc.ActionIcon(
-                        "🗑️",
+                        DashIconify(icon="tabler:trash-x", color="red", width=20),
                         id={"type": "delete-series-button", "series": series},
                         variant="subtle",
                         color="red",
