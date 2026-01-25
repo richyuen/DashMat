@@ -3054,10 +3054,16 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
             start_date = first_date - period_offset
             start_row = pd.DataFrame(0.0, index=[start_date], columns=drawdown_df.columns)
             drawdown_df = pd.concat([start_row, drawdown_df])
+            # Ensure index name is preserved
+            drawdown_df.index.name = "Date"
 
         # Reset index to include Date as a column
         drawdown_df = drawdown_df.reset_index()
-        drawdown_df["Date"] = drawdown_df["Date"].dt.strftime("%Y-%m-%d")
+        if "Date" in drawdown_df.columns:
+            drawdown_df["Date"] = drawdown_df["Date"].dt.strftime("%Y-%m-%d")
+        elif "index" in drawdown_df.columns:
+            drawdown_df["Date"] = drawdown_df["index"].dt.strftime("%Y-%m-%d")
+            drawdown_df = drawdown_df.drop(columns=["index"])
 
         # Define column definitions
         column_defs = [
