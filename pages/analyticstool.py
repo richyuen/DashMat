@@ -1181,6 +1181,12 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
     # Create benchmark options with "None" as first option
     benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
 
+    # Calculate dynamic width based on longest series name
+    # Use approximately 8 pixels per character in monospace font, with minimum of 80px
+    max_series_length = max(len(s) for s in all_series) if all_series else 10
+    series_width = max(80, max_series_length * 8 + 20)  # Add padding
+    benchmark_width = series_width  # Same width for consistency
+
     # Create column headers
     header_row = dmc.Group(
         mb="xs",
@@ -1191,9 +1197,9 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
             # Spacer for checkbox
             dmc.Box(w=20),
             # Series label
-            dmc.Text("Series", size="xs", fw=700, w=120, c="dimmed"),
+            dmc.Text("Series", size="xs", fw=700, w=series_width, c="dimmed"),
             # Benchmark label
-            dmc.Text("Benchmark", size="xs", fw=700, w=150, c="dimmed"),
+            dmc.Text("Benchmark", size="xs", fw=700, w=benchmark_width, c="dimmed"),
             # L/S label
             dmc.Text("L/S", size="xs", fw=700, w=50, c="dimmed"),
             # Spacer for delete button
@@ -1244,14 +1250,14 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
                         size="xs",
                     ),
                     # Series name
-                    dmc.Text(series, size="sm", w=120, style={"fontFamily": "monospace"}),
+                    dmc.Text(series, size="sm", w=series_width, style={"fontFamily": "monospace"}),
                     # Benchmark dropdown
                     dmc.Select(
                         id={"type": "benchmark-select", "series": series},
                         data=benchmark_options,
                         value=current_benchmark if current_benchmark in all_series or current_benchmark == "None" else default_benchmark,
                         size="xs",
-                        w=150,
+                        w=benchmark_width,
                         placeholder="Benchmark",
                     ),
                     # Long-Short switch
