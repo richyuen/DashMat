@@ -1499,6 +1499,7 @@ def cancel_edit_mode(n_clicks_list):
     Output("series-select", "data", allow_duplicate=True),
     Output("series-order-store", "data", allow_duplicate=True),
     Output("series-edit-mode", "data", allow_duplicate=True),
+    Output("series-select-value-store", "data", allow_duplicate=True),
     Input({"type": "save-edit-button", "series": ALL}, "n_clicks"),
     State({"type": "save-edit-button", "series": ALL}, "id"),
     State({"type": "edit-series-input", "series": ALL}, "value"),
@@ -1546,13 +1547,13 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
 
     # If name unchanged, just exit edit mode
     if new_name == old_name or not new_name:
-        return no_update, no_update, no_update, no_update, no_update, None
+        return no_update, no_update, no_update, no_update, no_update, None, no_update
 
     # Check if new name already exists
     df = json_to_df(raw_data)
     if new_name in df.columns:
         # Don't allow duplicate names, exit edit mode
-        return no_update, no_update, no_update, no_update, no_update, None
+        return no_update, no_update, no_update, no_update, no_update, None, no_update
 
     # Rename column in DataFrame
     df = df.rename(columns={old_name: new_name})
@@ -1578,7 +1579,7 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
     new_series_order = [new_name if s == old_name else s for s in series_order]
 
     # Return updated data and exit edit mode
-    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, None
+    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, None, new_series_select
 
 
 @callback(
