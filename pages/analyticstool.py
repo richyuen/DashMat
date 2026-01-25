@@ -682,8 +682,36 @@ layout = dmc.Container(
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
+        dcc.Store(id="rename-series-old", data=None),
         dcc.Download(id="download-excel"),
         dcc.Location(id="url-location", refresh=True),
+        # Rename series modal
+        dmc.Modal(
+            id="rename-series-modal",
+            title="Rename Series",
+            size="md",
+            children=[
+                dmc.Stack(
+                    gap="md",
+                    children=[
+                        dmc.TextInput(
+                            id="rename-series-input",
+                            label="New series name",
+                            placeholder="Enter new name",
+                            w="100%",
+                        ),
+                        dmc.Group(
+                            justify="flex-end",
+                            gap="sm",
+                            children=[
+                                dmc.Button("Cancel", id="rename-cancel-button", variant="subtle"),
+                                dmc.Button("Save", id="rename-save-button", color="blue"),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
         # Hidden file upload (triggered by menu item)
         html.Div(
             dcc.Upload(
@@ -1282,8 +1310,26 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
                         checked=is_selected,
                         size="xs",
                     ),
-                    # Series name
-                    dmc.Text(series, size="sm", w=series_width, style={"fontFamily": "monospace"}),
+                    # Series name with edit button
+                    dmc.Group(
+                        gap=4,
+                        w=series_width,
+                        wrap="nowrap",
+                        children=[
+                            dmc.Text(
+                                series,
+                                size="sm",
+                                style={"fontFamily": "monospace", "flex": 1},
+                            ),
+                            dmc.ActionIcon(
+                                DashIconify(icon="tabler:pencil", width=14),
+                                id={"type": "edit-series-button", "series": series},
+                                variant="subtle",
+                                color="gray",
+                                size="xs",
+                            ),
+                        ],
+                    ),
                     # Benchmark dropdown
                     dmc.Select(
                         id={"type": "benchmark-select", "series": series},
@@ -1396,6 +1442,112 @@ def delete_series(n_clicks_list, raw_data, selected_series):
     new_selected = [s for s in (selected_series or []) if s != series_to_delete]
 
     return df_to_json(df), new_selected
+
+
+@callback(
+    Output("rename-series-modal", "opened"),
+    Output("rename-series-old", "data"),
+    Output("rename-series-input", "value"),
+    Input({"type": "edit-series-button", "series": ALL}, "n_clicks"),
+    State({"type": "edit-series-button", "series": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def open_rename_modal(n_clicks_list, button_ids):
+    """Open the rename modal when edit button is clicked."""
+    if not n_clicks_list or all(n is None for n in n_clicks_list):
+        raise PreventUpdate
+
+    # Find which button was clicked
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered_id = ctx.triggered[0]["prop_id"]
+    import json
+    try:
+        id_dict = json.loads(triggered_id.rsplit(".", 1)[0])
+        series_name = id_dict.get("series")
+    except (json.JSONDecodeError, KeyError):
+        raise PreventUpdate
+
+    if not series_name:
+        raise PreventUpdate
+
+    # Open modal, store old name, and populate input with current name
+    return True, series_name, series_name
+
+
+@callback(
+    Output("rename-series-modal", "opened", allow_duplicate=True),
+    Input("rename-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def close_rename_modal(n_clicks):
+    """Close the rename modal when cancel is clicked."""
+    if n_clicks:
+        return False
+    raise PreventUpdate
+
+
+@callback(
+    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("long-short-store", "data", allow_duplicate=True),
+    Output("series-select", "data", allow_duplicate=True),
+    Output("series-order-store", "data", allow_duplicate=True),
+    Output("rename-series-modal", "opened", allow_duplicate=True),
+    Input("rename-save-button", "n_clicks"),
+    State("rename-series-old", "data"),
+    State("rename-series-input", "value"),
+    State("raw-data-store", "data"),
+    State("benchmark-assignments-store", "data"),
+    State("long-short-store", "data"),
+    State("series-select", "data"),
+    State("series-order-store", "data"),
+    prevent_initial_call=True,
+)
+def save_rename(n_clicks, old_name, new_name, raw_data, benchmark_assignments, long_short_assignments, series_select, series_order):
+    """Save the series rename."""
+    if not n_clicks or not old_name or not new_name:
+        raise PreventUpdate
+
+    new_name = new_name.strip()
+
+    # If name unchanged, just close modal
+    if new_name == old_name or not new_name:
+        return no_update, no_update, no_update, no_update, no_update, False
+
+    # Check if new name already exists
+    df = json_to_df(raw_data)
+    if new_name in df.columns:
+        # Don't allow duplicate names, just close modal
+        return no_update, no_update, no_update, no_update, no_update, False
+
+    # Rename column in DataFrame
+    df = df.rename(columns={old_name: new_name})
+    new_raw_data = df_to_json(df)
+
+    # Update benchmark assignments
+    new_benchmark_assignments = {}
+    for series, benchmark in benchmark_assignments.items():
+        series_key = new_name if series == old_name else series
+        benchmark_value = new_name if benchmark == old_name else benchmark
+        new_benchmark_assignments[series_key] = benchmark_value
+
+    # Update long-short assignments
+    new_long_short_assignments = {}
+    for series, is_long_short in long_short_assignments.items():
+        series_key = new_name if series == old_name else series
+        new_long_short_assignments[series_key] = is_long_short
+
+    # Update series selection
+    new_series_select = [new_name if s == old_name else s for s in series_select]
+
+    # Update series order
+    new_series_order = [new_name if s == old_name else s for s in series_order]
+
+    # Return updated data and close modal
+    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, False
 
 
 @callback(
