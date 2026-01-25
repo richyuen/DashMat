@@ -696,6 +696,10 @@ layout = dmc.Container(
             ),
             style={"display": "none"},
         ),
+        # Store to trigger clientside focus on edit input
+        dcc.Store(id="edit-box-focus-trigger", data=None),
+        # Dummy div for clientside callback output
+        html.Div(id="dummy-focus-output"),
     ],
 )
 
@@ -735,6 +739,32 @@ clientside_callback(
     """,
     Output("upload-trigger", "children"),
     Input("menu-add-series", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(series_name) {
+        if (series_name) {
+            // Use a short delay to ensure the input is rendered
+            setTimeout(function() {
+                // The ID is a JSON string, e.g., {"type":"edit-series-input","series":"SPY"}
+                // We construct the selector to find the input element.
+                var selector = `[id*='"series":"${series_name}"'][id*='"type":"edit-series-input"']`;
+                var inputElement = document.querySelector(selector);
+                
+                if (inputElement) {
+                    inputElement.focus();
+                    inputElement.select();
+                }
+            }, 50);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("dummy-focus-output", "children"),
+    Input("edit-box-focus-trigger", "data"),
     prevent_initial_call=True,
 )
 
@@ -1450,6 +1480,7 @@ def delete_series(n_clicks_list, raw_data, selected_series):
 
 @callback(
     Output("series-edit-mode", "data"),
+    Output("edit-box-focus-trigger", "data", allow_duplicate=True),
     Input({"type": "edit-series-button", "series": ALL}, "n_clicks"),
     State({"type": "edit-series-button", "series": ALL}, "id"),
     prevent_initial_call=True,
@@ -1475,11 +1506,12 @@ def enter_edit_mode(n_clicks_list, button_ids):
     if not series_name:
         raise PreventUpdate
 
-    return series_name
+    return series_name, series_name
 
 
 @callback(
     Output("series-edit-mode", "data", allow_duplicate=True),
+    Output("edit-box-focus-trigger", "data", allow_duplicate=True),
     Input({"type": "cancel-edit-button", "series": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
@@ -1489,7 +1521,7 @@ def cancel_edit_mode(n_clicks_list):
         raise PreventUpdate
 
     # Exit edit mode
-    return None
+    return None, None
 
 
 @callback(
@@ -1500,6 +1532,7 @@ def cancel_edit_mode(n_clicks_list):
     Output("series-order-store", "data", allow_duplicate=True),
     Output("series-edit-mode", "data", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True),
+    Output("edit-box-focus-trigger", "data", allow_duplicate=True),
     Input({"type": "save-edit-button", "series": ALL}, "n_clicks"),
     State({"type": "save-edit-button", "series": ALL}, "id"),
     State({"type": "edit-series-input", "series": ALL}, "value"),
@@ -1547,13 +1580,13 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
 
     # If name unchanged, just exit edit mode
     if new_name == old_name or not new_name:
-        return no_update, no_update, no_update, no_update, no_update, None, no_update
+        return no_update, no_update, no_update, no_update, no_update, None, no_update, None
 
     # Check if new name already exists
     df = json_to_df(raw_data)
     if new_name in df.columns:
         # Don't allow duplicate names, exit edit mode
-        return no_update, no_update, no_update, no_update, no_update, None, no_update
+        return no_update, no_update, no_update, no_update, no_update, None, no_update, None
 
     # Rename column in DataFrame
     df = df.rename(columns={old_name: new_name})
@@ -1579,7 +1612,7 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
     new_series_order = [new_name if s == old_name else s for s in series_order]
 
     # Return updated data and exit edit mode
-    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, None, new_series_select
+    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, None, new_series_select, None
 
 
 @callback(
