@@ -2904,11 +2904,14 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
             # Calculate cumulative growth
             growth = (1 + returns).cumprod()
 
-            # Calculate running maximum
-            running_max = growth.cummax()
+            # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
+            # This ensures that a negative first period return counts as a drawdown
+            growth_array = np.concatenate([[1.0], growth.values])
+            running_max_array = np.maximum.accumulate(growth_array)
 
-            # Calculate drawdown
-            drawdown = (growth / running_max) - 1
+            # Calculate drawdown (exclude the prepended 1.0)
+            drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
+            drawdown = pd.Series(drawdown_array, index=growth.index)
 
             # Create figure
             fig = go.Figure()
@@ -3005,11 +3008,14 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
             # Calculate cumulative growth
             growth = (1 + returns).cumprod()
 
-            # Calculate running maximum
-            running_max = growth.cummax()
+            # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
+            # This ensures that a negative first period return counts as a drawdown
+            growth_array = np.concatenate([[1.0], growth.values])
+            running_max_array = np.maximum.accumulate(growth_array)
 
-            # Calculate drawdown
-            drawdown = (growth / running_max) - 1
+            # Calculate drawdown (exclude the prepended 1.0)
+            drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
+            drawdown = pd.Series(drawdown_array, index=growth.index)
 
             drawdown_df[series] = drawdown
 
