@@ -1496,6 +1496,7 @@ def close_rename_modal(n_clicks):
     Output("series-select", "data", allow_duplicate=True),
     Output("series-order-store", "data", allow_duplicate=True),
     Output("rename-series-modal", "opened", allow_duplicate=True),
+    Output("series-select-value-store", "data", allow_duplicate=True),
     Input("rename-save-button", "n_clicks"),
     State("rename-series-old", "data"),
     State("rename-series-input", "value"),
@@ -1515,13 +1516,13 @@ def save_rename(n_clicks, old_name, new_name, raw_data, benchmark_assignments, l
 
     # If name unchanged, just close modal
     if new_name == old_name or not new_name:
-        return no_update, no_update, no_update, no_update, no_update, False
+        return no_update, no_update, no_update, no_update, no_update, False, no_update
 
     # Check if new name already exists
     df = json_to_df(raw_data)
     if new_name in df.columns:
         # Don't allow duplicate names, just close modal
-        return no_update, no_update, no_update, no_update, no_update, False
+        return no_update, no_update, no_update, no_update, no_update, False, no_update
 
     # Rename column in DataFrame
     df = df.rename(columns={old_name: new_name})
@@ -1547,7 +1548,7 @@ def save_rename(n_clicks, old_name, new_name, raw_data, benchmark_assignments, l
     new_series_order = [new_name if s == old_name else s for s in series_order]
 
     # Return updated data and close modal
-    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, False
+    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, False, new_series_select
 
 
 @callback(
