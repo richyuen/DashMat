@@ -2880,6 +2880,17 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
         if not available_series:
             return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.DateOffset(months=1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
+
         # Create individual drawdown charts for each series
         charts = []
         for series in available_series:
@@ -2912,6 +2923,13 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
             # Calculate drawdown (exclude the prepended 1.0)
             drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
             drawdown = pd.Series(drawdown_array, index=growth.index)
+
+            # Prepend starting value of 0.0 drawdown at one period before first date
+            if len(drawdown) > 0:
+                first_date = drawdown.index[0]
+                start_date = first_date - period_offset
+                start_value = pd.Series([0.0], index=[start_date])
+                drawdown = pd.concat([start_value, drawdown])
 
             # Create figure
             fig = go.Figure()
@@ -2984,6 +3002,17 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
         if not available_series:
             return [], []
 
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.DateOffset(months=1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
+
         # Calculate drawdown for each series
         drawdown_df = pd.DataFrame(index=df.index)
         for series in available_series:
@@ -3018,6 +3047,13 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
             drawdown = pd.Series(drawdown_array, index=growth.index)
 
             drawdown_df[series] = drawdown
+
+        # Prepend starting row with 0.0 drawdown at one period before first date
+        if len(drawdown_df) > 0:
+            first_date = drawdown_df.index[0]
+            start_date = first_date - period_offset
+            start_row = pd.DataFrame(0.0, index=[start_date], columns=drawdown_df.columns)
+            drawdown_df = pd.concat([start_row, drawdown_df])
 
         # Reset index to include Date as a column
         drawdown_df = drawdown_df.reset_index()
