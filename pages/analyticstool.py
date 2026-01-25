@@ -353,9 +353,9 @@ layout = dmc.Container(
                         dmc.TabsTab("Returns", value="returns"),
                         dmc.TabsTab("Rolling", value="rolling"),
                         dmc.TabsTab("Calendar Year", value="calendar"),
-                        dmc.TabsTab("Correlogram", value="correlogram"),
                         dmc.TabsTab("Growth of $1", value="growth"),
                         dmc.TabsTab("Drawdown", value="drawdown"),
+                        dmc.TabsTab("Correlogram", value="correlogram"),
                     ],
                 ),
                 dmc.TabsPanel(
