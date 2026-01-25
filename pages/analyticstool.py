@@ -2857,12 +2857,13 @@ def update_growth_charts(active_tab, raw_data, periodicity, selected_series, ben
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
+    Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update Drawdown charts (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and chart is checked
     if active_tab != "drawdown" or not chart_checked:
@@ -2917,12 +2918,21 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
                     returns = df[series] - df[benchmark]
                 else:
                     returns = df[series]
-            else:
-                # For non-long-short, use total returns
-                returns = df[series]
 
-            # Calculate cumulative growth
-            growth = (1 + returns).cumprod()
+                # Calculate cumulative growth
+                growth = (1 + returns).cumprod()
+            elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
+                # For excess returns, calculate drawdown of series relative to benchmark
+                # Compound each separately, then calculate relative performance
+                series_growth = (1 + df[series]).cumprod()
+                benchmark_growth = (1 + df[benchmark]).cumprod()
+
+                # Relative growth (series vs benchmark)
+                growth = series_growth / benchmark_growth
+            else:
+                # For total returns, use series returns directly
+                returns = df[series]
+                growth = (1 + returns).cumprod()
 
             # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
             # This ensures that a negative first period return counts as a drawdown
@@ -2979,12 +2989,13 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
+    Input("returns-type-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update Drawdown grid (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and grid is shown (chart not checked)
     if active_tab != "drawdown" or chart_checked:
@@ -3039,12 +3050,21 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
                     returns = df[series] - df[benchmark]
                 else:
                     returns = df[series]
-            else:
-                # For non-long-short, use total returns
-                returns = df[series]
 
-            # Calculate cumulative growth
-            growth = (1 + returns).cumprod()
+                # Calculate cumulative growth
+                growth = (1 + returns).cumprod()
+            elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
+                # For excess returns, calculate drawdown of series relative to benchmark
+                # Compound each separately, then calculate relative performance
+                series_growth = (1 + df[series]).cumprod()
+                benchmark_growth = (1 + df[benchmark]).cumprod()
+
+                # Relative growth (series vs benchmark)
+                growth = series_growth / benchmark_growth
+            else:
+                # For total returns, use series returns directly
+                returns = df[series]
+                growth = (1 + returns).cumprod()
 
             # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
             # This ensures that a negative first period return counts as a drawdown
@@ -3396,7 +3416,7 @@ def calculate_growth_of_dollar(returns_df, periodicity):
     return growth_df
 
 
-def calculate_drawdown(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate drawdown for Excel export."""
     try:
         df = resample_returns_cached(raw_data, periodicity or "daily")
@@ -3444,12 +3464,21 @@ def calculate_drawdown(raw_data, periodicity, selected_series, benchmark_assignm
                     returns = df[series] - df[benchmark]
                 else:
                     returns = df[series]
-            else:
-                # For non-long-short, use total returns
-                returns = df[series]
 
-            # Calculate cumulative growth
-            growth = (1 + returns).cumprod()
+                # Calculate cumulative growth
+                growth = (1 + returns).cumprod()
+            elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
+                # For excess returns, calculate drawdown of series relative to benchmark
+                # Compound each separately, then calculate relative performance
+                series_growth = (1 + df[series]).cumprod()
+                benchmark_growth = (1 + df[benchmark]).cumprod()
+
+                # Relative growth (series vs benchmark)
+                growth = series_growth / benchmark_growth
+            else:
+                # For total returns, use series returns directly
+                returns = df[series]
+                growth = (1 + returns).cumprod()
 
             # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
             # This ensures that a negative first period return counts as a drawdown
@@ -3641,6 +3670,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
                 raw_data,
                 periodicity,
                 selected_series,
+                returns_type,
                 benchmark_assignments,
                 long_short_assignments,
                 date_range
