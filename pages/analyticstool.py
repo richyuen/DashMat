@@ -419,10 +419,13 @@ layout = dmc.Container(
                                     w=120,
                                     size="sm",
                                 ),
-                                dmc.Switch(
+                                dmc.SegmentedControl(
                                     id="rolling-chart-switch",
-                                    label="Chart",
-                                    checked=False,
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="table",
                                     size="sm",
                                 ),
                             ],
@@ -556,10 +559,13 @@ layout = dmc.Container(
                         dmc.Group(
                             mb="md",
                             children=[
-                                dmc.Switch(
+                                dmc.SegmentedControl(
                                     id="growth-chart-switch",
-                                    label="Chart",
-                                    checked=True,
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="chart",
                                     size="sm",
                                 ),
                             ],
@@ -606,10 +612,13 @@ layout = dmc.Container(
                         dmc.Group(
                             mb="md",
                             children=[
-                                dmc.Switch(
+                                dmc.SegmentedControl(
                                     id="drawdown-chart-switch",
-                                    label="Chart",
-                                    checked=True,
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="chart",
                                     size="sm",
                                 ),
                             ],
@@ -663,9 +672,9 @@ layout = dmc.Container(
         dcc.Store(id="active-tab-store", data="statistics", storage_type="local"),
         dcc.Store(id="rolling-window-store", data="1y", storage_type="local"),
         dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="local"),
-        dcc.Store(id="rolling-chart-switch-store", data=False, storage_type="local"),
-        dcc.Store(id="drawdown-chart-switch-store", data=True, storage_type="local"),
-        dcc.Store(id="growth-chart-switch-store", data=True, storage_type="local"),
+        dcc.Store(id="rolling-chart-switch-store", data="table", storage_type="local"),
+        dcc.Store(id="drawdown-chart-switch-store", data="chart", storage_type="local"),
+        dcc.Store(id="growth-chart-switch-store", data="chart", storage_type="local"),
         dcc.Store(id="monthly-view-store", data=False, storage_type="local"),
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
@@ -921,34 +930,34 @@ def restore_rolling_options(raw_data, stored_window, stored_return_type):
 
 @callback(
     Output("rolling-chart-switch-store", "data"),
-    Input("rolling-chart-switch", "checked"),
+    Input("rolling-chart-switch", "value"),
     prevent_initial_call=True,
 )
 def save_rolling_chart_switch(value):
     """Save rolling chart switch state to local storage."""
-    return value if value is not None else False
+    return value if value is not None else "table"
 
 
 @callback(
-    Output("rolling-chart-switch", "checked"),
+    Output("rolling-chart-switch", "value"),
     Input("raw-data-store", "data"),
     State("rolling-chart-switch-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_rolling_chart_switch(raw_data, stored_chart_switch):
     """Restore rolling chart switch from local storage on page load."""
-    return stored_chart_switch if stored_chart_switch is not None else False
+    return stored_chart_switch if stored_chart_switch is not None else "table"
 
 
 @callback(
     Output("rolling-grid-container", "style"),
     Output("rolling-chart-container", "style"),
-    Input("rolling-chart-switch", "checked"),
+    Input("rolling-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def toggle_rolling_view(chart_checked):
+def toggle_rolling_view(view_type):
     """Toggle between grid and chart view for rolling returns."""
-    if chart_checked:
+    if view_type == "chart":
         return {"display": "none"}, {"display": "block"}
     else:
         return {"display": "block"}, {"display": "none"}
@@ -956,34 +965,34 @@ def toggle_rolling_view(chart_checked):
 
 @callback(
     Output("drawdown-chart-switch-store", "data"),
-    Input("drawdown-chart-switch", "checked"),
+    Input("drawdown-chart-switch", "value"),
     prevent_initial_call=True,
 )
 def save_drawdown_chart_switch(value):
     """Save drawdown chart switch state to local storage."""
-    return value if value is not None else True
+    return value if value is not None else "chart"
 
 
 @callback(
-    Output("drawdown-chart-switch", "checked"),
+    Output("drawdown-chart-switch", "value"),
     Input("raw-data-store", "data"),
     State("drawdown-chart-switch-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_drawdown_chart_switch(raw_data, stored_chart_switch):
     """Restore drawdown chart switch from local storage on page load."""
-    return stored_chart_switch if stored_chart_switch is not None else True
+    return stored_chart_switch if stored_chart_switch is not None else "chart"
 
 
 @callback(
     Output("drawdown-grid-container", "style"),
     Output("drawdown-chart-container", "style"),
-    Input("drawdown-chart-switch", "checked"),
+    Input("drawdown-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def toggle_drawdown_view(chart_checked):
+def toggle_drawdown_view(view_type):
     """Toggle between grid and chart view for drawdown."""
-    if chart_checked:
+    if view_type == "chart":
         return {"display": "none"}, {"display": "block"}
     else:
         return {"display": "block"}, {"display": "none"}
@@ -991,34 +1000,34 @@ def toggle_drawdown_view(chart_checked):
 
 @callback(
     Output("growth-chart-switch-store", "data"),
-    Input("growth-chart-switch", "checked"),
+    Input("growth-chart-switch", "value"),
     prevent_initial_call=True,
 )
 def save_growth_chart_switch(value):
     """Save growth chart switch state to local storage."""
-    return value if value is not None else True
+    return value if value is not None else "chart"
 
 
 @callback(
-    Output("growth-chart-switch", "checked"),
+    Output("growth-chart-switch", "value"),
     Input("raw-data-store", "data"),
     State("growth-chart-switch-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_growth_chart_switch(raw_data, stored_chart_switch):
     """Restore growth chart switch from local storage on page load."""
-    return stored_chart_switch if stored_chart_switch is not None else True
+    return stored_chart_switch if stored_chart_switch is not None else "chart"
 
 
 @callback(
     Output("growth-grid-container", "style"),
     Output("growth-chart-container", "style"),
-    Input("growth-chart-switch", "checked"),
+    Input("growth-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def toggle_growth_view(chart_checked):
+def toggle_growth_view(view_type):
     """Toggle between grid and chart view for growth of $1."""
-    if chart_checked:
+    if view_type == "chart":
         return {"display": "none"}, {"display": "block"}
     else:
         return {"display": "block"}, {"display": "none"}
@@ -1840,8 +1849,8 @@ def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selec
         template="plotly_white",
     )
 
-    # Lazy loading: only calculate when rolling tab is active and chart is checked
-    if active_tab != "rolling" or not chart_checked:
+    # Lazy loading: only calculate when rolling tab is active and chart view is selected
+    if active_tab != "rolling" or chart_checked != "chart":
         return empty_fig
 
     if raw_data is None or not selected_series:
@@ -2784,8 +2793,8 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
 )
 def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
     """Update Growth of $1 charts (lazy loaded)."""
-    # Lazy loading: only generate when growth tab is active and chart is checked
-    if active_tab != "growth" or not chart_checked:
+    # Lazy loading: only generate when growth tab is active and chart view is selected
+    if active_tab != "growth" or chart_checked != "chart":
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -2968,8 +2977,8 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
 )
 def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
     """Update Growth of $1 grid (lazy loaded)."""
-    # Lazy loading: only generate when growth tab is active and grid is shown (chart not checked)
-    if active_tab != "growth" or chart_checked:
+    # Lazy loading: only generate when growth tab is active and table view is selected
+    if active_tab != "growth" or chart_checked != "table":
         return [], []
 
     if raw_data is None or not selected_series:
@@ -3082,8 +3091,8 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
 )
 def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update Drawdown charts (lazy loaded)."""
-    # Lazy loading: only generate when drawdown tab is active and chart is checked
-    if active_tab != "drawdown" or not chart_checked:
+    # Lazy loading: only generate when drawdown tab is active and chart view is selected
+    if active_tab != "drawdown" or chart_checked != "chart":
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -3214,8 +3223,8 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
 )
 def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update Drawdown grid (lazy loaded)."""
-    # Lazy loading: only generate when drawdown tab is active and grid is shown (chart not checked)
-    if active_tab != "drawdown" or chart_checked:
+    # Lazy loading: only generate when drawdown tab is active and table view is selected
+    if active_tab != "drawdown" or chart_checked != "table":
         return [], []
 
     if raw_data is None or not selected_series:
