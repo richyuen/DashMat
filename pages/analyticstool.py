@@ -550,11 +550,48 @@ layout = dmc.Container(
                     value="growth",
                     pt="md",
                     children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.Switch(
+                                    id="growth-chart-switch",
+                                    label="Chart",
+                                    checked=True,
+                                    size="sm",
+                                ),
+                            ],
+                        ),
                         dcc.Loading(
                             id="loading-growth",
                             type="default",
                             children=[
-                                html.Div(id="growth-charts-container"),
+                                html.Div(
+                                    id="growth-chart-container",
+                                    children=[
+                                        html.Div(id="growth-charts-container"),
+                                    ],
+                                ),
+                                html.Div(
+                                    id="growth-grid-container",
+                                    style={"display": "none"},
+                                    children=[
+                                        dag.AgGrid(
+                                            id="growth-grid",
+                                            columnDefs=[],
+                                            rowData=[],
+                                            defaultColDef={
+                                                "sortable": True,
+                                                "resizable": True,
+                                            },
+                                            style={"height": "600px"},
+                                            dashGridOptions={
+                                                "animateRows": True,
+                                                "pagination": True,
+                                                "paginationPageSize": 100,
+                                            },
+                                        ),
+                                    ],
+                                ),
                             ],
                         ),
                     ],
@@ -625,6 +662,7 @@ layout = dmc.Container(
         dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="local"),
         dcc.Store(id="rolling-chart-switch-store", data=False, storage_type="local"),
         dcc.Store(id="drawdown-chart-switch-store", data=True, storage_type="local"),
+        dcc.Store(id="growth-chart-switch-store", data=True, storage_type="local"),
         dcc.Store(id="monthly-view-store", data=False, storage_type="local"),
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
@@ -942,6 +980,41 @@ def restore_drawdown_chart_switch(raw_data, stored_chart_switch):
 )
 def toggle_drawdown_view(chart_checked):
     """Toggle between grid and chart view for drawdown."""
+    if chart_checked:
+        return {"display": "none"}, {"display": "block"}
+    else:
+        return {"display": "block"}, {"display": "none"}
+
+
+@callback(
+    Output("growth-chart-switch-store", "data"),
+    Input("growth-chart-switch", "checked"),
+    prevent_initial_call=True,
+)
+def save_growth_chart_switch(value):
+    """Save growth chart switch state to local storage."""
+    return value if value is not None else True
+
+
+@callback(
+    Output("growth-chart-switch", "checked"),
+    Input("raw-data-store", "data"),
+    State("growth-chart-switch-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def restore_growth_chart_switch(raw_data, stored_chart_switch):
+    """Restore growth chart switch from local storage on page load."""
+    return stored_chart_switch if stored_chart_switch is not None else True
+
+
+@callback(
+    Output("growth-grid-container", "style"),
+    Output("growth-chart-container", "style"),
+    Input("growth-chart-switch", "checked"),
+    prevent_initial_call=True,
+)
+def toggle_growth_view(chart_checked):
+    """Toggle between grid and chart view for growth of $1."""
     if chart_checked:
         return {"display": "none"}, {"display": "block"}
     else:
@@ -2671,6 +2744,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
 @callback(
     Output("growth-charts-container", "children"),
     Input("main-tabs", "value"),
+    Input("growth-chart-switch", "checked"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
@@ -2679,10 +2753,10 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_charts(active_tab, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
     """Update Growth of $1 charts (lazy loaded)."""
-    # Lazy loading: only generate when growth tab is active
-    if active_tab != "growth":
+    # Lazy loading: only generate when growth tab is active and chart is checked
+    if active_tab != "growth" or not chart_checked:
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -2848,6 +2922,120 @@ def update_growth_charts(active_tab, raw_data, periodicity, selected_series, ben
 
     except Exception as e:
         return dmc.Text(f"Error generating growth charts: {str(e)}", size="sm", c="red")
+
+
+@callback(
+    Output("growth-grid", "columnDefs"),
+    Output("growth-grid", "rowData"),
+    Input("main-tabs", "value"),
+    Input("growth-chart-switch", "checked"),
+    Input("raw-data-store", "data"),
+    Input("periodicity-select", "value"),
+    Input("series-select", "data"),
+    Input("benchmark-assignments-store", "data"),
+    Input("long-short-store", "data"),
+    Input("date-range-store", "data"),
+    prevent_initial_call=True,
+)
+def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+    """Update Growth of $1 grid (lazy loaded)."""
+    # Lazy loading: only generate when growth tab is active and grid is shown (chart not checked)
+    if active_tab != "growth" or chart_checked:
+        return [], []
+
+    if raw_data is None or not selected_series:
+        return [], []
+
+    try:
+        df = resample_returns_cached(raw_data, periodicity or "daily")
+
+        # Apply date range filter if provided
+        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+        if date_range_dict:
+            start_date = pd.to_datetime(date_range_dict["start"])
+            end_date = pd.to_datetime(date_range_dict["end"])
+            df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+        # Filter to selected series only
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            return [], []
+
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.DateOffset(months=1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
+
+        # Calculate growth for each series
+        growth_df = pd.DataFrame(index=df.index)
+        for series in available_series:
+            is_long_short = long_short_dict.get(series, False)
+            benchmark = benchmark_dict.get(series, available_series[0])
+
+            if is_long_short:
+                # For long-short, use the difference
+                if benchmark == "None":
+                    returns = df[series]
+                elif benchmark == series:
+                    # Skip series where benchmark is itself for long-short
+                    continue
+                elif benchmark in df.columns:
+                    returns = df[series] - df[benchmark]
+                else:
+                    returns = df[series]
+            else:
+                # For non-long-short, use total returns
+                returns = df[series]
+
+            # Calculate cumulative growth
+            growth = (1 + returns).cumprod()
+
+            growth_df[series] = growth
+
+        # Prepend starting row with 1.0 growth at one period before first date
+        if len(growth_df) > 0:
+            first_date = growth_df.index[0]
+            start_date = first_date - period_offset
+            start_row = pd.DataFrame(1.0, index=[start_date], columns=growth_df.columns)
+            growth_df = pd.concat([start_row, growth_df])
+            growth_df.index.name = "Date"
+
+        # Reset index to include Date as a column
+        growth_df = growth_df.reset_index()
+        if "Date" in growth_df.columns:
+            growth_df["Date"] = growth_df["Date"].dt.strftime("%Y-%m-%d")
+        elif "index" in growth_df.columns:
+            growth_df["Date"] = growth_df["index"].dt.strftime("%Y-%m-%d")
+            growth_df = growth_df.drop(columns=["index"])
+
+        # Define column definitions
+        column_defs = [
+            {"field": "Date", "pinned": "left", "width": 120},
+        ]
+
+        for col in growth_df.columns:
+            if col != "Date":
+                column_defs.append({
+                    "field": col,
+                    "valueFormatter": {"function": "d3.format('.4f')(params.value)"},
+                })
+
+        # Convert to records
+        row_data = growth_df.to_dict("records")
+
+        return column_defs, row_data
+
+    except Exception:
+        return [], []
 
 
 @callback(
