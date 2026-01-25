@@ -1185,14 +1185,22 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
 @callback(
     Output("series-select", "data", allow_duplicate=True),
     Input({"type": "series-include-checkbox", "series": ALL}, "checked"),
+    State({"type": "series-include-checkbox", "series": ALL}, "id"),
     State("raw-data-store", "data"),
     State("series-order-store", "data"),
     prevent_initial_call=True,
 )
-def update_series_selection_from_checkboxes(checkbox_values, raw_data, series_order):
+def update_series_selection_from_checkboxes(checkbox_values, checkbox_ids, raw_data, series_order):
     """Update series selection based on checkbox states, preserving order."""
-    if raw_data is None or checkbox_values is None:
+    if raw_data is None or checkbox_values is None or not checkbox_ids:
         return []
+
+    # Map checkbox values to series using the pattern-matching IDs
+    checkbox_map = {}
+    for i, checkbox_id in enumerate(checkbox_ids):
+        series = checkbox_id["series"]
+        if i < len(checkbox_values):
+            checkbox_map[series] = checkbox_values[i]
 
     df = json_to_df(raw_data)
     all_series = list(df.columns)
@@ -1200,9 +1208,10 @@ def update_series_selection_from_checkboxes(checkbox_values, raw_data, series_or
     # Use series_order if available, otherwise use DataFrame column order
     ordered_series = series_order if series_order else all_series
 
+    # Build selected list in the correct order
     selected = []
-    for i, series in enumerate(ordered_series):
-        if i < len(checkbox_values) and checkbox_values[i]:
+    for series in ordered_series:
+        if checkbox_map.get(series, False):
             selected.append(series)
 
     return selected
@@ -1259,19 +1268,19 @@ def delete_series(n_clicks_list, raw_data, selected_series):
 @callback(
     Output("benchmark-assignments-store", "data"),
     Input({"type": "benchmark-select", "series": ALL}, "value"),
+    State({"type": "benchmark-select", "series": ALL}, "id"),
     State("raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_benchmark_assignments(benchmark_values, raw_data):
+def update_benchmark_assignments(benchmark_values, benchmark_ids, raw_data):
     """Store benchmark assignments for all series."""
-    if raw_data is None or not benchmark_values:
+    if raw_data is None or not benchmark_values or not benchmark_ids:
         return {}
 
-    df = json_to_df(raw_data)
-    all_series = list(df.columns)
-
+    # Map values to series using the pattern-matching IDs
     assignments = {}
-    for i, series in enumerate(all_series):
+    for i, benchmark_id in enumerate(benchmark_ids):
+        series = benchmark_id["series"]
         if i < len(benchmark_values) and benchmark_values[i]:
             assignments[series] = benchmark_values[i]
 
@@ -1281,19 +1290,19 @@ def update_benchmark_assignments(benchmark_values, raw_data):
 @callback(
     Output("long-short-store", "data"),
     Input({"type": "long-short-checkbox", "series": ALL}, "checked"),
+    State({"type": "long-short-checkbox", "series": ALL}, "id"),
     State("raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_long_short_assignments(checkbox_values, raw_data):
+def update_long_short_assignments(checkbox_values, checkbox_ids, raw_data):
     """Store long-short checkbox assignments for all series."""
-    if raw_data is None or checkbox_values is None:
+    if raw_data is None or checkbox_values is None or not checkbox_ids:
         return {}
 
-    df = json_to_df(raw_data)
-    all_series = list(df.columns)
-
+    # Map values to series using the pattern-matching IDs
     assignments = {}
-    for i, series in enumerate(all_series):
+    for i, checkbox_id in enumerate(checkbox_ids):
+        series = checkbox_id["series"]
         if i < len(checkbox_values):
             assignments[series] = checkbox_values[i] or False
 
