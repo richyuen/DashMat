@@ -3164,21 +3164,25 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             if benchmark not in df.columns:
                 continue
 
-            # Calculate growth for series
-            series_returns = df[series]
+            # Calculate growth for series - aligned to valid data
+            series_returns = df[series].dropna()
+            if series_returns.empty:
+                continue
+            
+            first_valid_date = series_returns.index[0]
             series_growth = (1 + series_returns).cumprod()
 
-            # Calculate growth for benchmark
-            benchmark_returns = df[benchmark]
+            # Calculate growth for benchmark - aligned to series start
+            # Slice benchmark to start from the same date as series
+            benchmark_returns = df[benchmark][df.index >= first_valid_date].dropna()
             benchmark_growth = (1 + benchmark_returns).cumprod()
 
             # Prepend starting value of 1.0 for both series, one full period earlier
-            if len(series_growth) > 0:
-                first_date = series_growth.index[0]
-                start_date = first_date - period_offset
-                start_value = pd.Series([1.0], index=[start_date])
-                series_growth = pd.concat([start_value, series_growth])
-                benchmark_growth = pd.concat([start_value, benchmark_growth])
+            start_date = first_valid_date - period_offset
+            start_value = pd.Series([1.0], index=[start_date])
+            
+            series_growth = pd.concat([start_value, series_growth])
+            benchmark_growth = pd.concat([start_value, benchmark_growth])
 
             # Create figure for this pair
             fig = go.Figure()
