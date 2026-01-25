@@ -409,14 +409,13 @@ layout = dmc.Container(
                                     w=120,
                                     size="sm",
                                 ),
-                                dmc.Select(
+                                dmc.SegmentedControl(
                                     id="rolling-return-type-select",
                                     data=[
-                                        {"value": "annualized", "label": "Annualized"},
                                         {"value": "cumulative", "label": "Cumulative"},
+                                        {"value": "annualized", "label": "Annualized"},
                                     ],
                                     value="annualized",
-                                    w=120,
                                     size="sm",
                                 ),
                                 dmc.SegmentedControl(
@@ -499,10 +498,14 @@ layout = dmc.Container(
                         dmc.Group(
                             mb="md",
                             children=[
-                                dmc.Checkbox(
+                                dmc.SegmentedControl(
                                     id="monthly-view-checkbox",
-                                    label="Monthly",
-                                    checked=False,
+                                    data=[
+                                        {"value": "annual", "label": "Annual"},
+                                        {"value": "monthly", "label": "Monthly"},
+                                    ],
+                                    value="annual",
+                                    size="sm",
                                 ),
                                 dmc.Select(
                                     id="monthly-series-select",
@@ -675,7 +678,7 @@ layout = dmc.Container(
         dcc.Store(id="rolling-chart-switch-store", data="table", storage_type="local"),
         dcc.Store(id="drawdown-chart-switch-store", data="chart", storage_type="local"),
         dcc.Store(id="growth-chart-switch-store", data="chart", storage_type="local"),
-        dcc.Store(id="monthly-view-store", data=False, storage_type="local"),
+        dcc.Store(id="monthly-view-store", data="annual", storage_type="local"),
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
@@ -1035,12 +1038,12 @@ def toggle_growth_view(view_type):
 
 @callback(
     Output("monthly-view-store", "data"),
-    Input("monthly-view-checkbox", "checked"),
+    Input("monthly-view-checkbox", "value"),
     prevent_initial_call=True,
 )
 def save_monthly_view(value):
-    """Save monthly view checkbox state to local storage."""
-    return value if value is not None else False
+    """Save monthly view selection to local storage."""
+    return value if value is not None else "annual"
 
 
 @callback(
@@ -1054,14 +1057,14 @@ def save_monthly_series(value):
 
 
 @callback(
-    Output("monthly-view-checkbox", "checked"),
+    Output("monthly-view-checkbox", "value"),
     Input("raw-data-store", "data"),
     State("monthly-view-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_monthly_view(raw_data, stored_monthly_view):
-    """Restore monthly view checkbox from local storage on page load."""
-    return stored_monthly_view if stored_monthly_view is not None else False
+    """Restore monthly view selection from local storage on page load."""
+    return stored_monthly_view if stored_monthly_view is not None else "annual"
 
 
 @callback(
@@ -2232,14 +2235,14 @@ def create_monthly_view(df, series_name, original_periodicity, returns_type, ben
     Output("monthly-series-select", "style"),
     Output("monthly-series-select", "data"),
     Output("monthly-series-select", "value", allow_duplicate=True),
-    Input("monthly-view-checkbox", "checked"),
+    Input("monthly-view-checkbox", "value"),
     Input("series-select", "data"),
     State("monthly-series-store", "data"),
     prevent_initial_call=True,
 )
-def update_monthly_series_select(monthly_checked, selected_series, stored_monthly_series):
+def update_monthly_series_select(monthly_view, selected_series, stored_monthly_series):
     """Show/hide monthly series select and populate with available series."""
-    if not monthly_checked:
+    if monthly_view != "monthly":
         return {"display": "none"}, [], None
 
     if not selected_series:
@@ -2269,7 +2272,7 @@ def update_monthly_series_select(monthly_checked, selected_series, stored_monthl
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
-    Input("monthly-view-checkbox", "checked"),
+    Input("monthly-view-checkbox", "value"),
     Input("monthly-series-select", "value"),
     prevent_initial_call=True,
 )
@@ -2315,8 +2318,8 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         if not available_series:
             return [], []
 
-        # Handle monthly view if checkbox is checked
-        if monthly_view and monthly_series and monthly_series in available_series:
+        # Handle monthly view if selected
+        if monthly_view == "monthly" and monthly_series and monthly_series in available_series:
             return create_monthly_view(
                 df,
                 monthly_series,
@@ -3834,8 +3837,8 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
         # Sheet 4: Calendar Year Returns
         if original_periodicity in ["daily", "monthly"]:
             try:
-                # Check if monthly view is enabled
-                if monthly_view and monthly_series and monthly_series in selected_series:
+                # Check if monthly view is selected
+                if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
                     # Use monthly view (Jan-Dec columns + Ann)
                     df = json_to_df(raw_data)
 
