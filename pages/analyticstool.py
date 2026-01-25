@@ -3172,20 +3172,33 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             if series_returns.empty:
                 continue
             
-            first_valid_date = series_returns.index[0]
+            series_start = series_returns.index[0]
             series_growth = (1 + series_returns).cumprod()
 
-            # Calculate growth for benchmark - aligned to series start
-            # Slice benchmark to start from the same date as series
-            benchmark_returns = df[benchmark][df.index >= first_valid_date].dropna()
+            # Determine effective start for benchmark
+            # If benchmark starts earlier, clip to series start.
+            # If benchmark starts later, use benchmark start.
+            benchmark_full = df[benchmark].dropna()
+            if benchmark_full.empty:
+                continue
+                
+            benchmark_start = benchmark_full.index[0]
+            effective_benchmark_start = max(series_start, benchmark_start)
+            
+            # Calculate growth for benchmark from effective start
+            benchmark_returns = df[benchmark][df.index >= effective_benchmark_start].dropna()
             benchmark_growth = (1 + benchmark_returns).cumprod()
 
-            # Prepend starting value of 1.0 for both series, one full period earlier
-            start_date = first_valid_date - period_offset
-            start_value = pd.Series([1.0], index=[start_date])
+            # Prepend 1.0 for Series
+            series_start_date = series_start - period_offset
+            series_start_val = pd.Series([1.0], index=[series_start_date])
+            series_growth = pd.concat([series_start_val, series_growth])
             
-            series_growth = pd.concat([start_value, series_growth])
-            benchmark_growth = pd.concat([start_value, benchmark_growth])
+            # Prepend 1.0 for Benchmark
+            if not benchmark_returns.empty:
+                benchmark_start_date = effective_benchmark_start - period_offset
+                benchmark_start_val = pd.Series([1.0], index=[benchmark_start_date])
+                benchmark_growth = pd.concat([benchmark_start_val, benchmark_growth])
 
             # Create figure for this pair
             fig = go.Figure()
@@ -3349,7 +3362,7 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
             if col != "Date":
                 column_defs.append({
                     "field": col,
-                    "valueFormatter": {"function": "d3.format('.4f')(params.value)"},
+                    "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"},
                 })
 
         # Convert to records
