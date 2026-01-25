@@ -1180,8 +1180,28 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
     # Create benchmark options with "None" as first option
     benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
 
+    # Create column headers
+    header_row = dmc.Group(
+        mb="xs",
+        gap="xs",
+        children=[
+            # Spacer for up/down arrows
+            dmc.Box(w=20),
+            # Spacer for checkbox
+            dmc.Box(w=20),
+            # Series label
+            dmc.Text("Series", size="xs", fw=700, w=120, c="dimmed"),
+            # Benchmark label
+            dmc.Text("Benchmark", size="xs", fw=700, w=150, c="dimmed"),
+            # L/S label
+            dmc.Text("L/S", size="xs", fw=700, w=50, c="dimmed"),
+            # Spacer for delete button
+            dmc.Box(w=30),
+        ],
+    )
+
     # Create a row for each series in the order specified
-    series_rows = []
+    series_rows = [header_row]
     for idx, series in enumerate(series_order):
         current_benchmark = current_assignments.get(series, default_benchmark) if current_assignments else default_benchmark
         is_long_short = long_short_assignments.get(series, False) if long_short_assignments else False
@@ -1233,16 +1253,16 @@ def update_series_selectors(raw_data, selected_series, series_order, current_ass
                         w=150,
                         placeholder="Benchmark",
                     ),
-                    # Long-Short checkbox
-                    dmc.Checkbox(
+                    # Long-Short switch
+                    dmc.Switch(
                         id={"type": "long-short-checkbox", "series": series},
-                        label="L/S",
                         checked=is_long_short,
                         size="xs",
+                        w=50,
                     ),
                     # Trash button to delete series
                     dmc.ActionIcon(
-                        dmc.Text("X", size="xs", fw=700),
+                        "🗑️",
                         id={"type": "delete-series-button", "series": series},
                         variant="subtle",
                         color="red",
