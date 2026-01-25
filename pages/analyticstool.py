@@ -3356,16 +3356,115 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_ser
         return pd.DataFrame()
 
 
-def calculate_growth_of_dollar(returns_df):
-    """Calculate growth of $1 for Excel export."""
+def calculate_growth_of_dollar(returns_df, periodicity):
+    """Calculate growth of $1 for Excel export with starting value of 1.0."""
     if returns_df.empty:
         return pd.DataFrame()
 
     # Calculate cumulative growth
     growth_df = (1 + returns_df).cumprod()
+
+    # Prepend starting value of 1.0 at one period before first date
+    if len(growth_df) > 0:
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.DateOffset(months=1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
+
+        first_date = growth_df.index[0]
+        start_date = first_date - period_offset
+        start_row = pd.DataFrame(1.0, index=[start_date], columns=growth_df.columns)
+        growth_df = pd.concat([start_row, growth_df])
+
     growth_df.index.name = 'Date'
 
     return growth_df
+
+
+def calculate_drawdown(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+    """Calculate drawdown for Excel export."""
+    try:
+        df = resample_returns_cached(raw_data, periodicity or "daily")
+
+        # Apply date range filter if provided
+        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+        if date_range_dict:
+            start_date = pd.to_datetime(date_range_dict["start"])
+            end_date = pd.to_datetime(date_range_dict["end"])
+            df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+        # Filter to selected series only
+        available_series = [s for s in selected_series if s in df.columns]
+        if not available_series:
+            return pd.DataFrame()
+
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.DateOffset(months=1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
+
+        # Calculate drawdown for each series
+        drawdown_df = pd.DataFrame(index=df.index)
+        for series in available_series:
+            is_long_short = long_short_dict.get(series, False)
+            benchmark = benchmark_dict.get(series, available_series[0])
+
+            if is_long_short:
+                # For long-short, use the difference
+                if benchmark == "None":
+                    returns = df[series]
+                elif benchmark == series:
+                    # Skip series where benchmark is itself for long-short
+                    continue
+                elif benchmark in df.columns:
+                    returns = df[series] - df[benchmark]
+                else:
+                    returns = df[series]
+            else:
+                # For non-long-short, use total returns
+                returns = df[series]
+
+            # Calculate cumulative growth
+            growth = (1 + returns).cumprod()
+
+            # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
+            # This ensures that a negative first period return counts as a drawdown
+            growth_array = np.concatenate([[1.0], growth.values])
+            running_max_array = np.maximum.accumulate(growth_array)
+
+            # Calculate drawdown (exclude the prepended 1.0)
+            drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
+            drawdown = pd.Series(drawdown_array, index=growth.index)
+
+            drawdown_df[series] = drawdown
+
+        # Prepend starting row with 0.0 drawdown at one period before first date
+        if len(drawdown_df) > 0:
+            first_date = drawdown_df.index[0]
+            start_date = first_date - period_offset
+            start_row = pd.DataFrame(0.0, index=[start_date], columns=drawdown_df.columns)
+            drawdown_df = pd.concat([start_row, drawdown_df])
+            drawdown_df.index.name = "Date"
+
+        return drawdown_df
+
+    except Exception:
+        return pd.DataFrame()
 
 
 @callback(
@@ -3386,7 +3485,7 @@ def calculate_growth_of_dollar(returns_df):
     prevent_initial_call=True,
 )
 def download_excel(n_clicks, raw_data, original_periodicity, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series):
-    """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, and Correlogram sheets."""
+    """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, Drawdown, and Correlogram sheets."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
 
@@ -3521,13 +3620,28 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
 
         # Sheet 5: Growth of $1
         try:
-            growth_df = calculate_growth_of_dollar(returns_df)
+            growth_df = calculate_growth_of_dollar(returns_df, periodicity)
             if not growth_df.empty:
                 growth_df.to_excel(writer, sheet_name="Growth of $1")
         except Exception:
             pass  # Skip if growth calculation fails
 
-        # Sheet 6: Correlogram
+        # Sheet 6: Drawdown
+        try:
+            drawdown_df = calculate_drawdown(
+                raw_data,
+                periodicity,
+                selected_series,
+                benchmark_assignments,
+                long_short_assignments,
+                date_range
+            )
+            if not drawdown_df.empty:
+                drawdown_df.to_excel(writer, sheet_name="Drawdown")
+        except Exception:
+            pass  # Skip if drawdown calculation fails
+
+        # Sheet 7: Correlogram
         corr_df.to_excel(writer, sheet_name="Correlogram")
 
     output.seek(0)
