@@ -769,6 +769,41 @@ clientside_callback(
 )
 
 
+clientside_callback(
+    """
+    function(n_submit_list, input_ids) {
+        if (!n_submit_list || n_submit_list.every(n => !n)) {
+            return window.dash_clientside.no_update;
+        }
+
+        const ctx = window.dash_clientside.callback_context;
+        const triggered = ctx.triggered[0];
+        if (!triggered) {
+            return window.dash_clientside.no_update;
+        }
+
+        const triggered_id_str = triggered.prop_id.split('.')[0]; // e.g., '{"type":"edit-series-input","series":"SPY"}'
+        const triggered_id = JSON.parse(triggered_id_str);
+        const series_name = triggered_id.series;
+
+        if (series_name) {
+            var saveButtonSelector = `[id*='"type":"save-edit-button"'][id*='"series":"${series_name}"']`;
+            var saveButton = document.querySelector(saveButtonSelector);
+
+            if (saveButton) {
+                // Programmatically click the save button
+                saveButton.click();
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("dummy-focus-output", "children", allow_duplicate=True),  # Reuse dummy output
+    Input({"type": "edit-series-input", "series": ALL}, "n_submit"),
+    prevent_initial_call=True,
+)
+
+
 @callback(
     Output("series-order-store", "data", allow_duplicate=True),
     Input({"type": "move-up-button", "series": ALL}, "n_clicks"),
