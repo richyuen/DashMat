@@ -3084,9 +3084,8 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         periodicity_str = periodicity or "daily"
         if periodicity_str == "daily":
             period_offset = pd.DateOffset(days=1)
-        elif periodicity_str == "monthly":
-            period_offset = pd.DateOffset(months=1)
-        elif periodicity_str.startswith("weekly"):
+                elif periodicity_str == "monthly":
+                    period_offset = pd.tseries.offsets.MonthEnd(1)        elif periodicity_str.startswith("weekly"):
             period_offset = pd.DateOffset(weeks=1)
         else:
             period_offset = pd.DateOffset(days=1)
@@ -3288,9 +3287,8 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
         periodicity_str = periodicity or "daily"
         if periodicity_str == "daily":
             period_offset = pd.DateOffset(days=1)
-        elif periodicity_str == "monthly":
-            period_offset = pd.DateOffset(months=1)
-        elif periodicity_str.startswith("weekly"):
+                elif periodicity_str == "monthly":
+                    period_offset = pd.tseries.offsets.MonthEnd(1)        elif periodicity_str.startswith("weekly"):
             period_offset = pd.DateOffset(weeks=1)
         else:
             period_offset = pd.DateOffset(days=1)
@@ -3418,9 +3416,8 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
         periodicity_str = periodicity or "daily"
         if periodicity_str == "daily":
             period_offset = pd.DateOffset(days=1)
-        elif periodicity_str == "monthly":
-            period_offset = pd.DateOffset(months=1)
-        elif periodicity_str.startswith("weekly"):
+                elif periodicity_str == "monthly":
+                    period_offset = pd.tseries.offsets.MonthEnd(1)        elif periodicity_str.startswith("weekly"):
             period_offset = pd.DateOffset(weeks=1)
         else:
             period_offset = pd.DateOffset(days=1)
@@ -3557,9 +3554,8 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
         periodicity_str = periodicity or "daily"
         if periodicity_str == "daily":
             period_offset = pd.DateOffset(days=1)
-        elif periodicity_str == "monthly":
-            period_offset = pd.DateOffset(months=1)
-        elif periodicity_str.startswith("weekly"):
+                elif periodicity_str == "monthly":
+                    period_offset = pd.tseries.offsets.MonthEnd(1)        elif periodicity_str.startswith("weekly"):
             period_offset = pd.DateOffset(weeks=1)
         else:
             period_offset = pd.DateOffset(days=1)
@@ -3932,9 +3928,8 @@ def calculate_growth_of_dollar(returns_df, periodicity):
     periodicity_str = periodicity or "daily"
     if periodicity_str == "daily":
         period_offset = pd.DateOffset(days=1)
-    elif periodicity_str == "monthly":
-        period_offset = pd.DateOffset(months=1)
-    elif periodicity_str.startswith("weekly"):
+            elif periodicity_str == "monthly":
+                period_offset = pd.tseries.offsets.MonthEnd(1)    elif periodicity_str.startswith("weekly"):
         period_offset = pd.DateOffset(weeks=1)
     else:
         period_offset = pd.DateOffset(days=1)
@@ -3997,9 +3992,8 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
         periodicity_str = periodicity or "daily"
         if periodicity_str == "daily":
             period_offset = pd.DateOffset(days=1)
-        elif periodicity_str == "monthly":
-            period_offset = pd.DateOffset(months=1)
-        elif periodicity_str.startswith("weekly"):
+                elif periodicity_str == "monthly":
+                    period_offset = pd.tseries.offsets.MonthEnd(1)        elif periodicity_str.startswith("weekly"):
             period_offset = pd.DateOffset(weeks=1)
         else:
             period_offset = pd.DateOffset(days=1)
