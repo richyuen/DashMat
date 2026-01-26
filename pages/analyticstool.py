@@ -516,7 +516,7 @@ layout = dmc.Container(
                                     w=200,
                                     size="sm",
                                     placeholder="Select series",
-                                    style={"display": "none"},
+                                    disabled=True,
                                 ),
                             ],
                         ),
@@ -2503,32 +2503,50 @@ def create_monthly_view(df, series_name, original_periodicity, returns_type, ben
 
 
 @callback(
-    Output("monthly-series-select", "style"),
+    Output("monthly-series-select", "disabled"),
     Output("monthly-series-select", "data"),
     Output("monthly-series-select", "value", allow_duplicate=True),
     Input("monthly-view-checkbox", "value"),
     Input("series-select", "data"),
     State("monthly-series-store", "data"),
+    State("monthly-series-select", "value"),
     prevent_initial_call=True,
 )
-def update_monthly_series_select(monthly_view, selected_series, stored_monthly_series):
-    """Show/hide monthly series select and populate with available series."""
-    if monthly_view != "monthly":
-        return {"display": "none"}, [], None
+def update_monthly_series_select(monthly_view, selected_series, stored_monthly_series, current_value):
+    """Enable/disable monthly series select and populate with available series."""
+    # Check which input triggered the callback
+    ctx = callback_context
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
 
     if not selected_series:
-        return {"display": "block"}, [], None
+        return True, [], None
 
     # Create dropdown options from selected series
     options = [{"value": s, "label": s} for s in selected_series]
 
-    # Use stored value if available and still valid, otherwise default to first series
-    if stored_monthly_series and stored_monthly_series in selected_series:
-        default_value = stored_monthly_series
-    else:
-        default_value = selected_series[0] if selected_series else None
+    # Disable when in annual view
+    if monthly_view != "monthly":
+        return True, options, no_update
 
-    return {"display": "block"}, options, default_value
+    # Enable when in monthly view
+    # Only update value when switching TO monthly view
+    if triggered_id == "monthly-view-checkbox":
+        # Use stored value when switching to monthly view
+        if stored_monthly_series and stored_monthly_series in selected_series:
+            default_value = stored_monthly_series
+        else:
+            default_value = selected_series[0] if selected_series else None
+        return False, options, default_value
+
+    # For series list changes while already in monthly view, preserve current value
+    else:
+        # Check if current value is still valid, otherwise use stored or first
+        if current_value and current_value in selected_series:
+            return False, options, no_update
+        elif stored_monthly_series and stored_monthly_series in selected_series:
+            return False, options, stored_monthly_series
+        else:
+            return False, options, selected_series[0] if selected_series else None
 
 
 @callback(
