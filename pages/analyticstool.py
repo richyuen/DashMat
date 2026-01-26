@@ -2908,7 +2908,7 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     """Update Growth of $1 grid (lazy loaded)."""
     # Lazy loading: only generate when growth tab is active and table view is selected
     if active_tab != "growth" or chart_checked != "table":
-        return [], []
+        raise PreventUpdate
 
     if raw_data is None or not selected_series:
         return [], []
@@ -3112,7 +3112,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     """Update Drawdown grid (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and table view is selected
     if active_tab != "drawdown" or chart_checked != "table":
-        return [], []
+        raise PreventUpdate
 
     if raw_data is None or not selected_series:
         return [], []
