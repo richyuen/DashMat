@@ -2424,11 +2424,11 @@ def create_monthly_view(df, series_name, original_periodicity, returns_type, ben
 
         # Group by year and month, compound returns
         monthly_data = series_data.groupby(['year', 'month'])['returns'].apply(
-            lambda x: (1 + x).prod() - 1
+            lambda x: (1 + x).prod(min_count=1) - 1
         ).reset_index()
 
-        # Count days in each month to filter out partial months
-        days_per_month = series_data.groupby(['year', 'month']).size().reset_index(name='days')
+        # Count VALID days in each month to filter out partial months
+        days_per_month = series_data.groupby(['year', 'month'])['returns'].count().reset_index(name='days')
         monthly_data = monthly_data.merge(days_per_month, on=['year', 'month'])
 
         # Only keep months with reasonable number of days (assume full month has at least 15 trading days)
@@ -2651,7 +2651,8 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                     if original_periodicity == "daily":
                         # For daily data, check if it starts in January
                         first_date = first_year_data.index.min()
-                        if not first_date.is_year_start:  # Allow some tolerance
+                        # Allow tolerance for holidays/weekends (first 10 days of Jan)
+                        if not (first_date.month == 1 and first_date.day <= 10):
                             annual_returns = annual_returns.drop(first_year, errors='ignore')
                     else:  # monthly
                         # For monthly data, check if all 12 months are present
@@ -2662,7 +2663,8 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 last_year_data = series_returns[series_returns.index.year == last_year]
                 if len(last_year_data) > 0:
                     last_date = last_year_data.index.max()
-                    if not last_date.is_year_end:  # Allow some tolerance
+                    # Allow tolerance for holidays/weekends (last 10 days of Dec)
+                    if not (last_date.month == 12 and last_date.day >= 21):
                         annual_returns = annual_returns.drop(last_year, errors='ignore')
 
             calendar_returns[series] = annual_returns
