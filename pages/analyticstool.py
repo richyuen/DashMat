@@ -2637,7 +2637,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
 
             # Calculate annual returns
             annual_returns = series_returns_df.groupby('year')['returns'].apply(
-                lambda x: (1 + x).prod() - 1
+                lambda x: (1 + x).prod(min_count=1) - 1
             )
 
             # Filter out partial years (exclude first and last year if partial)
@@ -3895,7 +3895,7 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_ser
 
             # Calculate annual returns
             annual_returns = series_returns_df.groupby('year')['returns'].apply(
-                lambda x: (1 + x).prod() - 1
+                lambda x: (1 + x).prod(min_count=1) - 1
             )
 
             calendar_returns[series] = annual_returns
