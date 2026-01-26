@@ -2651,8 +2651,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                     if original_periodicity == "daily":
                         # For daily data, check if it starts in January
                         first_date = first_year_data.index.min()
-                        # Allow tolerance for holidays/weekends (first 10 days of Jan)
-                        if not (first_date.month == 1 and first_date.day <= 10):
+                        if not first_date.is_year_start:
                             annual_returns = annual_returns.drop(first_year, errors='ignore')
                     else:  # monthly
                         # For monthly data, check if all 12 months are present
@@ -2663,8 +2662,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 last_year_data = series_returns[series_returns.index.year == last_year]
                 if len(last_year_data) > 0:
                     last_date = last_year_data.index.max()
-                    # Allow tolerance for holidays/weekends (last 10 days of Dec)
-                    if not (last_date.month == 12 and last_date.day >= 21):
+                    if not last_date.is_year_end:
                         annual_returns = annual_returns.drop(last_year, errors='ignore')
 
             calendar_returns[series] = annual_returns
@@ -2700,23 +2698,23 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         if max_abs_value == 0:
             max_abs_value = 1
 
-        # Add color data to each row for cellStyle
-        for row in row_data:
-            for series in available_series:
-                if series in row and row[series] is not None:
-                    value = row[series]
-                    intensity = min(abs(value) / max_abs_value, 1)
-                    if value > 0:
-                        # Green gradient
-                        r = int(255 - (255 - 22) * intensity)
-                        g = int(255 - (255 - 163) * intensity)
-                        b = int(255 - (255 - 74) * intensity)
-                    else:
-                        # Red gradient
-                        r = int(255 - (255 - 220) * intensity)
-                        g = int(255 - (255 - 38) * intensity)
-                        b = int(255 - (255 - 38) * intensity)
-                    row[f"{series}_color"] = f"rgb({r}, {g}, {b})"
+        # # Add color data to each row for cellStyle
+        # for row in row_data:
+        #     for series in available_series:
+        #         if series in row and row[series] is not None:
+        #             value = row[series]
+        #             intensity = min(abs(value) / max_abs_value, 1)
+        #             if value > 0:
+        #                 # Green gradient
+        #                 r = int(255 - (255 - 22) * intensity)
+        #                 g = int(255 - (255 - 163) * intensity)
+        #                 b = int(255 - (255 - 74) * intensity)
+        #             else:
+        #                 # Red gradient
+        #                 r = int(255 - (255 - 220) * intensity)
+        #                 g = int(255 - (255 - 38) * intensity)
+        #                 b = int(255 - (255 - 38) * intensity)
+        #             row[f"{series}_color"] = f"rgb({r}, {g}, {b})"
 
         # Create column definitions with conditional formatting
         column_defs = [
@@ -2733,7 +2731,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                     "field": series,
                     "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                     "width": 120,
-                    "cellStyle": {"function": f"params.data.{series}_color ? {{'backgroundColor': params.data.{series}_color}} : {{}}"}
+                    #"cellStyle": {"function": f"params.data.{series}_color ? {{'backgroundColor': params.data.{series}_color}} : {{}}"}
                 })
 
         return column_defs, row_data
@@ -3878,16 +3876,24 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_ser
 
             # Get series returns based on returns_type and long-short
             if is_long_short:
-                if benchmark == "None" or benchmark == series or benchmark not in df.columns:
+                if benchmark == "None":
                     series_returns = df[series]
-                else:
+                elif benchmark == series:
+                    continue  # Skip if benchmark equals series
+                elif benchmark in df.columns:
                     series_returns = df[series] - df[benchmark]
+                else:
+                    series_returns = df[series]
             else:
                 if returns_type == "excess":
-                    if benchmark == "None" or benchmark == series or benchmark not in df.columns:
+                    if benchmark == "None":
                         series_returns = df[series]
-                    else:
+                    elif benchmark == series:
+                        continue  # Skip if benchmark equals series
+                    elif benchmark in df.columns:
                         series_returns = df[series] - df[benchmark]
+                    else:
+                        series_returns = df[series]
                 else:  # total returns
                     series_returns = df[series]
 
@@ -3899,6 +3905,31 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_ser
             annual_returns = series_returns_df.groupby('year')['returns'].apply(
                 lambda x: (1 + x).prod(min_count=1) - 1
             )
+
+            # Filter out partial years (exclude first and last year if partial)
+            if len(annual_returns) > 0:
+                first_year = annual_returns.index.min()
+                last_year = annual_returns.index.max()
+
+                # Check if first year is complete
+                first_year_data = series_returns[series_returns.index.year == first_year]
+                if len(first_year_data) > 0:
+                    if original_periodicity == "daily":
+                        # For daily data, check if it starts in January
+                        first_date = first_year_data.index.min()
+                        if not first_date.is_year_start:
+                            annual_returns = annual_returns.drop(first_year, errors='ignore')
+                    else:  # monthly
+                        # For monthly data, check if all 12 months are present
+                        if len(first_year_data) < 12:
+                            annual_returns = annual_returns.drop(first_year, errors='ignore')
+
+                # Check if last year is complete
+                last_year_data = series_returns[series_returns.index.year == last_year]
+                if len(last_year_data) > 0:
+                    last_date = last_year_data.index.max()
+                    if not last_date.is_year_end:
+                        annual_returns = annual_returns.drop(last_year, errors='ignore')
 
             calendar_returns[series] = annual_returns
 
