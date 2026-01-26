@@ -2317,118 +2317,71 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         return [], []
 
     try:
-        # Use raw data (original periodicity) regardless of selected periodicity
-        df = json_to_df(raw_data)
-
-        # Apply date range filter if provided
-        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-        if date_range_dict:
-            start_date = pd.to_datetime(date_range_dict["start"])
-            end_date = pd.to_datetime(date_range_dict["end"])
-
-            if selected_periodicity == "monthly":
-                # Fall back to beginning of month (e.g., 1/31 -> 1/1)
-                start_date = start_date.replace(day=1)
-            elif selected_periodicity and selected_periodicity.startswith("weekly_"):
-                # Fall back 6 days (e.g., 1/8 -> 1/2)
-                start_date = start_date - pd.Timedelta(days=6)
-
-            df = df[(df.index >= start_date) & (df.index <= end_date)]
-
-        # Parse assignments
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
-
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
-            return [], []
-
-        # Handle monthly view if selected
-        if monthly_view == "monthly" and monthly_series and monthly_series in available_series:
+        if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
+            # Handle monthly view if selected
             return create_monthly_view(
-                df,
+                raw_data,
                 monthly_series,
                 original_periodicity,
+                selected_periodicity,
                 returns_type,
-                benchmark_dict,
-                long_short_dict,
-                available_series
+                benchmark_assignments,
+                long_short_assignments,
+                selected_series,
+                date_range
             )
 
-        # Compute calendar year returns using shared helper
-        calendar_returns = _compute_calendar_year_returns(
-            df, original_periodicity, available_series, returns_type, benchmark_dict, long_short_dict
-        )
+        else:
+            # Calculate calendar returns for the selected periodicity
+            calendar_returns = calculate_calendar_year_returns(
+                raw_data,
+                original_periodicity,
+                selected_periodicity,
+                selected_series,
+                returns_type,
+                benchmark_assignments,
+                long_short_assignments,
+                date_range
+            )
 
-        if not calendar_returns:
-            return [], []
+            if calendar_returns.empty:
+                return [], []
 
-        # Get all years that have data for at least one series
-        all_years = sorted(set().union(*[set(cr.index) for cr in calendar_returns.values()]))
+            # Get all years that have data for at least one series
+            all_years = calendar_returns.index.unique().sort_values().tolist()
 
-        if not all_years:
-            return [], []
+            if not all_years:
+                return [], []
 
-        # Build row data first to calculate max absolute value
-        row_data = []
-        for year in all_years:
-            row = {"Year": int(year)}
-            for series in available_series:
-                if series in calendar_returns and year in calendar_returns[series].index:
-                    row[series] = calendar_returns[series].loc[year]
-                else:
-                    row[series] = None
-            row_data.append(row)
+            # Build row data first to calculate max absolute value
+            row_data = []
+            for year in all_years:
+                row = {"Year": int(year)}
+                for series in selected_series:
+                    if series in calendar_returns and year in calendar_returns[series].index:
+                        row[series] = calendar_returns[series].loc[year]
+                    else:
+                        row[series] = None
+                row_data.append(row)
 
-        # Calculate maximum absolute value for gradient scaling
-        max_abs_value = 0
-        for row in row_data:
-            for series in available_series:
-                if series in row and row[series] is not None:
-                    max_abs_value = max(max_abs_value, abs(row[series]))
+            # Create column definitions with conditional formatting
+            column_defs = [
+                {
+                    "field": "Year",
+                    "pinned": "left",
+                    "width": 100,
+                }
+            ]
 
-        # Prevent division by zero
-        if max_abs_value == 0:
-            max_abs_value = 1
+            for series in selected_series:
+                if series in calendar_returns:
+                    column_defs.append({
+                        "field": series,
+                        "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                        "width": 120,
+                    })
 
-        # # Add color data to each row for cellStyle
-        # for row in row_data:
-        #     for series in available_series:
-        #         if series in row and row[series] is not None:
-        #             value = row[series]
-        #             intensity = min(abs(value) / max_abs_value, 1)
-        #             if value > 0:
-        #                 # Green gradient
-        #                 r = int(255 - (255 - 22) * intensity)
-        #                 g = int(255 - (255 - 163) * intensity)
-        #                 b = int(255 - (255 - 74) * intensity)
-        #             else:
-        #                 # Red gradient
-        #                 r = int(255 - (255 - 220) * intensity)
-        #                 g = int(255 - (255 - 38) * intensity)
-        #                 b = int(255 - (255 - 38) * intensity)
-        #             row[f"{series}_color"] = f"rgb({r}, {g}, {b})"
-
-        # Create column definitions with conditional formatting
-        column_defs = [
-            {
-                "field": "Year",
-                "pinned": "left",
-                "width": 100,
-            }
-        ]
-
-        for series in available_series:
-            if series in calendar_returns:
-                column_defs.append({
-                    "field": series,
-                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
-                    "width": 120,
-                    #"cellStyle": {"function": f"params.data.{series}_color ? {{'backgroundColor': params.data.{series}_color}} : {{}}"}
-                })
-
-        return column_defs, row_data
+            return column_defs, row_data
 
     except Exception:
         return [], []
@@ -3226,7 +3179,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("monthly-series-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, original_periodicity, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series):
+def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series):
     """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, Drawdown, and Correlogram sheets."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -3234,7 +3187,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
     # Use cached functions to get data
     returns_df = calculate_excess_returns(
         raw_data,
-        periodicity or "daily",
+        selected_periodicity or "daily",
         tuple(selected_series),
         str(benchmark_assignments),
         returns_type,
@@ -3248,7 +3201,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
     # Get cached statistics
     stats = calculate_statistics_cached(
         raw_data,
-        periodicity or "daily",
+        selected_periodicity or "daily",
         tuple(selected_series),
         str(benchmark_assignments),
         str(long_short_assignments),
@@ -3283,7 +3236,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
 
             rolling_df = calculate_rolling_returns(
                 raw_data,
-                periodicity,
+                selected_periodicity,
                 tuple(selected_series),
                 returns_type,
                 str(benchmark_assignments),
@@ -3314,28 +3267,17 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
             try:
                 # Check if monthly view is selected
                 if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
-                    # Use monthly view (Jan-Dec columns + Ann)
-                    df = json_to_df(raw_data)
-
-                    # Apply date range filter if provided
-                    date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-                    if date_range_dict:
-                        start_date = pd.to_datetime(date_range_dict["start"])
-                        end_date = pd.to_datetime(date_range_dict["end"])
-                        df = df[(df.index >= start_date) & (df.index <= end_date)]
-
-                    benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-                    long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
-
                     # Get monthly view data
                     column_defs, row_data = create_monthly_view(
-                        df,
+                        raw_data,
                         monthly_series,
                         original_periodicity,
+                        selected_periodicity,
                         returns_type,
-                        benchmark_dict,
-                        long_short_dict,
-                        selected_series
+                        benchmark_assignments,
+                        long_short_assignments,
+                        selected_series,
+                        date_range
                     )
 
                     if row_data:
@@ -3349,11 +3291,12 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
                     calendar_df = calculate_calendar_year_returns(
                         raw_data,
                         original_periodicity,
-                        tuple(selected_series),
+                        selected_periodicity,
+                        selected_series,
                         returns_type,
-                        str(benchmark_assignments),
-                        str(long_short_assignments),
-                        str(date_range)
+                        benchmark_assignments,
+                        long_short_assignments,
+                        date_range
                     )
                     if not calendar_df.empty:
                         calendar_df.to_excel(writer, sheet_name="Calendar Year")
@@ -3364,7 +3307,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
         try:
             growth_df = calculate_growth_of_dollar(
                 raw_data,
-                periodicity,
+                selected_periodicity,
                 tuple(selected_series),
                 str(benchmark_assignments),
                 str(long_short_assignments),
@@ -3379,7 +3322,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
         try:
             drawdown_df = calculate_drawdown(
                 raw_data,
-                periodicity,
+                selected_periodicity,
                 tuple(selected_series),
                 returns_type,
                 str(benchmark_assignments),
@@ -3397,7 +3340,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
     output.seek(0)
 
     # Generate filename
-    periodicity_suffix = periodicity.replace("_", "-") if periodicity else "returns"
+    periodicity_suffix = selected_periodicity.replace("_", "-") if selected_periodicity else "returns"
     returns_suffix = "excess" if returns_type == "excess" else "total"
     filename = f"dashmat_{periodicity_suffix}_{returns_suffix}.xlsx"
 

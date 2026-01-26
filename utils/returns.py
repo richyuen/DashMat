@@ -456,7 +456,7 @@ def _compute_calendar_year_returns(df, original_periodicity, available_series, r
 
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_calendar_year_returns(raw_data, original_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def calculate_calendar_year_returns(raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate calendar year returns for Excel export."""
     try:
         df = json_to_df(raw_data)
@@ -466,6 +466,14 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_ser
         if date_range_dict:
             start_date = pd.to_datetime(date_range_dict["start"])
             end_date = pd.to_datetime(date_range_dict["end"])
+
+            if selected_periodicity == "monthly":
+                # Fall back to beginning of month (e.g., 1/31 -> 1/1)
+                start_date = start_date.replace(day=1)
+            elif selected_periodicity and selected_periodicity.startswith("weekly_"):
+                # Fall back 6 days (e.g., 1/8 -> 1/2)
+                start_date = start_date - pd.Timedelta(days=6)
+
             df = df[(df.index >= start_date) & (df.index <= end_date)]
 
         # Parse assignments
@@ -507,11 +515,33 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_ser
 
 # Monthly view creation
 
-def create_monthly_view(df, series_name, original_periodicity, returns_type, benchmark_dict, long_short_dict, available_series):
+def create_monthly_view(raw_data, series_name, original_periodicity, selected_periodicity,returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range):
     """Create monthly view with Jan-Dec columns plus Year column."""
+    # Use raw data (original periodicity) regardless of selected periodicity
+    df = json_to_df(raw_data)
+
+    # Apply date range filter if provided
+    date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
+    if date_range_dict:
+        start_date = pd.to_datetime(date_range_dict["start"])
+        end_date = pd.to_datetime(date_range_dict["end"])
+
+        if selected_periodicity == "monthly":
+            # Fall back to beginning of month (e.g., 1/31 -> 1/1)
+            start_date = start_date.replace(day=1)
+        elif selected_periodicity and selected_periodicity.startswith("weekly_"):
+            # Fall back 6 days (e.g., 1/8 -> 1/2)
+            start_date = start_date - pd.Timedelta(days=6)
+
+        df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+    # Parse assignments
+    benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+    long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
     # Determine if series is long-short
     is_long_short = long_short_dict.get(series_name, False)
-    benchmark = benchmark_dict.get(series_name, available_series[0])
+    benchmark = benchmark_dict.get(series_name, selected_series[0])
 
     # Get series returns based on returns_type and long-short
     if is_long_short:
