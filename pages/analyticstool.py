@@ -1933,11 +1933,11 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
         rolling_df = calculate_rolling_returns(
             raw_data,
             periodicity,
-            selected_series,
+            tuple(selected_series),
             returns_type,
-            benchmark_assignments,
-            long_short_assignments,
-            date_range,
+            str(benchmark_assignments),
+            str(long_short_assignments),
+            str(date_range),
             rolling_window,
             rolling_return_type
         )
@@ -3107,10 +3107,10 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
         growth_df = calculate_growth_of_dollar(
             raw_data,
             periodicity,
-            selected_series,
-            benchmark_assignments,
-            long_short_assignments,
-            date_range
+            tuple(selected_series),
+            str(benchmark_assignments),
+            str(long_short_assignments),
+            str(date_range)
         )
 
         if growth_df.empty:
@@ -3311,11 +3311,11 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
         drawdown_df = calculate_drawdown(
             raw_data,
             periodicity,
-            selected_series,
+            tuple(selected_series),
             returns_type,
-            benchmark_assignments,
-            long_short_assignments,
-            date_range
+            str(benchmark_assignments),
+            str(long_short_assignments),
+            str(date_range)
         )
 
         if drawdown_df.empty:
@@ -3350,6 +3350,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
         return [], []
 
 
+@cache_config.cache.memoize(timeout=300)
 def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized"):
     """Calculate rolling returns for Excel export - matches the Rolling grid logic."""
     try:
@@ -3617,6 +3618,7 @@ def _compute_calendar_year_returns(df, original_periodicity, available_series, r
     return calendar_returns
 
 
+@cache_config.cache.memoize(timeout=300)
 def calculate_calendar_year_returns(raw_data, original_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate calendar year returns for Excel export."""
     try:
@@ -3739,6 +3741,7 @@ def _compute_growth_of_dollar(df, periodicity, available_series, benchmark_dict,
     return growth_df
 
 
+@cache_config.cache.memoize(timeout=300)
 def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
     """Calculate growth of $1 for Excel export with starting value of 1.0."""
     try:
@@ -3864,6 +3867,7 @@ def _compute_drawdown(df, periodicity, available_series, returns_type, benchmark
     return drawdown_df
 
 
+@cache_config.cache.memoize(timeout=300)
 def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate drawdown for Excel export."""
     try:
@@ -3970,11 +3974,11 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
             rolling_df = calculate_rolling_returns(
                 raw_data,
                 periodicity,
-                selected_series,
+                tuple(selected_series),
                 returns_type,
-                benchmark_assignments,
-                long_short_assignments,
-                date_range,
+                str(benchmark_assignments),
+                str(long_short_assignments),
+                str(date_range),
                 window,
                 return_type
             )
@@ -4035,11 +4039,11 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
                     calendar_df = calculate_calendar_year_returns(
                         raw_data,
                         original_periodicity,
-                        selected_series,
+                        tuple(selected_series),
                         returns_type,
-                        benchmark_assignments,
-                        long_short_assignments,
-                        date_range
+                        str(benchmark_assignments),
+                        str(long_short_assignments),
+                        str(date_range)
                     )
                     if not calendar_df.empty:
                         calendar_df.to_excel(writer, sheet_name="Calendar Year")
@@ -4051,10 +4055,10 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
             growth_df = calculate_growth_of_dollar(
                 raw_data,
                 periodicity,
-                selected_series,
-                benchmark_assignments,
-                long_short_assignments,
-                date_range
+                tuple(selected_series),
+                str(benchmark_assignments),
+                str(long_short_assignments),
+                str(date_range)
             )
             if not growth_df.empty:
                 growth_df.to_excel(writer, sheet_name="Growth of $1")
@@ -4066,11 +4070,11 @@ def download_excel(n_clicks, raw_data, original_periodicity, periodicity, select
             drawdown_df = calculate_drawdown(
                 raw_data,
                 periodicity,
-                selected_series,
+                tuple(selected_series),
                 returns_type,
-                benchmark_assignments,
-                long_short_assignments,
-                date_range
+                str(benchmark_assignments),
+                str(long_short_assignments),
+                str(date_range)
             )
             if not drawdown_df.empty:
                 drawdown_df.to_excel(writer, sheet_name="Drawdown")
