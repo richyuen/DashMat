@@ -215,6 +215,10 @@ layout = dmc.Container(
                                             "Clear all series",
                                             id="menu-clear-all-series",
                                         ),
+                                        dmc.MenuItem(
+                                            "Clear local storage and refresh",
+                                            id="menu-clear-local-storage",
+                                        ),
                                     ],
                                 ),
                             ],
@@ -716,6 +720,49 @@ clientside_callback(
     """,
     Output("url-location", "pathname"),
     Input("menu-exit", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Clientside callback to clear local storage and refresh page
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            // Clear all localStorage keys specific to Analytics Tool
+            const keysToRemove = [
+                'series-select',
+                'raw-data-store',
+                'original-periodicity-store',
+                'benchmark-assignments-store',
+                'long-short-store',
+                'periodicity-value-store',
+                'returns-type-value-store',
+                'series-select-value-store',
+                'series-order-store',
+                'active-tab-store',
+                'rolling-window-store',
+                'rolling-return-type-store',
+                'rolling-chart-switch-store',
+                'drawdown-chart-switch-store',
+                'growth-chart-switch-store',
+                'monthly-view-store',
+                'monthly-series-store',
+                'date-range-store'
+            ];
+
+            keysToRemove.forEach(key => {
+                localStorage.removeItem(key);
+            });
+
+            // Refresh the page
+            window.location.reload();
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("url-location", "pathname", allow_duplicate=True),
+    Input("menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
 )
 
