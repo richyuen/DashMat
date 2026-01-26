@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from io import StringIO
 import numpy as np
 import pandas as pd
 
@@ -162,7 +163,7 @@ def json_to_df_cached(json_str: str) -> pd.DataFrame:
     This is the primary performance bottleneck - caching this operation
     prevents repeated deserialization of the same data.
     """
-    df = pd.read_json(json_str, orient="split")
+    df = pd.read_json(StringIO(json_str), orient="split")
     df.index = pd.to_datetime(df.index)
     df.index.name = "Date"
     return df
