@@ -3638,7 +3638,7 @@ def _compute_growth_of_dollar(df, periodicity, available_series, benchmark_dict,
 
     # Calculate growth for each series and collect data
     series_growth_data = {}
-    all_dates = set(df.index)
+    all_dates = set()
 
     for series in available_series:
         is_long_short = long_short_dict.get(series, False)
@@ -3742,7 +3742,7 @@ def _compute_drawdown(df, periodicity, available_series, returns_type, benchmark
 
     # Calculate drawdown for each series and collect data
     series_drawdown_data = {}
-    all_dates = set(df.index)
+    all_dates = set()
 
     for series in available_series:
         is_long_short = long_short_dict.get(series, False)
