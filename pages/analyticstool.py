@@ -2760,89 +2760,29 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
         return dmc.Text("Select series to view drawdown charts", size="sm", c="dimmed")
 
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
+        # Use shared calculate_drawdown function
+        drawdown_df = calculate_drawdown(
+            raw_data,
+            periodicity,
+            tuple(selected_series),
+            returns_type,
+            str(benchmark_assignments),
+            str(long_short_assignments),
+            str(date_range)
+        )
 
-        # Apply date range filter if provided
-        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-        if date_range_dict:
-            start_date = pd.to_datetime(date_range_dict["start"])
-            end_date = pd.to_datetime(date_range_dict["end"])
-            df = df[(df.index >= start_date) & (df.index <= end_date)]
-
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
-
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
+        if drawdown_df.empty:
             return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
-        # Determine the period offset based on periodicity
-        periodicity_str = periodicity or "daily"
-        if periodicity_str == "daily":
-            period_offset = pd.DateOffset(days=1)
-        elif periodicity_str == "monthly":
-            period_offset = pd.tseries.offsets.MonthEnd(1)
-        elif periodicity_str.startswith("weekly"):
-            period_offset = pd.DateOffset(weeks=1)
-        else:
-            period_offset = pd.DateOffset(days=1)
+        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
 
         # Create individual drawdown charts for each series
         charts = []
-        for series in available_series:
-            is_long_short = long_short_dict.get(series, False)
-            benchmark = benchmark_dict.get(series, available_series[0])
+        for series in drawdown_df.columns:
+            drawdown = drawdown_df[series].dropna()
 
-            if is_long_short:
-                # For long-short, use the difference
-                if benchmark == "None":
-                    returns = df[series]
-                elif benchmark == series:
-                    # Skip series where benchmark is itself for long-short
-                    continue
-                elif benchmark in df.columns:
-                    returns = df[series] - df[benchmark]
-                else:
-                    returns = df[series]
-                
-                # Drop NaNs before calculation to handle different start dates
-                returns = returns.dropna()
-
-                # Calculate cumulative growth
-                growth = (1 + returns).cumprod()
-            elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
-                # For excess returns, calculate drawdown of series relative to benchmark
-                # Compound each separately, then calculate relative performance
-                
-                # Align data first by dropping NaNs where either series or benchmark is missing
-                aligned_df = df[[series, benchmark]].dropna()
-                
-                series_growth = (1 + aligned_df[series]).cumprod()
-                benchmark_growth = (1 + aligned_df[benchmark]).cumprod()
-
-                # Relative growth (series vs benchmark)
-                growth = series_growth / benchmark_growth
-            else:
-                # For total returns, use series returns directly
-                returns = df[series].dropna()
-                growth = (1 + returns).cumprod()
-
-            # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
-            # This ensures that a negative first period return counts as a drawdown
-            growth_array = np.concatenate([[1.0], growth.values])
-            running_max_array = np.maximum.accumulate(growth_array)
-
-            # Calculate drawdown (exclude the prepended 1.0)
-            drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
-            drawdown = pd.Series(drawdown_array, index=growth.index)
-
-            # Prepend starting value of 0.0 drawdown at one period before first date
-            if len(drawdown) > 0:
-                first_date = drawdown.index[0]
-                start_date = first_date - period_offset
-                start_value = pd.Series([0.0], index=[start_date])
-                drawdown = pd.concat([start_value, drawdown])
+            if drawdown.empty:
+                continue
 
             # Create figure
             fig = go.Figure()
@@ -2856,6 +2796,7 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
                 fillcolor='rgba(255, 0, 0, 0.2)',
             ))
 
+            is_long_short = long_short_dict.get(series, False)
             suffix = " (Long-Short)" if is_long_short else ""
             fig.update_layout(
                 title=f"Drawdown: {series}{suffix}",
