@@ -73,7 +73,7 @@ def _hash_json(json_str: str) -> str:
     return hashlib.md5(json_str.encode()).hexdigest()
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def json_to_df_cached(json_str: str) -> pd.DataFrame:
     """Convert JSON string back to DataFrame with caching.
 
@@ -91,7 +91,7 @@ def json_to_df(json_str: str) -> pd.DataFrame:
     return json_to_df_cached(json_str)
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
     """Resample returns with caching to avoid repeated computation."""
     df = json_to_df(json_str)
@@ -100,7 +100,7 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
     return resample_returns(df, periodicity)
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
                              benchmark_assignments: str, returns_type: str, long_short_assignments: str,
                              date_range_str: str) -> pd.DataFrame:
@@ -2235,7 +2235,7 @@ def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selec
         return empty_fig
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def calculate_statistics_cached(json_str: str, periodicity: str, selected_series: tuple,
                                 benchmark_assignments: str, long_short_assignments: str, date_range_str: str) -> list:
     """Calculate statistics with caching."""
@@ -2644,7 +2644,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         return [], []
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
                                 returns_type: str, benchmark_assignments: str, long_short_assignments: str,
                                 date_range_str: str):
@@ -3350,7 +3350,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
         return [], []
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized"):
     """Calculate rolling returns for Excel export - matches the Rolling grid logic."""
     try:
@@ -3618,7 +3618,7 @@ def _compute_calendar_year_returns(df, original_periodicity, available_series, r
     return calendar_returns
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def calculate_calendar_year_returns(raw_data, original_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate calendar year returns for Excel export."""
     try:
@@ -3741,7 +3741,7 @@ def _compute_growth_of_dollar(df, periodicity, available_series, benchmark_dict,
     return growth_df
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
     """Calculate growth of $1 for Excel export with starting value of 1.0."""
     try:
@@ -3867,7 +3867,7 @@ def _compute_drawdown(df, periodicity, available_series, returns_type, benchmark
     return drawdown_df
 
 
-@cache_config.cache.memoize(timeout=300)
+@cache_config.cache.memoize(timeout=0)
 def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate drawdown for Excel export."""
     try:
