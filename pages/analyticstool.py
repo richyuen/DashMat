@@ -414,39 +414,33 @@ layout = dmc.Container(
                                 ),
                             ],
                         ),
-                        dcc.Loading(
-                            id="loading-rolling",
-                            type="default",
+                        html.Div(
+                            id="rolling-grid-container",
                             children=[
-                                html.Div(
-                                    id="rolling-grid-container",
-                                    children=[
-                                        dag.AgGrid(
-                                            id="rolling-grid",
-                                            columnDefs=[],
-                                            rowData=[],
-                                            defaultColDef={
-                                                "sortable": True,
-                                                "resizable": True,
-                                            },
-                                            style={"height": "550px"},
-                                            dashGridOptions={
-                                                "animateRows": True,
-                                                "pagination": True,
-                                                "paginationPageSize": 100,
-                                            },
-                                        ),
-                                    ],
+                                dag.AgGrid(
+                                    id="rolling-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "550px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
                                 ),
-                                html.Div(
-                                    id="rolling-chart-container",
-                                    style={"display": "none"},
-                                    children=[
-                                        dcc.Graph(
-                                            id="rolling-chart",
-                                            style={"height": "550px"},
-                                        ),
-                                    ],
+                            ],
+                        ),
+                        html.Div(
+                            id="rolling-chart-container",
+                            style={"display": "none"},
+                            children=[
+                                dcc.Graph(
+                                    id="rolling-chart",
+                                    style={"height": "550px"},
                                 ),
                             ],
                         ),
@@ -503,24 +497,18 @@ layout = dmc.Container(
                                 ),
                             ],
                         ),
-                        dcc.Loading(
-                            id="loading-calendar",
-                            type="default",
-                            children=[
-                                dag.AgGrid(
-                                    id="calendar-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                    },
-                                    style={"height": "600px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                    },
-                                ),
-                            ],
+                        dag.AgGrid(
+                            id="calendar-grid",
+                            columnDefs=[],
+                            rowData=[],
+                            defaultColDef={
+                                "sortable": True,
+                                "resizable": True,
+                            },
+                            style={"height": "600px"},
+                            dashGridOptions={
+                                "animateRows": True,
+                            },
                         ),
                     ],
                 ),
@@ -528,15 +516,9 @@ layout = dmc.Container(
                     value="correlogram",
                     pt="md",
                     children=[
-                        dcc.Loading(
-                            id="loading-correlogram",
-                            type="default",
-                            children=[
-                                dcc.Graph(
-                                    id="correlogram-graph",
-                                    style={"height": "700px"},
-                                ),
-                            ],
+                        dcc.Graph(
+                            id="correlogram-graph",
+                            style={"height": "700px"},
                         ),
                     ],
                 ),
@@ -558,36 +540,30 @@ layout = dmc.Container(
                                 ),
                             ],
                         ),
-                        dcc.Loading(
-                            id="loading-growth",
-                            type="default",
+                        html.Div(
+                            id="growth-chart-container",
                             children=[
-                                html.Div(
-                                    id="growth-chart-container",
-                                    children=[
-                                        html.Div(id="growth-charts-container"),
-                                    ],
-                                ),
-                                html.Div(
-                                    id="growth-grid-container",
-                                    style={"display": "none"},
-                                    children=[
-                                        dag.AgGrid(
-                                            id="growth-grid",
-                                            columnDefs=[],
-                                            rowData=[],
-                                            defaultColDef={
-                                                "sortable": True,
-                                                "resizable": True,
-                                            },
-                                            style={"height": "600px"},
-                                            dashGridOptions={
-                                                "animateRows": True,
-                                                "pagination": True,
-                                                "paginationPageSize": 100,
-                                            },
-                                        ),
-                                    ],
+                                html.Div(id="growth-charts-container"),
+                            ],
+                        ),
+                        html.Div(
+                            id="growth-grid-container",
+                            style={"display": "none"},
+                            children=[
+                                dag.AgGrid(
+                                    id="growth-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "600px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
                                 ),
                             ],
                         ),
@@ -611,36 +587,30 @@ layout = dmc.Container(
                                 ),
                             ],
                         ),
-                        dcc.Loading(
-                            id="loading-drawdown",
-                            type="default",
+                        html.Div(
+                            id="drawdown-chart-container",
                             children=[
-                                html.Div(
-                                    id="drawdown-chart-container",
-                                    children=[
-                                        html.Div(id="drawdown-charts"),
-                                    ],
-                                ),
-                                html.Div(
-                                    id="drawdown-grid-container",
-                                    style={"display": "none"},
-                                    children=[
-                                        dag.AgGrid(
-                                            id="drawdown-grid",
-                                            columnDefs=[],
-                                            rowData=[],
-                                            defaultColDef={
-                                                "sortable": True,
-                                                "resizable": True,
-                                            },
-                                            style={"height": "600px"},
-                                            dashGridOptions={
-                                                "animateRows": True,
-                                                "pagination": True,
-                                                "paginationPageSize": 100,
-                                            },
-                                        ),
-                                    ],
+                                html.Div(id="drawdown-charts"),
+                            ],
+                        ),
+                        html.Div(
+                            id="drawdown-grid-container",
+                            style={"display": "none"},
+                            children=[
+                                dag.AgGrid(
+                                    id="drawdown-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "600px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
                                 ),
                             ],
                         ),
