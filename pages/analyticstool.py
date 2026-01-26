@@ -3291,7 +3291,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
             if col != "Date":
                 column_defs.append({
                     "field": col,
-                    "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
+                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                 })
 
         # Convert to records
