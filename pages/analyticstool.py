@@ -1928,7 +1928,6 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
 @callback(
     Output("rolling-chart", "figure"),
     Input("main-tabs", "value"),
-    Input("rolling-chart-switch", "value"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
@@ -1940,7 +1939,7 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
     Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update the Rolling Returns chart with rolling window calculations."""
     # Create empty figure
     empty_fig = go.Figure()
@@ -1951,9 +1950,9 @@ def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selec
         template="plotly_white",
     )
 
-    # Lazy loading: only calculate when rolling tab is active and chart view is selected
-    if active_tab != "rolling" or chart_checked != "chart":
-        return empty_fig
+    # Lazy loading: only calculate when rolling tab is active
+    if active_tab != "rolling":
+        raise PreventUpdate
 
     if raw_data is None or not selected_series:
         return empty_fig
