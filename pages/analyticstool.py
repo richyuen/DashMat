@@ -2545,53 +2545,27 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         else:
             period_offset = pd.DateOffset(days=1)
 
-        # Create the main growth chart
-        main_chart_data = {}
-        for series in available_series:
-            is_long_short = long_short_dict.get(series, False)
-            benchmark = benchmark_dict.get(series, available_series[0])
-
-            if is_long_short:
-                # For long-short, use the difference
-                if benchmark == "None":
-                    returns = df[series]
-                elif benchmark == series:
-                    # Skip series where benchmark is itself for long-short
-                    continue
-                elif benchmark in df.columns:
-                    returns = df[series] - df[benchmark]
-                else:
-                    returns = df[series]
-            else:
-                # For non-long-short, use total returns
-                returns = df[series]
-            
-            # Drop NaNs before calculation
-            returns = returns.dropna()
-
-            # Calculate cumulative growth (compounded)
-            growth = (1 + returns).cumprod()
-
-            # Prepend starting value of 1.0 at one period before first date
-            if len(growth) > 0:
-                first_date = growth.index[0]
-                # Create a series with 1.0 at the start, one full period earlier
-                start_date = first_date - period_offset
-                start_value = pd.Series([1.0], index=[start_date])
-                growth = pd.concat([start_value, growth])
-
-            main_chart_data[series] = growth
+        # Use shared calculate_growth_of_dollar function
+        growth_df = calculate_growth_of_dollar(
+            raw_data,
+            periodicity,
+            tuple(selected_series),
+            str(benchmark_assignments),
+            str(long_short_assignments),
+            str(date_range)
+        )
 
         # Create main growth figure
         main_fig = go.Figure()
-        for series, growth in main_chart_data.items():
-            main_fig.add_trace(go.Scatter(
-                x=growth.index,
-                y=growth,
-                mode='lines',
-                name=series,
-                line=dict(width=2),
-            ))
+        if not growth_df.empty:
+            for series in growth_df.columns:
+                main_fig.add_trace(go.Scatter(
+                    x=growth_df.index,
+                    y=growth_df[series],
+                    mode='lines',
+                    name=series,
+                    line=dict(width=2),
+                ))
 
         main_fig.update_layout(
             title="Growth of $1 - All Series",
