@@ -415,6 +415,7 @@ def _compute_calendar_year_returns(df, original_periodicity, available_series, r
                     series_returns = df[series]
             else:  # total returns
                 series_returns = df[series]
+        series_returns = series_returns.dropna()
 
         # Group by year and compound returns
         series_returns_df = series_returns.to_frame(name='returns')
@@ -567,6 +568,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
                 series_returns = df[series_name]
         else:  # total returns
             series_returns = df[series_name]
+    series_returns = series_returns.dropna()
 
     # Convert to DataFrame for processing
     series_data = series_returns.to_frame(name='returns')
@@ -614,7 +616,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
 
     # Calculate Annual column (compound all months in the row)
     pivot_data['Ann'] = pivot_data.apply(
-        lambda row: (1 + row.dropna()).prod() - 1 if row.notna().any() else None,
+        lambda row: (1 + row.dropna()).prod() - 1 if not row.isnull().any() else None,
         axis=1
     )
 
