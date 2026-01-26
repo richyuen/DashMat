@@ -21,7 +21,8 @@
       "Bash(pkill:*)",
       "Bash(curl:*)",
       "Bash(del /q test_row_data.py test_stats.py)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python -c:*)"
     ]
   }
 }
