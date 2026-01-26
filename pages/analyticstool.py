@@ -3740,8 +3740,10 @@ def _compute_drawdown(df, periodicity, available_series, returns_type, benchmark
     else:
         period_offset = pd.DateOffset(days=1)
 
-    # Calculate drawdown for each series
-    drawdown_df = pd.DataFrame(index=df.index)
+    # Calculate drawdown for each series and collect data
+    series_drawdown_data = {}
+    all_dates = set(df.index)
+
     for series in available_series:
         is_long_short = long_short_dict.get(series, False)
         benchmark = benchmark_dict.get(series, available_series[0])
@@ -3780,6 +3782,9 @@ def _compute_drawdown(df, periodicity, available_series, returns_type, benchmark
             returns = df[series].dropna()
             growth = (1 + returns).cumprod()
 
+        if growth.empty:
+            continue
+
         # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
         # This ensures that a negative first period return counts as a drawdown
         growth_array = np.concatenate([[1.0], growth.values])
@@ -3789,15 +3794,25 @@ def _compute_drawdown(df, periodicity, available_series, returns_type, benchmark
         drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
         drawdown = pd.Series(drawdown_array, index=growth.index)
 
-        drawdown_df[series] = drawdown
-
-    # Prepend starting row with 0.0 drawdown at one period before first date
-    if len(drawdown_df) > 0:
-        first_date = drawdown_df.index[0]
+        # Prepend 0.0 drawdown at one period before this series' first date
+        first_date = drawdown.index[0]
         start_date = first_date - period_offset
-        start_row = pd.DataFrame(0.0, index=[start_date], columns=drawdown_df.columns)
-        drawdown_df = pd.concat([start_row, drawdown_df])
-        drawdown_df.index.name = "Date"
+        start_val = pd.Series([0.0], index=[start_date])
+        drawdown_with_start = pd.concat([start_val, drawdown])
+
+        series_drawdown_data[series] = drawdown_with_start
+        all_dates.update(drawdown_with_start.index)
+
+    if not series_drawdown_data:
+        return pd.DataFrame()
+
+    # Build DataFrame with all dates
+    sorted_dates = sorted(list(all_dates))
+    drawdown_df = pd.DataFrame(index=sorted_dates)
+    drawdown_df.index.name = "Date"
+
+    for series, drawdown in series_drawdown_data.items():
+        drawdown_df[series] = drawdown
 
     return drawdown_df
 
