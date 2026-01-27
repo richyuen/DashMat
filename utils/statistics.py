@@ -93,6 +93,30 @@ def sharpe_ratio(returns: pd.Series, periods_per_year: float, rf: float = 0.0) -
     return (ann_ret - rf) / ann_vol
 
 
+def sortino_ratio(returns: pd.Series, periods_per_year: float, rf: float = 0.0, target_return: float = 0.0) -> float:
+    """Calculate Sortino ratio."""
+    ann_ret = annualized_return(returns, periods_per_year)
+
+    # Calculate downside deviation
+    # We care about returns below target_return
+    downside_diff = returns - target_return
+    downside_diff[downside_diff > 0] = 0
+
+    # Calculate semi-variance (using N-1 for consistency with sample std dev if len > 1)
+    if len(returns) < 2:
+        return np.nan
+
+    downside_sq = downside_diff ** 2
+    # Use N-1 to align with pandas std() behavior for volatility
+    semi_variance = downside_sq.sum() / (len(returns) - 1)
+    downside_dev = np.sqrt(semi_variance) * np.sqrt(periods_per_year)
+
+    if downside_dev == 0 or np.isnan(downside_dev):
+        return np.nan
+
+    return (ann_ret - rf) / downside_dev
+
+
 def tracking_error(returns: pd.Series, benchmark_returns: pd.Series, periods_per_year: float) -> float:
     """Calculate annualized tracking error."""
     excess = returns - benchmark_returns
@@ -186,6 +210,7 @@ def calculate_statistics(
             "Annualized Volatility": annualized_volatility(ls_returns, periods_per_year),
             "Annualized Tracking Error": annualized_volatility(ls_returns, periods_per_year),  # Same as volatility for long-short
             "Sharpe Ratio": sharpe_ratio(ls_returns, periods_per_year),
+            "Sortino Ratio": sortino_ratio(ls_returns, periods_per_year),
             "Information Ratio": sharpe_ratio(ls_returns, periods_per_year),  # Same as Sharpe for long-short
             "Hit Rate": hit_rate(ls_returns),
             "Hit Rate (vs Benchmark)": hit_rate(ls_returns),  # Same as Hit Rate for long-short
@@ -209,11 +234,13 @@ def calculate_statistics(
 
                 result[f"{label} Annualized Return"] = trailing_ls_ann_ret
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)
+                result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ls, periods_per_year)
                 result[f"{label} Excess Return"] = trailing_ls_ann_ret  # Same as annualized return
                 result[f"{label} Information Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)  # Same as Sharpe
             else:
                 result[f"{label} Annualized Return"] = np.nan
                 result[f"{label} Sharpe Ratio"] = np.nan
+                result[f"{label} Sortino Ratio"] = np.nan
                 result[f"{label} Excess Return"] = np.nan
                 result[f"{label} Information Ratio"] = np.nan
     else:
@@ -239,6 +266,7 @@ def calculate_statistics(
             "Annualized Volatility": annualized_volatility(ret, periods_per_year),
             "Annualized Tracking Error": np.nan if same_series else tracking_error(ret, bench, periods_per_year),
             "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
+            "Sortino Ratio": sortino_ratio(ret, periods_per_year),
             "Information Ratio": np.nan if same_series else information_ratio(ret, bench, periods_per_year),
             "Hit Rate": hit_rate(ret),
             "Hit Rate (vs Benchmark)": np.nan if same_series else hit_rate_vs_benchmark(ret, bench),
@@ -265,11 +293,13 @@ def calculate_statistics(
 
                 result[f"{label} Annualized Return"] = trailing_ann_ret
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
+                result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ret, periods_per_year)
                 result[f"{label} Excess Return"] = np.nan if same_series else (trailing_ann_ret - trailing_ann_bench)
                 result[f"{label} Information Ratio"] = np.nan if same_series else information_ratio(trailing_ret, trailing_bench, periods_per_year)
             else:
                 result[f"{label} Annualized Return"] = np.nan
                 result[f"{label} Sharpe Ratio"] = np.nan
+                result[f"{label} Sortino Ratio"] = np.nan
                 result[f"{label} Excess Return"] = np.nan
                 result[f"{label} Information Ratio"] = np.nan
 
