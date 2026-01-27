@@ -530,9 +530,13 @@ layout = dmc.Container(
                     value="correlogram",
                     pt="md",
                     children=[
-                        dcc.Graph(
-                            id="correlogram-graph",
-                            style={"height": "700px"},
+                        dcc.Loading(
+                            id="loading-correlogram",
+                            type="default",
+                            delay_show=500,
+                            children=[
+                                html.Div(id="correlogram-container"),
+                            ],
                         ),
                     ],
                 ),
@@ -2302,7 +2306,7 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
 
 
 @callback(
-    Output("correlogram-graph", "figure"),
+    Output("correlogram-container", "children"),
     Input("main-tabs", "value"),  # Lazy loading: only update when tab is active
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
@@ -2315,6 +2319,7 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
 )
 def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
+    # Define empty figure
     empty_fig = go.Figure()
     empty_fig.add_annotation(
         text="Select at least 2 series to view correlogram",
@@ -2325,14 +2330,16 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     empty_fig.update_layout(
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        template="plotly_white",
     )
+    empty_graph = dcc.Graph(figure=empty_fig, style={"height": "700px"})
 
     # Lazy loading: only generate when correlogram tab is active
     if active_tab != "correlogram":
         raise PreventUpdate
 
     if raw_data is None or not selected_series or len(selected_series) < 2:
-        return empty_fig
+        return empty_graph
 
     # Size limit: show simple correlation matrix heatmap if too many series
     if len(selected_series) > MAX_SCATTER_MATRIX_SIZE:
@@ -2348,7 +2355,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             )
 
             if result is None:
-                return empty_fig
+                return empty_graph
 
             corr_matrix = result['corr_matrix']
             available_series = result['available_series']
@@ -2368,17 +2375,19 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                 hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>',
             ))
 
+            height = max(500, 30 * len(available_series) + 150)
             heatmap_fig.update_layout(
                 title=f"Correlation Matrix ({returns_type.title()} Returns)",
-                height=max(500, 30 * len(available_series) + 150),
+                height=height,
                 xaxis=dict(tickangle=45),
                 yaxis=dict(autorange='reversed'),
+                template="plotly_white",
             )
 
-            return heatmap_fig
+            return dcc.Graph(figure=heatmap_fig, style={"height": f"{height}px"})
 
         except Exception:
-            return empty_fig
+            return empty_graph
 
     try:
         # Use cached function to avoid repeated computation
@@ -2393,7 +2402,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
         )
 
         if result is None:
-            return empty_fig
+            return empty_graph
 
         display_df = result['display_df']
         corr_matrix = result['corr_matrix']
@@ -2401,7 +2410,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
         n = result['n']
 
         if n < 2:
-            return empty_fig
+            return empty_graph
 
         # Create subplots
         fig = make_subplots(
@@ -2491,21 +2500,23 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             fig.update_yaxes(title_text=series, row=i+1, col=1, title_font=dict(size=10))
 
         # Update layout
+        height = max(500, 150 * n)
         fig.update_layout(
             title=f"Scatter Matrix ({returns_type.title()} Returns)",
-            height=max(500, 150 * n),
+            height=height,
             margin=dict(l=60, r=30, t=50, b=60),
             showlegend=False,
+            template="plotly_white",
         )
 
         # Hide tick labels for inner plots
         fig.update_xaxes(showticklabels=False)
         fig.update_yaxes(showticklabels=False)
 
-        return fig
+        return dcc.Graph(figure=fig, style={"height": f"{height}px"})
 
     except Exception:
-        return empty_fig
+        return empty_graph
 
 
 @callback(
