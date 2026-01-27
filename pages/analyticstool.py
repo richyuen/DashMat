@@ -417,20 +417,27 @@ layout = dmc.Container(
                         html.Div(
                             id="rolling-grid-container",
                             children=[
-                                dag.AgGrid(
-                                    id="rolling-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                    },
-                                    style={"height": "550px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
-                                    },
+                                dcc.Loading(
+                                    id="loading-rolling-grid",
+                                    type="default",
+                                    delay_show=500,
+                                    children=[
+                                        dag.AgGrid(
+                                            id="rolling-grid",
+                                            columnDefs=[],
+                                            rowData=[],
+                                            defaultColDef={
+                                                "sortable": True,
+                                                "resizable": True,
+                                            },
+                                            style={"height": "550px"},
+                                            dashGridOptions={
+                                                "animateRows": True,
+                                                "pagination": True,
+                                                "paginationPageSize": 100,
+                                            },
+                                        ),
+                                    ],
                                 ),
                             ],
                         ),
@@ -438,9 +445,16 @@ layout = dmc.Container(
                             id="rolling-chart-container",
                             style={"display": "none"},
                             children=[
-                                dcc.Graph(
-                                    id="rolling-chart",
-                                    style={"height": "550px"},
+                                dcc.Loading(
+                                    id="loading-rolling-chart",
+                                    type="default",
+                                    delay_show=500,
+                                    children=[
+                                        dcc.Graph(
+                                            id="rolling-chart",
+                                            style={"height": "550px"},
+                                        ),
+                                    ],
                                 ),
                             ],
                         ),
