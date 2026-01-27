@@ -33,7 +33,7 @@ from utils.statistics import (
     calculate_growth_of_dollar,
 )
 
-register_page(__name__, path="/dashboard", name="Dashboard", title="DashMat - Dashboard")
+register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
 # Performance optimization constants
 MAX_SCATTER_MATRIX_SIZE = 10  # Maximum series for scatter matrix (creates n² subplots)
