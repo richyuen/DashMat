@@ -418,41 +418,27 @@ layout = dmc.Container(
                             id="rolling-grid-container",
                             style={"display": "none"},
                             children=[
-                                dcc.Loading(
-                                    id="loading-rolling-grid",
-                                    type="default",
-                                    delay_show=500,
-                                    children=[
-                                        dag.AgGrid(
-                                            id="rolling-grid",
-                                            columnDefs=[],
-                                            rowData=[],
-                                            defaultColDef={
-                                                "sortable": True,
-                                                "resizable": True,
-                                            },
-                                            style={"height": "550px"},
-                                            dashGridOptions={
-                                                "animateRows": True,
-                                                "pagination": True,
-                                                "paginationPageSize": 100,
-                                            },
-                                        ),
-                                    ],
+                                dag.AgGrid(
+                                    id="rolling-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "550px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
                                 ),
                             ],
                         ),
                         html.Div(
                             id="rolling-chart-container",
                             children=[
-                                dcc.Loading(
-                                    id="loading-rolling-chart",
-                                    type="default",
-                                    delay_show=500,
-                                    children=[
-                                        html.Div(id="rolling-chart-wrapper"),
-                                    ],
-                                ),
+                                html.Div(id="rolling-chart-wrapper"),
                             ],
                         ),
                     ],
@@ -527,14 +513,7 @@ layout = dmc.Container(
                     value="correlogram",
                     pt="md",
                     children=[
-                        dcc.Loading(
-                            id="loading-correlogram",
-                            type="default",
-                            delay_show=500,
-                            children=[
-                                html.Div(id="correlogram-container"),
-                            ],
-                        ),
+                        html.Div(id="correlogram-container"),
                     ],
                 ),
                 dmc.TabsPanel(
