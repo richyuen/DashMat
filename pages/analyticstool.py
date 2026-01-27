@@ -416,6 +416,7 @@ layout = dmc.Container(
                         ),
                         html.Div(
                             id="rolling-grid-container",
+                            style={"display": "none"},
                             children=[
                                 dcc.Loading(
                                     id="loading-rolling-grid",
@@ -443,7 +444,6 @@ layout = dmc.Container(
                         ),
                         html.Div(
                             id="rolling-chart-container",
-                            style={"display": "none"},
                             children=[
                                 dcc.Loading(
                                     id="loading-rolling-chart",
@@ -645,7 +645,7 @@ layout = dmc.Container(
         dcc.Store(id="active-tab-store", data="statistics", storage_type="local"),
         dcc.Store(id="rolling-window-store", data="1y", storage_type="local"),
         dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="local"),
-        dcc.Store(id="rolling-chart-switch-store", data="table", storage_type="local"),
+        dcc.Store(id="rolling-chart-switch-store", data="chart", storage_type="local"),
         dcc.Store(id="drawdown-chart-switch-store", data="chart", storage_type="local"),
         dcc.Store(id="growth-chart-switch-store", data="chart", storage_type="local"),
         dcc.Store(id="monthly-view-store", data="annual", storage_type="local"),
@@ -1016,7 +1016,7 @@ def restore_rolling_options(raw_data, stored_window, stored_return_type):
 )
 def save_rolling_chart_switch(value):
     """Save rolling chart switch state to local storage."""
-    return value if value is not None else "table"
+    return value if value is not None else "chart"
 
 
 @callback(
@@ -1027,7 +1027,7 @@ def save_rolling_chart_switch(value):
 )
 def restore_rolling_chart_switch(raw_data, stored_chart_switch):
     """Restore rolling chart switch from local storage on page load."""
-    return stored_chart_switch if stored_chart_switch is not None else "table"
+    return stored_chart_switch if stored_chart_switch is not None else "chart"
 
 
 @callback(
