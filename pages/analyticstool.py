@@ -450,10 +450,7 @@ layout = dmc.Container(
                                     type="default",
                                     delay_show=500,
                                     children=[
-                                        dcc.Graph(
-                                            id="rolling-chart",
-                                            style={"height": "550px"},
-                                        ),
+                                        html.Div(id="rolling-chart-wrapper"),
                                     ],
                                 ),
                             ],
@@ -1944,7 +1941,7 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
 
 
 @callback(
-    Output("rolling-chart", "figure"),
+    Output("rolling-chart-wrapper", "children"),
     Input("main-tabs", "value"),
     Input("raw-data-store", "data"),
     Input("periodicity-select", "value"),
@@ -1967,13 +1964,14 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
         yaxis_title="",
         template="plotly_white",
     )
+    empty_graph = dcc.Graph(figure=empty_fig, style={"height": "550px"})
 
     # Lazy loading: only calculate when rolling tab is active
     if active_tab != "rolling":
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
-        return empty_fig
+        return empty_graph
 
     try:
         # Use shared calculate_rolling_returns function
@@ -1990,7 +1988,7 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
         )
 
         if rolling_df.empty:
-            return empty_fig
+            return empty_graph
 
         # Create the line chart
         fig = go.Figure()
@@ -2032,10 +2030,10 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
             ),
         )
 
-        return fig
+        return dcc.Graph(figure=fig, style={"height": "550px"})
 
     except Exception:
-        return empty_fig
+        return empty_graph
 
 
 @cache_config.cache.memoize(timeout=0)
