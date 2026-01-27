@@ -409,7 +409,7 @@ layout = dmc.Container(
                                         {"value": "table", "label": "Table"},
                                         {"value": "chart", "label": "Chart"},
                                     ],
-                                    value="table",
+                                    value="chart",
                                     size="sm",
                                 ),
                             ],
