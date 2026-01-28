@@ -157,7 +157,7 @@ def merge_returns(existing_df: pd.DataFrame | None, new_df: pd.DataFrame) -> pd.
 # JSON/DataFrame conversion with caching
 
 @cache_config.cache.memoize(timeout=0)
-def json_to_df_cached(json_str: str) -> pd.DataFrame:
+def json_to_df(json_str: str) -> pd.DataFrame:
     """Convert JSON string back to DataFrame with caching.
 
     This is the primary performance bottleneck - caching this operation
@@ -167,11 +167,6 @@ def json_to_df_cached(json_str: str) -> pd.DataFrame:
     df.index = pd.to_datetime(df.index)
     df.index.name = "Date"
     return df
-
-
-def json_to_df(json_str: str) -> pd.DataFrame:
-    """Convert JSON string back to DataFrame (cached wrapper)."""
-    return json_to_df_cached(json_str)
 
 
 @cache_config.cache.memoize(timeout=0)
