@@ -5,7 +5,7 @@ import pandas as pd
 from scipy import stats
 
 import cache_config
-from utils.returns import resample_returns_cached, get_working_returns
+from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns
 
 
 def annualization_factor(periodicity: str) -> float:
@@ -349,34 +349,51 @@ def calculate_statistics(
     return result
 
 
-def calculate_all_statistics(
-    df: pd.DataFrame,
-    selected_series: list[str],
-    benchmark_assignments: dict,
+@cache_config.cache.memoize(timeout=0)
+def calculate_statistics_cached(
+    json_str: str,
     periodicity: str,
-    long_short_assignments: dict = None,
-) -> list[dict]:
-    """Calculate statistics for all selected series."""
-    results = []
-    long_short_assignments = long_short_assignments or {}
+    selected_series: tuple,
+    benchmark_assignments: str,
+    long_short_assignments: str,
+    date_range_str: str
+) -> list:
+    """Calculate statistics for all selected series with caching."""
+    # Use get_working_returns to get aligned data + benchmarks
+    df = get_working_returns(
+        json_str, periodicity, selected_series,
+        benchmark_assignments, long_short_assignments,
+        date_range_str
+    )
 
-    for series in selected_series:
+    if df.empty:
+        return []
+
+    benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+    long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+    
+    results = []
+    # Ensure selected_series is iterable
+    series_list = list(selected_series) if selected_series else []
+
+    for series in series_list:
         if series not in df.columns:
             continue
 
-        benchmark = benchmark_assignments.get(series, "None") if benchmark_assignments else "None"
+        benchmark = benchmark_dict.get(series, "None")
 
         # Handle "None" benchmark as zero returns
         if benchmark == "None":
             # Create a zero returns series with the same index
             benchmark_returns = pd.Series(0.0, index=df.index, name="None")
         elif benchmark not in df.columns:
+            # If benchmark is specified but not in data, fallback to series itself (excess = 0)
             benchmark = series
             benchmark_returns = df[benchmark]
         else:
             benchmark_returns = df[benchmark]
 
-        is_long_short = long_short_assignments.get(series, False)
+        is_long_short = long_short_dict.get(series, False)
 
         stats_dict = calculate_statistics(
             df[series],
@@ -565,3 +582,29 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
 
     except Exception:
         return pd.DataFrame()
+
+
+@cache_config.cache.memoize(timeout=0)
+def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
+                                returns_type: str, benchmark_assignments: str, long_short_assignments: str,
+                                date_range_str: str):
+    """Generate correlogram with caching."""
+    display_df = calculate_excess_returns(
+        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str
+    )
+
+    if display_df.empty:
+        return None
+
+    available_series = list(display_df.columns)
+    n = len(available_series)
+
+    # Calculate correlation matrix
+    corr_matrix = display_df.corr()
+
+    return {
+        'display_df': display_df,
+        'corr_matrix': corr_matrix,
+        'available_series': available_series,
+        'n': n
+    }

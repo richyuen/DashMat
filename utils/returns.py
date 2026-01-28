@@ -276,6 +276,50 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
     return result_df.dropna(how='all')
 
 
+@cache_config.cache.memoize(timeout=0)
+def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
+                             benchmark_assignments: str, returns_type: str, long_short_assignments: str,
+                             date_range_str: str) -> pd.DataFrame:
+    """Calculate excess returns with caching."""
+    # Get base working returns (Series aligned to Bench, or L/S diff)
+    display_df = get_working_returns(
+        json_str, periodicity, selected_series,
+        benchmark_assignments, long_short_assignments,
+        date_range_str
+    )
+    
+    if display_df.empty:
+        return display_df
+
+    # If returns_type is "excess", we need to calculate Series - Benchmark
+    # for non-L/S series. L/S series are already diffs.
+    if returns_type == "excess":
+        # We use display_df which now includes benchmarks
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        
+        # Iterate over SELECTED series only
+        for series in selected_series:
+            if series not in display_df.columns:
+                continue
+
+            is_ls = ls_dict.get(series, False)
+            if not is_ls:
+                benchmark = benchmark_dict.get(series, "None")
+                if benchmark != "None" and benchmark in display_df.columns:
+                    # Align benchmark to display_df (which is already date filtered)
+                    # Use the benchmark column directly from display_df
+                    bench_series = display_df[benchmark]
+                    
+                    # Calculate arithmetic excess for the grid
+                    display_df[series] = display_df[series] - bench_series
+
+    # Filter to show only selected series (remove benchmark columns if they were added but not selected)
+    # Ensure we only return columns that are in selected_series
+    final_cols = [col for col in selected_series if col in display_df.columns]
+    return display_df[final_cols]
+
+
 # Rolling returns calculation
 
 @cache_config.cache.memoize(timeout=0)

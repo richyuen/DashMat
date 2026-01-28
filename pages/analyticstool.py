@@ -19,6 +19,7 @@ import cache_config
 from utils.parsing import detect_periodicity, parse_uploaded_file
 from utils.returns import (
     calculate_calendar_year_returns,
+    calculate_excess_returns,
     calculate_rolling_returns,
     create_monthly_view,
     get_available_periodicities,
@@ -29,9 +30,10 @@ from utils.returns import (
     resample_returns_cached,
 )
 from utils.statistics import (
-    calculate_all_statistics,
     calculate_drawdown,
     calculate_growth_of_dollar,
+    calculate_statistics_cached,
+    generate_correlogram_cached,
 )
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
@@ -94,48 +96,7 @@ def df_to_json(df: pd.DataFrame) -> str:
 
 
 
-@cache_config.cache.memoize(timeout=0)
-def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
-                             benchmark_assignments: str, returns_type: str, long_short_assignments: str,
-                             date_range_str: str) -> pd.DataFrame:
-    """Calculate excess returns with caching."""
-    # Get base working returns (Series aligned to Bench, or L/S diff)
-    display_df = get_working_returns(
-        json_str, periodicity, selected_series,
-        benchmark_assignments, long_short_assignments,
-        date_range_str
-    )
-    
-    if display_df.empty:
-        return display_df
 
-    # If returns_type is "excess", we need to calculate Series - Benchmark
-    # for non-L/S series. L/S series are already diffs.
-    if returns_type == "excess":
-        # We use display_df which now includes benchmarks
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
-        
-        # Iterate over SELECTED series only
-        for series in selected_series:
-            if series not in display_df.columns:
-                continue
-
-            is_ls = ls_dict.get(series, False)
-            if not is_ls:
-                benchmark = benchmark_dict.get(series, "None")
-                if benchmark != "None" and benchmark in display_df.columns:
-                    # Align benchmark to display_df (which is already date filtered)
-                    # Use the benchmark column directly from display_df
-                    bench_series = display_df[benchmark]
-                    
-                    # Calculate arithmetic excess for the grid
-                    display_df[series] = display_df[series] - bench_series
-
-    # Filter to show only selected series (remove benchmark columns if they were added but not selected)
-    # Ensure we only return columns that are in selected_series
-    final_cols = [col for col in selected_series if col in display_df.columns]
-    return display_df[final_cols]
 
 
 layout = dmc.Container(
@@ -2223,30 +2184,7 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
         return empty_graph
 
 
-@cache_config.cache.memoize(timeout=0)
-def calculate_statistics_cached(json_str: str, periodicity: str, selected_series: tuple,
-                                benchmark_assignments: str, long_short_assignments: str, date_range_str: str) -> list:
-    """Calculate statistics with caching."""
-    # Use get_working_returns to get aligned data + benchmarks
-    df = get_working_returns(
-        json_str, periodicity, selected_series,
-        benchmark_assignments, long_short_assignments,
-        date_range_str
-    )
 
-    if df.empty:
-        return []
-
-    benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
-    long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
-
-    return calculate_all_statistics(
-        df,
-        list(selected_series),
-        benchmark_dict,
-        periodicity,
-        long_short_dict,
-    )
 
 
 @callback(
@@ -2465,30 +2403,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         return [], []
 
 
-@cache_config.cache.memoize(timeout=0)
-def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
-                                returns_type: str, benchmark_assignments: str, long_short_assignments: str,
-                                date_range_str: str):
-    """Generate correlogram with caching."""
-    display_df = calculate_excess_returns(
-        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str
-    )
 
-    if display_df.empty:
-        return None
-
-    available_series = list(display_df.columns)
-    n = len(available_series)
-
-    # Calculate correlation matrix
-    corr_matrix = display_df.corr()
-
-    return {
-        'display_df': display_df,
-        'corr_matrix': corr_matrix,
-        'available_series': available_series,
-        'n': n
-    }
 
 
 @callback(
