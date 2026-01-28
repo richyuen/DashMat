@@ -188,7 +188,7 @@ def calculate_statistics(
     # For long-short mode, calculate returns based on the period-by-period difference
     if is_long_short:
         # Long-short returns are the excess returns (difference)
-        ls_returns = excess
+        ls_returns = ret
 
         # Use calendar-based annualization for daily/weekly data
         use_calendar_days = periodicity == "daily" or periodicity.startswith("weekly_")
