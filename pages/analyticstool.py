@@ -158,7 +158,7 @@ layout = dmc.Container(
                                             id="menu-clear-all-series",
                                         ),
                                         dmc.MenuItem(
-                                            "Clear local storage and refresh",
+                                            "Clear session storage and refresh",
                                             id="menu-clear-local-storage",
                                         ),
                                     ],
@@ -296,7 +296,7 @@ layout = dmc.Container(
                                     ),
                                 ], style={"marginBottom": "1rem"}),
                                 # Hidden store for series-select value (driven by checkboxes)
-                                dcc.Store(id="series-select", data=[], storage_type="local"),
+                                dcc.Store(id="series-select", data=[], storage_type="session"),
                                 # Hidden store to track which series is being edited
                                 dcc.Store(id="series-edit-mode", data=None),
                             ]
@@ -635,28 +635,28 @@ layout = dmc.Container(
             ],
         ),
         # Hidden stores for state management (using local storage for persistence)
-        dcc.Store(id="raw-data-store", data=None, storage_type="local"),
-        dcc.Store(id="original-periodicity-store", data="daily", storage_type="local"),
-        dcc.Store(id="benchmark-assignments-store", data={}, storage_type="local"),
-        dcc.Store(id="long-short-store", data={}, storage_type="local"),
-        dcc.Store(id="periodicity-value-store", data="daily", storage_type="local"),
-        dcc.Store(id="returns-type-value-store", data="total", storage_type="local"),
-        dcc.Store(id="series-select-value-store", data=[], storage_type="local"),
-        dcc.Store(id="series-order-store", data=[], storage_type="local"),
-        dcc.Store(id="active-tab-store", data="statistics", storage_type="local"),
-        dcc.Store(id="rolling-window-store", data="1y", storage_type="local"),
-        dcc.Store(id="rolling-metric-store", data="total_return", storage_type="local"),
-        dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="local"),
-        dcc.Store(id="rolling-chart-switch-store", data="chart", storage_type="local"),
-        dcc.Store(id="drawdown-chart-switch-store", data="chart", storage_type="local"),
-        dcc.Store(id="growth-chart-switch-store", data="chart", storage_type="local"),
-        dcc.Store(id="monthly-view-store", data="annual", storage_type="local"),
-        dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
-        dcc.Store(id="date-range-store", data=None, storage_type="local"),
-        dcc.Store(id="vol-scaler-value-store", data=0, storage_type="local"),
-        dcc.Store(id="vol-scaling-assignments-store", data={}, storage_type="local"),
+        dcc.Store(id="raw-data-store", data=None, storage_type="session"),
+        dcc.Store(id="original-periodicity-store", data="daily", storage_type="session"),
+        dcc.Store(id="benchmark-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="long-short-store", data={}, storage_type="session"),
+        dcc.Store(id="periodicity-value-store", data="daily", storage_type="session"),
+        dcc.Store(id="returns-type-value-store", data="total", storage_type="session"),
+        dcc.Store(id="series-select-value-store", data=[], storage_type="session"),
+        dcc.Store(id="series-order-store", data=[], storage_type="session"),
+        dcc.Store(id="active-tab-store", data="statistics", storage_type="session"),
+        dcc.Store(id="rolling-window-store", data="1y", storage_type="session"),
+        dcc.Store(id="rolling-metric-store", data="total_return", storage_type="session"),
+        dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="session"),
+        dcc.Store(id="rolling-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="drawdown-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="growth-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="monthly-view-store", data="annual", storage_type="session"),
+        dcc.Store(id="monthly-series-store", data=None, storage_type="session"),
+        dcc.Store(id="date-range-store", data=None, storage_type="session"),
+        dcc.Store(id="vol-scaler-value-store", data=0, storage_type="session"),
+        dcc.Store(id="vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="download-enabled-store", data=False),
-        dcc.Store(id="first-load-store", data=False, storage_type="local"),
+        dcc.Store(id="first-load-store", data=False, storage_type="session"),
         # Temporary stores for modal state
         dcc.Store(id="temp-series-select", data=[]),
         dcc.Store(id="temp-benchmark-assignments-store", data={}),
@@ -700,12 +700,12 @@ clientside_callback(
 )
 
 
-# Clientside callback to clear local storage and refresh page
+# Clientside callback to clear session storage and refresh page
 clientside_callback(
     """
     function(n_clicks) {
         if (n_clicks) {
-            // Clear all localStorage keys specific to Analytics Tool
+            // Clear all sessionStorage keys specific to Analytics Tool
             const keysToRemove = [
                 'series-select',
                 'raw-data-store',
@@ -730,7 +730,7 @@ clientside_callback(
             ];
 
             keysToRemove.forEach(key => {
-                localStorage.removeItem(key);
+                sessionStorage.removeItem(key);
             });
 
             // Refresh the page
