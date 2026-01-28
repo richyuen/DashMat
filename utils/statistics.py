@@ -321,7 +321,7 @@ def calculate_all_statistics(
         if series not in df.columns:
             continue
 
-        benchmark = benchmark_assignments.get(series, selected_series[0]) if benchmark_assignments else selected_series[0]
+        benchmark = benchmark_assignments.get(series, "None") if benchmark_assignments else "None"
 
         # Handle "None" benchmark as zero returns
         if benchmark == "None":

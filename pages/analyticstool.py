@@ -242,7 +242,18 @@ layout = dmc.Container(
                             children=[
                                 dmc.Group(
                                     mb="md",
+                                    align="flex-start",
                                     children=[
+                                        html.Div([
+                                            dmc.Text("Series Selection", size="sm", mb=3, fw=500),
+                                            dmc.Button(
+                                                "Select Series",
+                                                id="open-series-modal-button",
+                                                variant="light",
+                                                size="sm",
+                                                w=200,
+                                            ),
+                                        ]),
                                         dmc.Select(
                                             id="periodicity-select",
                                             label="Periodicity",
@@ -252,7 +263,7 @@ layout = dmc.Container(
                                             disabled=True,
                                         ),
                                         html.Div([
-                                            dmc.Text("Returns Type", size="sm", mb=5, c="dimmed"),
+                                            dmc.Text("Returns Type", size="sm", mb=3, fw=500),
                                             dmc.SegmentedControl(
                                                 id="returns-type-select",
                                                 data=[
@@ -270,18 +281,18 @@ layout = dmc.Container(
                                         id="date-picker-wrapper",
                                         children=[
                                             html.Div([
-                                                dmc.Text("Start Date", size="sm", mb=5, c="dimmed"),
                                                 dmc.DateInput(
                                                     id="start-date-picker",
+                                                    label="Start Date",
                                                     value=None,
                                                     w=200,
                                                     valueFormat="YYYY-MM-DD",
                                                 ),
                                             ], style={"marginRight": "15px"}),
                                             html.Div([
-                                                dmc.Text("End Date", size="sm", mb=5, c="dimmed"),
                                                 dmc.DateInput(
                                                     id="end-date-picker",
+                                                    label="End Date",
                                                     value=None,
                                                     w=200,
                                                     valueFormat="YYYY-MM-DD",
@@ -309,15 +320,6 @@ layout = dmc.Container(
                                         style={"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"},
                                     ),
                                 ], style={"marginBottom": "1rem"}),
-                                dmc.Divider(mb="md"),
-                                dmc.Text("Series Selection", size="sm", c="dimmed", mb="xs"),
-                                dmc.Button(
-                                    "Select Series",
-                                    id="open-series-modal-button",
-                                    variant="light",
-                                    size="sm",
-                                    fullWidth=True,
-                                ),
                                 # Hidden store for series-select value (driven by checkboxes)
                                 dcc.Store(id="series-select", data=[], storage_type="local"),
                                 # Hidden store to track which series is being edited
@@ -334,6 +336,15 @@ layout = dmc.Container(
             title="Select Series",
             size="xl",
             children=[
+                # Alert for messages (with close button)
+                dmc.Alert(
+                    id="alert-message",
+                    title="Info",
+                    color="blue",
+                    hide=True,
+                    mb="md",
+                    withCloseButton=True,
+                ),
                 html.Div(
                     id="series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
@@ -348,15 +359,6 @@ layout = dmc.Container(
                     ],
                 ),
             ],
-        ),
-        # Alert for messages (with close button)
-        dmc.Alert(
-            id="alert-message",
-            title="Info",
-            color="blue",
-            hide=True,
-            mb="md",
-            withCloseButton=True,
         ),
         # Tabs with AG Grid and Statistics
         dmc.Tabs(
@@ -659,11 +661,13 @@ layout = dmc.Container(
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
+        dcc.Store(id="first-load-store", data=False, storage_type="local"),
         # Temporary stores for modal state
         dcc.Store(id="temp-series-select", data=[]),
         dcc.Store(id="temp-benchmark-assignments-store", data={}),
         dcc.Store(id="temp-long-short-store", data={}),
         dcc.Store(id="temp-series-order-store", data=[]),
+        dcc.Store(id="temp-deleted-series-store", data=[]),
         dcc.Download(id="download-excel"),
         dcc.Location(id="url-location", refresh=True),
         # Hidden file upload (triggered by menu item)
@@ -833,6 +837,7 @@ clientside_callback(
     Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("temp-long-short-store", "data", allow_duplicate=True),
     Output("temp-series-order-store", "data", allow_duplicate=True),
+    Output("temp-deleted-series-store", "data", allow_duplicate=True),
     Input("open-series-modal-button", "n_clicks"),
     State("series-select", "data"),
     State("benchmark-assignments-store", "data"),
@@ -843,7 +848,7 @@ clientside_callback(
 def open_modal(n_clicks, current_select, current_bench, current_ls, current_order):
     if not n_clicks:
         raise PreventUpdate
-    return True, current_select, current_bench, current_ls, current_order
+    return True, current_select, current_bench, current_ls, current_order, []
 
 
 @callback(
@@ -853,17 +858,39 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     Output("series-order-store", "data", allow_duplicate=True),
     Output("series-selection-modal", "opened", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True), # Sync persistence
+    Output("raw-data-store", "data", allow_duplicate=True),
     Input("modal-ok-button", "n_clicks"),
     State("temp-series-select", "data"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
     State("temp-series-order-store", "data"),
+    State("temp-deleted-series-store", "data"),
+    State("raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order):
+def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_deleted, raw_data):
     if not n_clicks:
         raise PreventUpdate
-    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select
+
+    # Apply deletions to raw data
+    updated_raw_data = raw_data
+    if temp_deleted and raw_data:
+        df = json_to_df(raw_data)
+        # Filter out series that are actually in the columns
+        series_to_drop = [s for s in temp_deleted if s in df.columns]
+        if series_to_drop:
+            df = df.drop(columns=series_to_drop)
+            updated_raw_data = df_to_json(df)
+            
+            # Clean up assignments and order
+            if temp_bench:
+                temp_bench = {k: v for k, v in temp_bench.items() if k not in series_to_drop}
+            if temp_ls:
+                temp_ls = {k: v for k, v in temp_ls.items() if k not in series_to_drop}
+            if temp_order:
+                temp_order = [s for s in temp_order if s not in series_to_drop]
+
+    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select, updated_raw_data
 
 
 @callback(
@@ -1222,6 +1249,8 @@ def restore_monthly_view(raw_data, stored_monthly_view):
     Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("temp-long-short-store", "data", allow_duplicate=True),
     Output("temp-series-order-store", "data", allow_duplicate=True),
+    Output("first-load-store", "data"),
+    Output("temp-deleted-series-store", "data", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     State("raw-data-store", "data"),
@@ -1230,9 +1259,10 @@ def restore_monthly_view(raw_data, stored_monthly_view):
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
     State("series-order-store", "data"),
+    State("first-load-store", "data"),
     prevent_initial_call=True,
 )
-def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order):
+def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load):
     """Handle file upload, parse data, and update stores."""
     if contents is None:
         raise PreventUpdate
@@ -1255,6 +1285,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                     "red",
                     False,
                     no_update, no_update, no_update, no_update, no_update,
+                    no_update, no_update,
                 )
 
             # If new data is monthly but existing is daily, convert existing to monthly
@@ -1278,6 +1309,18 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
         new_series = [col for col in new_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
 
+        # Determine alert state
+        if not first_load:
+            alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename}"
+            alert_color = "green"
+            alert_hide = False
+            new_first_load = True
+        else:
+            alert_msg = no_update
+            alert_color = no_update
+            alert_hide = True
+            new_first_load = True
+
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -1285,14 +1328,16 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             default_periodicity,
             False,
             updated_selection,
-            f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename}",
-            "green",
-            False,
+            alert_msg,
+            alert_color,
+            alert_hide,
             default_periodicity,
             True, # Open modal
             current_bench or {},
             current_ls or {},
             current_order or [],
+            new_first_load,
+            [], # Reset deleted series
         )
 
     except Exception as e:
@@ -1303,6 +1348,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             "red",
             False,
             no_update, no_update, no_update, no_update, no_update,
+            no_update, no_update,
         )
 
 
@@ -1313,17 +1359,21 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Input("temp-series-select", "data"),
     Input("temp-series-order-store", "data"),
     Input("series-edit-mode", "data"),
+    Input("temp-deleted-series-store", "data"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def update_series_selectors(raw_data, selected_series, series_order, edit_mode_series, current_assignments, long_short_assignments):
+def update_series_selectors(raw_data, selected_series, series_order, edit_mode_series, deleted_series, current_assignments, long_short_assignments):
     """Create series selection rows with checkbox, benchmark dropdown, long-short, reorder buttons, and delete button."""
     if raw_data is None:
         return [], []
 
     df = json_to_df(raw_data)
-    all_series = list(df.columns)
+    
+    # Filter out deleted series
+    deleted_set = set(deleted_series or [])
+    all_series = [s for s in list(df.columns) if s not in deleted_set]
 
     if not all_series:
         return [], []
@@ -1336,10 +1386,10 @@ def update_series_selectors(raw_data, selected_series, series_order, edit_mode_s
         for series in all_series:
             if series not in series_order:
                 series_order.append(series)
-        # Remove any deleted series
+        # Remove any deleted/filtered series
         series_order = [s for s in series_order if s in all_series]
 
-    default_benchmark = all_series[0] if all_series else None
+    default_benchmark = "None"
     selected_series = selected_series or []
 
     # Create benchmark options with "None" as first option
@@ -1548,16 +1598,16 @@ def update_series_selection_from_checkboxes(checkbox_values, checkbox_ids, raw_d
 
 
 @callback(
-    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("temp-deleted-series-store", "data", allow_duplicate=True),
     Output("temp-series-select", "data", allow_duplicate=True),
     Input({"type": "delete-series-button", "series": ALL}, "n_clicks"),
-    State("raw-data-store", "data"),
+    State("temp-deleted-series-store", "data"),
     State("temp-series-select", "data"),
     prevent_initial_call=True,
 )
-def delete_series(n_clicks_list, raw_data, selected_series):
-    """Delete a series from the raw data when trash icon is clicked."""
-    if raw_data is None or not n_clicks_list or all(n is None for n in n_clicks_list):
+def delete_series(n_clicks_list, deleted_series, selected_series):
+    """Delete a series by adding it to the temporary deleted list."""
+    if not n_clicks_list or all(n is None for n in n_clicks_list):
         raise PreventUpdate
 
     # Find which button was clicked
@@ -1577,22 +1627,13 @@ def delete_series(n_clicks_list, raw_data, selected_series):
     if not series_to_delete:
         raise PreventUpdate
 
-    df = json_to_df(raw_data)
+    # Add to deleted list
+    new_deleted = (deleted_series or []) + [series_to_delete]
 
-    if series_to_delete not in df.columns:
-        raise PreventUpdate
-
-    # Remove the series
-    df = df.drop(columns=[series_to_delete])
-
-    # If no series left, return None
-    if df.empty or len(df.columns) == 0:
-        return None, []
-
-    # Update selected series to remove deleted one
+    # Update selected series to remove deleted one (just for UI consistency)
     new_selected = [s for s in (selected_series or []) if s != series_to_delete]
 
-    return df_to_json(df), new_selected
+    return new_deleted, new_selected
 
 
 @callback(
