@@ -535,12 +535,13 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
                 # Check if first year is complete
                 first_year_data = series_returns[series_returns.index.year == first_year]
                 if len(first_year_data) > 0:
-                    if original_periodicity == "daily":
+                    current_periodicity = selected_periodicity or "daily"
+                    if current_periodicity == "daily":
                         # For daily data, check if it starts in January
                         first_date = first_year_data.index.min()
                         if not first_date.is_year_start:
                             annual_returns = annual_returns.drop(first_year, errors='ignore')
-                    else:  # monthly
+                    elif current_periodicity == "monthly":
                         # For monthly data, check if all 12 months are present
                         if len(first_year_data) < 12:
                             annual_returns = annual_returns.drop(first_year, errors='ignore')
@@ -640,7 +641,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         s_data = rets.to_frame(name='returns')
 
         if original_periodicity == "daily":
-            # For daily data, resample to monthly and only include full months
+            # For daily data, resample to monthly
             s_data['year'] = s_data.index.year
             s_data['month'] = s_data.index.month
 
@@ -648,14 +649,6 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
             monthly_data = s_data.groupby(['year', 'month'])['returns'].apply(
                 lambda x: (1 + x).prod(min_count=1) - 1
             ).reset_index()
-
-            # Count VALID days in each month to filter out partial months
-            days_per_month = s_data.groupby(['year', 'month'])['returns'].count().reset_index(name='days')
-            monthly_data = monthly_data.merge(days_per_month, on=['year', 'month'])
-
-            # Only keep months with reasonable number of days (assume full month has at least 15 trading days)
-            monthly_data = monthly_data[monthly_data['days'] >= 15]
-            monthly_data = monthly_data.drop('days', axis=1)
 
         elif original_periodicity == "monthly":
             # Already monthly, just add year and month columns
@@ -675,47 +668,64 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     if monthly_data.empty:
         return [], []
 
-    # If excess, calculate monthly data for benchmark and diff
-    if calc_excess:
-        bench_monthly = aggregate_monthly(bench_returns)
-        if not bench_monthly.empty:
-            # Merge on year/month
-            merged = monthly_data.merge(bench_monthly, on=['year', 'month'], suffixes=('_s', '_b'))
-            # Calculate excess (Arithmetic for monthly cells)
-            merged['returns'] = merged['returns_s'] - merged['returns_b']
+        # If excess, calculate monthly data for benchmark and diff
+        if calc_excess:
+            # For grid cells: use ALIGNED benchmark (bench_returns)
+            # For Annual column: use FULL benchmark (to match Annual Grid)
             
-            # Keep track of component returns for Annual calc
-            monthly_data = merged
-        else:
-            calc_excess = False # Fallback
-
-    # Pivot to get months as columns
-    pivot_data = monthly_data.pivot(index='year', columns='month', values='returns')
-
-    # Rename columns to month names
-    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
-
+            # 1. Grid Cells (Aligned)
+            bench_monthly = aggregate_monthly(bench_returns)
+            if not bench_monthly.empty:
+                # Merge on year/month
+                merged = monthly_data.merge(bench_monthly, on=['year', 'month'], suffixes=('_s', '_b'))
+                # Calculate excess (Arithmetic for monthly cells)
+                merged['returns'] = merged['returns_s'] - merged['returns_b']
+                
+                # Keep track of component returns for Annual calc
+                monthly_data = merged
+            else:
+                calc_excess = False # Fallback
+    
+        # Pivot to get months as columns
+        pivot_data = monthly_data.pivot(index='year', columns='month', values='returns')
+    
+        # Rename columns to month names
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
+    
+        # Helper for annual calc (relaxed to allow partial years)
+        def calc_annual(row):
+            if row.dropna().empty: return None
+            return (1 + row.dropna()).prod() - 1
+    
     # Calculate Annual column
     if calc_excess:
         # For excess, Annual = Ann(S) - Ann(B)
-        # We need to pivot S and B separately
-        pivot_s = monthly_data.pivot(index='year', columns='month', values='returns_s')
-        pivot_b = monthly_data.pivot(index='year', columns='month', values='returns_b')
+        # Ann(S) comes from Series (working/aligned)
+        # Ann(B) comes from FULL Benchmark (raw) to match Annual Grid logic
         
-        def calc_annual(row):
-            if row.isnull().any(): return None
-            return (1 + row.dropna()).prod() - 1
-            
+        pivot_s = monthly_data.pivot(index='year', columns='month', values='returns_s')
         ann_s = pivot_s.apply(calc_annual, axis=1)
-        ann_b = pivot_b.apply(calc_annual, axis=1)
-        pivot_data['Ann'] = ann_s - ann_b
+        
+        # Calculate Full Benchmark Annual Returns
+        # We need to aggregate raw_df[benchmark] to monthly/annual
+        full_bench_series = raw_df[benchmark]
+        full_bench_monthly = aggregate_monthly(full_bench_series)
+        
+        if not full_bench_monthly.empty:
+            pivot_b_full = full_bench_monthly.pivot(index='year', columns='month', values='returns')
+            ann_b_full = pivot_b_full.apply(calc_annual, axis=1)
+            
+            # Align B to S years
+            ann_b_full = ann_b_full.reindex(ann_s.index)
+            
+            pivot_data['Ann'] = ann_s - ann_b_full
+        else:
+            pivot_data['Ann'] = None
+            
     else:
         # Standard compound
-        pivot_data['Ann'] = pivot_data.apply(
-            lambda row: (1 + row.dropna()).prod() - 1 if not row.isnull().any() else None,
-            axis=1
-        )
+        pivot_data['Ann'] = pivot_data.apply(calc_annual, axis=1)
 
     # Reset index to make year a column
     pivot_data = pivot_data.reset_index()
