@@ -5,7 +5,7 @@ import pandas as pd
 from scipy import stats
 
 import cache_config
-from utils.returns import resample_returns_cached
+from utils.returns import resample_returns_cached, get_working_returns
 
 
 def annualization_factor(periodicity: str) -> float:
@@ -392,104 +392,63 @@ def calculate_all_statistics(
 
 # Growth of $1 calculation
 
-def _compute_growth_of_dollar(df, periodicity, available_series, benchmark_dict, long_short_dict):
-    """Helper function to compute growth of $1 for all series.
-
-    Returns:
-        DataFrame: Growth of $1 with Date as index
-    """
-    # Determine the period offset based on periodicity
-    periodicity_str = periodicity or "daily"
-    if periodicity_str == "daily":
-        period_offset = pd.DateOffset(days=1)
-    elif periodicity_str == "monthly":
-        period_offset = pd.tseries.offsets.MonthEnd(1)
-    elif periodicity_str.startswith("weekly"):
-        period_offset = pd.DateOffset(weeks=1)
-    else:
-        period_offset = pd.DateOffset(days=1)
-
-    # Calculate growth for each series and collect data
-    series_growth_data = {}
-    all_dates = set()
-
-    for series in available_series:
-        is_long_short = long_short_dict.get(series, False)
-        benchmark = benchmark_dict.get(series, available_series[0])
-
-        if is_long_short:
-            # For long-short, use the difference
-            if benchmark == "None":
-                returns = df[series]
-            elif benchmark == series:
-                # Skip series where benchmark is itself for long-short
-                continue
-            elif benchmark in df.columns:
-                returns = df[series] - df[benchmark]
-            else:
-                returns = df[series]
-        else:
-            # For non-long-short, use total returns
-            returns = df[series]
-
-        # Drop NaNs before calculation
-        returns = returns.dropna()
-
-        if returns.empty:
-            continue
-
-        # Calculate cumulative growth
-        growth = (1 + returns).cumprod()
-
-        # Prepend 1.0 at start_date
-        first_date = growth.index[0]
-        start_date = first_date - period_offset
-
-        start_val = pd.Series([1.0], index=[start_date])
-        growth_with_start = pd.concat([start_val, growth])
-
-        series_growth_data[series] = growth_with_start
-        all_dates.update(growth_with_start.index)
-
-    if not series_growth_data:
-        return pd.DataFrame()
-
-    # Build DataFrame with all dates
-    sorted_dates = sorted(list(all_dates))
-    growth_df = pd.DataFrame(index=sorted_dates)
-    growth_df.index.name = "Date"
-
-    for series, growth in series_growth_data.items():
-        growth_df[series] = growth
-
-    return growth_df
-
-
 @cache_config.cache.memoize(timeout=0)
 def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
     """Calculate growth of $1 for Excel export with starting value of 1.0."""
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
+        # Use get_working_returns
+        working_df = get_working_returns(
+            raw_data, periodicity or "daily", tuple(selected_series),
+            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+        )
 
-        # Apply date range filter if provided
-        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-        if date_range_dict:
-            start_date = pd.to_datetime(date_range_dict["start"])
-            end_date = pd.to_datetime(date_range_dict["end"])
-            df = df[(df.index >= start_date) & (df.index <= end_date)]
+        if working_df.empty:
+            return pd.DataFrame()
+            
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.tseries.offsets.MonthEnd(1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
 
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        series_growth_data = {}
+        all_dates = set()
 
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
+        for series in working_df.columns:
+            returns = working_df[series].dropna()
+            
+            if returns.empty:
+                continue
+
+            # Total Return growth (standard logic)
+            # For L/S, working_df already contains the (L-S) difference stream.
+            growth = (1 + returns).cumprod()
+
+            # Prepend 1.0 at start_date
+            first_date = growth.index[0]
+            start_date = first_date - period_offset
+
+            start_val = pd.Series([1.0], index=[start_date])
+            growth_with_start = pd.concat([start_val, growth])
+
+            series_growth_data[series] = growth_with_start
+            all_dates.update(growth_with_start.index)
+
+        if not series_growth_data:
             return pd.DataFrame()
 
-        # Compute growth using shared helper
-        growth_df = _compute_growth_of_dollar(
-            df, periodicity, available_series, benchmark_dict, long_short_dict
-        )
+        # Build DataFrame with all dates
+        sorted_dates = sorted(list(all_dates))
+        growth_df = pd.DataFrame(index=sorted_dates)
+        growth_df.index.name = "Date"
+
+        for series, growth in series_growth_data.items():
+            growth_df[series] = growth
 
         return growth_df
 
@@ -499,125 +458,108 @@ def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark
 
 # Drawdown calculation
 
-def _compute_drawdown(df, periodicity, available_series, returns_type, benchmark_dict, long_short_dict):
-    """Helper function to compute drawdown for all series.
-
-    Returns:
-        DataFrame: Drawdown with Date as index
-    """
-    # Determine the period offset based on periodicity
-    periodicity_str = periodicity or "daily"
-    if periodicity_str == "daily":
-        period_offset = pd.DateOffset(days=1)
-    elif periodicity_str == "monthly":
-        period_offset = pd.tseries.offsets.MonthEnd(1)
-    elif periodicity_str.startswith("weekly"):
-        period_offset = pd.DateOffset(weeks=1)
-    else:
-        period_offset = pd.DateOffset(days=1)
-
-    # Calculate drawdown for each series and collect data
-    series_drawdown_data = {}
-    all_dates = set()
-
-    for series in available_series:
-        is_long_short = long_short_dict.get(series, False)
-        benchmark = benchmark_dict.get(series, available_series[0])
-
-        if is_long_short:
-            # For long-short, use the difference
-            if benchmark == "None":
-                returns = df[series]
-            elif benchmark == series:
-                # Skip series where benchmark is itself for long-short
-                continue
-            elif benchmark in df.columns:
-                returns = df[series] - df[benchmark]
-            else:
-                returns = df[series]
-
-            # Drop NaNs before calculation to handle different start dates
-            returns = returns.dropna()
-
-            # Calculate cumulative growth
-            growth = (1 + returns).cumprod()
-        elif returns_type == "excess" and benchmark != "None" and benchmark != series and benchmark in df.columns:
-            # For excess returns, calculate drawdown of series relative to benchmark
-            # Compound each separately, then calculate relative performance
-
-            # Align data first by dropping NaNs where either series or benchmark is missing
-            aligned_df = df[[series, benchmark]].dropna()
-
-            series_growth = (1 + aligned_df[series]).cumprod()
-            benchmark_growth = (1 + aligned_df[benchmark]).cumprod()
-
-            # Relative growth (series vs benchmark)
-            growth = series_growth / benchmark_growth
-        else:
-            # For total returns, use series returns directly
-            returns = df[series].dropna()
-            growth = (1 + returns).cumprod()
-
-        if growth.empty:
-            continue
-
-        # Prepend starting value of 1.0 to properly calculate drawdown from initial capital
-        # This ensures that a negative first period return counts as a drawdown
-        growth_array = np.concatenate([[1.0], growth.values])
-        running_max_array = np.maximum.accumulate(growth_array)
-
-        # Calculate drawdown (exclude the prepended 1.0)
-        drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
-        drawdown = pd.Series(drawdown_array, index=growth.index)
-
-        # Prepend 0.0 drawdown at one period before this series' first date
-        first_date = drawdown.index[0]
-        start_date = first_date - period_offset
-        start_val = pd.Series([0.0], index=[start_date])
-        drawdown_with_start = pd.concat([start_val, drawdown])
-
-        series_drawdown_data[series] = drawdown_with_start
-        all_dates.update(drawdown_with_start.index)
-
-    if not series_drawdown_data:
-        return pd.DataFrame()
-
-    # Build DataFrame with all dates
-    sorted_dates = sorted(list(all_dates))
-    drawdown_df = pd.DataFrame(index=sorted_dates)
-    drawdown_df.index.name = "Date"
-
-    for series, drawdown in series_drawdown_data.items():
-        drawdown_df[series] = drawdown
-
-    return drawdown_df
-
-
 @cache_config.cache.memoize(timeout=0)
 def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate drawdown for Excel export."""
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
+        # Use get_working_returns
+        working_df = get_working_returns(
+            raw_data, periodicity or "daily", tuple(selected_series),
+            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+        )
 
-        # Apply date range filter if provided
-        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-        if date_range_dict:
-            start_date = pd.to_datetime(date_range_dict["start"])
-            end_date = pd.to_datetime(date_range_dict["end"])
-            df = df[(df.index >= start_date) & (df.index <= end_date)]
+        if working_df.empty:
+            return pd.DataFrame()
+
+        # If Excess requested (and not L/S), we need benchmark data for relative drawdown
+        if returns_type == "excess":
+            raw_df = resample_returns_cached(raw_data, periodicity or "daily")
+        else:
+            raw_df = None
 
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
 
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
+        # Determine the period offset based on periodicity
+        periodicity_str = periodicity or "daily"
+        if periodicity_str == "daily":
+            period_offset = pd.DateOffset(days=1)
+        elif periodicity_str == "monthly":
+            period_offset = pd.tseries.offsets.MonthEnd(1)
+        elif periodicity_str.startswith("weekly"):
+            period_offset = pd.DateOffset(weeks=1)
+        else:
+            period_offset = pd.DateOffset(days=1)
+
+        series_drawdown_data = {}
+        all_dates = set()
+
+        for series in working_df.columns:
+            returns = working_df[series].dropna()
+
+            if returns.empty:
+                continue
+                
+            is_ls = long_short_dict.get(series, False)
+            
+            # Check for Excess Return mode (non-L/S)
+            if returns_type == "excess" and not is_ls:
+                benchmark = benchmark_dict.get(series, "None")
+                if benchmark != "None" and raw_df is not None and benchmark in raw_df.columns:
+                    # Calculate Geometric Relative Drawdown (GrowthS / GrowthB)
+                    
+                    # Align benchmark
+                    bench_series = raw_df[benchmark].reindex(returns.index)
+                    
+                    # Compute growth indices
+                    growth_s = (1 + returns).cumprod()
+                    growth_b = (1 + bench_series).cumprod()
+                    
+                    # Relative Wealth Index
+                    # Handle division by zero or NaN?
+                    # returns should be aligned/filtered already.
+                    rel_wealth = growth_s / growth_b
+                    
+                    # Prepend 1.0 (Base relative wealth)
+                    growth_array = np.concatenate([[1.0], rel_wealth.values])
+                    
+                else:
+                    # Fallback to total return drawdown if no benchmark
+                    growth = (1 + returns).cumprod()
+                    growth_array = np.concatenate([[1.0], growth.values])
+            else:
+                # Total Return or L/S (L/S is already an absolute stream)
+                growth = (1 + returns).cumprod()
+                # Prepend starting value of 1.0
+                growth_array = np.concatenate([[1.0], growth.values])
+
+            running_max_array = np.maximum.accumulate(growth_array)
+
+            # Calculate drawdown (exclude the prepended 1.0)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                drawdown_array = (growth_array[1:] / running_max_array[1:]) - 1
+            
+            drawdown = pd.Series(drawdown_array, index=returns.index)
+
+            # Prepend 0.0 drawdown at one period before this series' first date
+            first_date = drawdown.index[0]
+            start_date = first_date - period_offset
+            start_val = pd.Series([0.0], index=[start_date])
+            drawdown_with_start = pd.concat([start_val, drawdown])
+
+            series_drawdown_data[series] = drawdown_with_start
+            all_dates.update(drawdown_with_start.index)
+
+        if not series_drawdown_data:
             return pd.DataFrame()
 
-        # Compute drawdown using shared helper
-        drawdown_df = _compute_drawdown(
-            df, periodicity, available_series, returns_type, benchmark_dict, long_short_dict
-        )
+        # Build DataFrame with all dates
+        sorted_dates = sorted(list(all_dates))
+        drawdown_df = pd.DataFrame(index=sorted_dates)
+        drawdown_df.index.name = "Date"
+
+        for series, drawdown in series_drawdown_data.items():
+            drawdown_df[series] = drawdown
 
         return drawdown_df
 

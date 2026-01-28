@@ -183,6 +183,87 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
     return resample_returns(df, periodicity)
 
 
+@cache_config.cache.memoize(timeout=0)
+def get_working_returns(json_str: str, periodicity: str, selected_series: tuple, 
+                        benchmark_assignments: str, long_short_assignments: str, 
+                        date_range_str: str) -> pd.DataFrame:
+    """Calculate working returns with date filtering, benchmark intersection, and L/S logic.
+    
+    Args:
+        json_str: Raw data JSON string
+        periodicity: Selected periodicity
+        selected_series: Tuple of selected series names
+        benchmark_assignments: String representation of benchmark dict
+        long_short_assignments: String representation of L/S dict
+        date_range_str: String representation of date range dict
+        
+    Returns:
+        DataFrame with calculated returns for selected series.
+        For L/S series, returns (Series - Benchmark).
+        For standard series, returns Series (aligned to benchmark intersection).
+        Does NOT calculate excess returns for standard series.
+    """
+    # 1. Get base data
+    df = resample_returns_cached(json_str, periodicity)
+    
+    # 2. Parse configurations
+    bench_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+    ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+    date_range = eval(str(date_range_str)) if date_range_str and str(date_range_str) != "None" else None
+    
+    # 3. Global Date Range Filter
+    if date_range:
+        start_date = pd.to_datetime(date_range["start"])
+        end_date = pd.to_datetime(date_range["end"])
+        df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+    # 4. Process Series
+    result_df = pd.DataFrame(index=df.index)
+    
+    # Ensure selected_series is iterable
+    series_list = list(selected_series) if selected_series else []
+    
+    for series in series_list:
+        if series not in df.columns:
+            continue
+            
+        s_data = df[series]
+        
+        benchmark = bench_dict.get(series, "None")
+        is_ls = ls_dict.get(series, False)
+        
+        # Determine effective benchmark data
+        bench_data = None
+        if benchmark != "None" and benchmark in df.columns and benchmark != series:
+            bench_data = df[benchmark]
+        
+        # Benchmark Intersection Logic
+        if bench_data is not None:
+            # "Only dates in common... included"
+            # Intersect indices
+            common_idx = s_data.dropna().index.intersection(bench_data.dropna().index)
+            
+            # Align data to common index
+            s_aligned = s_data.reindex(common_idx)
+            bench_aligned = bench_data.reindex(common_idx)
+            
+            # Reindex back to result index (introduces NaNs for non-common dates)
+            s_data = s_aligned.reindex(df.index)
+            bench_data = bench_aligned.reindex(df.index)
+            
+        # Calculation Logic
+        if is_ls and bench_data is not None:
+            # L/S: Series - Benchmark
+            final_series = s_data - bench_data
+        else:
+            # Standard: Just the series (aligned)
+            final_series = s_data
+            
+        result_df[series] = final_series
+        
+    return result_df.dropna(how='all')
+
+
 # Rolling returns calculation
 
 @cache_config.cache.memoize(timeout=0)
@@ -191,24 +272,25 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
     try:
         from utils.statistics import annualization_factor, sharpe_ratio, sortino_ratio
 
-        # Get the resampled data
-        df = resample_returns_cached(raw_data, periodicity or "daily")
+        # Get working returns (forces alignment and filtering)
+        # working_df contains Series (aligned) OR (Series - Bench) if L/S
+        working_df = get_working_returns(
+            raw_data, periodicity or "daily", tuple(selected_series),
+            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+        )
+        
+        if working_df.empty:
+            return pd.DataFrame()
 
-        # Apply date range filter if provided
-        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-        if date_range_dict:
-            start_date = pd.to_datetime(date_range_dict["start"])
-            end_date = pd.to_datetime(date_range_dict["end"])
-            df = df[(df.index >= start_date) & (df.index <= end_date)]
+        # Get raw data for benchmarks (if needed for relative metrics)
+        raw_df = resample_returns_cached(raw_data, periodicity or "daily")
+        
+        # Align raw_df to working_df (date range filter)
+        raw_df = raw_df.reindex(working_df.index)
 
         # Parse assignments
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
-
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
-            return pd.DataFrame()
 
         # Calculate periods per year and window size
         periods_per_year = annualization_factor(periodicity or "daily")
@@ -287,9 +369,10 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
                 return series.rolling(window=window_spec, min_periods=window_size).apply(func, raw=False)
 
         # Calculate rolling metrics for each series
-        rolling_df = pd.DataFrame(index=df.index)
+        rolling_df = pd.DataFrame(index=working_df.index)
 
-        for series in available_series:
+        # Iterate over columns in working_df (which are the selected series)
+        for series in working_df.columns:
             is_long_short = long_short_dict.get(series, False)
             benchmark = benchmark_dict.get(series, "None") # Default to None if not found
 
@@ -298,33 +381,19 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
                  rolling_df[series] = np.nan
                  continue
 
-            # Determine the base series for calculation
-            # For correlation, we need series AND benchmark. For others, we might need difference or just series.
-            
             # 1. Resolve Series Returns
-            if is_long_short:
-                if benchmark == "None":
-                    series_ret = df[series]
-                elif benchmark == series:
-                    rolling_df[series] = np.nan
-                    continue
-                elif benchmark in df.columns:
-                    series_ret = df[series] - df[benchmark]
-                else:
-                    series_ret = df[series]
-            else:
-                series_ret = df[series]
+            series_ret = working_df[series]
 
-            # 2. Resolve Benchmark Returns (for Correlation/Excess/TE/IR if needed)
-            if benchmark in df.columns and benchmark != "None":
-                bench_ret = df[benchmark]
+            # 2. Resolve Benchmark Returns
+            if benchmark in raw_df.columns and benchmark != "None":
+                bench_ret = raw_df[benchmark]
+                # Reindex bench_ret to match series_ret (though logic mostly relies on index alignment)
+                # Note: raw_df was already reindexed to working_df.index
             else:
                 bench_ret = None
 
             # 3. Calculate based on Metric
             if rolling_metric == "total_return":
-                # For Total Return, use series_ret. 
-                # If L/S, series_ret is ALREADY the L/S difference (which is the "total return" of the strategy)
                 if use_calendar_days:
                     res = series_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
                 else:
@@ -332,39 +401,27 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
                 rolling_df[series] = res
 
             elif rolling_metric == "excess_return":
-                # Excess Return: Series - Benchmark.
-                # If L/S, it's already "Excess" relative to constituents, but "Excess Return" metric implies relative to benchmark.
-                # But L/S is typically absolute return strategy. If benchmark is None, excess = total.
-                # If benchmark is set, calculate (Series - Bench).
-                # Note: For L/S, 'series_ret' IS (Long - Short). If we want Excess vs Benchmark, we do (Long - Short) - Benchmark?
-                # The user's prompt says "Total Return and Excess Return should respect the Cumulative/Annualized Switch".
-                
-                # Logic: Calculate the difference first, then compound.
+                # Excess Return: Rolling(Series) - Rolling(Bench)
                 if bench_ret is not None and not is_long_short:
-                     # Standard excess
-                     excess_series = series_ret - bench_ret
-                else:
-                     # L/S or No Benchmark -> Use series returns (which is L-S or just series)
-                     # For L/S, series_ret is already excess if bench was used to create it?
-                     # Wait, L/S logic above USES benchmark to create series_ret = series - bench.
-                     # So series_ret IS the excess return stream.
-                     # If we are here, benchmark IS NOT None (because of check above), OR is_long_short is True.
-                     # If is_long_short is True, series_ret = (L-S). If bench exists, we might want (L-S) - Bench?
-                     # Standard practice: L/S return is comparing to 0. 
-                     # But if user selected a benchmark for L/S, they likely want relative return.
-                     if bench_ret is not None:
-                         excess_series = series_ret - bench_ret
+                     # Calculate separately
+                     if use_calendar_days:
+                         roll_s = series_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
+                         roll_b = bench_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
                      else:
-                         excess_series = series_ret
-
-                if use_calendar_days:
-                    res = excess_series.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
+                         roll_s = series_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                         roll_b = bench_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                     res = roll_s - roll_b
                 else:
-                    res = excess_series.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                     # L/S or No Benchmark -> Just calculate rolling of the series (which IS the L/S diff)
+                     # or if no benchmark, just total return
+                     if use_calendar_days:
+                        res = series_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
+                     else:
+                        res = series_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                
                 rolling_df[series] = res
 
             elif rolling_metric == "volatility":
-                # Volatility of the series returns
                 if use_calendar_days:
                     res = series_ret.rolling(window=window_spec).std() * np.sqrt(periods_per_year)
                 else:
@@ -372,16 +429,10 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
                 rolling_df[series] = res
 
             elif rolling_metric == "tracking_error":
-                # Volatility of excess returns (Series - Bench)
-                # If L/S, series_ret is already L-S. So it's Volatility of that.
-                # If not L/S and bench exists, use difference.
+                # For TE, we usually use the arithmetic difference stream's volatility
                 if bench_ret is not None and not is_long_short:
                     diff = series_ret - bench_ret
-                elif bench_ret is not None and is_long_short:
-                    # L/S relative to benchmark
-                    diff = series_ret - bench_ret
                 else:
-                    # Fallback (should be covered by top check if bench is None)
                     diff = series_ret
                 
                 if use_calendar_days:
@@ -391,8 +442,6 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
                 rolling_df[series] = res
 
             elif rolling_metric == "correlation":
-                # Correlation between Series and Benchmark
-                # If no benchmark, NaN?
                 if bench_ret is None:
                     rolling_df[series] = np.nan
                 else:
@@ -403,33 +452,25 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
                     rolling_df[series] = res
 
             elif rolling_metric == "sharpe_ratio":
-                # Sharpe of Series Returns (rf=0)
-                # Use apply with sharpe_ratio function
                 func = lambda x: sharpe_ratio(x, periods_per_year)
                 rolling_df[series] = apply_rolling_stat(series_ret, func)
 
             elif rolling_metric == "sortino_ratio":
-                # Sortino of Series Returns
                 func = lambda x: sortino_ratio(x, periods_per_year)
                 rolling_df[series] = apply_rolling_stat(series_ret, func)
 
             elif rolling_metric == "information_ratio":
-                # IR of Excess Returns (Series - Bench)
-                # IR is effectively Sharpe of Excess Returns (relative to 0 mean active return)
                 if bench_ret is not None and not is_long_short:
-                    diff = series_ret - bench_ret
-                elif bench_ret is not None and is_long_short:
                     diff = series_ret - bench_ret
                 else:
                     diff = series_ret
                 
-                func = lambda x: sharpe_ratio(x, periods_per_year) # Use Sharpe on excess returns
+                func = lambda x: sharpe_ratio(x, periods_per_year)
                 rolling_df[series] = apply_rolling_stat(diff, func)
 
         # For calendar-based windows, filter out periods that don't have enough calendar days
         if use_calendar_days and len(rolling_df) > 0:
-            first_date = df.index.min()
-            # Create a mask for dates that have at least min_calendar_days from the first date
+            first_date = working_df.index.min()
             valid_dates_mask = (rolling_df.index - first_date).days >= min_calendar_days - 1
             rolling_df = rolling_df[valid_dates_mask]
 
@@ -438,121 +479,104 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
 
         return rolling_df
 
-    except Exception:
+    except Exception as e:
         return pd.DataFrame()
 
 
-# Calendar year returns calculation
 
-def _compute_calendar_year_returns(df, original_periodicity, available_series, returns_type, benchmark_dict, long_short_dict):
-    """Helper function to compute calendar year returns for all series.
-
-    Returns:
-        dict: Dictionary mapping series names to their annual returns Series
-    """
-    calendar_returns = {}
-
-    for series in available_series:
-        is_long_short = long_short_dict.get(series, False)
-        benchmark = benchmark_dict.get(series, available_series[0])
-
-        # Get series returns based on returns_type and long-short
-        if is_long_short:
-            if benchmark == "None":
-                series_returns = df[series]
-            elif benchmark == series:
-                continue  # Skip if benchmark equals series
-            elif benchmark in df.columns:
-                series_returns = df[series] - df[benchmark]
-            else:
-                series_returns = df[series]
-        else:
-            if returns_type == "excess":
-                if benchmark == "None":
-                    series_returns = df[series]
-                elif benchmark == series:
-                    continue  # Skip if benchmark equals series
-                elif benchmark in df.columns:
-                    series_returns = df[series] - df[benchmark]
-                else:
-                    series_returns = df[series]
-            else:  # total returns
-                series_returns = df[series]
-        series_returns = series_returns.dropna()
-
-        # Group by year and compound returns
-        series_returns_df = series_returns.to_frame(name='returns')
-        series_returns_df['year'] = series_returns.index.year
-
-        # Calculate annual returns
-        annual_returns = series_returns_df.groupby('year')['returns'].apply(
-            lambda x: (1 + x).prod(min_count=1) - 1
-        )
-
-        # Filter out partial years (exclude first and last year if partial)
-        if len(annual_returns) > 0:
-            first_year = annual_returns.index.min()
-            last_year = annual_returns.index.max()
-
-            # Check if first year is complete
-            first_year_data = series_returns[series_returns.index.year == first_year]
-            if len(first_year_data) > 0:
-                if original_periodicity == "daily":
-                    # For daily data, check if it starts in January
-                    first_date = first_year_data.index.min()
-                    if not first_date.is_year_start:
-                        annual_returns = annual_returns.drop(first_year, errors='ignore')
-                else:  # monthly
-                    # For monthly data, check if all 12 months are present
-                    if len(first_year_data) < 12:
-                        annual_returns = annual_returns.drop(first_year, errors='ignore')
-
-            # Check if last year is complete
-            last_year_data = series_returns[series_returns.index.year == last_year]
-            if len(last_year_data) > 0:
-                last_date = last_year_data.index.max()
-                if not last_date.is_year_end:
-                    annual_returns = annual_returns.drop(last_year, errors='ignore')
-
-        calendar_returns[series] = annual_returns
-
-    return calendar_returns
 
 
 @cache_config.cache.memoize(timeout=0)
 def calculate_calendar_year_returns(raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
     """Calculate calendar year returns for Excel export."""
     try:
-        df = json_to_df(raw_data)
+        # Use get_working_returns for data prep
+        working_df = get_working_returns(
+            raw_data, selected_periodicity or "daily", tuple(selected_series),
+            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+        )
 
-        # Apply date range filter if provided
-        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-        if date_range_dict:
-            start_date = pd.to_datetime(date_range_dict["start"])
-            end_date = pd.to_datetime(date_range_dict["end"])
+        if working_df.empty:
+            return pd.DataFrame()
+            
+        # Get raw data for benchmarks if excess returns are needed
+        if returns_type == "excess":
+            raw_df = resample_returns_cached(raw_data, selected_periodicity or "daily")
+        else:
+            raw_df = None
 
-            if selected_periodicity == "monthly":
-                # Fall back to beginning of month (e.g., 1/31 -> 1/1)
-                start_date = start_date.replace(day=1)
-            elif selected_periodicity and selected_periodicity.startswith("weekly_"):
-                # Fall back 6 days (e.g., 1/8 -> 1/2)
-                start_date = start_date - pd.Timedelta(days=6)
-
-            df = df[(df.index >= start_date) & (df.index <= end_date)]
-
-        # Parse assignments
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
 
-        # Filter to selected series only
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
-            return pd.DataFrame()
+        calendar_returns = {}
 
-        # Compute calendar year returns using shared helper
-        calendar_returns = _compute_calendar_year_returns(
-            df, original_periodicity, available_series, returns_type, benchmark_dict, long_short_dict
-        )
+        # Compute annual returns for each series
+        for series in working_df.columns:
+            series_returns = working_df[series].dropna()
+            
+            if series_returns.empty:
+                continue
+
+            # Group by year and compound returns
+            series_returns_df = series_returns.to_frame(name='returns')
+            series_returns_df['year'] = series_returns.index.year
+
+            # Calculate annual returns
+            annual_returns = series_returns_df.groupby('year')['returns'].apply(
+                lambda x: (1 + x).prod(min_count=1) - 1
+            )
+            
+            # Filter out partial years (exclude first and last year if partial)
+            # Logic same as before
+            if len(annual_returns) > 0:
+                first_year = annual_returns.index.min()
+                last_year = annual_returns.index.max()
+
+                # Check if first year is complete
+                first_year_data = series_returns[series_returns.index.year == first_year]
+                if len(first_year_data) > 0:
+                    if original_periodicity == "daily":
+                        # For daily data, check if it starts in January
+                        first_date = first_year_data.index.min()
+                        if not first_date.is_year_start:
+                            annual_returns = annual_returns.drop(first_year, errors='ignore')
+                    else:  # monthly
+                        # For monthly data, check if all 12 months are present
+                        if len(first_year_data) < 12:
+                            annual_returns = annual_returns.drop(first_year, errors='ignore')
+
+                # Check if last year is complete
+                last_year_data = series_returns[series_returns.index.year == last_year]
+                if len(last_year_data) > 0:
+                    last_date = last_year_data.index.max()
+                    if not last_date.is_year_end:
+                        annual_returns = annual_returns.drop(last_year, errors='ignore')
+            
+            # If Excess Return requested (and not L/S), subtract Annual Benchmark Return
+            is_ls = long_short_dict.get(series, False)
+            if returns_type == "excess" and not is_ls:
+                benchmark = benchmark_dict.get(series, "None")
+                if benchmark != "None" and raw_df is not None and benchmark in raw_df.columns:
+                    # Calculate annual returns for benchmark
+                    # Must align benchmark to the same valid periods?
+                    # Ideally, yes. But usually Annual B is Annual B.
+                    # However, if we dropped partial years for S, we must use matching years for B.
+                    
+                    bench_series = raw_df[benchmark]
+                    bench_df = bench_series.to_frame(name='returns')
+                    bench_df['year'] = bench_series.index.year
+                    
+                    annual_bench = bench_df.groupby('year')['returns'].apply(
+                        lambda x: (1 + x).prod(min_count=1) - 1
+                    )
+                    
+                    # Align to series annual returns (years match)
+                    annual_bench = annual_bench.reindex(annual_returns.index)
+                    
+                    # Subtract
+                    annual_returns = annual_returns - annual_bench
+
+            calendar_returns[series] = annual_returns
 
         if not calendar_returns:
             return pd.DataFrame()
@@ -567,7 +591,7 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
         result = pd.DataFrame(index=all_years)
         result.index.name = 'Year'
 
-        for series in available_series:
+        for series in working_df.columns:
             if series in calendar_returns:
                 result[series] = calendar_returns[series]
 
@@ -579,96 +603,91 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
 
 # Monthly view creation
 
-def create_monthly_view(raw_data, series_name, original_periodicity, selected_periodicity,returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range):
+def create_monthly_view(raw_data, series_name, original_periodicity, selected_periodicity, returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range):
     """Create monthly view with Jan-Dec columns plus Year column."""
-    # Use raw data (original periodicity) regardless of selected periodicity
-    df = json_to_df(raw_data)
+    # Use get_working_returns for data prep
+    working_df = get_working_returns(
+        raw_data, original_periodicity or "daily", (series_name,),
+        str(benchmark_assignments), str(long_short_assignments), str(date_range)
+    )
+    
+    if series_name not in working_df.columns:
+        return [], []
+        
+    series_returns = working_df[series_name].dropna()
 
-    # Apply date range filter if provided
-    date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-    if date_range_dict:
-        start_date = pd.to_datetime(date_range_dict["start"])
-        end_date = pd.to_datetime(date_range_dict["end"])
-
-        if selected_periodicity == "monthly":
-            # Fall back to beginning of month (e.g., 1/31 -> 1/1)
-            start_date = start_date.replace(day=1)
-        elif selected_periodicity and selected_periodicity.startswith("weekly_"):
-            # Fall back 6 days (e.g., 1/8 -> 1/2)
-            start_date = start_date - pd.Timedelta(days=6)
-
-        df = df[(df.index >= start_date) & (df.index <= end_date)]
-
-    # Parse assignments
+    if series_returns.empty:
+        return [], []
+        
+    # Check configurations
     benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
     long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
-
-    # Determine if series is long-short
-    is_long_short = long_short_dict.get(series_name, False)
-    benchmark = benchmark_dict.get(series_name, selected_series[0])
-
-    # Get series returns based on returns_type and long-short
-    if is_long_short:
-        if benchmark == "None":
-            series_returns = df[series_name]
-        elif benchmark == series_name:
-            # Return empty for self-benchmark
-            return [], []
-        elif benchmark in df.columns:
-            series_returns = df[series_name] - df[benchmark]
+    is_ls = long_short_dict.get(series_name, False)
+    
+    # If Excess requested (and not L/S), we need benchmark data
+    calc_excess = (returns_type == "excess" and not is_ls)
+    if calc_excess:
+        benchmark = benchmark_dict.get(series_name, "None")
+        raw_df = resample_returns_cached(raw_data, original_periodicity or "daily")
+        if benchmark != "None" and benchmark in raw_df.columns:
+             bench_returns = raw_df[benchmark].reindex(series_returns.index)
         else:
-            series_returns = df[series_name]
-    else:
-        if returns_type == "excess":
-            if benchmark == "None":
-                series_returns = df[series_name]
-            elif benchmark == series_name:
-                # Return empty for self-benchmark
-                return [], []
-            elif benchmark in df.columns:
-                series_returns = df[series_name] - df[benchmark]
-            else:
-                series_returns = df[series_name]
-        else:  # total returns
-            series_returns = df[series_name]
-    series_returns = series_returns.dropna()
+             calc_excess = False
 
-    # Convert to DataFrame for processing
-    series_data = series_returns.to_frame(name='returns')
+    # Helper to aggregate to monthly
+    def aggregate_monthly(rets):
+        # Convert to DataFrame for processing
+        s_data = rets.to_frame(name='returns')
 
-    # Determine if we need to resample to monthly
-    if original_periodicity == "daily":
-        # For daily data, resample to monthly and only include full months
-        # Add year and month columns
-        series_data['year'] = series_data.index.year
-        series_data['month'] = series_data.index.month
+        if original_periodicity == "daily":
+            # For daily data, resample to monthly and only include full months
+            s_data['year'] = s_data.index.year
+            s_data['month'] = s_data.index.month
 
-        # Group by year and month, compound returns
-        monthly_data = series_data.groupby(['year', 'month'])['returns'].apply(
-            lambda x: (1 + x).prod(min_count=1) - 1
-        ).reset_index()
+            # Group by year and month, compound returns
+            monthly_data = s_data.groupby(['year', 'month'])['returns'].apply(
+                lambda x: (1 + x).prod(min_count=1) - 1
+            ).reset_index()
 
-        # Count VALID days in each month to filter out partial months
-        days_per_month = series_data.groupby(['year', 'month'])['returns'].count().reset_index(name='days')
-        monthly_data = monthly_data.merge(days_per_month, on=['year', 'month'])
+            # Count VALID days in each month to filter out partial months
+            days_per_month = s_data.groupby(['year', 'month'])['returns'].count().reset_index(name='days')
+            monthly_data = monthly_data.merge(days_per_month, on=['year', 'month'])
 
-        # Only keep months with reasonable number of days (assume full month has at least 15 trading days)
-        monthly_data = monthly_data[monthly_data['days'] >= 15]
-        monthly_data = monthly_data.drop('days', axis=1)
+            # Only keep months with reasonable number of days (assume full month has at least 15 trading days)
+            monthly_data = monthly_data[monthly_data['days'] >= 15]
+            monthly_data = monthly_data.drop('days', axis=1)
 
-    elif original_periodicity == "monthly":
-        # Already monthly, just add year and month columns
-        monthly_data = pd.DataFrame({
-            'year': series_data.index.year,
-            'month': series_data.index.month,
-            'returns': series_data['returns']
-        }).reset_index(drop=True)
-    else:
-        # For other periodicities, return empty
-        return [], []
+        elif original_periodicity == "monthly":
+            # Already monthly, just add year and month columns
+            monthly_data = pd.DataFrame({
+                'year': s_data.index.year,
+                'month': s_data.index.month,
+                'returns': s_data['returns']
+            }).reset_index(drop=True)
+        else:
+            return pd.DataFrame()
+            
+        return monthly_data
 
+    # Calculate monthly data for series
+    monthly_data = aggregate_monthly(series_returns)
+    
     if monthly_data.empty:
         return [], []
+
+    # If excess, calculate monthly data for benchmark and diff
+    if calc_excess:
+        bench_monthly = aggregate_monthly(bench_returns)
+        if not bench_monthly.empty:
+            # Merge on year/month
+            merged = monthly_data.merge(bench_monthly, on=['year', 'month'], suffixes=('_s', '_b'))
+            # Calculate excess (Arithmetic for monthly cells)
+            merged['returns'] = merged['returns_s'] - merged['returns_b']
+            
+            # Keep track of component returns for Annual calc
+            monthly_data = merged
+        else:
+            calc_excess = False # Fallback
 
     # Pivot to get months as columns
     pivot_data = monthly_data.pivot(index='year', columns='month', values='returns')
@@ -677,11 +696,26 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
 
-    # Calculate Annual column (compound all months in the row)
-    pivot_data['Ann'] = pivot_data.apply(
-        lambda row: (1 + row.dropna()).prod() - 1 if not row.isnull().any() else None,
-        axis=1
-    )
+    # Calculate Annual column
+    if calc_excess:
+        # For excess, Annual = Ann(S) - Ann(B)
+        # We need to pivot S and B separately
+        pivot_s = monthly_data.pivot(index='year', columns='month', values='returns_s')
+        pivot_b = monthly_data.pivot(index='year', columns='month', values='returns_b')
+        
+        def calc_annual(row):
+            if row.isnull().any(): return None
+            return (1 + row.dropna()).prod() - 1
+            
+        ann_s = pivot_s.apply(calc_annual, axis=1)
+        ann_b = pivot_b.apply(calc_annual, axis=1)
+        pivot_data['Ann'] = ann_s - ann_b
+    else:
+        # Standard compound
+        pivot_data['Ann'] = pivot_data.apply(
+            lambda row: (1 + row.dropna()).prod() - 1 if not row.isnull().any() else None,
+            axis=1
+        )
 
     # Reset index to make year a column
     pivot_data = pivot_data.reset_index()

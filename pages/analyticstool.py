@@ -22,6 +22,7 @@ from utils.returns import (
     calculate_rolling_returns,
     create_monthly_view,
     get_available_periodicities,
+    get_working_returns,
     json_to_df,
     merge_returns,
     resample_returns,
@@ -98,54 +99,35 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
                              benchmark_assignments: str, returns_type: str, long_short_assignments: str,
                              date_range_str: str) -> pd.DataFrame:
     """Calculate excess returns with caching."""
-    df = resample_returns_cached(json_str, periodicity)
+    # Get base working returns (Series aligned to Bench, or L/S diff)
+    display_df = get_working_returns(
+        json_str, periodicity, selected_series,
+        benchmark_assignments, long_short_assignments,
+        date_range_str
+    )
+    
+    if display_df.empty:
+        return display_df
 
-    # Parse assignments
-    benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
-    long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
-
-    # Filter to selected series only
-    available_series = [s for s in selected_series if s in df.columns]
-    if not available_series:
-        return pd.DataFrame()
-
-    display_df = df[available_series].copy()
-
-    # Calculate long-short returns for series with long-short enabled
-    for series in available_series:
-        is_long_short = long_short_dict.get(series, False)
-        if is_long_short:
-            benchmark = benchmark_dict.get(series, available_series[0])
-            if benchmark == series:
-                display_df[series] = np.nan
-            elif benchmark == "None":
-                # None benchmark: keep the series returns as-is (vs zero)
-                display_df.loc[:, series] = df[series]
-            elif benchmark in df.columns:
-                # Long-short: always show difference, regardless of returns_type
-                display_df.loc[:, series] = df[series] - df[benchmark]
-
-    # Calculate excess returns if requested (for non-long-short series)
+    # If returns_type is "excess", we need to calculate Series - Benchmark
+    # for non-L/S series. L/S series are already diffs.
     if returns_type == "excess":
-        for series in available_series:
-            is_long_short = long_short_dict.get(series, False)
-            if not is_long_short:  # Only apply to non-long-short series
-                benchmark = benchmark_dict.get(series, available_series[0])
-                if benchmark == series:
-                    display_df[series] = np.nan
-                elif benchmark == "None":
-                    # None benchmark: keep the series returns as-is (vs zero)
-                    display_df.loc[:, series] = df[series]
-                elif benchmark in df.columns:
-                    # Vectorized operation instead of per-series assignment
-                    display_df.loc[:, series] = df[series] - df[benchmark]
-
-    # Apply date range filter if provided (after all calculations)
-    date_range = eval(date_range_str) if date_range_str and date_range_str != "None" else None
-    if date_range:
-        start_date = pd.to_datetime(date_range["start"])
-        end_date = pd.to_datetime(date_range["end"])
-        display_df = display_df[(display_df.index >= start_date) & (display_df.index <= end_date)]
+        # We need raw data to get benchmarks
+        df = resample_returns_cached(json_str, periodicity)
+        
+        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
+        ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        
+        for series in display_df.columns:
+            is_ls = ls_dict.get(series, False)
+            if not is_ls:
+                benchmark = benchmark_dict.get(series, "None")
+                if benchmark != "None" and benchmark in df.columns:
+                    # Align benchmark to display_df (which is already date filtered)
+                    bench_series = df[benchmark].reindex(display_df.index)
+                    
+                    # Calculate arithmetic excess for the grid
+                    display_df[series] = display_df[series] - bench_series
 
     return display_df
 
