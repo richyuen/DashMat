@@ -112,24 +112,30 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
     # If returns_type is "excess", we need to calculate Series - Benchmark
     # for non-L/S series. L/S series are already diffs.
     if returns_type == "excess":
-        # We need raw data to get benchmarks
-        df = resample_returns_cached(json_str, periodicity)
-        
+        # We use display_df which now includes benchmarks
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
         
-        for series in display_df.columns:
+        # Iterate over SELECTED series only
+        for series in selected_series:
+            if series not in display_df.columns:
+                continue
+
             is_ls = ls_dict.get(series, False)
             if not is_ls:
                 benchmark = benchmark_dict.get(series, "None")
-                if benchmark != "None" and benchmark in df.columns:
+                if benchmark != "None" and benchmark in display_df.columns:
                     # Align benchmark to display_df (which is already date filtered)
-                    bench_series = df[benchmark].reindex(display_df.index)
+                    # Use the benchmark column directly from display_df
+                    bench_series = display_df[benchmark]
                     
                     # Calculate arithmetic excess for the grid
                     display_df[series] = display_df[series] - bench_series
 
-    return display_df
+    # Filter to show only selected series (remove benchmark columns if they were added but not selected)
+    # Ensure we only return columns that are in selected_series
+    final_cols = [col for col in selected_series if col in display_df.columns]
+    return display_df[final_cols]
 
 
 layout = dmc.Container(
@@ -2221,14 +2227,15 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
 def calculate_statistics_cached(json_str: str, periodicity: str, selected_series: tuple,
                                 benchmark_assignments: str, long_short_assignments: str, date_range_str: str) -> list:
     """Calculate statistics with caching."""
-    df = resample_returns_cached(json_str, periodicity)
+    # Use get_working_returns to get aligned data + benchmarks
+    df = get_working_returns(
+        json_str, periodicity, selected_series,
+        benchmark_assignments, long_short_assignments,
+        date_range_str
+    )
 
-    # Apply date range filter if provided
-    date_range = eval(date_range_str) if date_range_str and date_range_str != "None" else None
-    if date_range:
-        start_date = pd.to_datetime(date_range["start"])
-        end_date = pd.to_datetime(date_range["end"])
-        df = df[(df.index >= start_date) & (df.index <= end_date)]
+    if df.empty:
+        return []
 
     benchmark_dict = eval(benchmark_assignments) if benchmark_assignments else {}
     long_short_dict = eval(long_short_assignments) if long_short_assignments else {}
@@ -2720,14 +2727,14 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         return dmc.Text("Select series to view growth charts", size="sm", c="dimmed")
 
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
+        # Use get_working_returns to get aligned data + benchmarks
+        df = get_working_returns(
+            raw_data, periodicity or "daily", tuple(selected_series),
+            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+        )
 
-        # Apply date range filter if provided
-        date_range_dict = eval(str(date_range)) if date_range and str(date_range) != "None" else None
-        if date_range_dict:
-            start_date = pd.to_datetime(date_range_dict["start"])
-            end_date = pd.to_datetime(date_range_dict["end"])
-            df = df[(df.index >= start_date) & (df.index <= end_date)]
+        if df.empty:
+            return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
@@ -2748,7 +2755,8 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         else:
             period_offset = pd.DateOffset(days=1)
 
-        # Use shared calculate_growth_of_dollar function
+        # Use shared calculate_growth_of_dollar function for the main chart
+        # (It calls get_working_returns internally, but it's cached)
         growth_df = calculate_growth_of_dollar(
             raw_data,
             periodicity,

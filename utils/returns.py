@@ -198,9 +198,10 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
         date_range_str: String representation of date range dict
         
     Returns:
-        DataFrame with calculated returns for selected series.
+        DataFrame with calculated returns for selected series AND unselected benchmarks.
         For L/S series, returns (Series - Benchmark).
         For standard series, returns Series (aligned to benchmark intersection).
+        For unselected benchmarks, returns Series (date filtered only).
         Does NOT calculate excess returns for standard series.
     """
     # 1. Get base data
@@ -222,6 +223,13 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
     
     # Ensure selected_series is iterable
     series_list = list(selected_series) if selected_series else []
+    
+    # Identify unselected benchmarks
+    unselected_benchmarks = set()
+    for series in series_list:
+        benchmark = bench_dict.get(series, "None")
+        if benchmark != "None" and benchmark in df.columns and benchmark not in series_list:
+             unselected_benchmarks.add(benchmark)
     
     for series in series_list:
         if series not in df.columns:
@@ -260,6 +268,10 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
             final_series = s_data
             
         result_df[series] = final_series
+
+    # Add unselected benchmarks (date filtered only)
+    for bench in unselected_benchmarks:
+        result_df[bench] = df[bench]
         
     return result_df.dropna(how='all')
 
@@ -274,6 +286,7 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
 
         # Get working returns (forces alignment and filtering)
         # working_df contains Series (aligned) OR (Series - Bench) if L/S
+        # NOW also contains unselected benchmarks
         working_df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
             str(benchmark_assignments), str(long_short_assignments), str(date_range)
@@ -281,12 +294,6 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
         
         if working_df.empty:
             return pd.DataFrame()
-
-        # Get raw data for benchmarks (if needed for relative metrics)
-        raw_df = resample_returns_cached(raw_data, periodicity or "daily")
-        
-        # Align raw_df to working_df (date range filter)
-        raw_df = raw_df.reindex(working_df.index)
 
         # Parse assignments
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
@@ -371,8 +378,11 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
         # Calculate rolling metrics for each series
         rolling_df = pd.DataFrame(index=working_df.index)
 
-        # Iterate over columns in working_df (which are the selected series)
-        for series in working_df.columns:
+        # Iterate over SELECTED series only
+        for series in selected_series:
+            if series not in working_df.columns:
+                continue
+
             is_long_short = long_short_dict.get(series, False)
             benchmark = benchmark_dict.get(series, "None") # Default to None if not found
 
@@ -384,11 +394,11 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
             # 1. Resolve Series Returns
             series_ret = working_df[series]
 
-            # 2. Resolve Benchmark Returns
-            if benchmark in raw_df.columns and benchmark != "None":
-                bench_ret = raw_df[benchmark]
+            # 2. Resolve Benchmark Returns from working_df
+            if benchmark in working_df.columns and benchmark != "None":
+                bench_ret = working_df[benchmark]
                 # Reindex bench_ret to match series_ret (though logic mostly relies on index alignment)
-                # Note: raw_df was already reindexed to working_df.index
+                # working_df columns share same index
             else:
                 bench_ret = None
 
@@ -499,19 +509,16 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
         if working_df.empty:
             return pd.DataFrame()
             
-        # Get raw data for benchmarks if excess returns are needed
-        if returns_type == "excess":
-            raw_df = resample_returns_cached(raw_data, selected_periodicity or "daily")
-        else:
-            raw_df = None
-
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
 
         calendar_returns = {}
 
-        # Compute annual returns for each series
-        for series in working_df.columns:
+        # Compute annual returns for each SELECTED series
+        for series in selected_series:
+            if series not in working_df.columns:
+                continue
+
             series_returns = working_df[series].dropna()
             
             if series_returns.empty:
@@ -556,13 +563,11 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
             is_ls = long_short_dict.get(series, False)
             if returns_type == "excess" and not is_ls:
                 benchmark = benchmark_dict.get(series, "None")
-                if benchmark != "None" and raw_df is not None and benchmark in raw_df.columns:
+                if benchmark != "None" and benchmark in working_df.columns:
                     # Calculate annual returns for benchmark
-                    # Must align benchmark to the same valid periods?
-                    # Ideally, yes. But usually Annual B is Annual B.
-                    # However, if we dropped partial years for S, we must use matching years for B.
+                    # Use benchmark from working_df
+                    bench_series = working_df[benchmark].dropna()
                     
-                    bench_series = raw_df[benchmark]
                     bench_df = bench_series.to_frame(name='returns')
                     bench_df['year'] = bench_series.index.year
                     
@@ -591,7 +596,7 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
         result = pd.DataFrame(index=all_years)
         result.index.name = 'Year'
 
-        for series in working_df.columns:
+        for series in selected_series:
             if series in calendar_returns:
                 result[series] = calendar_returns[series]
 
@@ -628,9 +633,9 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     calc_excess = (returns_type == "excess" and not is_ls)
     if calc_excess:
         benchmark = benchmark_dict.get(series_name, "None")
-        raw_df = resample_returns_cached(raw_data, selected_periodicity or "daily")
-        if benchmark != "None" and benchmark in raw_df.columns:
-             bench_returns = raw_df[benchmark].reindex(series_returns.index)
+        if benchmark != "None" and benchmark in working_df.columns:
+             # Use benchmark from working_df
+             bench_returns = working_df[benchmark].reindex(series_returns.index)
         else:
              calc_excess = False
 
@@ -707,7 +712,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         ann_s = pivot_s.apply(calc_annual, axis=1)
         
         # Calculate Full Benchmark Annual Returns
-        full_bench_series = raw_df[benchmark]
+        full_bench_series = working_df[benchmark].dropna()
         full_bench_monthly = aggregate_monthly(full_bench_series)
         
         if not full_bench_monthly.empty:

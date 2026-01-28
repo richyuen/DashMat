@@ -419,7 +419,10 @@ def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark
         series_growth_data = {}
         all_dates = set()
 
-        for series in working_df.columns:
+        for series in selected_series:
+            if series not in working_df.columns:
+                continue
+
             returns = working_df[series].dropna()
             
             if returns.empty:
@@ -471,12 +474,6 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
         if working_df.empty:
             return pd.DataFrame()
 
-        # If Excess requested (and not L/S), we need benchmark data for relative drawdown
-        if returns_type == "excess":
-            raw_df = resample_returns_cached(raw_data, periodicity or "daily")
-        else:
-            raw_df = None
-
         benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
         long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
 
@@ -494,7 +491,10 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
         series_drawdown_data = {}
         all_dates = set()
 
-        for series in working_df.columns:
+        for series in selected_series:
+            if series not in working_df.columns:
+                continue
+
             returns = working_df[series].dropna()
 
             if returns.empty:
@@ -505,11 +505,11 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
             # Check for Excess Return mode (non-L/S)
             if returns_type == "excess" and not is_ls:
                 benchmark = benchmark_dict.get(series, "None")
-                if benchmark != "None" and raw_df is not None and benchmark in raw_df.columns:
+                if benchmark != "None" and benchmark in working_df.columns:
                     # Calculate Geometric Relative Drawdown (GrowthS / GrowthB)
                     
-                    # Align benchmark
-                    bench_series = raw_df[benchmark].reindex(returns.index)
+                    # Align benchmark (use working_df which includes date-filtered benchmark)
+                    bench_series = working_df[benchmark].reindex(returns.index)
                     
                     # Compute growth indices
                     growth_s = (1 + returns).cumprod()
