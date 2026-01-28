@@ -45,12 +45,13 @@ STATS_CONFIG = [
     ("Number of Periods", None),
     ("Cumulative Return", ".2%"),
     ("Annualized Return", ".2%"),
-    ("Annualized Excess Return", ".2%"),
     ("Annualized Volatility", ".2%"),
-    ("Annualized Tracking Error", ".2%"),
     ("Sharpe Ratio", ".2f"),
     ("Sortino Ratio", ".2f"),
+    ("Annualized Excess Return", ".2%"),
+    ("Annualized Tracking Error", ".2%"),
     ("Information Ratio", ".2f"),
+    ("Correlation", ".2f"),
     ("Hit Rate", ".2%"),
     ("Hit Rate (vs Benchmark)", ".2%"),
     ("Best Period Return", ".2%"),
@@ -59,20 +60,29 @@ STATS_CONFIG = [
     ("Skewness", ".2f"),
     ("Kurtosis", ".2f"),
     ("1Y Annualized Return", ".2%"),
+    ("1Y Annualized Volatility", ".2%"),
     ("1Y Sharpe Ratio", ".2f"),
     ("1Y Sortino Ratio", ".2f"),
     ("1Y Excess Return", ".2%"),
+    ("1Y Tracking Error", ".2%"),
     ("1Y Information Ratio", ".2f"),
+    ("1Y Correlation", ".2f"),
     ("3Y Annualized Return", ".2%"),
+    ("3Y Annualized Volatility", ".2%"),
     ("3Y Sharpe Ratio", ".2f"),
     ("3Y Sortino Ratio", ".2f"),
     ("3Y Excess Return", ".2%"),
+    ("3Y Tracking Error", ".2%"),
     ("3Y Information Ratio", ".2f"),
+    ("3Y Correlation", ".2f"),
     ("5Y Annualized Return", ".2%"),
+    ("5Y Annualized Volatility", ".2%"),
     ("5Y Sharpe Ratio", ".2f"),
     ("5Y Sortino Ratio", ".2f"),
     ("5Y Excess Return", ".2%"),
+    ("5Y Tracking Error", ".2%"),
     ("5Y Information Ratio", ".2f"),
+    ("5Y Correlation", ".2f"),
 ]
 
 
@@ -411,6 +421,23 @@ layout = dmc.Container(
                             mb="md",
                             children=[
                                 dmc.Select(
+                                    id="rolling-metric-select",
+                                    data=[
+                                        {"value": "total_return", "label": "Total Return"},
+                                        {"value": "volatility", "label": "Volatility"},
+                                        {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
+                                        {"value": "sortino_ratio", "label": "Sortino Ratio"},
+                                        {"value": "excess_return", "label": "Excess Return"},
+                                        {"value": "tracking_error", "label": "Tracking Error"},
+                                        {"value": "information_ratio", "label": "Information Ratio"},
+                                        {"value": "correlation", "label": "Correlation"},
+                                    ],
+                                    value="total_return",
+                                    w=150,
+                                    size="sm",
+                                    clearable=False,
+                                ),
+                                dmc.Select(
                                     id="rolling-window-select",
                                     data=[
                                         {"value": "3m", "label": "3-month"},
@@ -653,6 +680,7 @@ layout = dmc.Container(
         dcc.Store(id="series-order-store", data=[], storage_type="local"),
         dcc.Store(id="active-tab-store", data="statistics", storage_type="local"),
         dcc.Store(id="rolling-window-store", data="1y", storage_type="local"),
+        dcc.Store(id="rolling-metric-store", data="total_return", storage_type="local"),
         dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="local"),
         dcc.Store(id="rolling-chart-switch-store", data="chart", storage_type="local"),
         dcc.Store(id="drawdown-chart-switch-store", data="chart", storage_type="local"),
@@ -1074,6 +1102,16 @@ def save_rolling_window(value):
 
 
 @callback(
+    Output("rolling-metric-store", "data"),
+    Input("rolling-metric-select", "value"),
+    prevent_initial_call=True,
+)
+def save_rolling_metric(value):
+    """Save rolling metric selection to local storage."""
+    return value or "total_return"
+
+
+@callback(
     Output("rolling-return-type-store", "data"),
     Input("rolling-return-type-select", "value"),
     prevent_initial_call=True,
@@ -1084,18 +1122,33 @@ def save_rolling_return_type(value):
 
 
 @callback(
+    Output("rolling-return-type-select", "disabled"),
+    Output("rolling-return-type-select", "style"),
+    Input("rolling-metric-select", "value"),
+)
+def update_rolling_controls_state(metric):
+    """Enable/disable return type select based on metric."""
+    if metric in ["total_return", "excess_return"]:
+        return False, {}
+    return True, {"opacity": 0.5, "pointerEvents": "none"}
+
+
+@callback(
     Output("rolling-window-select", "value"),
     Output("rolling-return-type-select", "value"),
+    Output("rolling-metric-select", "value"),
     Input("raw-data-store", "data"),
     State("rolling-window-store", "data"),
     State("rolling-return-type-store", "data"),
+    State("rolling-metric-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def restore_rolling_options(raw_data, stored_window, stored_return_type):
+def restore_rolling_options(raw_data, stored_window, stored_return_type, stored_metric):
     """Restore rolling options from local storage on page load."""
     window = stored_window if stored_window else "1y"
     return_type = stored_return_type if stored_return_type else "annualized"
-    return window, return_type
+    metric = stored_metric if stored_metric else "total_return"
+    return window, return_type, metric
 
 
 @callback(
@@ -1989,13 +2042,13 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
     Input("series-select", "data"),
     Input("rolling-window-select", "value"),
     Input("rolling-return-type-select", "value"),
-    Input("returns-type-select", "value"),
+    Input("rolling-metric-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range):
     """Update the Rolling Returns grid with rolling window calculations."""
     # Lazy loading: only calculate when rolling tab is active
     if active_tab != "rolling":
@@ -2006,23 +2059,29 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
 
     try:
         # Use shared calculate_rolling_returns function
+        # We pass "total" for returns_type as it's ignored by the new logic in favor of rolling_metric
         rolling_df = calculate_rolling_returns(
             raw_data,
             periodicity,
             tuple(selected_series),
-            returns_type,
+            "total",
             str(benchmark_assignments),
             str(long_short_assignments),
             str(date_range),
             rolling_window,
-            rolling_return_type
+            rolling_return_type,
+            rolling_metric or "total_return"
         )
 
         if rolling_df.empty:
             return [], []
 
-        if rolling_df.empty:
-            return [], []
+        # Determine formatter based on metric
+        metric = rolling_metric or "total_return"
+        if metric in ["total_return", "excess_return", "volatility", "tracking_error"]:
+            formatter = ".2%"
+        else:
+            formatter = ".2f"
 
         # Create column definitions
         column_defs = [
@@ -2037,7 +2096,7 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
         for col in rolling_df.columns:
             column_defs.append({
                 "field": col,
-                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "valueFormatter": {"function": f"params.value != null ? d3.format('{formatter}')(params.value) : ''"},
                 "width": 120,
             })
 
@@ -2060,13 +2119,13 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
     Input("series-select", "data"),
     Input("rolling-window-select", "value"),
     Input("rolling-return-type-select", "value"),
-    Input("returns-type-select", "value"),
+    Input("rolling-metric-select", "value"),
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range):
     """Update the Rolling Returns chart with rolling window calculations."""
     # Create empty figure
     empty_fig = go.Figure()
@@ -2091,16 +2150,24 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
             raw_data,
             periodicity,
             tuple(selected_series),
-            returns_type,
+            "total",
             str(benchmark_assignments),
             str(long_short_assignments),
             str(date_range),
             rolling_window,
-            rolling_return_type
+            rolling_return_type,
+            rolling_metric or "total_return"
         )
 
         if rolling_df.empty:
             return empty_graph
+
+        # Determine formatting
+        metric = rolling_metric or "total_return"
+        if metric in ["total_return", "excess_return", "volatility", "tracking_error"]:
+            y_format = ".2%"
+        else:
+            y_format = ".2f"
 
         # Create the line chart
         fig = go.Figure()
@@ -2111,7 +2178,7 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
                 y=rolling_df[col],
                 mode='lines',
                 name=col,
-                hovertemplate='%{y:.2%}<extra></extra>',
+                hovertemplate=f'%{{y:{y_format}}}<extra></extra>',
             ))
 
         # Update layout
@@ -2124,13 +2191,33 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
             "10y": "10-Year",
         }
         window_label = window_label_map.get(rolling_window, "1-Year")
+        
+        metric_label_map = {
+            "total_return": "Total Return",
+            "volatility": "Volatility",
+            "sharpe_ratio": "Sharpe Ratio",
+            "sortino_ratio": "Sortino Ratio",
+            "excess_return": "Excess Return",
+            "tracking_error": "Tracking Error",
+            "information_ratio": "Information Ratio",
+            "correlation": "Correlation",
+        }
+        metric_label = metric_label_map.get(metric, "Total Return")
+        
         return_type_label = "Annualized" if rolling_return_type == "annualized" else "Cumulative"
+        
+        if metric in ["total_return", "excess_return"]:
+            title = f"Rolling {window_label} {return_type_label} {metric_label}"
+        elif metric in ["volatility", "tracking_error"]:
+            title = f"Rolling {window_label} Annualized {metric_label}"
+        else:
+            title = f"Rolling {window_label} {metric_label}"
 
         fig.update_layout(
-            title=f"Rolling {window_label} {return_type_label} Returns",
+            title=title,
             xaxis_title="Date",
-            yaxis_title="Return",
-            yaxis_tickformat=".2%",
+            yaxis_title=metric_label,
+            yaxis_tickformat=y_format,
             template="plotly_white",
             hovermode="x unified",
             legend=dict(
@@ -2139,7 +2226,7 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
                 y=1.02,
                 xanchor="right",
                 x=1
-            ),
+            )
         )
 
         return dcc.Graph(figure=fig, style={"height": "550px"})

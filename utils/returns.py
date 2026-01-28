@@ -186,10 +186,10 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
 # Rolling returns calculation
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized"):
+def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized", rolling_metric="total_return"):
     """Calculate rolling returns for Excel export - matches the Rolling grid logic."""
     try:
-        from utils.statistics import annualization_factor
+        from utils.statistics import annualization_factor, sharpe_ratio, sortino_ratio
 
         # Get the resampled data
         df = resample_returns_cached(raw_data, periodicity or "daily")
@@ -253,7 +253,7 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
             window_size = max(1, window_size)
             window_spec = window_size
 
-        # Map rolling window to number of years for annualization
+        # Map rolling window to number of years for annualization (only used for returns)
         window_years_map = {
             "3m": 0.25,
             "6m": 0.5,
@@ -264,104 +264,167 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
         }
         window_years = window_years_map.get(rolling_window, 1.0)
 
-        # Calculate rolling returns for each series
+        # Helper functions for rolling apply
+        def calc_rolling_return(window):
+            if len(window) == 0:
+                return np.nan
+            # For count-based windows, check minimum size
+            if not use_calendar_days and len(window) < window_size:
+                return np.nan
+            cum_ret = (1 + window).prod() - 1
+            if rolling_return_type == "annualized":
+                if window_years <= 1.0:
+                    return cum_ret
+                return (1 + cum_ret) ** (1 / window_years) - 1
+            else:
+                return cum_ret
+
+        # Wrapper for statistics functions to handle window requirements
+        def apply_rolling_stat(series, func):
+            if use_calendar_days:
+                return series.rolling(window=window_spec).apply(func, raw=False)
+            else:
+                return series.rolling(window=window_spec, min_periods=window_size).apply(func, raw=False)
+
+        # Calculate rolling metrics for each series
         rolling_df = pd.DataFrame(index=df.index)
 
         for series in available_series:
             is_long_short = long_short_dict.get(series, False)
-            benchmark = benchmark_dict.get(series, available_series[0])
+            benchmark = benchmark_dict.get(series, "None") # Default to None if not found
 
-            # Calculate rolling returns
-            def calc_rolling_return(window):
-                if len(window) == 0:
-                    return np.nan
-                # For count-based windows, check minimum size
-                if not use_calendar_days and len(window) < window_size:
-                    return np.nan
-                cum_ret = (1 + window).prod() - 1
-                if rolling_return_type == "annualized":
-                    # If period is 1 year or less, return cumulative return (don't annualize)
-                    if window_years <= 1.0:
-                        return cum_ret
-                    # Annualize based on the window years, not actual periods
-                    return (1 + cum_ret) ** (1 / window_years) - 1
-                else:  # cumulative
-                    return cum_ret
+            # If relative metric and no benchmark, return NaN
+            if rolling_metric in ["excess_return", "tracking_error", "information_ratio", "correlation"] and benchmark == "None":
+                 rolling_df[series] = np.nan
+                 continue
 
+            # Determine the base series for calculation
+            # For correlation, we need series AND benchmark. For others, we might need difference or just series.
+            
+            # 1. Resolve Series Returns
             if is_long_short:
-                # Long-short: always calculate period-by-period difference, then compound
                 if benchmark == "None":
-                    series_returns = df[series]
+                    series_ret = df[series]
                 elif benchmark == series:
                     rolling_df[series] = np.nan
                     continue
                 elif benchmark in df.columns:
-                    series_returns = df[series] - df[benchmark]
+                    series_ret = df[series] - df[benchmark]
                 else:
-                    series_returns = df[series]
+                    series_ret = df[series]
+            else:
+                series_ret = df[series]
+
+            # 2. Resolve Benchmark Returns (for Correlation/Excess/TE/IR if needed)
+            if benchmark in df.columns and benchmark != "None":
+                bench_ret = df[benchmark]
+            else:
+                bench_ret = None
+
+            # 3. Calculate based on Metric
+            if rolling_metric == "total_return":
+                # For Total Return, use series_ret. 
+                # If L/S, series_ret is ALREADY the L/S difference (which is the "total return" of the strategy)
+                if use_calendar_days:
+                    res = series_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
+                else:
+                    res = series_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                rolling_df[series] = res
+
+            elif rolling_metric == "excess_return":
+                # Excess Return: Series - Benchmark.
+                # If L/S, it's already "Excess" relative to constituents, but "Excess Return" metric implies relative to benchmark.
+                # But L/S is typically absolute return strategy. If benchmark is None, excess = total.
+                # If benchmark is set, calculate (Series - Bench).
+                # Note: For L/S, 'series_ret' IS (Long - Short). If we want Excess vs Benchmark, we do (Long - Short) - Benchmark?
+                # The user's prompt says "Total Return and Excess Return should respect the Cumulative/Annualized Switch".
+                
+                # Logic: Calculate the difference first, then compound.
+                if bench_ret is not None and not is_long_short:
+                     # Standard excess
+                     excess_series = series_ret - bench_ret
+                else:
+                     # L/S or No Benchmark -> Use series returns (which is L-S or just series)
+                     # For L/S, series_ret is already excess if bench was used to create it?
+                     # Wait, L/S logic above USES benchmark to create series_ret = series - bench.
+                     # So series_ret IS the excess return stream.
+                     # If we are here, benchmark IS NOT None (because of check above), OR is_long_short is True.
+                     # If is_long_short is True, series_ret = (L-S). If bench exists, we might want (L-S) - Bench?
+                     # Standard practice: L/S return is comparing to 0. 
+                     # But if user selected a benchmark for L/S, they likely want relative return.
+                     if bench_ret is not None:
+                         excess_series = series_ret - bench_ret
+                     else:
+                         excess_series = series_ret
 
                 if use_calendar_days:
-                    rolling_returns = series_returns.rolling(window=window_spec).apply(
-                        calc_rolling_return, raw=False
-                    )
+                    res = excess_series.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
                 else:
-                    rolling_returns = series_returns.rolling(window=window_spec, min_periods=window_size).apply(
-                        calc_rolling_return, raw=False
-                    )
-                rolling_df[series] = rolling_returns
-            else:
-                # Non-long-short: apply returns_type logic
-                if returns_type == "excess":
-                    # For excess returns: compound(series) - compound(benchmark)
-                    if benchmark == "None":
-                        if use_calendar_days:
-                            rolling_returns = df[series].rolling(window=window_spec).apply(
-                                calc_rolling_return, raw=False
-                            )
-                        else:
-                            rolling_returns = df[series].rolling(window=window_spec, min_periods=window_size).apply(
-                                calc_rolling_return, raw=False
-                            )
-                        rolling_df[series] = rolling_returns
-                    elif benchmark == series:
-                        rolling_df[series] = np.nan
-                    elif benchmark in df.columns:
-                        # Calculate rolling returns for series and benchmark separately
-                        if use_calendar_days:
-                            rolling_series = df[series].rolling(window=window_spec).apply(
-                                calc_rolling_return, raw=False
-                            )
-                            rolling_bench = df[benchmark].rolling(window=window_spec).apply(
-                                calc_rolling_return, raw=False
-                            )
-                        else:
-                            rolling_series = df[series].rolling(window=window_spec, min_periods=window_size).apply(
-                                calc_rolling_return, raw=False
-                            )
-                            rolling_bench = df[benchmark].rolling(window=window_spec, min_periods=window_size).apply(
-                                calc_rolling_return, raw=False
-                            )
-                        rolling_df[series] = rolling_series - rolling_bench
-                    else:
-                        if use_calendar_days:
-                            rolling_returns = df[series].rolling(window=window_spec).apply(
-                                calc_rolling_return, raw=False
-                            )
-                        else:
-                            rolling_returns = df[series].rolling(window=window_spec, min_periods=window_size).apply(
-                                calc_rolling_return, raw=False
-                            )
-                        rolling_df[series] = rolling_returns
-                else:  # total returns
+                    res = excess_series.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                rolling_df[series] = res
+
+            elif rolling_metric == "volatility":
+                # Volatility of the series returns
+                if use_calendar_days:
+                    res = series_ret.rolling(window=window_spec).std() * np.sqrt(periods_per_year)
+                else:
+                    res = series_ret.rolling(window=window_spec, min_periods=window_size).std() * np.sqrt(periods_per_year)
+                rolling_df[series] = res
+
+            elif rolling_metric == "tracking_error":
+                # Volatility of excess returns (Series - Bench)
+                # If L/S, series_ret is already L-S. So it's Volatility of that.
+                # If not L/S and bench exists, use difference.
+                if bench_ret is not None and not is_long_short:
+                    diff = series_ret - bench_ret
+                elif bench_ret is not None and is_long_short:
+                    # L/S relative to benchmark
+                    diff = series_ret - bench_ret
+                else:
+                    # Fallback (should be covered by top check if bench is None)
+                    diff = series_ret
+                
+                if use_calendar_days:
+                    res = diff.rolling(window=window_spec).std() * np.sqrt(periods_per_year)
+                else:
+                    res = diff.rolling(window=window_spec, min_periods=window_size).std() * np.sqrt(periods_per_year)
+                rolling_df[series] = res
+
+            elif rolling_metric == "correlation":
+                # Correlation between Series and Benchmark
+                # If no benchmark, NaN?
+                if bench_ret is None:
+                    rolling_df[series] = np.nan
+                else:
                     if use_calendar_days:
-                        rolling_returns = df[series].rolling(window=window_spec).apply(
-                            calc_rolling_return, raw=False
-                        )
+                        res = series_ret.rolling(window=window_spec).corr(bench_ret)
                     else:
-                        rolling_returns = df[series].rolling(window=window_spec, min_periods=window_size).apply(
-                            calc_rolling_return, raw=False
-                        )
-                    rolling_df[series] = rolling_returns
+                        res = series_ret.rolling(window=window_spec, min_periods=window_size).corr(bench_ret)
+                    rolling_df[series] = res
+
+            elif rolling_metric == "sharpe_ratio":
+                # Sharpe of Series Returns (rf=0)
+                # Use apply with sharpe_ratio function
+                func = lambda x: sharpe_ratio(x, periods_per_year)
+                rolling_df[series] = apply_rolling_stat(series_ret, func)
+
+            elif rolling_metric == "sortino_ratio":
+                # Sortino of Series Returns
+                func = lambda x: sortino_ratio(x, periods_per_year)
+                rolling_df[series] = apply_rolling_stat(series_ret, func)
+
+            elif rolling_metric == "information_ratio":
+                # IR of Excess Returns (Series - Bench)
+                # IR is effectively Sharpe of Excess Returns (relative to 0 mean active return)
+                if bench_ret is not None and not is_long_short:
+                    diff = series_ret - bench_ret
+                elif bench_ret is not None and is_long_short:
+                    diff = series_ret - bench_ret
+                else:
+                    diff = series_ret
+                
+                func = lambda x: sharpe_ratio(x, periods_per_year) # Use Sharpe on excess returns
+                rolling_df[series] = apply_rolling_stat(diff, func)
 
         # For calendar-based windows, filter out periods that don't have enough calendar days
         if use_calendar_days and len(rolling_df) > 0:

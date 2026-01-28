@@ -125,6 +125,13 @@ def tracking_error(returns: pd.Series, benchmark_returns: pd.Series, periods_per
     return excess.std() * np.sqrt(periods_per_year)
 
 
+def correlation(returns: pd.Series, benchmark_returns: pd.Series) -> float:
+    """Calculate correlation with benchmark."""
+    if len(returns) < 2 or len(benchmark_returns) < 2:
+        return np.nan
+    return returns.corr(benchmark_returns)
+
+
 def information_ratio(returns: pd.Series, benchmark_returns: pd.Series, periods_per_year: float) -> float:
     """Calculate information ratio."""
     excess = returns - benchmark_returns
@@ -185,6 +192,9 @@ def calculate_statistics(
 
     # Calculate excess once for reuse
     excess = ret - bench
+    
+    # Check if benchmark is valid (not "None" placeholder)
+    has_benchmark = benchmark_returns.name != "None"
 
     # For long-short mode, calculate returns based on the period-by-period difference
     if is_long_short:
@@ -206,14 +216,34 @@ def calculate_statistics(
             "Number of Periods": len(ls_returns),
             "Cumulative Return": cumulative_return(ls_returns),
             "Annualized Return": ls_ann_ret,
-            "Annualized Excess Return": ls_ann_ret,  # Same as Annualized Return
             "Annualized Volatility": annualized_volatility(ls_returns, periods_per_year),
-            "Annualized Tracking Error": annualized_volatility(ls_returns, periods_per_year),  # Same as volatility for long-short
             "Sharpe Ratio": sharpe_ratio(ls_returns, periods_per_year),
             "Sortino Ratio": sortino_ratio(ls_returns, periods_per_year),
-            "Information Ratio": sharpe_ratio(ls_returns, periods_per_year),  # Same as Sharpe for long-short
+            # For L/S, "Excess Return" is typically just the return itself, but if we follow strict "relative to bench" rule:
+            # If bench is None, L/S return is absolute. 
+            # If we enforce "no relative stats if no bench", then for L/S:
+            # The "Excess Return" field in the table usually means "Active Return".
+            # For L/S, the strategy return IS the active return (vs cash/0).
+            # But the user asked: "If no benchmark is selected, then don't calculate any value for Excess Return..."
+            # This implies they want to see blank if benchmark is None.
+            # However, for L/S, the whole point is excess return.
+            # But technically, if benchmark is None, `excess` is just `ret`.
+            # Let's follow the instruction strictly for the fields labeled "Excess Return", "Tracking Error", "Information Ratio".
+            # But wait, earlier code mapped "Annualized Excess Return" to `ls_ann_ret`.
+            # If I make it NaN, I lose the main return metric for L/S in that column?
+            # No, L/S has "Annualized Return" column too.
+            # So I will set these to NaN if `has_benchmark` is False.
+            "Annualized Excess Return": ls_ann_ret if has_benchmark else np.nan, 
+            "Annualized Tracking Error": annualized_volatility(ls_returns, periods_per_year) if has_benchmark else np.nan,
+            "Information Ratio": sharpe_ratio(ls_returns, periods_per_year) if has_benchmark else np.nan,
+            "Correlation": np.nan, # L/S correlation to constituents? Or bench? 
+                                   # If has_benchmark, we could calculate corr(ls_returns, bench).
+                                   # But standard logic was returning NaN. Let's keep it NaN or implement it?
+                                   # User said "Correlation seems to be correctly showing blank already".
+                                   # So I'll leave Correlation as NaN for L/S or implement if needed. 
+                                   # I'll stick to NaN for L/S as it's a derived series.
             "Hit Rate": hit_rate(ls_returns),
-            "Hit Rate (vs Benchmark)": hit_rate(ls_returns),  # Same as Hit Rate for long-short
+            "Hit Rate (vs Benchmark)": hit_rate(ls_returns) if has_benchmark else np.nan,
             "Best Period Return": ls_returns.max() if len(ls_returns) > 0 else np.nan,
             "Worst Period Return": ls_returns.min() if len(ls_returns) > 0 else np.nan,
             "Maximum Drawdown": maximum_drawdown(ls_returns),
@@ -233,16 +263,22 @@ def calculate_statistics(
                     trailing_ls_ann_ret = annualized_return(trailing_ls, periods_per_year)
 
                 result[f"{label} Annualized Return"] = trailing_ls_ann_ret
+                result[f"{label} Annualized Volatility"] = annualized_volatility(trailing_ls, periods_per_year)
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)
                 result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ls, periods_per_year)
-                result[f"{label} Excess Return"] = trailing_ls_ann_ret  # Same as annualized return
-                result[f"{label} Information Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)  # Same as Sharpe
+                result[f"{label} Excess Return"] = trailing_ls_ann_ret if has_benchmark else np.nan
+                result[f"{label} Tracking Error"] = annualized_volatility(trailing_ls, periods_per_year) if has_benchmark else np.nan
+                result[f"{label} Information Ratio"] = sharpe_ratio(trailing_ls, periods_per_year) if has_benchmark else np.nan
+                result[f"{label} Correlation"] = np.nan
             else:
                 result[f"{label} Annualized Return"] = np.nan
+                result[f"{label} Annualized Volatility"] = np.nan
                 result[f"{label} Sharpe Ratio"] = np.nan
                 result[f"{label} Sortino Ratio"] = np.nan
                 result[f"{label} Excess Return"] = np.nan
+                result[f"{label} Tracking Error"] = np.nan
                 result[f"{label} Information Ratio"] = np.nan
+                result[f"{label} Correlation"] = np.nan
     else:
         # Normal mode (non-long-short)
         # Use calendar-based annualization for daily/weekly data
@@ -262,14 +298,15 @@ def calculate_statistics(
             "Number of Periods": len(ret),
             "Cumulative Return": cumulative_return(ret),
             "Annualized Return": ann_ret,
-            "Annualized Excess Return": np.nan if same_series else (ann_ret - ann_bench),
             "Annualized Volatility": annualized_volatility(ret, periods_per_year),
-            "Annualized Tracking Error": np.nan if same_series else tracking_error(ret, bench, periods_per_year),
             "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
             "Sortino Ratio": sortino_ratio(ret, periods_per_year),
-            "Information Ratio": np.nan if same_series else information_ratio(ret, bench, periods_per_year),
+            "Annualized Excess Return": (ann_ret - ann_bench) if has_benchmark and not same_series else np.nan,
+            "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
+            "Information Ratio": information_ratio(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
+            "Correlation": correlation(ret, bench) if has_benchmark and not same_series else np.nan,
             "Hit Rate": hit_rate(ret),
-            "Hit Rate (vs Benchmark)": np.nan if same_series else hit_rate_vs_benchmark(ret, bench),
+            "Hit Rate (vs Benchmark)": hit_rate_vs_benchmark(ret, bench) if has_benchmark and not same_series else np.nan,
             "Best Period Return": ret.max() if len(ret) > 0 else np.nan,
             "Worst Period Return": ret.min() if len(ret) > 0 else np.nan,
             "Maximum Drawdown": maximum_drawdown(ret),
@@ -292,16 +329,22 @@ def calculate_statistics(
                     trailing_ann_bench = annualized_return(trailing_bench, periods_per_year)
 
                 result[f"{label} Annualized Return"] = trailing_ann_ret
+                result[f"{label} Annualized Volatility"] = annualized_volatility(trailing_ret, periods_per_year)
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
                 result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ret, periods_per_year)
-                result[f"{label} Excess Return"] = np.nan if same_series else (trailing_ann_ret - trailing_ann_bench)
-                result[f"{label} Information Ratio"] = np.nan if same_series else information_ratio(trailing_ret, trailing_bench, periods_per_year)
+                result[f"{label} Excess Return"] = (trailing_ann_ret - trailing_ann_bench) if has_benchmark and not same_series else np.nan
+                result[f"{label} Tracking Error"] = tracking_error(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
+                result[f"{label} Information Ratio"] = information_ratio(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
+                result[f"{label} Correlation"] = correlation(trailing_ret, trailing_bench) if has_benchmark and not same_series else np.nan
             else:
                 result[f"{label} Annualized Return"] = np.nan
+                result[f"{label} Annualized Volatility"] = np.nan
                 result[f"{label} Sharpe Ratio"] = np.nan
                 result[f"{label} Sortino Ratio"] = np.nan
                 result[f"{label} Excess Return"] = np.nan
+                result[f"{label} Tracking Error"] = np.nan
                 result[f"{label} Information Ratio"] = np.nan
+                result[f"{label} Correlation"] = np.nan
 
     return result
 
