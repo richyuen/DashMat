@@ -311,9 +311,12 @@ layout = dmc.Container(
                                 ], style={"marginBottom": "1rem"}),
                                 dmc.Divider(mb="md"),
                                 dmc.Text("Series Selection", size="sm", c="dimmed", mb="xs"),
-                                html.Div(
-                                    id="series-selection-container",
-                                    children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
+                                dmc.Button(
+                                    "Select Series",
+                                    id="open-series-modal-button",
+                                    variant="light",
+                                    size="sm",
+                                    fullWidth=True,
                                 ),
                                 # Hidden store for series-select value (driven by checkboxes)
                                 dcc.Store(id="series-select", data=[], storage_type="local"),
@@ -321,6 +324,27 @@ layout = dmc.Container(
                                 dcc.Store(id="series-edit-mode", data=None),
                             ]
                         ),
+                    ],
+                ),
+            ],
+        ),
+        # Series Selection Modal
+        dmc.Modal(
+            id="series-selection-modal",
+            title="Select Series",
+            size="xl",
+            children=[
+                html.Div(
+                    id="series-selection-container",
+                    children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
+                    style={"maxHeight": "60vh", "overflowY": "auto"},
+                ),
+                dmc.Group(
+                    mt="md",
+                    justify="flex-end",
+                    children=[
+                        dmc.Button("Cancel", id="modal-cancel-button", variant="outline", color="red"),
+                        dmc.Button("OK", id="modal-ok-button", color="blue"),
                     ],
                 ),
             ],
@@ -635,6 +659,11 @@ layout = dmc.Container(
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
+        # Temporary stores for modal state
+        dcc.Store(id="temp-series-select", data=[]),
+        dcc.Store(id="temp-benchmark-assignments-store", data={}),
+        dcc.Store(id="temp-long-short-store", data={}),
+        dcc.Store(id="temp-series-order-store", data=[]),
         dcc.Download(id="download-excel"),
         dcc.Location(id="url-location", refresh=True),
         # Hidden file upload (triggered by menu item)
@@ -799,10 +828,60 @@ clientside_callback(
 
 
 @callback(
+    Output("series-selection-modal", "opened", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
+    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("temp-long-short-store", "data", allow_duplicate=True),
+    Output("temp-series-order-store", "data", allow_duplicate=True),
+    Input("open-series-modal-button", "n_clicks"),
+    State("series-select", "data"),
+    State("benchmark-assignments-store", "data"),
+    State("long-short-store", "data"),
+    State("series-order-store", "data"),
+    prevent_initial_call=True,
+)
+def open_modal(n_clicks, current_select, current_bench, current_ls, current_order):
+    if not n_clicks:
+        raise PreventUpdate
+    return True, current_select, current_bench, current_ls, current_order
+
+
+@callback(
+    Output("series-select", "data", allow_duplicate=True),
+    Output("benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("long-short-store", "data", allow_duplicate=True),
     Output("series-order-store", "data", allow_duplicate=True),
+    Output("series-selection-modal", "opened", allow_duplicate=True),
+    Output("series-select-value-store", "data", allow_duplicate=True), # Sync persistence
+    Input("modal-ok-button", "n_clicks"),
+    State("temp-series-select", "data"),
+    State("temp-benchmark-assignments-store", "data"),
+    State("temp-long-short-store", "data"),
+    State("temp-series-order-store", "data"),
+    prevent_initial_call=True,
+)
+def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order):
+    if not n_clicks:
+        raise PreventUpdate
+    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select
+
+
+@callback(
+    Output("series-selection-modal", "opened", allow_duplicate=True),
+    Input("modal-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_modal_cancel(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False
+
+
+@callback(
+    Output("temp-series-order-store", "data", allow_duplicate=True),
     Input({"type": "move-up-button", "series": ALL}, "n_clicks"),
     Input({"type": "move-down-button", "series": ALL}, "n_clicks"),
-    State("series-order-store", "data"),
+    State("temp-series-order-store", "data"),
     State("raw-data-store", "data"),
     prevent_initial_call=True,
 )
@@ -1134,20 +1213,26 @@ def restore_monthly_view(raw_data, stored_monthly_view):
     Output("periodicity-select", "data"),
     Output("periodicity-select", "value"),
     Output("periodicity-select", "disabled"),
-    Output("series-select", "data", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
     Output("alert-message", "children"),
     Output("alert-message", "color"),
     Output("alert-message", "hide"),
     Output("periodicity-value-store", "data", allow_duplicate=True),
-    Output("series-select-value-store", "data", allow_duplicate=True),
+    Output("series-selection-modal", "opened", allow_duplicate=True),
+    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("temp-long-short-store", "data", allow_duplicate=True),
+    Output("temp-series-order-store", "data", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     State("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
     State("series-select", "data"),
+    State("benchmark-assignments-store", "data"),
+    State("long-short-store", "data"),
+    State("series-order-store", "data"),
     prevent_initial_call=True,
 )
-def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection):
+def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order):
     """Handle file upload, parse data, and update stores."""
     if contents is None:
         raise PreventUpdate
@@ -1169,7 +1254,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                     "Cannot append daily data to monthly data. Monthly data cannot be upsampled.",
                     "red",
                     False,
-                    no_update, no_update,
+                    no_update, no_update, no_update, no_update, no_update,
                 )
 
             # If new data is monthly but existing is daily, convert existing to monthly
@@ -1204,7 +1289,10 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             "green",
             False,
             default_periodicity,
-            updated_selection,
+            True, # Open modal
+            current_bench or {},
+            current_ls or {},
+            current_order or [],
         )
 
     except Exception as e:
@@ -1214,19 +1302,19 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             f"Error loading file: {str(e)}",
             "red",
             False,
-            no_update, no_update,
+            no_update, no_update, no_update, no_update, no_update,
         )
 
 
 @callback(
     Output("series-selection-container", "children"),
-    Output("series-order-store", "data", allow_duplicate=True),
+    Output("temp-series-order-store", "data", allow_duplicate=True),
     Input("raw-data-store", "data"),
-    Input("series-select", "data"),
-    Input("series-order-store", "data"),
+    Input("temp-series-select", "data"),
+    Input("temp-series-order-store", "data"),
     Input("series-edit-mode", "data"),
-    State("benchmark-assignments-store", "data"),
-    State("long-short-store", "data"),
+    State("temp-benchmark-assignments-store", "data"),
+    State("temp-long-short-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def update_series_selectors(raw_data, selected_series, series_order, edit_mode_series, current_assignments, long_short_assignments):
@@ -1425,11 +1513,11 @@ def update_series_selectors(raw_data, selected_series, series_order, edit_mode_s
 
 
 @callback(
-    Output("series-select", "data", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
     Input({"type": "series-include-checkbox", "series": ALL}, "checked"),
     State({"type": "series-include-checkbox", "series": ALL}, "id"),
     State("raw-data-store", "data"),
-    State("series-order-store", "data"),
+    State("temp-series-order-store", "data"),
     prevent_initial_call=True,
 )
 def update_series_selection_from_checkboxes(checkbox_values, checkbox_ids, raw_data, series_order):
@@ -1461,10 +1549,10 @@ def update_series_selection_from_checkboxes(checkbox_values, checkbox_ids, raw_d
 
 @callback(
     Output("raw-data-store", "data", allow_duplicate=True),
-    Output("series-select", "data", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
     Input({"type": "delete-series-button", "series": ALL}, "n_clicks"),
     State("raw-data-store", "data"),
-    State("series-select", "data"),
+    State("temp-series-select", "data"),
     prevent_initial_call=True,
 )
 def delete_series(n_clicks_list, raw_data, selected_series):
@@ -1555,10 +1643,10 @@ def cancel_edit_mode(n_clicks_list):
 
 @callback(
     Output("raw-data-store", "data", allow_duplicate=True),
-    Output("benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("long-short-store", "data", allow_duplicate=True),
-    Output("series-select", "data", allow_duplicate=True),
-    Output("series-order-store", "data", allow_duplicate=True),
+    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("temp-long-short-store", "data", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
+    Output("temp-series-order-store", "data", allow_duplicate=True),
     Output("series-edit-mode", "data", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True),
     Output("edit-box-focus-trigger", "data", allow_duplicate=True),
@@ -1567,10 +1655,10 @@ def cancel_edit_mode(n_clicks_list):
     State({"type": "edit-series-input", "series": ALL}, "value"),
     State({"type": "edit-series-input", "series": ALL}, "id"),
     State("raw-data-store", "data"),
-    State("benchmark-assignments-store", "data"),
-    State("long-short-store", "data"),
-    State("series-select", "data"),
-    State("series-order-store", "data"),
+    State("temp-benchmark-assignments-store", "data"),
+    State("temp-long-short-store", "data"),
+    State("temp-series-select", "data"),
+    State("temp-series-order-store", "data"),
     State("series-edit-mode", "data"),
     prevent_initial_call=True,
 )
@@ -1645,7 +1733,7 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
 
 
 @callback(
-    Output("benchmark-assignments-store", "data"),
+    Output("temp-benchmark-assignments-store", "data"),
     Input({"type": "benchmark-select", "series": ALL}, "value"),
     State({"type": "benchmark-select", "series": ALL}, "id"),
     State("raw-data-store", "data"),
@@ -1667,7 +1755,7 @@ def update_benchmark_assignments(benchmark_values, benchmark_ids, raw_data):
 
 
 @callback(
-    Output("long-short-store", "data"),
+    Output("temp-long-short-store", "data"),
     Input({"type": "long-short-checkbox", "series": ALL}, "checked"),
     State({"type": "long-short-checkbox", "series": ALL}, "id"),
     State("raw-data-store", "data"),
