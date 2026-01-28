@@ -233,6 +233,22 @@ layout = dmc.Container(
                                                 w=200,
                                             ),
                                         ]),
+                                        html.Div([
+                                            dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
+                                            dmc.Tooltip(
+                                                label="A value of 0% disables the volatility scaling.",
+                                                position="top",
+                                                withArrow=True,
+                                                children=dmc.NumberInput(
+                                                    id="vol-scaler-input",
+                                                    value=0,
+                                                    min=0,
+                                                    step=1,
+                                                    suffix="%",
+                                                    w=120,
+                                                ),
+                                            ),
+                                        ]),
                                     ],
                                 ),
                                 html.Div([
@@ -637,12 +653,15 @@ layout = dmc.Container(
         dcc.Store(id="monthly-view-store", data="annual", storage_type="local"),
         dcc.Store(id="monthly-series-store", data=None, storage_type="local"),
         dcc.Store(id="date-range-store", data=None, storage_type="local"),
+        dcc.Store(id="vol-scaler-value-store", data=0, storage_type="local"),
+        dcc.Store(id="vol-scaling-assignments-store", data={}, storage_type="local"),
         dcc.Store(id="download-enabled-store", data=False),
         dcc.Store(id="first-load-store", data=False, storage_type="local"),
         # Temporary stores for modal state
         dcc.Store(id="temp-series-select", data=[]),
         dcc.Store(id="temp-benchmark-assignments-store", data={}),
         dcc.Store(id="temp-long-short-store", data={}),
+        dcc.Store(id="temp-vol-scaling-assignments-store", data={}),
         dcc.Store(id="temp-series-order-store", data=[]),
         dcc.Store(id="temp-deleted-series-store", data=[]),
         dcc.Download(id="download-excel"),
@@ -705,7 +724,9 @@ clientside_callback(
                 'growth-chart-switch-store',
                 'monthly-view-store',
                 'monthly-series-store',
-                'date-range-store'
+                'date-range-store',
+                'vol-scaler-value-store',
+                'vol-scaling-assignments-store'
             ];
 
             keysToRemove.forEach(key => {
@@ -815,17 +836,19 @@ clientside_callback(
     Output("temp-long-short-store", "data", allow_duplicate=True),
     Output("temp-series-order-store", "data", allow_duplicate=True),
     Output("temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Input("open-series-modal-button", "n_clicks"),
     State("series-select", "data"),
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
     State("series-order-store", "data"),
+    State("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def open_modal(n_clicks, current_select, current_bench, current_ls, current_order):
+def open_modal(n_clicks, current_select, current_bench, current_ls, current_order, current_vol_scaling):
     if not n_clicks:
         raise PreventUpdate
-    return True, current_select, current_bench, current_ls, current_order, []
+    return True, current_select, current_bench, current_ls, current_order, [], current_vol_scaling
 
 
 @callback(
@@ -836,6 +859,7 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     Output("series-selection-modal", "opened", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True), # Sync persistence
     Output("raw-data-store", "data", allow_duplicate=True),
+    Output("vol-scaling-assignments-store", "data", allow_duplicate=True),
     Input("modal-ok-button", "n_clicks"),
     State("temp-series-select", "data"),
     State("temp-benchmark-assignments-store", "data"),
@@ -843,9 +867,10 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     State("temp-series-order-store", "data"),
     State("temp-deleted-series-store", "data"),
     State("raw-data-store", "data"),
+    State("temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_deleted, raw_data):
+def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_deleted, raw_data, temp_vol_scaling):
     if not n_clicks:
         raise PreventUpdate
 
@@ -866,8 +891,10 @@ def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_del
                 temp_ls = {k: v for k, v in temp_ls.items() if k not in series_to_drop}
             if temp_order:
                 temp_order = [s for s in temp_order if s not in series_to_drop]
+            if temp_vol_scaling:
+                temp_vol_scaling = {k: v for k, v in temp_vol_scaling.items() if k not in series_to_drop}
 
-    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select, updated_raw_data
+    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select, updated_raw_data, temp_vol_scaling
 
 
 @callback(
@@ -940,6 +967,8 @@ def reorder_series(up_clicks, down_clicks, current_order, raw_data):
     Output("series-select-value-store", "data", allow_duplicate=True),
     Output("series-order-store", "data", allow_duplicate=True),
     Output("series-select", "data", allow_duplicate=True),
+    Output("vol-scaler-value-store", "data", allow_duplicate=True),
+    Output("vol-scaling-assignments-store", "data", allow_duplicate=True),
     Input("menu-clear-all-series", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -949,7 +978,7 @@ def clear_all_series(n_clicks):
         raise PreventUpdate
 
     # Reset all stores to initial state
-    return None, "daily", {}, {}, None, None, [], [], []
+    return None, "daily", {}, {}, None, None, [], [], [], 0, {}
 
 
 @callback(
@@ -958,17 +987,19 @@ def clear_all_series(n_clicks):
     Output("periodicity-select", "disabled", allow_duplicate=True),
     Output("series-select", "data", allow_duplicate=True),
     Output("returns-type-select", "value", allow_duplicate=True),
+    Output("vol-scaler-input", "value", allow_duplicate=True),
     Input("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
     State("periodicity-value-store", "data"),
     State("series-select-value-store", "data"),
     State("returns-type-value-store", "data"),
+    State("vol-scaler-value-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def restore_state_from_storage(raw_data, original_periodicity, stored_periodicity, stored_series, stored_returns_type):
+def restore_state_from_storage(raw_data, original_periodicity, stored_periodicity, stored_series, stored_returns_type, stored_vol_scaler):
     """Restore UI state from local storage on page load."""
     if raw_data is None:
-        return [], "daily", True, [], "total"
+        return [], "daily", True, [], "total", 0
 
     try:
         df = json_to_df(raw_data)
@@ -981,11 +1012,12 @@ def restore_state_from_storage(raw_data, original_periodicity, stored_periodicit
         valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else (original_periodicity or "daily")
         valid_series = [s for s in (stored_series or []) if s in df.columns]
         valid_returns_type = stored_returns_type if stored_returns_type in ["total", "excess"] else "total"
+        valid_vol_scaler = stored_vol_scaler if stored_vol_scaler is not None else 0
 
-        return periodicity_options, valid_periodicity, False, valid_series, valid_returns_type
+        return periodicity_options, valid_periodicity, False, valid_series, valid_returns_type, valid_vol_scaler
 
     except Exception:
-        return [], "daily", True, [], "total"
+        return [], "daily", True, [], "total", 0
 
 
 @callback(
@@ -1005,6 +1037,16 @@ def save_periodicity(value):
 )
 def save_returns_type(value):
     """Save returns type selection to local storage."""
+    return value
+
+
+@callback(
+    Output("vol-scaler-value-store", "data"),
+    Input("vol-scaler-input", "value"),
+    prevent_initial_call=True,
+)
+def save_vol_scaler_value(value):
+    """Save vol scaler value to local storage."""
     return value
 
 
@@ -1253,6 +1295,7 @@ def restore_monthly_view(raw_data, stored_monthly_view):
     Output("temp-series-order-store", "data", allow_duplicate=True),
     Output("first-load-store", "data"),
     Output("temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     State("raw-data-store", "data"),
@@ -1262,9 +1305,10 @@ def restore_monthly_view(raw_data, stored_monthly_view):
     State("long-short-store", "data"),
     State("series-order-store", "data"),
     State("first-load-store", "data"),
+    State("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load):
+def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load, current_vol_scaling):
     """Handle file upload, parse data, and update stores."""
     if contents is None:
         raise PreventUpdate
@@ -1287,7 +1331,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                     "red",
                     False,
                     no_update, no_update, no_update, no_update, no_update,
-                    no_update, no_update,
+                    no_update, no_update, no_update,
                 )
 
             # If new data is monthly but existing is daily, convert existing to monthly
@@ -1340,6 +1384,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             current_order or [],
             new_first_load,
             [], # Reset deleted series
+            current_vol_scaling or {},
         )
 
     except Exception as e:
@@ -1350,7 +1395,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             "red",
             False,
             no_update, no_update, no_update, no_update, no_update,
-            no_update, no_update,
+            no_update, no_update, no_update,
         )
 
 
@@ -1364,9 +1409,10 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Input("temp-deleted-series-store", "data"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
+    State("temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def update_series_selectors(raw_data, selected_series, series_order, edit_mode_series, deleted_series, current_assignments, long_short_assignments):
+def update_series_selectors(raw_data, selected_series, series_order, edit_mode_series, deleted_series, current_assignments, long_short_assignments, vol_scaling_assignments):
     """Create series selection rows with checkbox, benchmark dropdown, long-short, reorder buttons, and delete button."""
     if raw_data is None:
         return [], []
@@ -1418,6 +1464,8 @@ def update_series_selectors(raw_data, selected_series, series_order, edit_mode_s
             dmc.Text("Benchmark", size="xs", fw=700, w=benchmark_width, c="dimmed"),
             # L/S label
             dmc.Text("L/S", size="xs", fw=700, w=50, c="dimmed"),
+            # Scale Vol label
+            dmc.Text("Scale Vol", size="xs", fw=700, w=60, c="dimmed"),
             # Spacer for delete button
             dmc.Box(w=30),
         ],
@@ -1436,6 +1484,11 @@ def update_series_selectors(raw_data, selected_series, series_order, edit_mode_s
             is_long_short = long_short_assignments.get(series, False)
         else:
             is_long_short = False
+
+        if vol_scaling_assignments:
+            is_scale_vol = vol_scaling_assignments.get(series, True) # Default True
+        else:
+            is_scale_vol = True
 
         is_selected = series in selected_series
 
@@ -1546,6 +1599,13 @@ def update_series_selectors(raw_data, selected_series, series_order, edit_mode_s
                     dmc.Switch(
                         id={"type": "long-short-checkbox", "series": series},
                         checked=is_long_short,
+                        size="xs",
+                        w=50,
+                    ),
+                    # Scale Vol switch
+                    dmc.Switch(
+                        id={"type": "scale-vol-checkbox", "series": series},
+                        checked=is_scale_vol,
                         size="xs",
                         w=50,
                     ),
@@ -1688,6 +1748,7 @@ def cancel_edit_mode(n_clicks_list):
     Output("raw-data-store", "data", allow_duplicate=True),
     Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("temp-long-short-store", "data", allow_duplicate=True),
+    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("temp-series-select", "data", allow_duplicate=True),
     Output("temp-series-order-store", "data", allow_duplicate=True),
     Output("series-edit-mode", "data", allow_duplicate=True),
@@ -1700,12 +1761,13 @@ def cancel_edit_mode(n_clicks_list):
     State("raw-data-store", "data"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
+    State("temp-vol-scaling-assignments-store", "data"),
     State("temp-series-select", "data"),
     State("temp-series-order-store", "data"),
     State("series-edit-mode", "data"),
     prevent_initial_call=True,
 )
-def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, benchmark_assignments, long_short_assignments, series_select, series_order, edit_mode_series):
+def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, benchmark_assignments, long_short_assignments, vol_scaling_assignments, series_select, series_order, edit_mode_series):
     """Save the series rename when check button is clicked."""
     if not save_clicks_list or all(n is None for n in save_clicks_list):
         raise PreventUpdate
@@ -1740,13 +1802,13 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
 
     # If name unchanged, just exit edit mode
     if new_name == old_name or not new_name:
-        return no_update, no_update, no_update, no_update, no_update, None, no_update, None
+        return no_update, no_update, no_update, no_update, no_update, no_update, None, no_update, None
 
     # Check if new name already exists
     df = json_to_df(raw_data)
     if new_name in df.columns:
         # Don't allow duplicate names, exit edit mode
-        return no_update, no_update, no_update, no_update, no_update, None, no_update, None
+        return no_update, no_update, no_update, no_update, no_update, no_update, None, no_update, None
 
     # Rename column in DataFrame
     df = df.rename(columns={old_name: new_name})
@@ -1765,6 +1827,13 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
         series_key = new_name if series == old_name else series
         new_long_short_assignments[series_key] = is_long_short
 
+    # Update vol scaling assignments
+    new_vol_scaling_assignments = {}
+    if vol_scaling_assignments:
+        for series, is_scaled in vol_scaling_assignments.items():
+            series_key = new_name if series == old_name else series
+            new_vol_scaling_assignments[series_key] = is_scaled
+
     # Update series selection
     new_series_select = [new_name if s == old_name else s for s in series_select]
 
@@ -1772,7 +1841,7 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
     new_series_order = [new_name if s == old_name else s for s in series_order]
 
     # Return updated data and exit edit mode
-    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_series_select, new_series_order, None, new_series_select, None
+    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_vol_scaling_assignments, new_series_select, new_series_order, None, new_series_select, None
 
 
 @callback(
@@ -1815,6 +1884,28 @@ def update_long_short_assignments(checkbox_values, checkbox_ids, raw_data):
         series = checkbox_id["series"]
         if i < len(checkbox_values):
             assignments[series] = checkbox_values[i] or False
+
+    return assignments
+
+
+@callback(
+    Output("temp-vol-scaling-assignments-store", "data"),
+    Input({"type": "scale-vol-checkbox", "series": ALL}, "checked"),
+    State({"type": "scale-vol-checkbox", "series": ALL}, "id"),
+    State("raw-data-store", "data"),
+    prevent_initial_call=True,
+)
+def update_vol_scaling_assignments(checkbox_values, checkbox_ids, raw_data):
+    """Store vol-scaling checkbox assignments for all series."""
+    if raw_data is None or checkbox_values is None or not checkbox_ids:
+        return {}
+
+    # Map values to series using the pattern-matching IDs
+    assignments = {}
+    for i, checkbox_id in enumerate(checkbox_ids):
+        series = checkbox_id["series"]
+        if i < len(checkbox_values):
+            assignments[series] = checkbox_values[i]
 
     return assignments
 
@@ -1932,9 +2023,11 @@ def update_date_range_store(start_date, end_date):
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update the AG Grid based on selections (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], [], True
@@ -1948,7 +2041,9 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
             str(benchmark_assignments),  # Convert to string for cache key
             returns_type,
             str(long_short_assignments),  # Convert to string for cache key
-            str(date_range)  # Convert to string for cache key
+            str(date_range),  # Convert to string for cache key
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if display_df.empty:
@@ -1995,9 +2090,11 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range):
+def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update the Rolling Returns grid with rolling window calculations."""
     # Lazy loading: only calculate when rolling tab is active
     if active_tab != "rolling":
@@ -2019,7 +2116,9 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
             str(date_range),
             rolling_window,
             rolling_return_type,
-            rolling_metric or "total_return"
+            rolling_metric or "total_return",
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if rolling_df.empty:
@@ -2072,9 +2171,11 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range):
+def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update the Rolling Returns chart with rolling window calculations."""
     # Create empty figure
     empty_fig = go.Figure()
@@ -2105,7 +2206,9 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
             str(date_range),
             rolling_window,
             rolling_return_type,
-            rolling_metric or "total_return"
+            rolling_metric or "total_return",
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if rolling_df.empty:
@@ -2248,9 +2351,11 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
     Input("date-range-store", "data"),
     Input("monthly-view-checkbox", "value"),
     Input("monthly-series-select", "value"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, monthly_view, monthly_series):
+def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments):
     """Update the Calendar Year Returns grid (lazy loaded)."""
     # Lazy loading: only calculate when calendar tab is active
     if active_tab != "calendar":
@@ -2276,7 +2381,9 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 benchmark_assignments,
                 long_short_assignments,
                 selected_series,
-                date_range
+                date_range,
+                vol_scaler or 0,
+                str(vol_scaling_assignments)
             )
 
         else:
@@ -2289,7 +2396,9 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 returns_type,
                 benchmark_assignments,
                 long_short_assignments,
-                date_range
+                date_range,
+                vol_scaler or 0,
+                str(vol_scaling_assignments)
             )
 
             if calendar_returns.empty:
@@ -2344,9 +2453,11 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], []
@@ -2359,7 +2470,9 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             tuple(selected_series),
             str(benchmark_assignments),
             str(long_short_assignments),
-            str(date_range)
+            str(date_range),
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if not stats:
@@ -2416,9 +2529,11 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -2452,7 +2567,9 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                 returns_type,
                 str(benchmark_assignments),
                 str(long_short_assignments),
-                str(date_range)
+                str(date_range),
+                vol_scaler or 0,
+                str(vol_scaling_assignments)
             )
 
             if result is None:
@@ -2499,7 +2616,9 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             returns_type,
             str(benchmark_assignments),
             str(long_short_assignments),
-            str(date_range)
+            str(date_range),
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if result is None:
@@ -2630,9 +2749,11 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update Growth of $1 charts (lazy loaded)."""
     # Lazy loading: only generate when growth tab is active and chart view is selected
     if active_tab != "growth" or chart_checked != "chart":
@@ -2645,7 +2766,8 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         # Use get_working_returns to get aligned data + benchmarks
         df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+            str(benchmark_assignments), str(long_short_assignments), str(date_range),
+            vol_scaler or 0, str(vol_scaling_assignments)
         )
 
         if df.empty:
@@ -2678,7 +2800,9 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             tuple(selected_series),
             str(benchmark_assignments),
             str(long_short_assignments),
-            str(date_range)
+            str(date_range),
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         # Create main growth figure
@@ -2809,9 +2933,11 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update Growth of $1 grid (lazy loaded)."""
     # Lazy loading: only generate when growth tab is active and table view is selected
     if active_tab != "growth" or chart_checked != "table":
@@ -2828,7 +2954,9 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
             tuple(selected_series),
             str(benchmark_assignments),
             str(long_short_assignments),
-            str(date_range)
+            str(date_range),
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if growth_df.empty:
@@ -2874,9 +3002,11 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update Drawdown charts (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and chart view is selected
     if active_tab != "drawdown" or chart_checked != "chart":
@@ -2894,7 +3024,9 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
             returns_type,
             str(benchmark_assignments),
             str(long_short_assignments),
-            str(date_range)
+            str(date_range),
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if drawdown_df.empty:
@@ -2954,9 +3086,11 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
     Input("benchmark-assignments-store", "data"),
     Input("long-short-store", "data"),
     Input("date-range-store", "data"),
+    Input("vol-scaler-value-store", "data"),
+    Input("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
     """Update Drawdown grid (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and table view is selected
     if active_tab != "drawdown" or chart_checked != "table":
@@ -2974,7 +3108,9 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
             returns_type,
             str(benchmark_assignments),
             str(long_short_assignments),
-            str(date_range)
+            str(date_range),
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
         )
 
         if drawdown_df.empty:
@@ -3025,9 +3161,11 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("rolling-return-type-store", "data"),
     State("monthly-view-store", "data"),
     State("monthly-series-store", "data"),
+    State("vol-scaler-value-store", "data"),
+    State("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series):
+def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments):
     """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, Drawdown, and Correlogram sheets."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -3040,7 +3178,9 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         str(benchmark_assignments),
         returns_type,
         str(long_short_assignments),
-        str(date_range)
+        str(date_range),
+        vol_scaler or 0,
+        str(vol_scaling_assignments)
     )
 
     if returns_df.empty:
@@ -3053,7 +3193,9 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         tuple(selected_series),
         str(benchmark_assignments),
         str(long_short_assignments),
-        str(date_range)
+        str(date_range),
+        vol_scaler or 0,
+        str(vol_scaling_assignments)
     )
 
     # Build statistics DataFrame (transposed: statistics as rows, series as columns)
@@ -3091,7 +3233,10 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                 str(long_short_assignments),
                 str(date_range),
                 window,
-                return_type
+                return_type,
+                "total_return", # Default metric for excel
+                vol_scaler or 0,
+                str(vol_scaling_assignments)
             )
             if not rolling_df.empty:
                 # Create sheet name based on window and type
@@ -3125,7 +3270,9 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                         benchmark_assignments,
                         long_short_assignments,
                         selected_series,
-                        date_range
+                        date_range,
+                        vol_scaler or 0,
+                        str(vol_scaling_assignments)
                     )
 
                     if row_data:
@@ -3144,7 +3291,9 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                         returns_type,
                         benchmark_assignments,
                         long_short_assignments,
-                        date_range
+                        date_range,
+                        vol_scaler or 0,
+                        str(vol_scaling_assignments)
                     )
                     if not calendar_df.empty:
                         calendar_df.to_excel(writer, sheet_name="Calendar Year")
@@ -3159,7 +3308,9 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                 tuple(selected_series),
                 str(benchmark_assignments),
                 str(long_short_assignments),
-                str(date_range)
+                str(date_range),
+                vol_scaler or 0,
+                str(vol_scaling_assignments)
             )
             if not growth_df.empty:
                 growth_df.to_excel(writer, sheet_name="Growth of $1")
@@ -3175,7 +3326,9 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                 returns_type,
                 str(benchmark_assignments),
                 str(long_short_assignments),
-                str(date_range)
+                str(date_range),
+                vol_scaler or 0,
+                str(vol_scaling_assignments)
             )
             if not drawdown_df.empty:
                 drawdown_df.to_excel(writer, sheet_name="Drawdown")

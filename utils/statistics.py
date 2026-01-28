@@ -5,21 +5,10 @@ import pandas as pd
 from scipy import stats
 
 import cache_config
-from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns
+from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns, annualization_factor
 
 
-def annualization_factor(periodicity: str) -> float:
-    """Get annualization factor based on periodicity."""
-    factors = {
-        "daily": 252,
-        "weekly_monday": 52,
-        "weekly_tuesday": 52,
-        "weekly_wednesday": 52,
-        "weekly_thursday": 52,
-        "weekly_friday": 52,
-        "monthly": 12,
-    }
-    return factors.get(periodicity, 252)
+
 
 
 def cumulative_return(returns: pd.Series) -> float:
@@ -356,14 +345,16 @@ def calculate_statistics_cached(
     selected_series: tuple,
     benchmark_assignments: str,
     long_short_assignments: str,
-    date_range_str: str
+    date_range_str: str,
+    vol_scaler: float = 0,
+    vol_scaling_assignments: str = ""
 ) -> list:
     """Calculate statistics for all selected series with caching."""
     # Use get_working_returns to get aligned data + benchmarks
     df = get_working_returns(
         json_str, periodicity, selected_series,
         benchmark_assignments, long_short_assignments,
-        date_range_str
+        date_range_str, vol_scaler, vol_scaling_assignments
     )
 
     if df.empty:
@@ -410,13 +401,14 @@ def calculate_statistics_cached(
 # Growth of $1 calculation
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range):
+def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate growth of $1 for Excel export with starting value of 1.0."""
     try:
         # Use get_working_returns
         working_df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+            str(benchmark_assignments), str(long_short_assignments), str(date_range),
+            vol_scaler, str(vol_scaling_assignments)
         )
 
         if working_df.empty:
@@ -479,13 +471,14 @@ def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark
 # Drawdown calculation
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate drawdown for Excel export."""
     try:
         # Use get_working_returns
         working_df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+            str(benchmark_assignments), str(long_short_assignments), str(date_range),
+            vol_scaler, str(vol_scaling_assignments)
         )
 
         if working_df.empty:
@@ -587,10 +580,11 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
 @cache_config.cache.memoize(timeout=0)
 def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
                                 returns_type: str, benchmark_assignments: str, long_short_assignments: str,
-                                date_range_str: str):
+                                date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Generate correlogram with caching."""
     display_df = calculate_excess_returns(
-        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str
+        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str,
+        vol_scaler, vol_scaling_assignments
     )
 
     if display_df.empty:

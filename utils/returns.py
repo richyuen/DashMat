@@ -181,8 +181,8 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
 @cache_config.cache.memoize(timeout=0)
 def get_working_returns(json_str: str, periodicity: str, selected_series: tuple, 
                         benchmark_assignments: str, long_short_assignments: str, 
-                        date_range_str: str) -> pd.DataFrame:
-    """Calculate working returns with date filtering, benchmark intersection, and L/S logic.
+                        date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "") -> pd.DataFrame:
+    """Calculate working returns with date filtering, benchmark intersection, L/S logic, and vol scaling.
     
     Args:
         json_str: Raw data JSON string
@@ -191,13 +191,11 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
         benchmark_assignments: String representation of benchmark dict
         long_short_assignments: String representation of L/S dict
         date_range_str: String representation of date range dict
+        vol_scaler: Target volatility in percent (e.g. 10 for 10%). 0 means disabled.
+        vol_scaling_assignments: String representation of dict mapping series to boolean (enable/disable scaling).
         
     Returns:
         DataFrame with calculated returns for selected series AND unselected benchmarks.
-        For L/S series, returns (Series - Benchmark).
-        For standard series, returns Series (aligned to benchmark intersection).
-        For unselected benchmarks, returns Series (date filtered only).
-        Does NOT calculate excess returns for standard series.
     """
     # 1. Get base data
     df = resample_returns_cached(json_str, periodicity)
@@ -206,6 +204,7 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
     bench_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
     ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
     date_range = eval(str(date_range_str)) if date_range_str and str(date_range_str) != "None" else None
+    vol_scaling_dict = eval(str(vol_scaling_assignments)) if vol_scaling_assignments else {}
     
     # 3. Global Date Range Filter
     if date_range:
@@ -267,20 +266,40 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
     # Add unselected benchmarks (date filtered only)
     for bench in unselected_benchmarks:
         result_df[bench] = df[bench]
+    
+    # 5. Volatility Scaling
+    if vol_scaler > 0:
+        periods_per_year = annualization_factor(periodicity or "daily")
+        target_vol = vol_scaler / 100.0
         
+        for col in result_df.columns:
+            # Check if scaling is enabled for this series
+            # Default to True
+            should_scale = vol_scaling_dict.get(col, True)
+            
+            if should_scale:
+                series_data = result_df[col]
+                # Calculate current volatility (annualized) of valid data
+                valid_data = series_data.dropna()
+                if len(valid_data) > 1:
+                    current_vol = valid_data.std() * np.sqrt(periods_per_year)
+                    if current_vol > 0:
+                        factor = target_vol / current_vol
+                        result_df[col] = result_df[col] * factor
+
     return result_df.dropna(how='all')
 
 
 @cache_config.cache.memoize(timeout=0)
 def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
                              benchmark_assignments: str, returns_type: str, long_short_assignments: str,
-                             date_range_str: str) -> pd.DataFrame:
+                             date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "") -> pd.DataFrame:
     """Calculate excess returns with caching."""
     # Get base working returns (Series aligned to Bench, or L/S diff)
     display_df = get_working_returns(
         json_str, periodicity, selected_series,
         benchmark_assignments, long_short_assignments,
-        date_range_str
+        date_range_str, vol_scaler, vol_scaling_assignments
     )
     
     if display_df.empty:
@@ -318,7 +337,7 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
 # Rolling returns calculation
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized", rolling_metric="total_return"):
+def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized", rolling_metric="total_return", vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate rolling returns for Excel export - matches the Rolling grid logic."""
     try:
         from utils.statistics import annualization_factor, sharpe_ratio, sortino_ratio
@@ -328,7 +347,8 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
         # NOW also contains unselected benchmarks
         working_df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+            str(benchmark_assignments), str(long_short_assignments), str(date_range),
+            vol_scaler, str(vol_scaling_assignments)
         )
         
         if working_df.empty:
@@ -536,13 +556,14 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
 
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_calendar_year_returns(raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range):
+def calculate_calendar_year_returns(raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate calendar year returns for Excel export."""
     try:
         # Use get_working_returns for data prep
         working_df = get_working_returns(
             raw_data, selected_periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range)
+            str(benchmark_assignments), str(long_short_assignments), str(date_range),
+            vol_scaler, str(vol_scaling_assignments)
         )
 
         if working_df.empty:
@@ -647,12 +668,13 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
 
 # Monthly view creation
 
-def create_monthly_view(raw_data, series_name, original_periodicity, selected_periodicity, returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range):
+def create_monthly_view(raw_data, series_name, original_periodicity, selected_periodicity, returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Create monthly view with Jan-Dec columns plus Year column."""
     # Use get_working_returns for data prep
     working_df = get_working_returns(
         raw_data, selected_periodicity or "daily", (series_name,),
-        str(benchmark_assignments), str(long_short_assignments), str(date_range)
+        str(benchmark_assignments), str(long_short_assignments), str(date_range),
+        vol_scaler, str(vol_scaling_assignments)
     )
     
     if series_name not in working_df.columns:
@@ -807,3 +829,17 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     row_data = pivot_data.to_dict("records")
 
     return column_defs, row_data
+
+
+def annualization_factor(periodicity: str) -> float:
+    """Get annualization factor based on periodicity."""
+    factors = {
+        "daily": 252,
+        "weekly_monday": 52,
+        "weekly_tuesday": 52,
+        "weekly_wednesday": 52,
+        "weekly_thursday": 52,
+        "weekly_friday": 52,
+        "monthly": 12,
+    }
+    return factors.get(periodicity, 252)
