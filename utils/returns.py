@@ -668,35 +668,35 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     if monthly_data.empty:
         return [], []
 
-        # If excess, calculate monthly data for benchmark and diff
-        if calc_excess:
-            # For grid cells: use ALIGNED benchmark (bench_returns)
-            # For Annual column: use FULL benchmark (to match Annual Grid)
+    # If excess, calculate monthly data for benchmark and diff
+    if calc_excess:
+        # For grid cells: use ALIGNED benchmark (bench_returns)
+        # For Annual column: use FULL benchmark (to match Annual Grid)
+        
+        # 1. Grid Cells (Aligned)
+        bench_monthly = aggregate_monthly(bench_returns)
+        if not bench_monthly.empty:
+            # Merge on year/month
+            merged = monthly_data.merge(bench_monthly, on=['year', 'month'], suffixes=('_s', '_b'))
+            # Calculate excess (Arithmetic for monthly cells)
+            merged['returns'] = merged['returns_s'] - merged['returns_b']
             
-            # 1. Grid Cells (Aligned)
-            bench_monthly = aggregate_monthly(bench_returns)
-            if not bench_monthly.empty:
-                # Merge on year/month
-                merged = monthly_data.merge(bench_monthly, on=['year', 'month'], suffixes=('_s', '_b'))
-                # Calculate excess (Arithmetic for monthly cells)
-                merged['returns'] = merged['returns_s'] - merged['returns_b']
-                
-                # Keep track of component returns for Annual calc
-                monthly_data = merged
-            else:
-                calc_excess = False # Fallback
-    
-        # Pivot to get months as columns
-        pivot_data = monthly_data.pivot(index='year', columns='month', values='returns')
-    
-        # Rename columns to month names
-        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-        pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
-    
-        # Helper for annual calc (relaxed to allow partial years)
-        def calc_annual(row):
-            if row.dropna().empty: return None
-            return (1 + row.dropna()).prod() - 1
+            # Keep track of component returns for Annual calc
+            monthly_data = merged
+        else:
+            calc_excess = False # Fallback
+
+    # Pivot to get months as columns
+    pivot_data = monthly_data.pivot(index='year', columns='month', values='returns')
+
+    # Rename columns to month names
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
+
+    # Helper for annual calc (relaxed to allow partial years)
+    def calc_annual(row):
+        if row.dropna().empty: return None
+        return (1 + row.dropna()).prod() - 1
     
     # Calculate Annual column
     if calc_excess:
