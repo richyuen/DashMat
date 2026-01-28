@@ -527,7 +527,6 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
             )
             
             # Filter out partial years (exclude first and last year if partial)
-            # Logic same as before
             if len(annual_returns) > 0:
                 first_year = annual_returns.index.min()
                 last_year = annual_returns.index.max()
@@ -608,7 +607,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     """Create monthly view with Jan-Dec columns plus Year column."""
     # Use get_working_returns for data prep
     working_df = get_working_returns(
-        raw_data, original_periodicity or "daily", (series_name,),
+        raw_data, selected_periodicity or "daily", (series_name,),
         str(benchmark_assignments), str(long_short_assignments), str(date_range)
     )
     
@@ -629,7 +628,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     calc_excess = (returns_type == "excess" and not is_ls)
     if calc_excess:
         benchmark = benchmark_dict.get(series_name, "None")
-        raw_df = resample_returns_cached(raw_data, original_periodicity or "daily")
+        raw_df = resample_returns_cached(raw_data, selected_periodicity or "daily")
         if benchmark != "None" and benchmark in raw_df.columns:
              bench_returns = raw_df[benchmark].reindex(series_returns.index)
         else:
@@ -640,7 +639,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         # Convert to DataFrame for processing
         s_data = rets.to_frame(name='returns')
 
-        if original_periodicity == "daily":
+        if selected_periodicity == "daily":
             # For daily data, resample to monthly
             s_data['year'] = s_data.index.year
             s_data['month'] = s_data.index.month
@@ -650,7 +649,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
                 lambda x: (1 + x).prod(min_count=1) - 1
             ).reset_index()
 
-        elif original_periodicity == "monthly":
+        elif selected_periodicity == "monthly":
             # Already monthly, just add year and month columns
             monthly_data = pd.DataFrame({
                 'year': s_data.index.year,
@@ -693,22 +692,21 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
 
-    # Helper for annual calc (relaxed to allow partial years)
+    # Helper for annual calc (requires full year)
     def calc_annual(row):
-        if row.dropna().empty: return None
+        # Must have data for all 12 months
+        if row.count() < 12: return None
         return (1 + row.dropna()).prod() - 1
-    
+
     # Calculate Annual column
     if calc_excess:
         # For excess, Annual = Ann(S) - Ann(B)
-        # Ann(S) comes from Series (working/aligned)
-        # Ann(B) comes from FULL Benchmark (raw) to match Annual Grid logic
+        # Both S and B must be full years
         
         pivot_s = monthly_data.pivot(index='year', columns='month', values='returns_s')
         ann_s = pivot_s.apply(calc_annual, axis=1)
         
         # Calculate Full Benchmark Annual Returns
-        # We need to aggregate raw_df[benchmark] to monthly/annual
         full_bench_series = raw_df[benchmark]
         full_bench_monthly = aggregate_monthly(full_bench_series)
         
@@ -719,6 +717,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
             # Align B to S years
             ann_b_full = ann_b_full.reindex(ann_s.index)
             
+            # Subtract (only if both are non-None)
             pivot_data['Ann'] = ann_s - ann_b_full
         else:
             pivot_data['Ann'] = None
@@ -726,7 +725,6 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     else:
         # Standard compound
         pivot_data['Ann'] = pivot_data.apply(calc_annual, axis=1)
-
     # Reset index to make year a column
     pivot_data = pivot_data.reset_index()
     pivot_data = pivot_data.rename(columns={'year': 'Year_Label'})
