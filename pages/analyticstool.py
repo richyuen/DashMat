@@ -284,7 +284,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.TabsTab("Calendar Year", value="calendar"),
                         dmc.TabsTab("Growth of $1", value="growth"),
                         dmc.TabsTab("Drawdown", value="drawdown"),
-                        dmc.TabsTab("Correlogram", value="correlogram"),
+                        dmc.TabsTab("Correlation", value="correlogram"),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -474,6 +474,20 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     value="correlogram",
                     pt="md",
                     children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.SegmentedControl(
+                                    id="correlation-view-switch",
+                                    data=[
+                                        {"value": "correlation", "label": "Correlation"},
+                                        {"value": "correlogram", "label": "Correlogram"},
+                                    ],
+                                    value="correlogram",
+                                    size="sm",
+                                ),
+                            ],
+                        ),
                         html.Div(id="correlogram-container"),
                     ],
                 ),
@@ -2667,7 +2681,15 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         return [], []
 
 
-
+@callback(
+    Output("correlation-view-switch", "value"),
+    Input("series-select", "data"),
+)
+def update_correlation_view_default(selected_series):
+    """Update correlation view default based on number of series."""
+    if not selected_series or len(selected_series) <= 10:
+        return "correlogram"
+    return "correlation"
 
 
 @callback(
@@ -2682,9 +2704,10 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
     Input("date-range-store", "data"),
     Input("vol-scaler-value-store", "data"),
     Input("vol-scaling-assignments-store", "data"),
+    Input("correlation-view-switch", "value"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -2708,27 +2731,27 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     if raw_data is None or not selected_series or len(selected_series) < 2:
         return empty_graph
 
-    # Size limit: show simple correlation matrix heatmap if too many series
-    if len(selected_series) > MAX_SCATTER_MATRIX_SIZE:
-        try:
-            result = generate_correlogram_cached(
-                raw_data,
-                periodicity or "daily",
-                tuple(selected_series),
-                returns_type,
-                str(benchmark_assignments),
-                str(long_short_assignments),
-                str(date_range),
-                vol_scaler or 0,
-                str(vol_scaling_assignments)
-            )
+    try:
+        result = generate_correlogram_cached(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series),
+            returns_type,
+            str(benchmark_assignments),
+            str(long_short_assignments),
+            str(date_range),
+            vol_scaler or 0,
+            str(vol_scaling_assignments)
+        )
 
-            if result is None:
-                return empty_graph
+        if result is None:
+            return empty_graph
 
-            corr_matrix = result['corr_matrix']
-            available_series = result['available_series']
+        available_series = result['available_series']
+        corr_matrix = result['corr_matrix']
 
+        # 1. Correlation Matrix (Heatmap)
+        if correlation_view == "correlation":
             # Create a simple heatmap for correlation matrix
             heatmap_fig = go.Figure(data=go.Heatmap(
                 z=corr_matrix.values,
@@ -2754,137 +2777,132 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             )
 
             return dcc.Graph(figure=heatmap_fig, style={"height": f"{height}px"})
+        
+        # 2. Correlogram (Scatter Matrix)
+        else:
+            display_df = result['display_df']
+            n = result['n']
 
-        except Exception:
-            return empty_graph
+            if n < 2:
+                return empty_graph
 
-    try:
-        # Use cached function to avoid repeated computation
-        result = generate_correlogram_cached(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series),
-            returns_type,
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
-            vol_scaler or 0,
-            str(vol_scaling_assignments)
-        )
+            # Create subplots
+            fig = make_subplots(
+                rows=n, cols=n,
+                horizontal_spacing=0.02,
+                vertical_spacing=0.02,
+                print_grid=False,
+            )
 
-        if result is None:
-            return empty_graph
+            # Populate the grid
+            for i, row_series in enumerate(available_series):
+                for j, col_series in enumerate(available_series):
+                    row_idx = i + 1
+                    col_idx = j + 1
 
-        display_df = result['display_df']
-        corr_matrix = result['corr_matrix']
-        available_series = result['available_series']
-        n = result['n']
+                    if i == j:
+                        # Diagonal: density chart (histogram with KDE-like appearance)
+                        fig.add_trace(
+                            go.Histogram(
+                                x=display_df[row_series].dropna(),
+                                histnorm='probability density',
+                                marker_color='#228be6',
+                                opacity=0.7,
+                                showlegend=False,
+                                nbinsx=30,  # Limit bins for performance
+                            ),
+                            row=row_idx, col=col_idx
+                        )
+                    elif i > j:
+                        # Lower triangle: scatter plot with sampling for large datasets
+                        series_data = display_df[[col_series, row_series]].dropna()
+                        if len(series_data) > 1000:
+                            # Sample for performance if > 1000 points
+                            series_data = series_data.sample(n=1000, random_state=42)
 
-        if n < 2:
-            return empty_graph
-
-        # Create subplots
-        fig = make_subplots(
-            rows=n, cols=n,
-            horizontal_spacing=0.02,
-            vertical_spacing=0.02,
-        )
-
-        # Populate the grid
-        for i, row_series in enumerate(available_series):
-            for j, col_series in enumerate(available_series):
-                row_idx = i + 1
-                col_idx = j + 1
-
-                if i == j:
-                    # Diagonal: density chart (histogram with KDE-like appearance)
-                    fig.add_trace(
-                        go.Histogram(
-                            x=display_df[row_series].dropna(),
-                            histnorm='probability density',
-                            marker_color='#228be6',
-                            opacity=0.7,
-                            showlegend=False,
-                            nbinsx=30,  # Limit bins for performance
-                        ),
-                        row=row_idx, col=col_idx
-                    )
-                elif i > j:
-                    # Lower triangle: scatter plot with sampling for large datasets
-                    series_data = display_df[[col_series, row_series]].dropna()
-                    if len(series_data) > 1000:
-                        # Sample for performance if > 1000 points
-                        series_data = series_data.sample(n=1000, random_state=42)
-
-                    fig.add_trace(
-                        go.Scattergl(  # Use Scattergl for better performance
-                            x=series_data[col_series],
-                            y=series_data[row_series],
-                            mode='markers',
-                            marker=dict(size=3, opacity=0.5, color='#228be6'),
-                            showlegend=False,
-                        ),
-                        row=row_idx, col=col_idx
-                    )
-                else:
-                    # Upper triangle: correlation value
-                    corr_val = corr_matrix.loc[row_series, col_series]
-                    # Color based on correlation
-                    if corr_val >= 0.7:
-                        color = '#1971c2'
-                    elif corr_val >= 0.3:
-                        color = '#228be6'
-                    elif corr_val <= -0.7:
-                        color = '#c92a2a'
-                    elif corr_val <= -0.3:
-                        color = '#e03131'
+                        fig.add_trace(
+                            go.Scattergl(  # Use Scattergl for better performance
+                                x=series_data[col_series],
+                                y=series_data[row_series],
+                                mode='markers',
+                                marker=dict(size=3, opacity=0.5, color='#228be6'),
+                                showlegend=False,
+                            ),
+                            row=row_idx, col=col_idx
+                        )
                     else:
-                        color = '#868e96'
+                        # Upper triangle: correlation value
+                        corr_val = corr_matrix.loc[row_series, col_series]
+                        # Color based on correlation
+                        if corr_val >= 0.7:
+                            color = '#1971c2'
+                        elif corr_val >= 0.3:
+                            color = '#228be6'
+                        elif corr_val <= -0.7:
+                            color = '#c92a2a'
+                        elif corr_val <= -0.3:
+                            color = '#e03131'
+                        else:
+                            color = '#868e96'
 
-                    fig.add_trace(
-                        go.Scatter(
-                            x=[0.5], y=[0.5],
-                            mode='text',
-                            text=[f'{corr_val:.2f}'],
-                            textfont=dict(size=14, color=color),
-                            showlegend=False,
-                        ),
-                        row=row_idx, col=col_idx
-                    )
-                    # Hide axes for correlation cells
-                    fig.update_xaxes(
-                        showticklabels=False, showgrid=False,
-                        zeroline=False, range=[0, 1],
-                        row=row_idx, col=col_idx
-                    )
-                    fig.update_yaxes(
-                        showticklabels=False, showgrid=False,
-                        zeroline=False, range=[0, 1],
-                        row=row_idx, col=col_idx
-                    )
+                        fig.add_trace(
+                            go.Scatter(
+                                x=[0.5], y=[0.5],
+                                mode='text',
+                                text=[f'{corr_val:.2f}'],
+                                textfont=dict(size=14, color=color),
+                                showlegend=False,
+                                hoverinfo='skip',
+                            ),
+                            row=row_idx, col=col_idx
+                        )
+                        # Hide axes for upper triangle
+                        fig.update_xaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
+                        fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
 
-        # Update axis labels
-        for i, series in enumerate(available_series):
-            # Bottom row x-axis labels
-            fig.update_xaxes(title_text=series, row=n, col=i+1, title_font=dict(size=10))
-            # Left column y-axis labels
-            fig.update_yaxes(title_text=series, row=i+1, col=1, title_font=dict(size=10))
+            # Check if we need scrolling
+            container_style = {}
+            graph_style = {"height": "800px"}
+            
+            if len(available_series) > 10:
+                # Calculate large size for scrolling
+                # Each plot 200px square? Or smaller? 150px is reasonable minimum.
+                size_px = len(available_series) * 150
+                size_px = max(size_px, 800)
+                
+                graph_style = {"height": f"{size_px}px", "width": f"{size_px}px"}
+                container_style = {"overflow": "auto", "height": "800px", "width": "100%"}
+                
+                fig.update_layout(height=size_px, width=size_px)
+            else:
+                fig.update_layout(height=800)
 
-        # Update layout
-        height = max(500, 150 * n)
-        fig.update_layout(
-            title=f"Scatter Matrix ({returns_type.title()} Returns)",
-            height=height,
-            margin=dict(l=60, r=30, t=50, b=60),
-            showlegend=False,
-            template="plotly_white",
-        )
+            fig.update_layout(
+                title=f"Scatter Matrix ({returns_type.title()} Returns)",
+                showlegend=False,
+                template="plotly_white",
+                margin=dict(l=20, r=20, t=50, b=20),
+            )
+            
+            # Update axes labels only on edges
+            for i in range(n):
+                # Bottom row x-axes
+                fig.update_xaxes(title_text=available_series[i], row=n, col=i+1, title_font=dict(size=10))
+                # Left col y-axes
+                fig.update_yaxes(title_text=available_series[i], row=i+1, col=1, title_font=dict(size=10))
+                
+                # Hide internal tick labels
+                if i < n-1:
+                     fig.update_xaxes(showticklabels=False, row=i+1)
+                if i > 0:
+                     fig.update_yaxes(showticklabels=False, col=i+1)
 
-        # Hide tick labels for inner plots
-        fig.update_xaxes(showticklabels=False)
-        fig.update_yaxes(showticklabels=False)
 
-        return dcc.Graph(figure=fig, style={"height": f"{height}px"})
+            # If scrolling, we return a Div wrapping the Graph
+            if len(available_series) > 10:
+                return html.Div(dcc.Graph(figure=fig, style=graph_style), style=container_style)
+            else:
+                return dcc.Graph(figure=fig, style=graph_style)
 
     except Exception:
         return empty_graph
