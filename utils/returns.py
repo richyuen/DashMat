@@ -6,6 +6,7 @@ from io import StringIO
 import numpy as np
 import pandas as pd
 
+from utils.parsing import detect_periodicity
 import cache_config
 
 
@@ -58,6 +59,11 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
     Optimized for performance with vectorized operations where possible.
     """
     if periodicity == "daily":
+        return df
+
+    # Check if data is already in the target periodicity
+    current_periodicity = detect_periodicity(df)
+    if current_periodicity == periodicity:
         return df
 
     resample_code = RESAMPLE_CODES.get(periodicity)
