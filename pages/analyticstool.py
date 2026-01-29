@@ -295,6 +295,10 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             id="loading-returns",
                             type="default",
                             children=[
+                                dag.AgGrid(
+                                    id="returns-grid",
+                                    columnDefs=[],
+                                    rowData=[],
                                     defaultColDef={
                                         "sortable": True,
                                         "resizable": True,
