@@ -295,15 +295,11 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             id="loading-returns",
                             type="default",
                             children=[
-                                dag.AgGrid(
-                                    id="returns-grid",
-                                    columnDefs=[],
-                                    rowData=[],
                                     defaultColDef={
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "600px"},
+                                    style={"height": "80vh", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -386,7 +382,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "550px"},
+                                    style={"height": "80vh", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -419,7 +415,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "resizable": True,
                                     },
-                                    style={"height": "700px"},
+                                    style={"height": "80vh", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                     },
@@ -463,7 +459,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 "sortable": True,
                                 "resizable": True,
                             },
-                            style={"height": "600px"},
+                            style={"height": "80vh", "minHeight": "600px"},
                             dashGridOptions={
                                 "animateRows": True,
                             },
@@ -528,7 +524,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "600px"},
+                                    style={"height": "80vh", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -576,7 +572,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "600px"},
+                                    style={"height": "80vh", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -593,10 +589,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 
 
 layout = dmc.Container(
-    size="xl",
-    py="md",
+    fluid=True,
     children=[
-        # Menu Bar
+        # Stores for state management
         dmc.Paper(
             shadow="xs",
             p="xs",
