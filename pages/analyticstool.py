@@ -140,20 +140,25 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
                       monthly_series_options, monthly_select_disabled):
     
-    # Calculate visibility styles
-    rolling_grid_style = {"display": "block"} if rolling_chart_switch == "table" else {"display": "none"}
-    rolling_chart_style = {"display": "block"} if rolling_chart_switch == "chart" else {"display": "none"}
+    # Calculate visibility styles - use flex for full height
+    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
+    none_style = {"display": "none"}
     
-    drawdown_grid_style = {"display": "block"} if drawdown_chart_switch == "table" else {"display": "none"}
-    drawdown_chart_style = {"display": "block"} if drawdown_chart_switch == "chart" else {"display": "none"}
+    rolling_grid_style = flex_style if rolling_chart_switch == "table" else none_style
+    rolling_chart_style = flex_style if rolling_chart_switch == "chart" else none_style
     
-    growth_grid_style = {"display": "block"} if growth_chart_switch == "table" else {"display": "none"}
-    growth_chart_style = {"display": "block"} if growth_chart_switch == "chart" else {"display": "none"}
+    drawdown_grid_style = flex_style if drawdown_chart_switch == "table" else none_style
+    drawdown_chart_style = flex_style if drawdown_chart_switch == "chart" else none_style
+    
+    growth_grid_style = flex_style if growth_chart_switch == "table" else none_style
+    growth_chart_style = flex_style if growth_chart_switch == "chart" else none_style
 
     rolling_return_type_disabled = False if rolling_metric in ["total_return", "excess_return"] else True
     rolling_return_type_style = {} if not rolling_return_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
 
-    return html.Div([
+    return html.Div(
+        style={"display": "flex", "flexDirection": "column", "height": "100%", "overflow": "hidden"},
+        children=[
         # Controls Section (Collapsible, starts expanded)
         dmc.Accordion(
             value="controls",
@@ -275,6 +280,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
         dmc.Tabs(
             id="main-tabs",
             value=active_tab,
+            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
             children=[
                 dmc.TabsList(
                     children=[
@@ -290,10 +296,13 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                 dmc.TabsPanel(
                     value="returns",
                     pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dcc.Loading(
                             id="loading-returns",
                             type="default",
+                            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             children=[
                                 dag.AgGrid(
                                     id="returns-grid",
@@ -303,7 +312,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "80vh", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -317,6 +326,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                 dmc.TabsPanel(
                     value="rolling",
                     pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dmc.Group(
                             mb="md",
@@ -386,7 +396,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "80vh", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -399,7 +409,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             id="rolling-chart-container",
                             style=rolling_chart_style,
                             children=[
-                                html.Div(id="rolling-chart-wrapper"),
+                                html.Div(id="rolling-chart-wrapper", style={"height": "100%", "width": "100%"}),
                             ],
                         ),
                     ],
@@ -407,10 +417,13 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                 dmc.TabsPanel(
                     value="statistics",
                     pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dcc.Loading(
                             id="loading-statistics",
                             type="default",
+                            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             children=[
                                 dag.AgGrid(
                                     id="statistics-grid",
@@ -419,7 +432,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "resizable": True,
                                     },
-                                    style={"height": "80vh", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                     },
@@ -431,6 +444,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                 dmc.TabsPanel(
                     value="calendar",
                     pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dmc.Group(
                             mb="md",
@@ -463,7 +477,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 "sortable": True,
                                 "resizable": True,
                             },
-                            style={"height": "80vh", "minHeight": "600px"},
+                            style={"height": "100%", "width": "100%", "minHeight": "600px"},
                             dashGridOptions={
                                 "animateRows": True,
                             },
@@ -473,6 +487,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                 dmc.TabsPanel(
                     value="correlogram",
                     pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
                     children=[
                         dmc.Group(
                             mb="md",
@@ -488,12 +503,13 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                             ],
                         ),
-                        html.Div(id="correlogram-container"),
+                        html.Div(id="correlogram-container", style={"flex": "1"}),
                     ],
                 ),
                 dmc.TabsPanel(
                     value="growth",
                     pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dmc.Group(
                             mb="md",
@@ -513,7 +529,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             id="growth-chart-container",
                             style=growth_chart_style,
                             children=[
-                                html.Div(id="growth-charts-container"),
+                                html.Div(id="growth-charts-container", style={"height": "100%", "width": "100%"}),
                             ],
                         ),
                         html.Div(
@@ -528,7 +544,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "80vh", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -542,6 +558,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                 dmc.TabsPanel(
                     value="drawdown",
                     pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dmc.Group(
                             mb="md",
@@ -561,7 +578,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             id="drawdown-chart-container",
                             style=drawdown_chart_style,
                             children=[
-                                html.Div(id="drawdown-charts"),
+                                html.Div(id="drawdown-charts", style={"height": "100%", "width": "100%"}),
                             ],
                         ),
                         html.Div(
@@ -576,7 +593,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "80vh", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -594,6 +611,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 
 layout = dmc.Container(
     fluid=True,
+    style={"height": "calc(100vh - 20px)", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
     children=[
         # Stores for state management
         dmc.Paper(
@@ -894,7 +912,7 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
                 monthly_series_val = valid_selection[0]
         
         return (
-            {"display": "none"}, {"display": "block"},
+            {"display": "none"}, {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
             monthly_view, valid_selection
