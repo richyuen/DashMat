@@ -252,7 +252,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
                                             html.Div([
                                                 dmc.Button(
-                                                    "Maximum Range",
+                                                    "Max Range",
                                                     id="maximum-range-button",
                                                     size="xs",
                                                     variant="outline",
