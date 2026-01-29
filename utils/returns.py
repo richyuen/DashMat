@@ -13,22 +13,22 @@ import cache_config
 # Mapping of periodicity options to pandas resample codes
 RESAMPLE_CODES = {
     "daily": None,  # No resampling needed
+    "monthly": "ME",
     "weekly_monday": "W-MON",
     "weekly_tuesday": "W-TUE",
     "weekly_wednesday": "W-WED",
     "weekly_thursday": "W-THU",
     "weekly_friday": "W-FRI",
-    "monthly": "ME",
 }
 
 PERIODICITY_LABELS = {
     "daily": "Daily",
+    "monthly": "Monthly",
     "weekly_monday": "Weekly (Monday)",
     "weekly_tuesday": "Weekly (Tuesday)",
     "weekly_wednesday": "Weekly (Wednesday)",
     "weekly_thursday": "Weekly (Thursday)",
     "weekly_friday": "Weekly (Friday)",
-    "monthly": "Monthly",
 }
 
 
