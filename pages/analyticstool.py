@@ -3170,6 +3170,7 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
                 column_defs.append({
                     "field": col,
                     "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"},
+                    "width": 120,
                 })
 
         # Convert to records
@@ -3324,6 +3325,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
                 column_defs.append({
                     "field": col,
                     "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                    "width": 120,
                 })
 
         # Convert to records
