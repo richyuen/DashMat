@@ -861,7 +861,8 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     Output("raw-data-store", "data", allow_duplicate=True),
     Output("vol-scaling-assignments-store", "data", allow_duplicate=True),
     Input("modal-ok-button", "n_clicks"),
-    State("temp-series-select", "data"),
+    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
+    State({"type": "series-include-checkbox", "series": ALL}, "id"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
     State("temp-series-order-store", "data"),
@@ -870,9 +871,25 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     State("temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_deleted, raw_data, temp_vol_scaling):
+def on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls, temp_order, temp_deleted, raw_data, temp_vol_scaling):
     if not n_clicks:
         raise PreventUpdate
+
+    # Reconstruct selected series from checkbox states
+    temp_select = []
+    if checkbox_values and checkbox_ids:
+        # Map checkbox values to series
+        checkbox_map = {}
+        for i, checkbox_id in enumerate(checkbox_ids):
+            series = checkbox_id["series"]
+            if i < len(checkbox_values):
+                checkbox_map[series] = checkbox_values[i]
+        
+        # Use series order if available to maintain consistency
+        order_to_use = temp_order if temp_order else (list(checkbox_map.keys()))
+        for series in order_to_use:
+             if checkbox_map.get(series, False):
+                 temp_select.append(series)
 
     # Apply deletions to raw data
     updated_raw_data = raw_data
@@ -893,6 +910,9 @@ def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_del
                 temp_order = [s for s in temp_order if s not in series_to_drop]
             if temp_vol_scaling:
                 temp_vol_scaling = {k: v for k, v in temp_vol_scaling.items() if k not in series_to_drop}
+            
+            # Also remove from temp_select if present
+            temp_select = [s for s in temp_select if s not in series_to_drop]
 
     return temp_select, temp_bench, temp_ls, temp_order, False, temp_select, updated_raw_data, temp_vol_scaling
 
@@ -910,13 +930,16 @@ def on_modal_cancel(n_clicks):
 
 @callback(
     Output("temp-series-order-store", "data", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
     Input({"type": "move-up-button", "series": ALL}, "n_clicks"),
     Input({"type": "move-down-button", "series": ALL}, "n_clicks"),
     State("temp-series-order-store", "data"),
     State("raw-data-store", "data"),
+    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
+    State({"type": "series-include-checkbox", "series": ALL}, "id"),
     prevent_initial_call=True,
 )
-def reorder_series(up_clicks, down_clicks, current_order, raw_data):
+def reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_values, checkbox_ids):
     """Reorder series when up/down buttons are clicked."""
     if raw_data is None or not current_order:
         raise PreventUpdate
@@ -931,13 +954,26 @@ def reorder_series(up_clicks, down_clicks, current_order, raw_data):
     if not triggered_id:
         raise PreventUpdate
 
-    # Parse the button ID (it will be like '{"type":"move-up-button","series":"SPY"}.n_clicks')
+    # Parse the button ID
     try:
         button_data = eval(triggered_id.rsplit(".", 1)[0])
         button_type = button_data["type"]
         series_name = button_data["series"]
     except (SyntaxError, KeyError, ValueError):
         raise PreventUpdate
+
+    # Reconstruct selected series from checkbox states
+    current_selected = []
+    if checkbox_values and checkbox_ids:
+        checkbox_map = {}
+        for i, checkbox_id in enumerate(checkbox_ids):
+            s = checkbox_id["series"]
+            if i < len(checkbox_values):
+                checkbox_map[s] = checkbox_values[i]
+        
+        for s in current_order:
+             if checkbox_map.get(s, False):
+                 current_selected.append(s)
 
     # Find current index
     if series_name not in current_order:
@@ -954,7 +990,7 @@ def reorder_series(up_clicks, down_clicks, current_order, raw_data):
     else:
         raise PreventUpdate
 
-    return new_order
+    return new_order, current_selected
 
 
 @callback(
@@ -1624,39 +1660,7 @@ def update_series_selectors(raw_data, selected_series, series_order, edit_mode_s
     return series_rows, series_order
 
 
-@callback(
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Input({"type": "series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "series-include-checkbox", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
-    State("temp-series-order-store", "data"),
-    prevent_initial_call=True,
-)
-def update_series_selection_from_checkboxes(checkbox_values, checkbox_ids, raw_data, series_order):
-    """Update series selection based on checkbox states, preserving order."""
-    if raw_data is None or checkbox_values is None or not checkbox_ids:
-        return []
 
-    # Map checkbox values to series using the pattern-matching IDs
-    checkbox_map = {}
-    for i, checkbox_id in enumerate(checkbox_ids):
-        series = checkbox_id["series"]
-        if i < len(checkbox_values):
-            checkbox_map[series] = checkbox_values[i]
-
-    df = json_to_df(raw_data)
-    all_series = list(df.columns)
-
-    # Use series_order if available, otherwise use DataFrame column order
-    ordered_series = series_order if series_order else all_series
-
-    # Build selected list in the correct order
-    selected = []
-    for series in ordered_series:
-        if checkbox_map.get(series, False):
-            selected.append(series)
-
-    return selected
 
 
 @callback(
@@ -1664,10 +1668,11 @@ def update_series_selection_from_checkboxes(checkbox_values, checkbox_ids, raw_d
     Output("temp-series-select", "data", allow_duplicate=True),
     Input({"type": "delete-series-button", "series": ALL}, "n_clicks"),
     State("temp-deleted-series-store", "data"),
-    State("temp-series-select", "data"),
+    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
+    State({"type": "series-include-checkbox", "series": ALL}, "id"),
     prevent_initial_call=True,
 )
-def delete_series(n_clicks_list, deleted_series, selected_series):
+def delete_series(n_clicks_list, deleted_series, checkbox_values, checkbox_ids):
     """Delete a series by adding it to the temporary deleted list."""
     if not n_clicks_list or all(n is None for n in n_clicks_list):
         raise PreventUpdate
@@ -1692,8 +1697,15 @@ def delete_series(n_clicks_list, deleted_series, selected_series):
     # Add to deleted list
     new_deleted = (deleted_series or []) + [series_to_delete]
 
+    # Reconstruct selected series from checkbox states
+    selected_series = []
+    if checkbox_values and checkbox_ids:
+        for i, checkbox_id in enumerate(checkbox_ids):
+             if i < len(checkbox_values) and checkbox_values[i]:
+                 selected_series.append(checkbox_id["series"])
+
     # Update selected series to remove deleted one (just for UI consistency)
-    new_selected = [s for s in (selected_series or []) if s != series_to_delete]
+    new_selected = [s for s in selected_series if s != series_to_delete]
 
     return new_deleted, new_selected
 
@@ -1701,11 +1713,14 @@ def delete_series(n_clicks_list, deleted_series, selected_series):
 @callback(
     Output("series-edit-mode", "data"),
     Output("edit-box-focus-trigger", "data", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
     Input({"type": "edit-series-button", "series": ALL}, "n_clicks"),
     State({"type": "edit-series-button", "series": ALL}, "id"),
+    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
+    State({"type": "series-include-checkbox", "series": ALL}, "id"),
     prevent_initial_call=True,
 )
-def enter_edit_mode(n_clicks_list, button_ids):
+def enter_edit_mode(n_clicks_list, button_ids, checkbox_values, checkbox_ids):
     """Enter edit mode when pencil button is clicked."""
     if not n_clicks_list or all(n is None for n in n_clicks_list):
         raise PreventUpdate
@@ -1726,7 +1741,14 @@ def enter_edit_mode(n_clicks_list, button_ids):
     if not series_name:
         raise PreventUpdate
 
-    return series_name, series_name
+    # Reconstruct selected series from checkbox states
+    current_selected = []
+    if checkbox_values and checkbox_ids:
+        for i, checkbox_id in enumerate(checkbox_ids):
+             if i < len(checkbox_values) and checkbox_values[i]:
+                 current_selected.append(checkbox_id["series"])
+
+    return series_name, series_name, current_selected
 
 
 @callback(
@@ -1762,12 +1784,13 @@ def cancel_edit_mode(n_clicks_list):
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
     State("temp-vol-scaling-assignments-store", "data"),
-    State("temp-series-select", "data"),
+    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
+    State({"type": "series-include-checkbox", "series": ALL}, "id"),
     State("temp-series-order-store", "data"),
     State("series-edit-mode", "data"),
     prevent_initial_call=True,
 )
-def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, benchmark_assignments, long_short_assignments, vol_scaling_assignments, series_select, series_order, edit_mode_series):
+def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, benchmark_assignments, long_short_assignments, vol_scaling_assignments, checkbox_values, checkbox_ids, series_order, edit_mode_series):
     """Save the series rename when check button is clicked."""
     if not save_clicks_list or all(n is None for n in save_clicks_list):
         raise PreventUpdate
@@ -1834,8 +1857,15 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
             series_key = new_name if series == old_name else series
             new_vol_scaling_assignments[series_key] = is_scaled
 
-    # Update series selection
-    new_series_select = [new_name if s == old_name else s for s in series_select]
+    # Reconstruct selected series from checkbox states
+    current_selected = []
+    if checkbox_values and checkbox_ids:
+        for i, checkbox_id in enumerate(checkbox_ids):
+             if i < len(checkbox_values) and checkbox_values[i]:
+                 current_selected.append(checkbox_id["series"])
+
+    # Update series selection (handling the rename)
+    new_series_select = [new_name if s == old_name else s for s in current_selected]
 
     # Update series order
     new_series_order = [new_name if s == old_name else s for s in series_order]
