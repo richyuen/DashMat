@@ -71,7 +71,7 @@ def convert_percents_to_decimals(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def detect_periodicity(df: pd.DataFrame) -> str:
-    """Detect if the data is daily or monthly.
+    """Detect if the data is daily or monthly using the first few rows.
 
     Returns:
         'daily' or 'monthly'
@@ -79,8 +79,10 @@ def detect_periodicity(df: pd.DataFrame) -> str:
     if len(df) < 2:
         return "daily"
 
-    # Calculate median difference between consecutive dates
-    date_diffs = pd.Series(df.index).diff().dropna()
+    # Calculate median difference between consecutive dates using first 5 rows
+    # for performance on large datasets
+    sample_index = df.index[:5]
+    date_diffs = pd.Series(sample_index).diff().dropna()
     median_diff = date_diffs.median().days
 
     # If median difference is > 20 days, assume monthly
