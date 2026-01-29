@@ -661,9 +661,9 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
                 if len(first_year_data) > 0:
                     current_periodicity = selected_periodicity or "daily"
                     if current_periodicity == "daily":
-                        # For daily data, check if it starts in January
+                        # For daily data, check if it starts in January (up to 4th)
                         first_date = first_year_data.index.min()
-                        if not first_date.is_year_start:
+                        if not (first_date.month == 1 and first_date.day <= 4):
                             annual_returns = annual_returns.drop(first_year, errors='ignore')
                     elif current_periodicity == "monthly":
                         # For monthly data, check if all 12 months are present
@@ -674,8 +674,15 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
                 last_year_data = series_returns[series_returns.index.year == last_year]
                 if len(last_year_data) > 0:
                     last_date = last_year_data.index.max()
-                    if not last_date.is_year_end:
-                        annual_returns = annual_returns.drop(last_year, errors='ignore')
+                    current_periodicity = selected_periodicity or "daily"
+                    
+                    if current_periodicity == "daily":
+                        if not (last_date.month == 12 and last_date.day >= 28):
+                            annual_returns = annual_returns.drop(last_year, errors='ignore')
+                    elif current_periodicity == "monthly":
+                        # For monthly data, check if all 12 months are present (implied by ending in Dec)
+                        if last_date.month != 12:
+                            annual_returns = annual_returns.drop(last_year, errors='ignore')
             
             # If Excess Return requested (and not L/S), subtract Annual Benchmark Return
             is_ls = long_short_dict.get(series, False)
