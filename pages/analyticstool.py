@@ -2883,21 +2883,16 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                         fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
 
             # Check if we need scrolling
-            container_style = {}
-            graph_style = {"height": "800px"}
-            
             if len(available_series) > 10:
-                # Calculate large size for scrolling
-                # Each plot 200px square? Or smaller? 150px is reasonable minimum.
-                size_px = len(available_series) * 150
-                size_px = max(size_px, 800)
+                # Calculate large size for scrolling (triggers parent scroll)
+                size_px = max(800, len(available_series) * 150)
                 
-                graph_style = {"height": f"{size_px}px", "width": f"{size_px}px"}
-                container_style = {"overflow": "auto", "height": "800px", "width": "100%"}
-                
+                # Set explicit size on figure layout
                 fig.update_layout(height=size_px, width=size_px)
+                graph_style = {"height": f"{size_px}px", "width": f"{size_px}px"}
             else:
-                fig.update_layout(height=800)
+                # Small matrix: Fit to container (100%)
+                graph_style = {"height": "100%", "minHeight": "600px"}
 
             fig.update_layout(
                 title=f"Scatter Matrix ({returns_type.title()} Returns)",
@@ -2920,11 +2915,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                      fig.update_yaxes(showticklabels=False, col=i+1)
 
 
-            # If scrolling, we return a Div wrapping the Graph
-            if len(available_series) > 10:
-                return html.Div(dcc.Graph(figure=fig, style=graph_style), style=container_style)
-            else:
-                return dcc.Graph(figure=fig, style=graph_style)
+            return dcc.Graph(figure=fig, style=graph_style)
 
     except Exception:
         return empty_graph
