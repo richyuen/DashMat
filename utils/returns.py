@@ -39,11 +39,88 @@ def compound_returns(returns: pd.Series) -> float:
 
     Optimized with numpy for better performance.
     """
+    # Drop NaNs to avoid propagating them in product
+    returns = returns.dropna()
     if len(returns) == 0:
         return np.nan
     # Use numpy for faster computation
     growth_factors = 1 + returns.values
     return np.prod(growth_factors) - 1
+
+
+
+def mask_partial_periods(resampled_df: pd.DataFrame, original_df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
+    """Mask partial periods at the start and end of each series based on stricter rules.
+    
+    Rules:
+    1. Full First Month: Data must start between 1st and 4th calendar day.
+    2. Full Last Month: Data must end on the last 4 calendar days.
+    3. Full First/Last Week: Must have exactly 7 calendar days coverage.
+    """
+    if periodicity == "daily":
+        return resampled_df
+
+    # Create a copy to avoid modifying the input
+    result = resampled_df.copy()
+    
+    is_monthly = periodicity == "monthly"
+    is_weekly = periodicity.startswith("weekly_")
+    
+    if not (is_monthly or is_weekly):
+        return result
+
+    # Iterate over columns to handle each series individually
+    for col in result.columns:
+        if col not in original_df.columns:
+            continue
+            
+        # Get valid data range from original series
+        orig_valid = original_df[col].dropna()
+        if orig_valid.empty:
+            continue
+            
+        orig_start = orig_valid.index[0]
+        orig_end = orig_valid.index[-1]
+        
+        # Get valid data range from resampled series
+        res_valid = result[col].dropna()
+        if res_valid.empty:
+            continue
+            
+        # Check First Period
+        first_idx = res_valid.index[0]
+        is_first_full = False
+        
+        if is_monthly:
+            # Full First Month: Data starts <= 4th day
+            is_first_full = orig_start.day <= 4
+        elif is_weekly:
+            # Full First Week: Span of 7 days (resampled date - orig start >= 6 days)
+            # resampled date is the end of the period
+            is_first_full = (first_idx - orig_start).days >= 6
+            
+        if not is_first_full:
+            result.loc[first_idx, col] = np.nan
+            
+        # Check Last Period
+        last_idx = res_valid.index[-1]
+
+        is_last_full = False
+        
+        if is_monthly:
+            # Full Last Month: Data ends within last 4 days
+            # dim = days_in_month
+            dim = last_idx.days_in_month
+            is_last_full = orig_end.day >= (dim - 3)
+        elif is_weekly:
+            # Full Last Week: Data ends on the resampled period end date
+            # This ensures full coverage up to the defined week ending
+            is_last_full = (last_idx - orig_end).days == 0
+            
+        if not is_last_full:
+            result.loc[last_idx, col] = np.nan
+            
+    return result
 
 
 def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
@@ -77,36 +154,11 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
     # Drop rows where all values are NaN (periods with no data)
     resampled = resampled.dropna(how="all")
 
-    # For weekly periodicity, exclude partial weeks at start and end
-    if periodicity.startswith("weekly_") and len(resampled) > 0:
-        # Count the number of observations in each period
-        counts = df.resample(resample_code).count()
-
-        # Align counts with resampled data (in case some periods were dropped)
-        counts = counts.reindex(resampled.index, fill_value=0)
-
-        # Get the typical week size (mode of the counts, excluding zeros)
-        # Use the first column to determine count
-        first_col = counts.columns[0]
-        non_zero_counts = counts[first_col][counts[first_col] > 0]
-        if len(non_zero_counts) > 0:
-            typical_week_size = non_zero_counts.mode().iloc[0] if len(non_zero_counts.mode()) > 0 else 5
-
-            # Identify periods to keep (not partial weeks)
-            periods_to_keep = []
-            for i, idx in enumerate(resampled.index):
-                count = counts.loc[idx, first_col]
-                # Keep if it's a full week, or if it's a middle period (not first or last)
-                if count >= typical_week_size:
-                    periods_to_keep.append(True)
-                elif i == 0 or i == len(resampled) - 1:
-                    # Drop partial first or last period
-                    periods_to_keep.append(False)
-                else:
-                    # Keep middle periods even if partial (e.g., holidays)
-                    periods_to_keep.append(True)
-
-            resampled = resampled[periods_to_keep]
+    # Apply strict partial period filtering
+    resampled = mask_partial_periods(resampled, df, periodicity)
+    
+    # Drop rows that might have become all-NaN after masking
+    resampled = resampled.dropna(how="all")
 
     return resampled
 
@@ -712,14 +764,20 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         s_data = rets.to_frame(name='returns')
 
         if selected_periodicity == "daily":
-            # For daily data, resample to monthly
-            s_data['year'] = s_data.index.year
-            s_data['month'] = s_data.index.month
-
-            # Group by year and month, compound returns
-            monthly_data = s_data.groupby(['year', 'month'])['returns'].apply(
-                lambda x: (1 + x).prod(min_count=1) - 1
-            ).reset_index()
+            # Use resample_returns to handle aggregation and partial period masking
+            # This ensures consistent logic with other parts of the app
+            try:
+                # Rename column to match expected input (though resample_returns handles any col name)
+                # Pass 'monthly' to get strict monthly checks
+                resampled = resample_returns(s_data, "monthly")
+                
+                monthly_data = pd.DataFrame({
+                    'year': resampled.index.year,
+                    'month': resampled.index.month,
+                    'returns': resampled['returns']
+                }).reset_index(drop=True)
+            except Exception:
+                return pd.DataFrame()
 
         elif selected_periodicity == "monthly":
             # Already monthly, just add year and month columns
