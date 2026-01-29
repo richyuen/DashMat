@@ -197,7 +197,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                     {"value": "excess", "label": "Excess"},
                                                 ],
                                                 value=returns_type,
-                                                w=200,
+                                                w=250,
                                             ),
                                         ]),
                                         html.Div([
@@ -247,6 +247,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                     size="xs",
                                                     variant="outline",
                                                     disabled=True,
+                                                    w=120,
                                                 ),
                                             ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
                                             html.Div([
@@ -256,6 +257,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                     size="xs",
                                                     variant="outline",
                                                     disabled=True,
+                                                    w=120,
                                                 ),
                                             ], style={"alignSelf": "flex-end", "marginBottom": "2px"}),
                                         ],
