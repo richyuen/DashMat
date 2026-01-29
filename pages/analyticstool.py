@@ -94,9 +94,486 @@ def df_to_json(df: pd.DataFrame) -> str:
     return df.to_json(date_format="iso", orient="split")
 
 
+def build_welcome_screen():
+    return dmc.Stack(
+        align="center",
+        justify="center",
+        h=400,
+        children=[
+            DashIconify(icon="tabler:chart-arrows-vertical", width=60, color="#adb5bd"),
+            dmc.Text("Welcome to Analytics Tool", size="xl", fw=500, c="dimmed", mt="md"),
+            dmc.Text("Use the File menu to add data series.", size="sm", c="dimmed"),
+            dmc.Button(
+                "Add series from file", 
+                leftSection=DashIconify(icon="tabler:upload"),
+                variant="light",
+                mt="lg",
+                id="welcome-add-series-btn"
+            )
+        ]
+    )
+
+# Callback for the welcome button
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            var uploadDiv = document.getElementById('upload-data');
+            if (uploadDiv) {
+                var input = uploadDiv.querySelector('input[type="file"]');
+                if (input) {
+                    input.click();
+                }
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("upload-trigger", "children", allow_duplicate=True),
+    Input("welcome-add-series-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
+def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
+                      active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
+                      drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
+                      monthly_series_options, monthly_select_disabled):
+    
+    # Calculate visibility styles
+    rolling_grid_style = {"display": "block"} if rolling_chart_switch == "table" else {"display": "none"}
+    rolling_chart_style = {"display": "block"} if rolling_chart_switch == "chart" else {"display": "none"}
+    
+    drawdown_grid_style = {"display": "block"} if drawdown_chart_switch == "table" else {"display": "none"}
+    drawdown_chart_style = {"display": "block"} if drawdown_chart_switch == "chart" else {"display": "none"}
+    
+    growth_grid_style = {"display": "block"} if growth_chart_switch == "table" else {"display": "none"}
+    growth_chart_style = {"display": "block"} if growth_chart_switch == "chart" else {"display": "none"}
 
+    rolling_return_type_disabled = False if rolling_metric in ["total_return", "excess_return"] else True
+    rolling_return_type_style = {} if not rolling_return_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
+
+    return html.Div([
+        # Controls Section (Collapsible, starts expanded)
+        dmc.Accordion(
+            value="controls",
+            mb="md",
+            variant="contained",
+            children=[
+                dmc.AccordionItem(
+                    value="controls",
+                    children=[
+                        dmc.AccordionControl("Controls"),
+                        dmc.AccordionPanel(
+                            children=[
+                                dmc.Group(
+                                    mb="md",
+                                    align="flex-start",
+                                    children=[
+                                        html.Div([
+                                            dmc.Text("Series Selection", size="sm", mb=3, fw=500),
+                                            dmc.Button(
+                                                "Select Series",
+                                                id="open-series-modal-button",
+                                                variant="light",
+                                                size="sm",
+                                                w=200,
+                                            ),
+                                        ]),
+                                        dmc.Select(
+                                            id="periodicity-select",
+                                            label="Periodicity",
+                                            data=periodicity_options,
+                                            value=periodicity_value,
+                                            w=200,
+                                            disabled=False,
+                                        ),
+                                        html.Div([
+                                            dmc.Text("Returns Type", size="sm", mb=3, fw=500),
+                                            dmc.SegmentedControl(
+                                                id="returns-type-select",
+                                                data=[
+                                                    {"value": "total", "label": "Total"},
+                                                    {"value": "excess", "label": "Excess"},
+                                                ],
+                                                value=returns_type,
+                                                w=200,
+                                            ),
+                                        ]),
+                                        html.Div([
+                                            dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
+                                            dmc.Tooltip(
+                                                label="A value of 0% disables the volatility scaling.",
+                                                position="top",
+                                                withArrow=True,
+                                                children=dmc.NumberInput(
+                                                    id="vol-scaler-input",
+                                                    value=vol_scaler,
+                                                    min=0,
+                                                    step=1,
+                                                    suffix="%",
+                                                    w=120,
+                                                ),
+                                            ),
+                                        ]),
+                                    ],
+                                ),
+                                html.Div([
+                                    html.Div(
+                                        id="date-picker-wrapper",
+                                        children=[
+                                            html.Div([
+                                                dmc.DateInput(
+                                                    id="start-date-picker",
+                                                    label="Start Date",
+                                                    value=None,
+                                                    w=200,
+                                                    valueFormat="YYYY-MM-DD",
+                                                ),
+                                            ], style={"marginRight": "15px"}),
+                                            html.Div([
+                                                dmc.DateInput(
+                                                    id="end-date-picker",
+                                                    label="End Date",
+                                                    value=None,
+                                                    w=200,
+                                                    valueFormat="YYYY-MM-DD",
+                                                ),
+                                            ], style={"marginRight": "15px"}),
+                                            html.Div([
+                                                dmc.Button(
+                                                    "Common Range",
+                                                    id="common-range-button",
+                                                    size="xs",
+                                                    variant="outline",
+                                                    disabled=True,
+                                                ),
+                                            ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
+                                            html.Div([
+                                                dmc.Button(
+                                                    "Maximum Range",
+                                                    id="maximum-range-button",
+                                                    size="xs",
+                                                    variant="outline",
+                                                    disabled=True,
+                                                ),
+                                            ], style={"alignSelf": "flex-end", "marginBottom": "2px"}),
+                                        ],
+                                        style={"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"},
+                                    ),
+                                ], style={"marginBottom": "1rem"}),
+                            ]
+                        ),
+                    ],
+                ),
+            ],
+        ),
+
+        # Tabs with AG Grid and Statistics
+        dmc.Tabs(
+            id="main-tabs",
+            value=active_tab,
+            children=[
+                dmc.TabsList(
+                    children=[
+                        dmc.TabsTab("Statistics", value="statistics"),
+                        dmc.TabsTab("Returns", value="returns"),
+                        dmc.TabsTab("Rolling", value="rolling"),
+                        dmc.TabsTab("Calendar Year", value="calendar"),
+                        dmc.TabsTab("Growth of $1", value="growth"),
+                        dmc.TabsTab("Drawdown", value="drawdown"),
+                        dmc.TabsTab("Correlogram", value="correlogram"),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="returns",
+                    pt="md",
+                    children=[
+                        dcc.Loading(
+                            id="loading-returns",
+                            type="default",
+                            children=[
+                                dag.AgGrid(
+                                    id="returns-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "600px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="rolling",
+                    pt="md",
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.Select(
+                                    id="rolling-metric-select",
+                                    data=[
+                                        {"value": "total_return", "label": "Total Return"},
+                                        {"value": "volatility", "label": "Volatility"},
+                                        {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
+                                        {"value": "sortino_ratio", "label": "Sortino Ratio"},
+                                        {"value": "excess_return", "label": "Excess Return"},
+                                        {"value": "tracking_error", "label": "Tracking Error"},
+                                        {"value": "information_ratio", "label": "Information Ratio"},
+                                        {"value": "correlation", "label": "Correlation"},
+                                    ],
+                                    value=rolling_metric,
+                                    w=150,
+                                    size="sm",
+                                    clearable=False,
+                                ),
+                                dmc.Select(
+                                    id="rolling-window-select",
+                                    data=[
+                                        {"value": "3m", "label": "3-month"},
+                                        {"value": "6m", "label": "6-month"},
+                                        {"value": "1y", "label": "1-year"},
+                                        {"value": "3y", "label": "3-year"},
+                                        {"value": "5y", "label": "5-year"},
+                                        {"value": "10y", "label": "10-year"},
+                                    ],
+                                    value=rolling_window,
+                                    w=120,
+                                    size="sm",
+                                ),
+                                dmc.SegmentedControl(
+                                    id="rolling-return-type-select",
+                                    data=[
+                                        {"value": "cumulative", "label": "Cumulative"},
+                                        {"value": "annualized", "label": "Annualized"},
+                                    ],
+                                    value=rolling_return_type,
+                                    size="sm",
+                                    disabled=rolling_return_type_disabled,
+                                    style=rolling_return_type_style,
+                                ),
+                                dmc.SegmentedControl(
+                                    id="rolling-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value=rolling_chart_switch,
+                                    size="sm",
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            id="rolling-grid-container",
+                            style=rolling_grid_style,
+                            children=[
+                                dag.AgGrid(
+                                    id="rolling-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "550px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            id="rolling-chart-container",
+                            style=rolling_chart_style,
+                            children=[
+                                html.Div(id="rolling-chart-wrapper"),
+                            ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="statistics",
+                    pt="md",
+                    children=[
+                        dcc.Loading(
+                            id="loading-statistics",
+                            type="default",
+                            children=[
+                                dag.AgGrid(
+                                    id="statistics-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "resizable": True,
+                                    },
+                                    style={"height": "700px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="calendar",
+                    pt="md",
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.SegmentedControl(
+                                    id="monthly-view-checkbox",
+                                    data=[
+                                        {"value": "annual", "label": "Annual"},
+                                        {"value": "monthly", "label": "Monthly"},
+                                    ],
+                                    value=monthly_view,
+                                    size="sm",
+                                ),
+                                dmc.Select(
+                                    id="monthly-series-select",
+                                    data=monthly_series_options,
+                                    value=monthly_series,
+                                    w=200,
+                                    size="sm",
+                                    placeholder="Select series",
+                                    disabled=monthly_select_disabled,
+                                ),
+                            ],
+                        ),
+                        dag.AgGrid(
+                            id="calendar-grid",
+                            columnDefs=[],
+                            rowData=[],
+                            defaultColDef={
+                                "sortable": True,
+                                "resizable": True,
+                            },
+                            style={"height": "600px"},
+                            dashGridOptions={
+                                "animateRows": True,
+                            },
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="correlogram",
+                    pt="md",
+                    children=[
+                        html.Div(id="correlogram-container"),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="growth",
+                    pt="md",
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.SegmentedControl(
+                                    id="growth-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value=growth_chart_switch,
+                                    size="sm",
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            id="growth-chart-container",
+                            style=growth_chart_style,
+                            children=[
+                                html.Div(id="growth-charts-container"),
+                            ],
+                        ),
+                        html.Div(
+                            id="growth-grid-container",
+                            style=growth_grid_style,
+                            children=[
+                                dag.AgGrid(
+                                    id="growth-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "600px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="drawdown",
+                    pt="md",
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                dmc.SegmentedControl(
+                                    id="drawdown-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value=drawdown_chart_switch,
+                                    size="sm",
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            id="drawdown-chart-container",
+                            style=drawdown_chart_style,
+                            children=[
+                                html.Div(id="drawdown-charts"),
+                            ],
+                        ),
+                        html.Div(
+                            id="drawdown-grid-container",
+                            style=drawdown_grid_style,
+                            children=[
+                                dag.AgGrid(
+                                    id="drawdown-grid",
+                                    columnDefs=[],
+                                    rowData=[],
+                                    defaultColDef={
+                                        "sortable": True,
+                                        "resizable": True,
+                                    },
+                                    style={"height": "600px"},
+                                    dashGridOptions={
+                                        "animateRows": True,
+                                        "pagination": True,
+                                        "paginationPageSize": 100,
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    ])
 
 
 layout = dmc.Container(
@@ -187,124 +664,18 @@ layout = dmc.Container(
                 ),
             ],
         ),
-        # Controls Section (Collapsible, starts expanded)
-        dmc.Accordion(
-            value="controls",
-            mb="md",
-            variant="contained",
-            children=[
-                dmc.AccordionItem(
-                    value="controls",
-                    children=[
-                        dmc.AccordionControl("Controls"),
-                        dmc.AccordionPanel(
-                            children=[
-                                dmc.Group(
-                                    mb="md",
-                                    align="flex-start",
-                                    children=[
-                                        html.Div([
-                                            dmc.Text("Series Selection", size="sm", mb=3, fw=500),
-                                            dmc.Button(
-                                                "Select Series",
-                                                id="open-series-modal-button",
-                                                variant="light",
-                                                size="sm",
-                                                w=200,
-                                            ),
-                                        ]),
-                                        dmc.Select(
-                                            id="periodicity-select",
-                                            label="Periodicity",
-                                            data=[{"value": "daily", "label": "Daily"}],
-                                            value="daily",
-                                            w=200,
-                                            disabled=True,
-                                        ),
-                                        html.Div([
-                                            dmc.Text("Returns Type", size="sm", mb=3, fw=500),
-                                            dmc.SegmentedControl(
-                                                id="returns-type-select",
-                                                data=[
-                                                    {"value": "total", "label": "Total"},
-                                                    {"value": "excess", "label": "Excess"},
-                                                ],
-                                                value="total",
-                                                w=200,
-                                            ),
-                                        ]),
-                                        html.Div([
-                                            dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
-                                            dmc.Tooltip(
-                                                label="A value of 0% disables the volatility scaling.",
-                                                position="top",
-                                                withArrow=True,
-                                                children=dmc.NumberInput(
-                                                    id="vol-scaler-input",
-                                                    value=0,
-                                                    min=0,
-                                                    step=1,
-                                                    suffix="%",
-                                                    w=120,
-                                                ),
-                                            ),
-                                        ]),
-                                    ],
-                                ),
-                                html.Div([
-                                    html.Div(
-                                        id="date-picker-wrapper",
-                                        children=[
-                                            html.Div([
-                                                dmc.DateInput(
-                                                    id="start-date-picker",
-                                                    label="Start Date",
-                                                    value=None,
-                                                    w=200,
-                                                    valueFormat="YYYY-MM-DD",
-                                                ),
-                                            ], style={"marginRight": "15px"}),
-                                            html.Div([
-                                                dmc.DateInput(
-                                                    id="end-date-picker",
-                                                    label="End Date",
-                                                    value=None,
-                                                    w=200,
-                                                    valueFormat="YYYY-MM-DD",
-                                                ),
-                                            ], style={"marginRight": "15px"}),
-                                            html.Div([
-                                                dmc.Button(
-                                                    "Common Range",
-                                                    id="common-range-button",
-                                                    size="xs",
-                                                    variant="outline",
-                                                    disabled=True,
-                                                ),
-                                            ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
-                                            html.Div([
-                                                dmc.Button(
-                                                    "Maximum Range",
-                                                    id="maximum-range-button",
-                                                    size="xs",
-                                                    variant="outline",
-                                                    disabled=True,
-                                                ),
-                                            ], style={"alignSelf": "flex-end", "marginBottom": "2px"}),
-                                        ],
-                                        style={"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"},
-                                    ),
-                                ], style={"marginBottom": "1rem"}),
-                                # Hidden store for series-select value (driven by checkboxes)
-                                dcc.Store(id="series-select", data=[], storage_type="session"),
-                                # Hidden store to track which series is being edited
-                                dcc.Store(id="series-edit-mode", data=None),
-                            ]
-                        ),
-                    ],
-                ),
-            ],
+        
+        # Hidden file upload (triggered by menu item) - Moved here for startup priority
+        html.Div(
+            dcc.Upload(
+                id="upload-data",
+                children=html.Div(id="upload-trigger"),
+                multiple=False,
+                accept=".csv,.xlsx,.xls",
+            ),
+            style={"display": "none"},
         ),
+
         # Series Selection Modal
         dmc.Modal(
             id="series-selection-modal",
@@ -335,306 +706,39 @@ layout = dmc.Container(
                 ),
             ],
         ),
-        # Tabs with AG Grid and Statistics
-        dmc.Tabs(
-            id="main-tabs",
-            value="statistics",
-            children=[
-                dmc.TabsList(
-                    children=[
-                        dmc.TabsTab("Statistics", value="statistics"),
-                        dmc.TabsTab("Returns", value="returns"),
-                        dmc.TabsTab("Rolling", value="rolling"),
-                        dmc.TabsTab("Calendar Year", value="calendar"),
-                        dmc.TabsTab("Growth of $1", value="growth"),
-                        dmc.TabsTab("Drawdown", value="drawdown"),
-                        dmc.TabsTab("Correlogram", value="correlogram"),
-                    ],
-                ),
-                dmc.TabsPanel(
-                    value="returns",
-                    pt="md",
-                    children=[
-                        dcc.Loading(
-                            id="loading-returns",
-                            type="default",
-                            children=[
-                                dag.AgGrid(
-                                    id="returns-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                    },
-                                    style={"height": "600px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-                dmc.TabsPanel(
-                    value="rolling",
-                    pt="md",
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.Select(
-                                    id="rolling-metric-select",
-                                    data=[
-                                        {"value": "total_return", "label": "Total Return"},
-                                        {"value": "volatility", "label": "Volatility"},
-                                        {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
-                                        {"value": "sortino_ratio", "label": "Sortino Ratio"},
-                                        {"value": "excess_return", "label": "Excess Return"},
-                                        {"value": "tracking_error", "label": "Tracking Error"},
-                                        {"value": "information_ratio", "label": "Information Ratio"},
-                                        {"value": "correlation", "label": "Correlation"},
-                                    ],
-                                    value="total_return",
-                                    w=150,
-                                    size="sm",
-                                    clearable=False,
-                                ),
-                                dmc.Select(
-                                    id="rolling-window-select",
-                                    data=[
-                                        {"value": "3m", "label": "3-month"},
-                                        {"value": "6m", "label": "6-month"},
-                                        {"value": "1y", "label": "1-year"},
-                                        {"value": "3y", "label": "3-year"},
-                                        {"value": "5y", "label": "5-year"},
-                                        {"value": "10y", "label": "10-year"},
-                                    ],
-                                    value="1y",
-                                    w=120,
-                                    size="sm",
-                                ),
-                                dmc.SegmentedControl(
-                                    id="rolling-return-type-select",
-                                    data=[
-                                        {"value": "cumulative", "label": "Cumulative"},
-                                        {"value": "annualized", "label": "Annualized"},
-                                    ],
-                                    value="annualized",
-                                    size="sm",
-                                ),
-                                dmc.SegmentedControl(
-                                    id="rolling-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="rolling-grid-container",
-                            style={"display": "none"},
-                            children=[
-                                dag.AgGrid(
-                                    id="rolling-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                    },
-                                    style={"height": "550px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
-                                    },
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="rolling-chart-container",
-                            children=[
-                                html.Div(id="rolling-chart-wrapper"),
-                            ],
-                        ),
-                    ],
-                ),
-                dmc.TabsPanel(
-                    value="statistics",
-                    pt="md",
-                    children=[
-                        dcc.Loading(
-                            id="loading-statistics",
-                            type="default",
-                            children=[
-                                dag.AgGrid(
-                                    id="statistics-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "resizable": True,
-                                    },
-                                    style={"height": "700px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-                dmc.TabsPanel(
-                    value="calendar",
-                    pt="md",
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.SegmentedControl(
-                                    id="monthly-view-checkbox",
-                                    data=[
-                                        {"value": "annual", "label": "Annual"},
-                                        {"value": "monthly", "label": "Monthly"},
-                                    ],
-                                    value="annual",
-                                    size="sm",
-                                ),
-                                dmc.Select(
-                                    id="monthly-series-select",
-                                    data=[],
-                                    value=None,
-                                    w=200,
-                                    size="sm",
-                                    placeholder="Select series",
-                                    disabled=True,
-                                ),
-                            ],
-                        ),
-                        dag.AgGrid(
-                            id="calendar-grid",
-                            columnDefs=[],
-                            rowData=[],
-                            defaultColDef={
-                                "sortable": True,
-                                "resizable": True,
-                            },
-                            style={"height": "600px"},
-                            dashGridOptions={
-                                "animateRows": True,
-                            },
-                        ),
-                    ],
-                ),
-                dmc.TabsPanel(
-                    value="correlogram",
-                    pt="md",
-                    children=[
-                        html.Div(id="correlogram-container"),
-                    ],
-                ),
-                dmc.TabsPanel(
-                    value="growth",
-                    pt="md",
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.SegmentedControl(
-                                    id="growth-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="growth-chart-container",
-                            children=[
-                                html.Div(id="growth-charts-container"),
-                            ],
-                        ),
-                        html.Div(
-                            id="growth-grid-container",
-                            style={"display": "none"},
-                            children=[
-                                dag.AgGrid(
-                                    id="growth-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                    },
-                                    style={"height": "600px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-                dmc.TabsPanel(
-                    value="drawdown",
-                    pt="md",
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.SegmentedControl(
-                                    id="drawdown-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="drawdown-chart-container",
-                            children=[
-                                html.Div(id="drawdown-charts"),
-                            ],
-                        ),
-                        html.Div(
-                            id="drawdown-grid-container",
-                            style={"display": "none"},
-                            children=[
-                                dag.AgGrid(
-                                    id="drawdown-grid",
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                    },
-                                    style={"height": "600px"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
+
+        # Welcome Screen (Initially Visible)
+        html.Div(
+            id="welcome-screen-container",
+            children=build_welcome_screen(),
+            style={"display": "block"}
         ),
+
+        # Main App Container (Initially Hidden)
+        html.Div(
+            id="main-app-container",
+            children=build_main_layout(
+                periodicity_options=[{"value": "daily", "label": "Daily"}],
+                periodicity_value="daily",
+                returns_type="total",
+                vol_scaler=0,
+                active_tab="statistics",
+                rolling_window="1y",
+                rolling_metric="total_return",
+                rolling_return_type="annualized",
+                rolling_chart_switch="chart",
+                drawdown_chart_switch="chart",
+                growth_chart_switch="chart",
+                monthly_view="annual",
+                monthly_series=None,
+                monthly_series_options=[],
+                monthly_select_disabled=True
+            ),
+            style={"display": "none"}
+        ),
+
         # Hidden stores for state management (using local storage for persistence)
+        # These MUST remain in the static layout to be available for callbacks
         dcc.Store(id="raw-data-store", data=None, storage_type="session"),
         dcc.Store(id="original-periodicity-store", data="daily", storage_type="session"),
         dcc.Store(id="benchmark-assignments-store", data={}, storage_type="session"),
@@ -666,22 +770,129 @@ layout = dmc.Container(
         dcc.Store(id="temp-deleted-series-store", data=[]),
         dcc.Download(id="download-excel"),
         dcc.Location(id="url-location", refresh=True),
-        # Hidden file upload (triggered by menu item)
-        html.Div(
-            dcc.Upload(
-                id="upload-data",
-                children=html.Div(id="upload-trigger"),
-                multiple=False,
-                accept=".csv,.xlsx,.xls",
-            ),
-            style={"display": "none"},
-        ),
+        # Moved series-select and edit-mode to global scope
+        dcc.Store(id="series-select", data=[], storage_type="session"),
+        dcc.Store(id="series-edit-mode", data=None),
+
         # Store to trigger clientside focus on edit input
         dcc.Store(id="edit-box-focus-trigger", data=None),
         # Dummy div for clientside callback output
         html.Div(id="dummy-focus-output"),
     ],
 )
+
+
+@callback(
+    Output("welcome-screen-container", "style"),
+    Output("main-app-container", "style"),
+    Output("periodicity-select", "data", allow_duplicate=True),
+    Output("periodicity-select", "value", allow_duplicate=True),
+    Output("returns-type-select", "value"),
+    Output("vol-scaler-input", "value"),
+    Output("main-tabs", "value"),
+    Output("rolling-window-select", "value"),
+    Output("rolling-metric-select", "value"),
+    Output("rolling-return-type-select", "value"),
+    Output("rolling-return-type-select", "disabled", allow_duplicate=True),
+    Output("rolling-return-type-select", "style", allow_duplicate=True),
+    Output("rolling-chart-switch", "value"),
+    Output("drawdown-chart-switch", "value"),
+    Output("growth-chart-switch", "value"),
+    Output("monthly-view-checkbox", "value"),
+    Output("series-select", "data"),
+    Input("raw-data-store", "data"),
+    State("original-periodicity-store", "data"),
+    State("periodicity-value-store", "data"),
+    State("series-select-value-store", "data"),
+    State("returns-type-value-store", "data"),
+    State("vol-scaler-value-store", "data"),
+    State("active-tab-store", "data"),
+    State("rolling-window-store", "data"),
+    State("rolling-metric-store", "data"),
+    State("rolling-return-type-store", "data"),
+    State("rolling-chart-switch-store", "data"),
+    State("drawdown-chart-switch-store", "data"),
+    State("growth-chart-switch-store", "data"),
+    State("monthly-view-store", "data"),
+    State("monthly-series-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def restore_application_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series):
+    if not raw_data:
+        # Show welcome, hide main, reset defaults if needed
+        return (
+            {"display": "block"}, {"display": "none"},
+            [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
+            "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
+            "annual", []
+        )
+
+    try:
+        df = json_to_df(raw_data)
+        
+        # Periodicity
+        periodicity_options = get_available_periodicities(orig_periodicity or "daily")
+        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else (orig_periodicity or "daily")
+        
+        # Returns Type
+        valid_returns = stored_returns if stored_returns in ["total", "excess"] else "total"
+        
+        # Vol Scaler
+        valid_vol = stored_vol if stored_vol is not None else 0
+        
+        # Active Tab
+        active_tab = stored_tab if stored_tab else "statistics"
+        
+        # Rolling
+        roll_win = stored_roll_win if stored_roll_win else "1y"
+        roll_metric = stored_roll_metric if stored_roll_metric else "total_return"
+        roll_type = stored_roll_type if stored_roll_type else "annualized"
+        roll_chart = stored_roll_chart if stored_roll_chart is not None else "chart"
+        
+        # Rolling Return Type Disabled Logic
+        roll_type_disabled = False if roll_metric in ["total_return", "excess_return"] else True
+        roll_type_style = {} if not roll_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
+        
+        # Drawdown
+        dd_chart = stored_dd_chart if stored_dd_chart is not None else "chart"
+        
+        # Growth
+        gr_chart = stored_gr_chart if stored_gr_chart is not None else "chart"
+        
+        # Monthly View
+        monthly_view = stored_monthly_view if stored_monthly_view is not None else "annual"
+        
+        # Monthly Series Options & Selection
+        current_selection = stored_series or []
+        valid_selection = [s for s in current_selection if s in df.columns]
+        
+        monthly_series_options = [{"value": s, "label": s} for s in valid_selection]
+        
+        monthly_select_disabled = True
+        monthly_series_val = None
+        
+        if monthly_view == "monthly":
+            monthly_select_disabled = False
+            if stored_monthly_series and stored_monthly_series in valid_selection:
+                monthly_series_val = stored_monthly_series
+            elif valid_selection:
+                monthly_series_val = valid_selection[0]
+        
+        return (
+            {"display": "none"}, {"display": "block"},
+            periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
+            roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
+            monthly_view, valid_selection
+        )
+
+    except Exception:
+        # Fallback to welcome screen on error
+        return (
+            {"display": "block"}, {"display": "none"},
+            [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
+            "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
+            "annual", []
+        )
 
 
 # Clientside callback to navigate to home on Exit
@@ -1017,43 +1228,7 @@ def clear_all_series(n_clicks):
     return None, "daily", {}, {}, None, None, [], [], [], 0, {}
 
 
-@callback(
-    Output("periodicity-select", "data", allow_duplicate=True),
-    Output("periodicity-select", "value", allow_duplicate=True),
-    Output("periodicity-select", "disabled", allow_duplicate=True),
-    Output("series-select", "data", allow_duplicate=True),
-    Output("returns-type-select", "value", allow_duplicate=True),
-    Output("vol-scaler-input", "value", allow_duplicate=True),
-    Input("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
-    State("periodicity-value-store", "data"),
-    State("series-select-value-store", "data"),
-    State("returns-type-value-store", "data"),
-    State("vol-scaler-value-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def restore_state_from_storage(raw_data, original_periodicity, stored_periodicity, stored_series, stored_returns_type, stored_vol_scaler):
-    """Restore UI state from local storage on page load."""
-    if raw_data is None:
-        return [], "daily", True, [], "total", 0
 
-    try:
-        df = json_to_df(raw_data)
-
-        # Get available periodicities
-        from utils.returns import get_available_periodicities
-        periodicity_options = get_available_periodicities(original_periodicity or "daily")
-
-        # Validate stored values
-        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else (original_periodicity or "daily")
-        valid_series = [s for s in (stored_series or []) if s in df.columns]
-        valid_returns_type = stored_returns_type if stored_returns_type in ["total", "excess"] else "total"
-        valid_vol_scaler = stored_vol_scaler if stored_vol_scaler is not None else 0
-
-        return periodicity_options, valid_periodicity, False, valid_series, valid_returns_type, valid_vol_scaler
-
-    except Exception:
-        return [], "daily", True, [], "total", 0
 
 
 @callback(
@@ -1106,16 +1281,7 @@ def save_active_tab(value):
     return value or "statistics"
 
 
-@callback(
-    Output("main-tabs", "value"),
-    Input("raw-data-store", "data"),
-    State("active-tab-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def restore_active_tab(raw_data, stored_tab):
-    """Restore active tab from local storage on page load."""
-    # Return stored tab if available, otherwise default to statistics
-    return stored_tab if stored_tab else "statistics"
+
 
 
 @callback(
@@ -1160,22 +1326,7 @@ def update_rolling_controls_state(metric):
     return True, {"opacity": 0.5, "pointerEvents": "none"}
 
 
-@callback(
-    Output("rolling-window-select", "value"),
-    Output("rolling-return-type-select", "value"),
-    Output("rolling-metric-select", "value"),
-    Input("raw-data-store", "data"),
-    State("rolling-window-store", "data"),
-    State("rolling-return-type-store", "data"),
-    State("rolling-metric-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def restore_rolling_options(raw_data, stored_window, stored_return_type, stored_metric):
-    """Restore rolling options from local storage on page load."""
-    window = stored_window if stored_window else "1y"
-    return_type = stored_return_type if stored_return_type else "annualized"
-    metric = stored_metric if stored_metric else "total_return"
-    return window, return_type, metric
+
 
 
 @callback(
@@ -1188,15 +1339,7 @@ def save_rolling_chart_switch(value):
     return value if value is not None else "chart"
 
 
-@callback(
-    Output("rolling-chart-switch", "value"),
-    Input("raw-data-store", "data"),
-    State("rolling-chart-switch-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def restore_rolling_chart_switch(raw_data, stored_chart_switch):
-    """Restore rolling chart switch from local storage on page load."""
-    return stored_chart_switch if stored_chart_switch is not None else "chart"
+
 
 
 @callback(
@@ -1223,15 +1366,7 @@ def save_drawdown_chart_switch(value):
     return value if value is not None else "chart"
 
 
-@callback(
-    Output("drawdown-chart-switch", "value"),
-    Input("raw-data-store", "data"),
-    State("drawdown-chart-switch-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def restore_drawdown_chart_switch(raw_data, stored_chart_switch):
-    """Restore drawdown chart switch from local storage on page load."""
-    return stored_chart_switch if stored_chart_switch is not None else "chart"
+
 
 
 @callback(
@@ -1258,15 +1393,7 @@ def save_growth_chart_switch(value):
     return value if value is not None else "chart"
 
 
-@callback(
-    Output("growth-chart-switch", "value"),
-    Input("raw-data-store", "data"),
-    State("growth-chart-switch-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def restore_growth_chart_switch(raw_data, stored_chart_switch):
-    """Restore growth chart switch from local storage on page load."""
-    return stored_chart_switch if stored_chart_switch is not None else "chart"
+
 
 
 @callback(
@@ -1303,15 +1430,7 @@ def save_monthly_series(value):
     return value
 
 
-@callback(
-    Output("monthly-view-checkbox", "value"),
-    Input("raw-data-store", "data"),
-    State("monthly-view-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def restore_monthly_view(raw_data, stored_monthly_view):
-    """Restore monthly view selection from local storage on page load."""
-    return stored_monthly_view if stored_monthly_view is not None else "annual"
+
 
 
 @callback(
