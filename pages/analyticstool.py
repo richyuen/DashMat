@@ -142,16 +142,17 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
     
     # Calculate visibility styles - use flex for full height
     flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
+    flex_scroll_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"}
     none_style = {"display": "none"}
     
     rolling_grid_style = flex_style if rolling_chart_switch == "table" else none_style
     rolling_chart_style = flex_style if rolling_chart_switch == "chart" else none_style
     
     drawdown_grid_style = flex_style if drawdown_chart_switch == "table" else none_style
-    drawdown_chart_style = flex_style if drawdown_chart_switch == "chart" else none_style
+    drawdown_chart_style = flex_scroll_style if drawdown_chart_switch == "chart" else none_style
     
     growth_grid_style = flex_style if growth_chart_switch == "table" else none_style
-    growth_chart_style = flex_style if growth_chart_switch == "chart" else none_style
+    growth_chart_style = flex_scroll_style if growth_chart_switch == "chart" else none_style
 
     rolling_return_type_disabled = False if rolling_metric in ["total_return", "excess_return"] else True
     rolling_return_type_style = {} if not rolling_return_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
@@ -1383,10 +1384,11 @@ def save_rolling_chart_switch(value):
 )
 def toggle_rolling_view(view_type):
     """Toggle between grid and chart view for rolling returns."""
+    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
     if view_type == "chart":
-        return {"display": "none"}, {"display": "block"}
+        return {"display": "none"}, flex_style
     else:
-        return {"display": "block"}, {"display": "none"}
+        return flex_style, {"display": "none"}
 
 
 @callback(
@@ -1410,10 +1412,12 @@ def save_drawdown_chart_switch(value):
 )
 def toggle_drawdown_view(view_type):
     """Toggle between grid and chart view for drawdown."""
+    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
+    flex_scroll_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"}
     if view_type == "chart":
-        return {"display": "none"}, {"display": "block"}
+        return {"display": "none"}, flex_scroll_style
     else:
-        return {"display": "block"}, {"display": "none"}
+        return flex_style, {"display": "none"}
 
 
 @callback(
@@ -1437,10 +1441,12 @@ def save_growth_chart_switch(value):
 )
 def toggle_growth_view(view_type):
     """Toggle between grid and chart view for growth of $1."""
+    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
+    flex_scroll_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"}
     if view_type == "chart":
-        return {"display": "none"}, {"display": "block"}
+        return {"display": "none"}, flex_scroll_style
     else:
-        return {"display": "block"}, {"display": "none"}
+        return flex_style, {"display": "none"}
 
 
 @callback(
@@ -2463,7 +2469,7 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
             )
         )
 
-        return dcc.Graph(figure=fig, style={"height": "550px"})
+        return dcc.Graph(figure=fig, style={"height": "100%"})
 
     except Exception:
         return empty_graph
@@ -2787,13 +2793,12 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             height = max(500, 30 * len(available_series) + 150)
             heatmap_fig.update_layout(
                 title=f"Correlation Matrix ({returns_type.title()} Returns)",
-                height=height,
                 xaxis=dict(tickangle=45),
                 yaxis=dict(autorange='reversed'),
                 template="plotly_white",
             )
 
-            return dcc.Graph(figure=heatmap_fig, style={"height": f"{height}px"})
+            return dcc.Graph(figure=heatmap_fig, style={"height": "100%", "minHeight": "500px"})
         
         # 2. Correlogram (Scatter Matrix)
         else:
@@ -3007,7 +3012,6 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             title="Growth of $1 - All Series",
             xaxis_title="Date",
             yaxis_title="Growth of $1",
-            height=500,
             hovermode='x unified',
             legend=dict(
                 orientation="h",
@@ -3100,9 +3104,9 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             individual_charts.append(dcc.Graph(figure=fig, style={"marginBottom": "2rem"}))
 
         # Combine all charts
-        charts = [dcc.Graph(figure=main_fig, style={"marginBottom": "3rem"})] + individual_charts
+        charts = [dcc.Graph(figure=main_fig, style={"height": "100%", "minHeight": "500px", "marginBottom": "3rem"})] + individual_charts
 
-        return html.Div(charts)
+        return html.Div(charts, style={"height": "100%"})
 
     except Exception as e:
         return dmc.Text(f"Error generating growth charts: {str(e)}", size="sm", c="red")
