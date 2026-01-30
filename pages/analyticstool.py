@@ -100,9 +100,9 @@ def build_welcome_screen():
         justify="center",
         h=400,
         children=[
-            DashIconify(icon="tabler:chart-arrows-vertical", width=60, color="#adb5bd"),
-            dmc.Text("Welcome to Analytics Tool", size="xl", fw=500, c="dimmed", mt="md"),
-            dmc.Text("Use the File menu to add data series.", size="sm", c="dimmed"),
+            DashIconify(icon="fluent-mdl2:chart", width=60, color="#adb5bd"),
+            dmc.Text("Welcome to the Analytics Tool", size="xl", fw=500, c="dimmed", mt="md"),
+            dmc.Text("Add a data series to begin", size="sm", c="dimmed"),
             dmc.Button(
                 "Add series from file", 
                 leftSection=DashIconify(icon="tabler:upload"),
