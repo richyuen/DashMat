@@ -1050,23 +1050,29 @@ clientside_callback(
 )
 
 
-@callback(
+clientside_callback(
+    """
+    function(n) {
+        // Hide Blocker (False), Disable Timeout (True)
+        return [false, true];
+    }
+    """,
     Output("ui-blocker-store", "data", allow_duplicate=True),
     Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("ui-blocker-timeout", "n_intervals"),
     prevent_initial_call=True,
 )
-def reset_ui_blocker_on_timeout(n):
-    # Hide Blocker, Disable Timeout
-    return False, True
 
 
-@callback(
+clientside_callback(
+    """
+    function(is_loading) {
+        return is_loading || false;
+    }
+    """,
     Output("ui-blocker-overlay", "visible"),
     Input("ui-blocker-store", "data"),
 )
-def update_ui_blocker_visibility(is_loading):
-    return is_loading or False
 
 
 clientside_callback(
