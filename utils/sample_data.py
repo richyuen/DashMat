@@ -6,17 +6,6 @@ import numpy as np
 import pandas as pd
 
 
-# Series names for sample files
-SAMPLE_SERIES_NAMES = [
-    "US Equity",
-    "Intl Equity",
-    "US Bonds",
-    "Real Estate",
-    "Commodities",
-    "High Yield",
-]
-
-
 def generate_sample_returns(periodicity: str) -> pd.DataFrame:
     """
     Generate sample returns data for download.
@@ -34,6 +23,10 @@ def generate_sample_returns(periodicity: str) -> pd.DataFrame:
     full_start = pd.Timestamp("2021-01-01")
     full_end = pd.Timestamp("2025-12-31")
 
+    # Generate series names based on periodicity
+    prefix = "Daily" if periodicity == "daily" else "Monthly"
+    series_names = [f"{prefix}{i}" for i in range(1, 7)]
+
     # Create date index based on periodicity
     if periodicity == "daily":
         # Business days only
@@ -49,9 +42,9 @@ def generate_sample_returns(periodicity: str) -> pd.DataFrame:
 
     # Random parameters for each series
     # Annual means between 0% and 8%
-    annual_means = rng.uniform(0.00, 0.08, size=len(SAMPLE_SERIES_NAMES))
+    annual_means = rng.uniform(0.00, 0.08, size=len(series_names))
     # Annual vols between 6% and 20%
-    annual_vols = rng.uniform(0.06, 0.20, size=len(SAMPLE_SERIES_NAMES))
+    annual_vols = rng.uniform(0.06, 0.20, size=len(series_names))
 
     # Convert to per-period
     period_means = annual_means / periods_per_year
@@ -62,7 +55,7 @@ def generate_sample_returns(periodicity: str) -> pd.DataFrame:
     start_range = pd.date_range("2021-01-01", "2022-12-31", freq="D")
     end_range = pd.date_range("2024-01-01", "2025-12-31", freq="D")
 
-    for i, series_name in enumerate(SAMPLE_SERIES_NAMES):
+    for i, series_name in enumerate(series_names):
         if i == 0:
             # First series has full date range
             series_start = full_start
