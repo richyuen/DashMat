@@ -29,6 +29,7 @@ from utils.returns import (
     resample_returns,
     resample_returns_cached,
 )
+from utils.sample_data import create_sample_excel
 from utils.statistics import (
     calculate_drawdown,
     calculate_growth_of_dollar,
@@ -104,12 +105,32 @@ def build_welcome_screen():
             dmc.Text("Welcome to the Analytics Tool", size="xl", fw=500, c="dimmed", mt="md"),
             dmc.Text("Add a data series to begin", size="sm", c="dimmed"),
             dmc.Button(
-                "Add series from file", 
+                "Add series from file",
                 leftSection=DashIconify(icon="tabler:upload"),
                 variant="light",
                 mt="lg",
                 id="welcome-add-series-btn"
-            )
+            ),
+            dmc.Group(
+                gap="md",
+                mt="sm",
+                children=[
+                    dmc.Button(
+                        "Sample Daily File",
+                        leftSection=DashIconify(icon="tabler:download"),
+                        id="download-sample-daily-btn",
+                        size="sm",
+                        variant="outline",
+                    ),
+                    dmc.Button(
+                        "Sample Monthly File",
+                        leftSection=DashIconify(icon="tabler:download"),
+                        id="download-sample-monthly-btn",
+                        size="sm",
+                        variant="outline",
+                    ),
+                ],
+            ),
         ]
     )
 
@@ -820,6 +841,8 @@ layout = dmc.Container(
         dcc.Store(id="temp-series-order-store", data=[]),
         dcc.Store(id="temp-deleted-series-store", data=[]),
         dcc.Download(id="download-excel"),
+        dcc.Download(id="download-sample-daily"),
+        dcc.Download(id="download-sample-monthly"),
         dcc.Location(id="url-location", refresh=True),
         # Moved series-select and edit-mode to global scope
         dcc.Store(id="series-select", data=[], storage_type="session"),
@@ -3633,3 +3656,32 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
     filename = f"dashmat_{periodicity_suffix}_{returns_suffix}.xlsx"
 
     return dcc.send_bytes(output.getvalue(), filename)
+
+
+# Sample file download callbacks
+@callback(
+    Output("download-sample-daily", "data"),
+    Input("download-sample-daily-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_sample_daily(n_clicks):
+    """Generate and download sample daily returns file."""
+    if n_clicks is None:
+        raise PreventUpdate
+
+    content = create_sample_excel("daily")
+    return dcc.send_bytes(content, "sample_daily_returns.xlsx")
+
+
+@callback(
+    Output("download-sample-monthly", "data"),
+    Input("download-sample-monthly-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_sample_monthly(n_clicks):
+    """Generate and download sample monthly returns file."""
+    if n_clicks is None:
+        raise PreventUpdate
+
+    content = create_sample_excel("monthly")
+    return dcc.send_bytes(content, "sample_monthly_returns.xlsx")
