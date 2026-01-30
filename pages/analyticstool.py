@@ -116,13 +116,16 @@ def build_welcome_screen():
 # Callback for the welcome button - triggers server side to show loading
 @callback(
     Output("upload-trigger", "children", allow_duplicate=True),
+    Output("ui-blocker-store", "data", allow_duplicate=True),
+    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def trigger_upload_from_welcome(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return f"welcome-{n_clicks}"
+    # Trigger upload, Show Blocker, Enable Timeout
+    return f"welcome-{n_clicks}", True, False
 
 
 # Clientside callback to actually open the file dialog when trigger changes
@@ -724,19 +727,14 @@ layout = dmc.Container(
         ),
         
         # Hidden file upload (triggered by menu item) - Moved here for startup priority
-        dcc.Loading(
-            id="upload-loading",
-            type="default",
-            fullscreen=True,
-            children=html.Div(
-                dcc.Upload(
-                    id="upload-data",
-                    children=html.Div(id="upload-trigger"),
-                    multiple=False,
-                    accept=".csv,.xlsx,.xls",
-                ),
-                style={"display": "none"},
+        html.Div(
+            dcc.Upload(
+                id="upload-data",
+                children=html.Div(id="upload-trigger"),
+                multiple=False,
+                accept=".csv,.xlsx,.xls",
             ),
+            style={"display": "none"},
         ),
 
         # Series Selection Modal
@@ -844,6 +842,17 @@ layout = dmc.Container(
         
         # Correlogram metadata for client-side sizing
         dcc.Store(id="correlogram-meta-store", data={}),
+
+        # UI Blocker for file dialog (Overlay)
+        dcc.Store(id="ui-blocker-store", data=False),
+        dcc.Interval(id="ui-blocker-timeout", interval=15000, disabled=True), # 15 second timeout
+        dmc.LoadingOverlay(
+            id="ui-blocker-overlay",
+            visible=False,
+            zIndex=2000,
+            overlayProps={"radius": "sm", "blur": 2},
+            loaderProps={"variant": "bars"},
+        ),
     ],
 )
 
@@ -1025,13 +1034,35 @@ clientside_callback(
 # Server callback to trigger file upload from menu
 @callback(
     Output("upload-trigger", "children", allow_duplicate=True),
+    Output("ui-blocker-store", "data", allow_duplicate=True),
+    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("menu-add-series", "n_clicks"),
     prevent_initial_call=True,
 )
 def trigger_upload_from_menu(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return f"menu-{n_clicks}"
+    # Trigger upload, Show Blocker, Enable Timeout
+    return f"menu-{n_clicks}", True, False
+
+
+@callback(
+    Output("ui-blocker-store", "data", allow_duplicate=True),
+    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Input("ui-blocker-timeout", "n_intervals"),
+    prevent_initial_call=True,
+)
+def reset_ui_blocker_on_timeout(n):
+    # Hide Blocker, Disable Timeout
+    return False, True
+
+
+@callback(
+    Output("ui-blocker-overlay", "visible"),
+    Input("ui-blocker-store", "data"),
+)
+def update_ui_blocker_visibility(is_loading):
+    return is_loading or False
 
 
 clientside_callback(
@@ -1511,6 +1542,8 @@ def save_monthly_series(value):
     Output("first-load-store", "data"),
     Output("temp-deleted-series-store", "data", allow_duplicate=True),
     Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("ui-blocker-store", "data", allow_duplicate=True),
+    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     State("raw-data-store", "data"),
@@ -1547,6 +1580,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                     False,
                     no_update, no_update, no_update, no_update, no_update,
                     no_update, no_update, no_update,
+                    False, True # Hide blocker
                 )
 
             # If new data is monthly but existing is daily, convert existing to monthly
@@ -1600,6 +1634,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             new_first_load,
             [], # Reset deleted series
             current_vol_scaling or {},
+            False, True # Hide blocker
         )
 
     except Exception as e:
@@ -1611,6 +1646,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             False,
             no_update, no_update, no_update, no_update, no_update,
             no_update, no_update, no_update,
+            False, True # Hide blocker
         )
 
 
