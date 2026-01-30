@@ -502,9 +502,19 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     value="correlogram",
                                     size="sm",
                                 ),
+                                dmc.NumberInput(
+                                    id="correlogram-block-width",
+                                    label=None,
+                                    value=100,
+                                    min=50,
+                                    step=50,
+                                    suffix="px",
+                                    w=100,
+                                    size="sm",
+                                ),
                             ],
                         ),
-                        html.Div(id="correlogram-container", style={"flex": "1", "minHeight": "0"}),
+                        html.Div(id="correlogram-container", style={"flex": "1", "minHeight": "0", "overflow": "auto"}),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -812,6 +822,9 @@ layout = dmc.Container(
         dcc.Store(id="edit-box-focus-trigger", data=None),
         # Dummy div for clientside callback output
         html.Div(id="dummy-focus-output"),
+        
+        # Correlogram metadata for client-side sizing
+        dcc.Store(id="correlogram-meta-store", data={}),
     ],
 )
 
@@ -2705,14 +2718,49 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 
 @callback(
-    Output("correlation-view-switch", "value"),
+    Output("correlogram-meta-store", "data"),
     Input("series-select", "data"),
+    Input("main-tabs", "value"),
 )
-def update_correlation_view_default(selected_series):
-    """Update correlation view default based on number of series."""
-    if not selected_series or len(selected_series) <= 10:
-        return "correlogram"
-    return "correlation"
+def update_correlogram_meta(selected_series, active_tab):
+    """Update correlogram metadata (num_series) when tab is active."""
+    if active_tab != "correlogram" or not selected_series:
+        return no_update
+    return {"num_series": len(selected_series)}
+
+
+clientside_callback(
+    """
+    function(meta) {
+        if (!meta || !meta.num_series || meta.num_series <= 1) {
+            return dash_clientside.no_update;
+        }
+
+        var container = document.getElementById('correlogram-container');
+        if (!container) {
+            return dash_clientside.no_update;
+        }
+        
+        var container_width = container.clientWidth;
+        if (!container_width) return dash_clientside.no_update;
+
+        // Default strategy: Clamp between 100 and 200, based on (Container - Buffer) / N
+        // This ensures we fill the window if possible, but respect min 100px and max 200px defaults.
+        var available_width = container_width - 40;
+        var default_width = Math.floor(available_width / meta.num_series);
+        
+        if (default_width < 100) {
+            default_width = 100;
+        } else if (default_width > 200) {
+            default_width = 200;
+        }
+        
+        return default_width;
+    }
+    """,
+    Output("correlogram-block-width", "value"),
+    Input("correlogram-meta-store", "data"),
+)
 
 
 @callback(
@@ -2728,9 +2776,10 @@ def update_correlation_view_default(selected_series):
     Input("vol-scaler-value-store", "data"),
     Input("vol-scaling-assignments-store", "data"),
     Input("correlation-view-switch", "value"),
+    Input("correlogram-block-width", "value"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view):
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view, block_width):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -2882,17 +2931,18 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                         fig.update_xaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
                         fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
 
-            # Check if we need scrolling
-            if len(available_series) > 3:
-                # Calculate large size for scrolling (triggers parent scroll)
-                size_px = max(800, len(available_series) * 150)
-                
-                # Set explicit size on figure layout
-                fig.update_layout(height=size_px, width=size_px)
-                graph_style = {"height": f"{size_px}px", "width": f"{size_px}px"}
-            else:
-                # Small matrix: Fit to container (100%)
-                graph_style = {"height": "100%"}
+            # Scaling logic: Fixed size based on user input
+            # Always square blocks (N * block_width)
+            user_block_width = block_width if block_width else 100
+            total_size_px = len(available_series) * user_block_width
+            
+            graph_style = {
+                "width": f"{total_size_px}px",
+                "height": f"{total_size_px}px",
+            }
+            
+            # Set explicit size on figure layout
+            fig.update_layout(width=total_size_px, height=total_size_px, autosize=False)
 
             fig.update_layout(
                 title=f"Scatter Matrix ({returns_type.title()} Returns)",
