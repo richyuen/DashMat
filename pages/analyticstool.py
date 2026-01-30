@@ -113,24 +113,38 @@ def build_welcome_screen():
         ]
     )
 
-# Callback for the welcome button
+# Callback for the welcome button - triggers server side to show loading
+@callback(
+    Output("upload-trigger", "children", allow_duplicate=True),
+    Input("welcome-add-series-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def trigger_upload_from_welcome(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return f"welcome-{n_clicks}"
+
+
+# Clientside callback to actually open the file dialog when trigger changes
 clientside_callback(
     """
-    function(n_clicks) {
-        if (n_clicks) {
-            var uploadDiv = document.getElementById('upload-data');
-            if (uploadDiv) {
-                var input = uploadDiv.querySelector('input[type="file"]');
-                if (input) {
-                    input.click();
+    function(trigger) {
+        if (trigger) {
+            setTimeout(function() {
+                var uploadDiv = document.getElementById('upload-data');
+                if (uploadDiv) {
+                    var input = uploadDiv.querySelector('input[type="file"]');
+                    if (input) {
+                        input.click();
+                    }
                 }
-            }
+            }, 100);
         }
         return window.dash_clientside.no_update;
     }
     """,
-    Output("upload-trigger", "children", allow_duplicate=True),
-    Input("welcome-add-series-btn", "n_clicks"),
+    Output("dummy-focus-output", "children", allow_duplicate=True),
+    Input("upload-trigger", "children"),
     prevent_initial_call=True,
 )
 
@@ -710,14 +724,19 @@ layout = dmc.Container(
         ),
         
         # Hidden file upload (triggered by menu item) - Moved here for startup priority
-        html.Div(
-            dcc.Upload(
-                id="upload-data",
-                children=html.Div(id="upload-trigger"),
-                multiple=False,
-                accept=".csv,.xlsx,.xls",
+        dcc.Loading(
+            id="upload-loading",
+            type="default",
+            fullscreen=True,
+            children=html.Div(
+                dcc.Upload(
+                    id="upload-data",
+                    children=html.Div(id="upload-trigger"),
+                    multiple=False,
+                    accept=".csv,.xlsx,.xls",
+                ),
+                style={"display": "none"},
             ),
-            style={"display": "none"},
         ),
 
         # Series Selection Modal
@@ -1003,27 +1022,16 @@ clientside_callback(
 )
 
 
-# Clientside callback to trigger file upload from menu
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            // Find the hidden upload input and click it
-            var uploadDiv = document.getElementById('upload-data');
-            if (uploadDiv) {
-                var input = uploadDiv.querySelector('input[type="file"]');
-                if (input) {
-                    input.click();
-                }
-            }
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("upload-trigger", "children"),
+# Server callback to trigger file upload from menu
+@callback(
+    Output("upload-trigger", "children", allow_duplicate=True),
     Input("menu-add-series", "n_clicks"),
     prevent_initial_call=True,
 )
+def trigger_upload_from_menu(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return f"menu-{n_clicks}"
 
 
 clientside_callback(
