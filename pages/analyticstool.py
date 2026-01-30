@@ -313,7 +313,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -397,7 +397,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -433,7 +433,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "resizable": True,
                                     },
-                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
                                     },
@@ -478,7 +478,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 "sortable": True,
                                 "resizable": True,
                             },
-                            style={"height": "100%", "width": "100%", "minHeight": "600px"},
+                            style={"height": "100%", "width": "100%"},
                             dashGridOptions={
                                 "animateRows": True,
                             },
@@ -504,7 +504,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                             ],
                         ),
-                        html.Div(id="correlogram-container", style={"flex": "1"}),
+                        html.Div(id="correlogram-container", style={"flex": "1", "minHeight": "0"}),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -545,7 +545,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -594,7 +594,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                     },
-                                    style={"height": "100%", "width": "100%", "minHeight": "600px"},
+                                    style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "pagination": True,
@@ -612,7 +612,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 
 layout = dmc.Container(
     fluid=True,
-    style={"height": "calc(100vh - 20px)", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+    style={"height": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "hidden"}, # 45px for header + 10px bottom margin
     children=[
         # Stores for state management
         dmc.Paper(
@@ -2745,7 +2745,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         template="plotly_white",
     )
-    empty_graph = dcc.Graph(figure=empty_fig, style={"height": "700px"})
+    empty_graph = dcc.Graph(figure=empty_fig, style={"height": "100%"})
 
     # Lazy loading: only generate when correlogram tab is active
     if active_tab != "correlogram":
@@ -2798,7 +2798,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                 template="plotly_white",
             )
 
-            return dcc.Graph(figure=heatmap_fig, style={"height": "100%", "minHeight": "500px"})
+            return dcc.Graph(figure=heatmap_fig, style={"height": "100%"})
         
         # 2. Correlogram (Scatter Matrix)
         else:
@@ -2883,7 +2883,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                         fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
 
             # Check if we need scrolling
-            if len(available_series) > 10:
+            if len(available_series) > 3:
                 # Calculate large size for scrolling (triggers parent scroll)
                 size_px = max(800, len(available_series) * 150)
                 
@@ -2892,7 +2892,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                 graph_style = {"height": f"{size_px}px", "width": f"{size_px}px"}
             else:
                 # Small matrix: Fit to container (100%)
-                graph_style = {"height": "100%", "minHeight": "600px"}
+                graph_style = {"height": "100%"}
 
             fig.update_layout(
                 title=f"Scatter Matrix ({returns_type.title()} Returns)",
@@ -3095,7 +3095,7 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             individual_charts.append(dcc.Graph(figure=fig, style={"marginBottom": "2rem"}))
 
         # Combine all charts
-        charts = [dcc.Graph(figure=main_fig, style={"height": "100%", "minHeight": "500px", "marginBottom": "3rem"})] + individual_charts
+        charts = [dcc.Graph(figure=main_fig, style={"height": "100%", "marginBottom": "3rem"})] + individual_charts
 
         return html.Div(charts, style={"height": "100%"})
 
