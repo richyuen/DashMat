@@ -113,26 +113,12 @@ def build_welcome_screen():
         ]
     )
 
-# Callback for the welcome button - triggers server side to show loading
-@callback(
-    Output("upload-trigger", "children", allow_duplicate=True),
-    Output("ui-blocker-store", "data", allow_duplicate=True),
-    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
-    Input("welcome-add-series-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def trigger_upload_from_welcome(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    # Trigger upload, Show Blocker, Enable Timeout
-    return f"welcome-{n_clicks}", True, False
-
-
-# Clientside callback to actually open the file dialog when trigger changes
+# Clientside callback to trigger upload from welcome button
 clientside_callback(
     """
-    function(trigger) {
-        if (trigger) {
+    function(n_clicks) {
+        if (n_clicks) {
+            // Trigger the file input click with a small delay to allow overlay to render
             setTimeout(function() {
                 var uploadDiv = document.getElementById('upload-data');
                 if (uploadDiv) {
@@ -142,12 +128,16 @@ clientside_callback(
                     }
                 }
             }, 100);
+            
+            // Show Blocker (True), Enable Timeout (False)
+            return [true, false];
         }
-        return window.dash_clientside.no_update;
+        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
     }
     """,
-    Output("dummy-focus-output", "children", allow_duplicate=True),
-    Input("upload-trigger", "children"),
+    Output("ui-blocker-store", "data", allow_duplicate=True),
+    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Input("welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -1031,19 +1021,33 @@ clientside_callback(
 )
 
 
-# Server callback to trigger file upload from menu
-@callback(
-    Output("upload-trigger", "children", allow_duplicate=True),
+# Clientside callback to trigger upload from menu
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            // Trigger the file input click with a small delay to allow overlay to render
+            setTimeout(function() {
+                var uploadDiv = document.getElementById('upload-data');
+                if (uploadDiv) {
+                    var input = uploadDiv.querySelector('input[type="file"]');
+                    if (input) {
+                        input.click();
+                    }
+                }
+            }, 100);
+
+            // Show Blocker (True), Enable Timeout (False)
+            return [true, false];
+        }
+        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+    }
+    """,
     Output("ui-blocker-store", "data", allow_duplicate=True),
     Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("menu-add-series", "n_clicks"),
     prevent_initial_call=True,
 )
-def trigger_upload_from_menu(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    # Trigger upload, Show Blocker, Enable Timeout
-    return f"menu-{n_clicks}", True, False
 
 
 @callback(
