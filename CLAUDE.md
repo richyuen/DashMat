@@ -5,10 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 DashMat is a Python dashboard for working with market returns time series data. Built with:
-- **Dash** - Plotly's framework for building analytical web applications
+- **Dash 2.14+** - Plotly's framework for building analytical web applications
 - **Dash Mantine Components (DMC)** - Modern UI component library
-- **Dash AG Grid Enterprise** - Advanced data grid for displaying returns
-- **pandas** - Data manipulation and time series handling
+- **Dash AG Grid 31+** - Advanced data grid for displaying returns
+- **Dash Iconify** - Icon library
+- **pandas 2.0+** - Data manipulation and time series handling
+- **scipy** - Scientific computing for distribution metrics
+- **Flask-Caching** - Performance optimization via memoization
+- **openpyxl, xlsxwriter** - Excel file handling
 
 ## Environment Setup
 
@@ -27,34 +31,88 @@ pip install -r requirements.txt
 # Run the application
 conda run -n dashmat python app.py
 
-# Run with debug mode
+# Run with debug mode (hot reload)
 conda run -n dashmat python app.py --debug
+
+# Generate test data
+conda run -n dashmat python generate_test_data.py
+```
+
+## Architecture
+
+```
+DashMat/
+├── app.py                    # Entry point, MantineProvider, cache init
+├── cache_config.py           # Flask-Caching setup with memoize decorator
+├── generate_test_data.py     # Test data generator (10 series)
+├── requirements.txt          # Python dependencies
+├── CLAUDE.md                 # This file
+├── pages/
+│   ├── __init__.py
+│   ├── home.py               # Welcome/portal page
+│   └── analyticstool.py      # Main analytics dashboard (~3,600 lines)
+└── utils/
+    ├── __init__.py
+    ├── parsing.py            # File parsing, percent detection, periodicity
+    ├── returns.py            # Return calculations, resampling, compounding
+    └── statistics.py         # Statistics calculations (40+ metrics)
 ```
 
 ## Application Functionality
 
 ### Core Features
 
-1. **File Upload**: Button to upload Excel (.xlsx) or CSV files containing returns data
-2. **Series Selection**: MultiSelect to choose which series to include in analysis
-3. **Benchmark Assignment**: Assign a benchmark to each selected series (can be any loaded series)
-4. **Returns Type**: Toggle between Total Returns and Excess Returns (vs assigned benchmark)
-5. **Periodicity Conversion**: Dropdown to convert daily returns to different periodicities
-6. **Append Data**: Additional uploads append new series as columns to the right
-7. **Export**: Download button to export displayed data as Excel
+1. **File Upload**: Upload Excel (.xlsx, .xls) or CSV files containing returns data
+2. **Series Selection Modal**: Select series, rename, assign benchmarks, configure long-short
+3. **Benchmark Assignment**: Assign any loaded series as a benchmark
+4. **Returns Type**: Toggle between Total Returns and Excess Returns (vs benchmark)
+5. **Periodicity Conversion**: Convert daily returns to weekly (Mon-Fri options) or monthly
+6. **Long-Short Analysis**: Calculate difference between series and benchmark
+7. **Volatility Scaling**: Scale returns to target volatility percentage
+8. **Append Data**: Additional uploads append new series as columns
+9. **Excel Export**: Multi-sheet export with all tabs
 
 ### UI Structure
 
-- **Controls Section**: Upload, Periodicity, Returns Type, Download
-- **Series Selection Section** (collapsible): MultiSelect + benchmark assignment dropdowns
-- **Tabs**: Returns grid, Statistics grid
+**Welcome Screen**: Shown when no data loaded - icon + "Add series from file" button
+
+**Menu Bar**:
+- File: Add series, Download Excel, Exit
+- Edit: Clear all series, Clear storage
+- Help: (placeholder)
+
+**Main Controls (Accordion)**:
+- Series Selection button → Opens modal
+- Periodicity dropdown (auto-populated based on data)
+- Returns Type toggle: Total/Excess
+- Vol Scaler input: 0-100%
+- Date range pickers
+
+**Tabs**:
+1. **Statistics** - 40+ metrics per series in AG Grid
+2. **Returns** - Time series returns data grid
+3. **Rolling** - Rolling metrics with configurable window/metric, chart/table toggle
+4. **Calendar Year** - Annual or monthly heatmap view (Jan-Dec columns)
+5. **Growth of $1** - Compound growth chart/table
+6. **Drawdown** - Drawdown series chart/table
+7. **Correlation** - Correlation matrix or correlogram (scatter matrix)
+
+### Series Selection Modal
+
+- Checkboxes to select series with move-up/down ordering
+- For each selected series:
+  - Rename input field
+  - Benchmark dropdown (any series or "None")
+  - Long-Short toggle
+  - Vol Scaling toggle
+- OK/Cancel applies or discards changes
 
 ### Data Format
 
 - **Rows**: Dates (daily or monthly)
 - **Columns**: Series names (e.g., "SPY", "AGG", "GLD")
 - **Values**: Returns in decimal (0.05) or percent with % sign (5%)
-- Percent signs are detected and values converted to decimal internally
+- Percent signs are auto-detected and converted to decimal internally
 
 ### Periodicity Rules
 
@@ -65,26 +123,85 @@ conda run -n dashmat python app.py --debug
 
 **Weekly End-of-Week Options**: Monday, Tuesday, Wednesday, Thursday, Friday
 
-### Key Logic
+## State Management
 
-- **Percent Detection**: Check if any cell contains '%' character, strip and divide by 100
-- **Date Parsing**: Auto-detect date format, determine if daily or monthly frequency
-- **Resampling**: Use pandas `.resample()` for periodicity conversion
+### Core Data Stores (dcc.Store)
+
+```python
+# Core data
+raw-data-store                    # Original uploaded data (JSON string)
+original-periodicity-store        # Auto-detected: 'daily' or 'monthly'
+series-select                     # List of selected series names
+benchmark-assignments-store       # Dict: {series_name: benchmark_name}
+long-short-store                  # Dict: {series_name: is_long_short}
+
+# UI controls
+periodicity-value-store           # Current periodicity selection
+returns-type-value-store          # 'total' or 'excess'
+vol-scaler-value-store            # Volatility scaling percentage
+date-range-store                  # Start/end date filters
+vol-scaling-assignments-store     # Dict: {series_name: apply_vol_scaling}
+
+# Tab states
+active-tab-store                  # Current active tab
+rolling-metric-store              # Selected rolling metric
+rolling-window-store              # Selected rolling window
+drawdown-chart-switch-store       # Chart vs table view
+growth-chart-switch-store         # Chart vs table view
+monthly-view-store                # Annual vs monthly calendar view
+monthly-series-store              # Selected series for monthly view
+
+# Modal state
+temp-series-select                # Draft selection before OK
+temp-benchmark-assignments-store  # Draft assignments before OK
+series-edit-mode                  # Modal open state
+```
+
+### State Management Pattern
+
+1. **Separation**: Persistent stores vs transient UI component state
+2. **Sync callbacks**: Map store → UI and UI → store bidirectionally
+3. **Modal pattern**: Temp stores hold draft changes until user confirms
+4. **JSON serialization**: DataFrames stored as JSON for browser transport
+
+## Key Logic
+
+### Parsing (utils/parsing.py)
+
+- **Percent Detection**: Check if any cell contains '%', strip and divide by 100
+- **Date Parsing**: Auto-detect format, set as DatetimeIndex
+- **Periodicity Detection**: Sample first 5 rows, median diff > 20 days = monthly
+
+```python
+parse_uploaded_file(contents, filename)  # Entry point
+convert_percents_to_decimals(df)         # Format handling
+detect_periodicity(df) -> str            # Returns 'daily'/'monthly'
+```
+
+### Returns Calculations (utils/returns.py)
+
+- **Compounding**: `(1 + r).prod() - 1` using numpy for performance
+- **Resampling**: pandas `.resample()` with partial period masking
   - Weekly: `'W-MON'`, `'W-TUE'`, `'W-WED'`, `'W-THU'`, `'W-FRI'`
   - Monthly: `'ME'` (month end)
-- **Compounding**: Convert returns to growth factors `(1 + r)`, compound with `.prod()`, subtract 1
-- **Append Logic**: Outer join on date index when appending new series
+- **Excess Returns**: Arithmetic difference (series - benchmark)
+- **Long-Short**: Treats series-benchmark difference as absolute stream
+- **Volatility Scaling**: Scale returns to achieve target annualized vol
 
-### State Management
+```python
+get_working_returns()              # Core calculation engine
+calculate_excess_returns()         # Excess returns calculation
+calculate_rolling_returns()        # Rolling stats (3m-10y windows)
+calculate_calendar_year_returns()  # Annual returns by year
+create_monthly_view()              # Jan-Dec monthly heatmap
+```
 
-Track these in `dcc.Store`:
-- `raw-data-store`: Original uploaded returns (preserves daily granularity if available)
-- `original-periodicity-store`: Highest frequency available (daily or monthly)
-- `benchmark-assignments-store`: Dict mapping series name to benchmark name
+**Annualization Factors**:
+- Daily: 252
+- Weekly: 52
+- Monthly: 12
 
-### Statistics Tab
-
-Calculates per-series statistics using the assigned benchmark:
+### Statistics (utils/statistics.py)
 
 | Statistic | Description |
 |-----------|-------------|
@@ -96,23 +213,32 @@ Calculates per-series statistics using the assigned benchmark:
 | Annualized Volatility | Std dev × √periods_per_year |
 | Annualized Tracking Error | Std dev of excess returns × √periods_per_year |
 | Sharpe Ratio | Annualized return / Annualized volatility (rf=0) |
+| Sortino Ratio | Annualized return / Downside deviation |
 | Information Ratio | Annualized excess / Tracking error |
+| Correlation | Pearson correlation vs benchmark |
 | Hit Rate | % of positive returns |
 | Hit Rate (vs Benchmark) | % of periods outperforming benchmark |
 | Best/Worst Period Return | Max/min single period return |
 | Maximum Drawdown | Largest peak-to-trough decline |
-| Skewness/Kurtosis | Distribution shape metrics |
+| Skewness/Kurtosis | Distribution shape metrics (scipy.stats) |
 | 1Y/3Y/5Y metrics | Trailing period versions of key stats |
 
-## Architecture
+## Caching Strategy (cache_config.py)
 
+```python
+# Initialize cache
+init_cache(app)  # SimpleCache, 300s timeout, 100 items max
+
+# Memoize decorator for module-level use
+@cache_config.memoize(timeout=0)  # Zero timeout = session-persistent
+def expensive_calculation(...):
+    ...
+
+# CacheProxy for cache-agnostic code
+cache_config.cache.memoize(timeout=0)
 ```
-app.py                  # Entry point, layout, and callbacks
-utils/
-    parsing.py          # CSV/Excel parsing, percent detection, periodicity detection
-    returns.py          # Return calculations, compounding, resampling
-    statistics.py       # Statistics calculations (returns, risk, ratios)
-```
+
+**Purpose**: Prevent recalculation of expensive financial operations (compounding, statistics).
 
 ## AG Grid Configuration
 
@@ -132,3 +258,51 @@ dag.AgGrid(
     }
 )
 ```
+
+## Code Conventions
+
+### Callbacks
+
+- ~50 callbacks in analyticstool.py handling complex state
+- Use `prevent_initial_call=True` where appropriate
+- Store sync callbacks keep UI and stores in sync
+- Callbacks return `dash.no_update` to skip unnecessary updates
+
+### Data Flow
+
+1. File upload → `raw-data-store`
+2. UI controls (periodicity, returns-type) → stores
+3. Stores → calculation functions (memoized)
+4. Results → grid/chart rendering
+
+### Financial Calculations
+
+- All returns calculations use vectorized numpy/pandas operations
+- Benchmark alignment: Force common dates before relative metrics
+- NaN handling: Careful `dropna()` with `min_periods` constraints
+- Outer joins preserve all dates when merging series
+
+### Error Handling
+
+- Graceful handling of missing benchmarks
+- Validation before invalid operations (e.g., upsampling monthly data)
+- Modal validation prevents invalid benchmark assignments
+
+## Testing
+
+```bash
+# Generate test data with 10 series
+python generate_test_data.py
+# Creates test_data.csv with SPY, AGG, GLD, etc.
+```
+
+## Excel Export
+
+Multi-sheet workbook with:
+- Statistics sheet
+- Returns sheet
+- Rolling (configurable metric/window)
+- Calendar Year
+- Growth of $1
+- Drawdown
+- Correlation matrix
