@@ -3150,11 +3150,11 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         # Create individual series vs benchmark charts
         individual_charts = []
         for series in available_series:
-            benchmark = benchmark_dict.get(series, available_series[0])
+            benchmark = benchmark_dict.get(series, None)
             is_long_short = long_short_dict.get(series, False)
 
             # Skip if benchmark is None or same as series
-            if benchmark == "None" or benchmark == series:
+            if benchmark is None or benchmark == "None" or benchmark == series:
                 continue
 
             if benchmark not in df.columns:
