@@ -1286,10 +1286,10 @@ def reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_val
 
     # Parse the button ID
     try:
-        button_data = eval(triggered_id.rsplit(".", 1)[0])
+        button_data = json.loads(triggered_id.rsplit(".", 1)[0])
         button_type = button_data["type"]
         series_name = button_data["series"]
-    except (SyntaxError, KeyError, ValueError):
+    except (json.JSONDecodeError, KeyError, ValueError):
         raise PreventUpdate
 
     # Reconstruct selected series from checkbox states
@@ -1350,87 +1350,79 @@ def clear_all_series(n_clicks):
 
 
 
-@callback(
+# Clientside callback for periodicity selection storage
+clientside_callback(
+    "function(value) { return value; }",
     Output("periodicity-value-store", "data"),
     Input("periodicity-select", "value"),
     prevent_initial_call=True,
 )
-def save_periodicity(value):
-    """Save periodicity selection to local storage."""
-    return value
 
 
-@callback(
+# Clientside callback for returns type selection storage
+clientside_callback(
+    "function(value) { return value; }",
     Output("returns-type-value-store", "data"),
     Input("returns-type-select", "value"),
     prevent_initial_call=True,
 )
-def save_returns_type(value):
-    """Save returns type selection to local storage."""
-    return value
 
 
-@callback(
+# Clientside callback for vol scaler value storage
+clientside_callback(
+    "function(value) { return value; }",
     Output("vol-scaler-value-store", "data"),
     Input("vol-scaler-input", "value"),
     prevent_initial_call=True,
 )
-def save_vol_scaler_value(value):
-    """Save vol scaler value to local storage."""
-    return value
 
 
-@callback(
+# Clientside callback for series selection storage
+clientside_callback(
+    "function(value) { return value || []; }",
     Output("series-select-value-store", "data"),
     Input("series-select", "data"),
     prevent_initial_call=True,
 )
-def save_series_selection(value):
-    """Save series selection to local storage."""
-    return value or []
 
 
-@callback(
+# Clientside callback for active tab storage
+clientside_callback(
+    "function(value) { return value || 'statistics'; }",
     Output("active-tab-store", "data"),
     Input("main-tabs", "value"),
     prevent_initial_call=True,
 )
-def save_active_tab(value):
-    """Save active tab to local storage."""
-    return value or "statistics"
 
 
 
 
 
-@callback(
+# Clientside callback for rolling window selection storage
+clientside_callback(
+    "function(value) { return value || '1y'; }",
     Output("rolling-window-store", "data"),
     Input("rolling-window-select", "value"),
     prevent_initial_call=True,
 )
-def save_rolling_window(value):
-    """Save rolling window selection to local storage."""
-    return value or "1y"
 
 
-@callback(
+# Clientside callback for rolling metric selection storage
+clientside_callback(
+    "function(value) { return value || 'total_return'; }",
     Output("rolling-metric-store", "data"),
     Input("rolling-metric-select", "value"),
     prevent_initial_call=True,
 )
-def save_rolling_metric(value):
-    """Save rolling metric selection to local storage."""
-    return value or "total_return"
 
 
-@callback(
+# Clientside callback for rolling return type storage
+clientside_callback(
+    "function(value) { return value || 'annualized'; }",
     Output("rolling-return-type-store", "data"),
     Input("rolling-return-type-select", "value"),
     prevent_initial_call=True,
 )
-def save_rolling_return_type(value):
-    """Save rolling return type to local storage."""
-    return value or "annualized"
 
 
 @callback(
@@ -1448,110 +1440,117 @@ def update_rolling_controls_state(metric):
 
 
 
-@callback(
+# Clientside callback for rolling chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("rolling-chart-switch-store", "data"),
     Input("rolling-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def save_rolling_chart_switch(value):
-    """Save rolling chart switch state to local storage."""
-    return value if value is not None else "chart"
 
 
 
 
 
-@callback(
+# Clientside callback for rolling view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        const flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
     Output("rolling-grid-container", "style"),
     Output("rolling-chart-container", "style"),
     Input("rolling-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def toggle_rolling_view(view_type):
-    """Toggle between grid and chart view for rolling returns."""
-    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
-    if view_type == "chart":
-        return {"display": "none"}, flex_style
-    else:
-        return flex_style, {"display": "none"}
 
 
-@callback(
+# Clientside callback for drawdown chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("drawdown-chart-switch-store", "data"),
     Input("drawdown-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def save_drawdown_chart_switch(value):
-    """Save drawdown chart switch state to local storage."""
-    return value if value is not None else "chart"
 
 
 
 
 
-@callback(
+# Clientside callback for drawdown view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        const flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        const flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_scroll_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
     Output("drawdown-grid-container", "style"),
     Output("drawdown-chart-container", "style"),
     Input("drawdown-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def toggle_drawdown_view(view_type):
-    """Toggle between grid and chart view for drawdown."""
-    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
-    flex_scroll_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"}
-    if view_type == "chart":
-        return {"display": "none"}, flex_scroll_style
-    else:
-        return flex_style, {"display": "none"}
 
 
-@callback(
+# Clientside callback for growth chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("growth-chart-switch-store", "data"),
     Input("growth-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def save_growth_chart_switch(value):
-    """Save growth chart switch state to local storage."""
-    return value if value is not None else "chart"
 
 
 
 
 
-@callback(
+# Clientside callback for growth view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        const flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        const flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_scroll_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
     Output("growth-grid-container", "style"),
     Output("growth-chart-container", "style"),
     Input("growth-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def toggle_growth_view(view_type):
-    """Toggle between grid and chart view for growth of $1."""
-    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
-    flex_scroll_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"}
-    if view_type == "chart":
-        return {"display": "none"}, flex_scroll_style
-    else:
-        return flex_style, {"display": "none"}
 
 
-@callback(
+# Clientside callback for monthly view storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'annual'; }",
     Output("monthly-view-store", "data"),
     Input("monthly-view-checkbox", "value"),
     prevent_initial_call=True,
 )
-def save_monthly_view(value):
-    """Save monthly view selection to local storage."""
-    return value if value is not None else "annual"
 
 
-@callback(
+# Clientside callback for monthly series selection storage
+clientside_callback(
+    "function(value) { return value; }",
     Output("monthly-series-store", "data"),
     Input("monthly-series-select", "value"),
     prevent_initial_call=True,
 )
-def save_monthly_series(value):
-    """Save monthly series selection to local storage."""
-    return value
 
 
 
@@ -2308,12 +2307,12 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
             raw_data,
             periodicity or "daily",
             tuple(selected_series),  # Convert to tuple for cache key
-            str(benchmark_assignments),  # Convert to string for cache key
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",  # Convert to string for cache key
             returns_type,
-            str(long_short_assignments),  # Convert to string for cache key
-            str(date_range),  # Convert to string for cache key
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",  # Convert to string for cache key
+            json.dumps(date_range) if date_range else "null",  # Convert to string for cache key
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if display_df.empty:
@@ -2381,14 +2380,14 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
             periodicity,
             tuple(selected_series),
             "total",
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             rolling_window,
             rolling_return_type,
             rolling_metric or "total_return",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if rolling_df.empty:
@@ -2471,14 +2470,14 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
             periodicity,
             tuple(selected_series),
             "total",
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             rolling_window,
             rolling_return_type,
             rolling_metric or "total_return",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if rolling_df.empty:
@@ -2648,12 +2647,12 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 original_periodicity,
                 selected_periodicity,
                 returns_type,
-                benchmark_assignments,
-                long_short_assignments,
+                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+                json.dumps(long_short_assignments) if long_short_assignments else "{}",
                 selected_series,
-                date_range,
+                json.dumps(date_range) if date_range else "null",
                 vol_scaler or 0,
-                str(vol_scaling_assignments)
+                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
             )
 
         else:
@@ -2664,11 +2663,11 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 selected_periodicity,
                 selected_series,
                 returns_type,
-                benchmark_assignments,
-                long_short_assignments,
-                date_range,
+                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+                json.dumps(long_short_assignments) if long_short_assignments else "{}",
+                json.dumps(date_range) if date_range else "null",
                 vol_scaler or 0,
-                str(vol_scaling_assignments)
+                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
             )
 
             if calendar_returns.empty:
@@ -2738,11 +2737,11 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             raw_data,
             periodicity or "daily",
             tuple(selected_series),
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if not stats:
@@ -2872,17 +2871,33 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     if raw_data is None or not selected_series or len(selected_series) < 2:
         return empty_graph
 
+    # Enforce scatter matrix size limit to prevent browser crashes
+    if correlation_view == "correlogram" and len(selected_series) > MAX_SCATTER_MATRIX_SIZE:
+        error_fig = go.Figure()
+        error_fig.add_annotation(
+            text=f"Too many series ({len(selected_series)}). Correlogram limited to {MAX_SCATTER_MATRIX_SIZE} series.<br>Please deselect some series or use the heatmap view.",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16, color="red"),
+        )
+        error_fig.update_layout(
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            template="plotly_white",
+        )
+        return dcc.Graph(figure=error_fig, style={"height": "100%"})
+
     try:
         result = generate_correlogram_cached(
             raw_data,
             periodicity or "daily",
             tuple(selected_series),
             returns_type,
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if result is None:
@@ -3067,15 +3082,15 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         # Use get_working_returns to get aligned data + benchmarks
         df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range),
-            vol_scaler or 0, str(vol_scaling_assignments)
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}", json.dumps(long_short_assignments) if long_short_assignments else "{}", json.dumps(date_range) if date_range else "null",
+            vol_scaler or 0, json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if df.empty:
             return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
 
         # Filter to selected series only
         available_series = [s for s in selected_series if s in df.columns]
@@ -3099,11 +3114,11 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             raw_data,
             periodicity,
             tuple(selected_series),
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         # Create main growth figure
@@ -3252,11 +3267,11 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
             raw_data,
             periodicity,
             tuple(selected_series),
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if growth_df.empty:
@@ -3323,17 +3338,17 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
             periodicity,
             tuple(selected_series),
             returns_type,
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if drawdown_df.empty:
             return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
 
         # Create individual drawdown charts for each series
         charts = []
@@ -3407,11 +3422,11 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
             periodicity,
             tuple(selected_series),
             returns_type,
-            str(benchmark_assignments),
-            str(long_short_assignments),
-            str(date_range),
+            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+            json.dumps(long_short_assignments) if long_short_assignments else "{}",
+            json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
-            str(vol_scaling_assignments)
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
         )
 
         if drawdown_df.empty:
@@ -3477,12 +3492,12 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         raw_data,
         selected_periodicity or "daily",
         tuple(selected_series),
-        str(benchmark_assignments),
+        json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
         returns_type,
-        str(long_short_assignments),
-        str(date_range),
+        json.dumps(long_short_assignments) if long_short_assignments else "{}",
+        json.dumps(date_range) if date_range else "null",
         vol_scaler or 0,
-        str(vol_scaling_assignments)
+        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
     )
 
     if returns_df.empty:
@@ -3493,11 +3508,11 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         raw_data,
         selected_periodicity or "daily",
         tuple(selected_series),
-        str(benchmark_assignments),
-        str(long_short_assignments),
-        str(date_range),
+        json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+        json.dumps(long_short_assignments) if long_short_assignments else "{}",
+        json.dumps(date_range) if date_range else "null",
         vol_scaler or 0,
-        str(vol_scaling_assignments)
+        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
     )
 
     # Build statistics DataFrame (transposed: statistics as rows, series as columns)
@@ -3531,14 +3546,14 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                 selected_periodicity,
                 tuple(selected_series),
                 returns_type,
-                str(benchmark_assignments),
-                str(long_short_assignments),
-                str(date_range),
+                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+                json.dumps(long_short_assignments) if long_short_assignments else "{}",
+                json.dumps(date_range) if date_range else "null",
                 window,
                 return_type,
                 "total_return", # Default metric for excel
                 vol_scaler or 0,
-                str(vol_scaling_assignments)
+                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
             )
             if not rolling_df.empty:
                 # Create sheet name based on window and type
@@ -3574,7 +3589,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                         selected_series,
                         date_range,
                         vol_scaler or 0,
-                        str(vol_scaling_assignments)
+                        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
                     )
 
                     if row_data:
@@ -3595,7 +3610,7 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                         long_short_assignments,
                         date_range,
                         vol_scaler or 0,
-                        str(vol_scaling_assignments)
+                        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
                     )
                     if not calendar_df.empty:
                         calendar_df.to_excel(writer, sheet_name="Calendar Year")
@@ -3608,11 +3623,11 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                 raw_data,
                 selected_periodicity,
                 tuple(selected_series),
-                str(benchmark_assignments),
-                str(long_short_assignments),
-                str(date_range),
+                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+                json.dumps(long_short_assignments) if long_short_assignments else "{}",
+                json.dumps(date_range) if date_range else "null",
                 vol_scaler or 0,
-                str(vol_scaling_assignments)
+                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
             )
             if not growth_df.empty:
                 growth_df.to_excel(writer, sheet_name="Growth of $1")
@@ -3626,11 +3641,11 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                 selected_periodicity,
                 tuple(selected_series),
                 returns_type,
-                str(benchmark_assignments),
-                str(long_short_assignments),
-                str(date_range),
+                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
+                json.dumps(long_short_assignments) if long_short_assignments else "{}",
+                json.dumps(date_range) if date_range else "null",
                 vol_scaler or 0,
-                str(vol_scaling_assignments)
+                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
             )
             if not drawdown_df.empty:
                 drawdown_df.to_excel(writer, sheet_name="Drawdown")

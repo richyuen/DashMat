@@ -49,13 +49,14 @@ def convert_percents_to_decimals(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in result.columns:
         if result[col].dtype == object:
+            # Convert to string once and cache it
+            str_series = result[col].astype(str)
             # Check if any values contain '%'
-            mask = result[col].astype(str).str.contains("%", na=False)
+            mask = str_series.str.contains("%", na=False)
             if mask.any():
                 # Convert entire column: strip '%' and divide by 100
                 result[col] = (
-                    result[col]
-                    .astype(str)
+                    str_series
                     .str.replace("%", "", regex=False)
                     .astype(float)
                     / 100

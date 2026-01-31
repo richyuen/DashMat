@@ -1,5 +1,6 @@
 """Statistics calculations for returns analysis."""
 
+import json
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -360,8 +361,8 @@ def calculate_statistics_cached(
     if df.empty:
         return []
 
-    benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-    long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+    benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+    long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
     
     results = []
     # Ensure selected_series is iterable
@@ -484,8 +485,8 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
         if working_df.empty:
             return pd.DataFrame()
 
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
 
         # Determine the period offset based on periodicity
         periodicity_str = periodicity or "daily"

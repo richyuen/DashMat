@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from utils.parsing import detect_periodicity
+from utils.constants import WINDOW_MAP_DAYS, WINDOW_DAYS_MAP, WINDOW_YEARS_MAP
 import cache_config
 
 
@@ -259,10 +260,10 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
     df = resample_returns_cached(json_str, periodicity)
     
     # 2. Parse configurations
-    bench_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-    ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
-    date_range = eval(str(date_range_str)) if date_range_str and str(date_range_str) != "None" else None
-    vol_scaling_dict = eval(str(vol_scaling_assignments)) if vol_scaling_assignments else {}
+    bench_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+    ls_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+    date_range = json.loads(date_range_str) if isinstance(date_range_str, str) and date_range_str != "None" else (date_range_str if isinstance(date_range_str, list) else None)
+    vol_scaling_dict = json.loads(vol_scaling_assignments) if isinstance(vol_scaling_assignments, str) else (vol_scaling_assignments if isinstance(vol_scaling_assignments, dict) else {})
     
     # 3. Global Date Range Filter
     if date_range:
@@ -367,8 +368,8 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
     # for non-L/S series. L/S series are already diffs.
     if returns_type == "excess":
         # We use display_df which now includes benchmarks
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        ls_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+        ls_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
         
         # Iterate over SELECTED series only
         for series in selected_series:
@@ -413,8 +414,8 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
             return pd.DataFrame()
 
         # Parse assignments
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
 
         # Calculate periods per year and window size
         periods_per_year = annualization_factor(periodicity or "daily")
@@ -424,26 +425,10 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
 
         if use_calendar_days:
             # Map rolling window to calendar days
-            window_map_days = {
-                "3m": "91D",
-                "6m": "183D",
-                "1y": "365D",
-                "3y": "1096D",
-                "5y": "1826D",
-                "10y": "3652D",
-            }
-            window_spec = window_map_days.get(rolling_window, "365D")
+            window_spec = WINDOW_MAP_DAYS.get(rolling_window, "365D")
 
             # Extract the number of days from the window spec
-            window_days_map = {
-                "3m": 91,
-                "6m": 183,
-                "1y": 365,
-                "3y": 1096,
-                "5y": 1826,
-                "10y": 3652,
-            }
-            min_calendar_days = window_days_map.get(rolling_window, 365)
+            min_calendar_days = WINDOW_DAYS_MAP.get(rolling_window, 365)
             window_size = None  # Not used for time-based rolling
         else:
             # Map rolling window to number of periods
@@ -460,15 +445,7 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
             window_spec = window_size
 
         # Map rolling window to number of years for annualization (only used for returns)
-        window_years_map = {
-            "3m": 0.25,
-            "6m": 0.5,
-            "1y": 1.0,
-            "3y": 3.0,
-            "5y": 5.0,
-            "10y": 10.0,
-        }
-        window_years = window_years_map.get(rolling_window, 1.0)
+        window_years = WINDOW_YEARS_MAP.get(rolling_window, 1.0)
 
         # Helper functions for rolling apply
         def calc_rolling_return(window):
@@ -626,9 +603,9 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
 
         if working_df.empty:
             return pd.DataFrame()
-            
-        benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-        long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+
+        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
 
         calendar_returns = {}
 
@@ -751,8 +728,8 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         return [], []
         
     # Check configurations
-    benchmark_dict = eval(str(benchmark_assignments)) if benchmark_assignments else {}
-    long_short_dict = eval(str(long_short_assignments)) if long_short_assignments else {}
+    benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
+    long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
     is_ls = long_short_dict.get(series_name, False)
     
     # If Excess requested (and not L/S), we need benchmark data

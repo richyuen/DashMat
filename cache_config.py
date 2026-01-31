@@ -24,7 +24,7 @@ def init_cache(server):
     _cache = Cache(server, config={
         'CACHE_TYPE': 'SimpleCache',
         'CACHE_DEFAULT_TIMEOUT': 300,  # 5 minutes
-        'CACHE_THRESHOLD': 100,  # Maximum number of cached items
+        'CACHE_THRESHOLD': 500,  # Maximum number of cached items (5x increase for better hit rate)
     })
     return _cache
 
