@@ -107,7 +107,7 @@ def build_welcome_screen():
             dmc.Button(
                 "Add series from file",
                 leftSection=DashIconify(icon="tabler:upload"),
-                variant="light",
+                variant="outline",
                 mt="lg",
                 id="welcome-add-series-btn"
             ),
@@ -120,14 +120,14 @@ def build_welcome_screen():
                         leftSection=DashIconify(icon="tabler:download"),
                         id="download-sample-daily-btn",
                         size="sm",
-                        variant="outline",
+                        variant="light",
                     ),
                     dmc.Button(
                         "Sample Monthly File",
                         leftSection=DashIconify(icon="tabler:download"),
                         id="download-sample-monthly-btn",
                         size="sm",
-                        variant="outline",
+                        variant="light",
                     ),
                 ],
             ),
@@ -1603,21 +1603,13 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
         if existing_data is not None:
             existing_df = json_to_df(existing_data)
 
-            # Check periodicity compatibility
+            # Check periodicity compatibility and resample if needed
             if existing_periodicity == "monthly" and new_periodicity == "daily":
-                return (
-                    no_update, no_update, no_update, no_update, no_update,
-                    no_update,
-                    "Cannot append daily data to monthly data. Monthly data cannot be upsampled.",
-                    "red",
-                    False,
-                    no_update, no_update, no_update, no_update, no_update,
-                    no_update, no_update, no_update,
-                    False, True # Hide blocker
-                )
-
-            # If new data is monthly but existing is daily, convert existing to monthly
-            if new_periodicity == "monthly" and existing_periodicity == "daily":
+                # Resample new daily data to monthly before appending
+                new_df = resample_returns(new_df, "monthly")
+                combined_periodicity = "monthly"
+            elif new_periodicity == "monthly" and existing_periodicity == "daily":
+                # If new data is monthly but existing is daily, convert existing to monthly
                 existing_df = resample_returns(existing_df, "monthly")
                 combined_periodicity = "monthly"
             else:
