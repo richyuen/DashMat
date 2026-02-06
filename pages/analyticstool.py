@@ -40,7 +40,6 @@ from utils.statistics import (
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
 # Performance optimization constants
-MAX_SCATTER_MATRIX_SIZE = 10  # Maximum series for scatter matrix (creates n² subplots)
 
 # Statistics row order and formatting
 STATS_CONFIG = [
@@ -2870,22 +2869,6 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
 
     if raw_data is None or not selected_series or len(selected_series) < 2:
         return empty_graph
-
-    # Enforce scatter matrix size limit to prevent browser crashes
-    if correlation_view == "correlogram" and len(selected_series) > MAX_SCATTER_MATRIX_SIZE:
-        error_fig = go.Figure()
-        error_fig.add_annotation(
-            text=f"Too many series ({len(selected_series)}). Correlogram limited to {MAX_SCATTER_MATRIX_SIZE} series.<br>Please deselect some series or use the heatmap view.",
-            xref="paper", yref="paper",
-            x=0.5, y=0.5, showarrow=False,
-            font=dict(size=16, color="red"),
-        )
-        error_fig.update_layout(
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            template="plotly_white",
-        )
-        return dcc.Graph(figure=error_fig, style={"height": "100%"})
 
     try:
         result = generate_correlogram_cached(

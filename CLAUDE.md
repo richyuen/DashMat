@@ -43,19 +43,22 @@ conda run -n dashmat python generate_test_data.py
 ```
 DashMat/
 ├── app.py                    # Entry point, MantineProvider, cache init
-├── cache_config.py           # Flask-Caching setup with memoize decorator
-├── generate_test_data.py     # Test data generator (10 series)
+├── cache_config.py           # Flask-Caching setup with lazy memoize decorator
+├── generate_test_data.py     # Test data generator (10 series named Series_1-10)
 ├── requirements.txt          # Python dependencies
 ├── CLAUDE.md                 # This file
+├── TESTING_CHECKLIST.md      # Manual testing checklist for all features
 ├── pages/
 │   ├── __init__.py
-│   ├── home.py               # Welcome/portal page
-│   └── analyticstool.py      # Main analytics dashboard (~3,600 lines)
+│   ├── home.py               # Welcome/portal page (links to /dashboard)
+│   └── analyticstool.py      # Main analytics dashboard (~3,700 lines)
 └── utils/
     ├── __init__.py
-    ├── parsing.py            # File parsing, percent detection, periodicity
-    ├── returns.py            # Return calculations, resampling, compounding
-    └── statistics.py         # Statistics calculations (40+ metrics)
+    ├── constants.py           # Window/day mappings for rolling calculations
+    ├── parsing.py             # File parsing, percent detection, periodicity
+    ├── returns.py             # Return calculations, resampling, compounding
+    ├── sample_data.py         # Sample data generation for downloads
+    └── statistics.py          # Statistics calculations (40+ metrics)
 ```
 
 ## Application Functionality
@@ -69,15 +72,16 @@ DashMat/
 5. **Periodicity Conversion**: Convert daily returns to weekly (Mon-Fri options) or monthly
 6. **Long-Short Analysis**: Calculate difference between series and benchmark
 7. **Volatility Scaling**: Scale returns to target volatility percentage
-8. **Append Data**: Additional uploads append new series as columns
+8. **Append Data**: Additional uploads append new series; daily data auto-resamples to monthly when appending to monthly data
 9. **Excel Export**: Multi-sheet export with all tabs
+10. **Sample Data Download**: File menu offers sample daily or monthly data files (Daily1-6 or Monthly1-6)
 
 ### UI Structure
 
 **Welcome Screen**: Shown when no data loaded - icon + "Add series from file" button
 
 **Menu Bar**:
-- File: Add series, Download Excel, Exit
+- File: Add series, Download sample data (daily/monthly), Download Excel, Exit
 - Edit: Clear all series, Clear storage
 - Help: (placeholder)
 
@@ -95,7 +99,7 @@ DashMat/
 4. **Calendar Year** - Annual or monthly heatmap view (Jan-Dec columns)
 5. **Growth of $1** - Compound growth chart/table
 6. **Drawdown** - Drawdown series chart/table
-7. **Correlation** - Correlation matrix or correlogram (scatter matrix)
+7. **Correlation** - Correlation heatmap or correlogram (scatter matrix)
 
 ### Series Selection Modal
 
@@ -122,6 +126,8 @@ DashMat/
 | Monthly | Monthly only (no upsampling) |
 
 **Weekly End-of-Week Options**: Monday, Tuesday, Wednesday, Thursday, Friday
+
+**Auto-resampling**: When appending daily data to an existing monthly dataset, daily data is automatically resampled to monthly frequency.
 
 ## State Management
 
@@ -178,6 +184,16 @@ convert_percents_to_decimals(df)         # Format handling
 detect_periodicity(df) -> str            # Returns 'daily'/'monthly'
 ```
 
+### Constants (utils/constants.py)
+
+Window mappings extracted for use across rolling calculations:
+
+```python
+WINDOW_MAP_DAYS    # {"3m": "91D", "6m": "183D", ...} for pd.rolling
+WINDOW_DAYS_MAP    # {"3m": 91, "6m": 183, ...} for min_periods
+WINDOW_YEARS_MAP   # {"3m": 0.25, "6m": 0.5, ...} for annualization
+```
+
 ### Returns Calculations (utils/returns.py)
 
 - **Compounding**: `(1 + r).prod() - 1` using numpy for performance
@@ -200,6 +216,17 @@ create_monthly_view()              # Jan-Dec monthly heatmap
 - Daily: 252
 - Weekly: 52
 - Monthly: 12
+
+### Sample Data (utils/sample_data.py)
+
+Generates synthetic returns data for download from the File menu:
+
+```python
+generate_sample_returns(periodicity)  # Create daily or monthly sample data (6 series)
+create_sample_excel(periodicity)      # Package as downloadable Excel bytes
+```
+
+Series are named `Daily1-6` or `Monthly1-6` depending on periodicity.
 
 ### Statistics (utils/statistics.py)
 
@@ -227,16 +254,18 @@ create_monthly_view()              # Jan-Dec monthly heatmap
 
 ```python
 # Initialize cache
-init_cache(app)  # SimpleCache, 300s timeout, 100 items max
+init_cache(app.server)  # SimpleCache, 300s timeout, 500 items max
 
-# Memoize decorator for module-level use
-@cache_config.memoize(timeout=0)  # Zero timeout = session-persistent
+# Lazy memoize decorator for module-level use (works before cache init)
+@cache_config.memoize(timeout=300)
 def expensive_calculation(...):
     ...
 
 # CacheProxy for cache-agnostic code
-cache_config.cache.memoize(timeout=0)
+cache_config.cache.memoize(timeout=300)
 ```
+
+The memoize decorator uses MD5-hashed cache keys from function arguments and defers cache access until call time, allowing decoration at import time before the cache is initialized.
 
 **Purpose**: Prevent recalculation of expensive financial operations (compounding, statistics).
 
@@ -263,15 +292,16 @@ dag.AgGrid(
 
 ### Callbacks
 
-- ~50 callbacks in analyticstool.py handling complex state
+- 59 callbacks in analyticstool.py: 34 server-side `@callback` + 25 `clientside_callback`
+- Clientside callbacks handle instant UI toggles (store ↔ component sync) for performance
+- Server-side callbacks handle data processing, chart rendering, and complex logic
 - Use `prevent_initial_call=True` where appropriate
-- Store sync callbacks keep UI and stores in sync
 - Callbacks return `dash.no_update` to skip unnecessary updates
 
 ### Data Flow
 
 1. File upload → `raw-data-store`
-2. UI controls (periodicity, returns-type) → stores
+2. UI controls (periodicity, returns-type) → stores (via clientside callbacks)
 3. Stores → calculation functions (memoized)
 4. Results → grid/chart rendering
 
@@ -288,13 +318,23 @@ dag.AgGrid(
 - Validation before invalid operations (e.g., upsampling monthly data)
 - Modal validation prevents invalid benchmark assignments
 
+### Performance Optimizations
+
+- 25 clientside callbacks for instant UI toggles (no server round-trip)
+- `json.loads()` for JSON deserialization (not `eval()`)
+- Cache threshold of 500 items for better hit rate
+- Memoization with MD5 hash keys on expensive calculations
+- Vectorized numpy operations for compounding
+
 ## Testing
 
 ```bash
-# Generate test data with 10 series
+# Generate test data with 10 series (Series_1 through Series_10)
 python generate_test_data.py
-# Creates test_data.csv with SPY, AGG, GLD, etc.
+# Creates test_data.csv with random daily returns and varying date ranges
 ```
+
+See `TESTING_CHECKLIST.md` for a comprehensive manual testing guide covering all tabs, state persistence, periodicity conversion, and export.
 
 ## Excel Export
 
