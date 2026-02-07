@@ -882,9 +882,24 @@ layout = dmc.Container(
 )
 
 
-@callback(
+# Toggle welcome/main visibility based on raw-data-store (clientside for reliable
+# session-storage hydration on cross-page navigation)
+clientside_callback(
+    """
+    function(data) {
+        if (data) {
+            return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
+        }
+        return [{display: "block"}, {display: "none"}];
+    }
+    """,
     Output("welcome-screen-container", "style"),
     Output("main-app-container", "style"),
+    Input("raw-data-store", "data"),
+)
+
+
+@callback(
     Output("periodicity-select", "data", allow_duplicate=True),
     Output("periodicity-select", "value", allow_duplicate=True),
     Output("returns-type-select", "value"),
@@ -919,9 +934,8 @@ layout = dmc.Container(
 )
 def restore_application_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series):
     if not raw_data:
-        # Show welcome, hide main, reset defaults if needed
+        # Reset defaults (visibility handled by clientside callback)
         return (
-            {"display": "block"}, {"display": "none"},
             [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
             "annual", []
@@ -981,16 +995,14 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
                 monthly_series_val = valid_selection[0]
         
         return (
-            {"display": "none"}, {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
             monthly_view, valid_selection
         )
 
     except Exception:
-        # Fallback to welcome screen on error
+        # Fallback to defaults on error (visibility handled by clientside callback)
         return (
-            {"display": "block"}, {"display": "none"},
             [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
             "annual", []

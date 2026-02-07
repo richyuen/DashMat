@@ -816,12 +816,29 @@ clientside_callback(
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
+# Toggle welcome/main visibility (clientside for reliable session-storage
+# hydration on cross-page navigation)
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """
+    function(data) {
+        if (data) {
+            return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
+        }
+        return [{display: "block"}, {display: "none"}];
+    }
+    """,
+    Output("po-welcome-screen", "style"),
+    Output("po-main-container", "style"),
+    Input("raw-data-store", "data"),
+)
+
+# ---------------------------------------------------------------------------
 # Restore application state when raw data loads
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-welcome-screen", "style"),
-    Output("po-main-container", "style"),
     Output("po-periodicity-select", "data", allow_duplicate=True),
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
@@ -836,8 +853,6 @@ clientside_callback(
 def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol):
     if not raw_data:
         return (
-            {"display": "block"},
-            {"display": "none"},
             [{"value": "daily", "label": "Daily"}],
             "daily",
             0,
@@ -853,8 +868,6 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         if not valid_selection:
             valid_selection = list(df.columns)
         return (
-            {"display": "none"},
-            {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
             periodicity_options,
             valid_periodicity,
             valid_vol,
@@ -862,8 +875,6 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         )
     except Exception:
         return (
-            {"display": "block"},
-            {"display": "none"},
             [{"value": "daily", "label": "Daily"}],
             "daily",
             0,
