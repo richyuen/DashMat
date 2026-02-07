@@ -14,7 +14,7 @@ class WindowResult:
     weights: dict  # {series_name: weight}
 
 
-def _compute_windows(df, window_type, window_size, opt_step):
+def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=False):
     """Compute optimization windows as (est_start, est_end, apply_start, apply_end) tuples.
 
     Args:
@@ -22,6 +22,8 @@ def _compute_windows(df, window_type, window_size, opt_step):
         window_type: 'full', 'expanding', or 'rolling'
         window_size: Number of periods for initial window
         opt_step: Number of periods to step forward
+        fill_in_sample: If True, first window weights apply from period 0 (in-sample).
+                        If False, first window weights apply from period window_size (out-of-sample only).
 
     Returns:
         List of (est_start_idx, est_end_idx, apply_start_idx, apply_end_idx) tuples
@@ -39,9 +41,13 @@ def _compute_windows(df, window_type, window_size, opt_step):
     windows = []
 
     if window_type == "expanding":
-        # First window: estimate on [0:window_size], apply to [0:window_size + opt_step - 1]
         est_end = window_size - 1
-        apply_start = 0
+        if fill_in_sample:
+            # Apply from period 0 (includes in-sample)
+            apply_start = 0
+        else:
+            # Apply from period window_size (out-of-sample only)
+            apply_start = window_size
         apply_end = min(window_size + opt_step - 1, n - 1)
         windows.append((0, est_end, apply_start, apply_end))
 
@@ -54,10 +60,14 @@ def _compute_windows(df, window_type, window_size, opt_step):
             apply_end = new_apply_end
 
     elif window_type == "rolling":
-        # First window: estimate on [0:window_size], apply to [0:window_size + opt_step - 1]
         est_start = 0
         est_end = window_size - 1
-        apply_start = 0
+        if fill_in_sample:
+            # Apply from period 0 (includes in-sample)
+            apply_start = 0
+        else:
+            # Apply from period window_size (out-of-sample only)
+            apply_start = window_size
         apply_end = min(window_size + opt_step - 1, n - 1)
         windows.append((est_start, est_end, apply_start, apply_end))
 
@@ -305,6 +315,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     exp_wt_cov = config.get("exp_wt_cov", False)
     halflife = config.get("halflife", 63)
     missing_data = config.get("missing_data", "fill_na")
+    fill_in_sample = config.get("fill_in_sample", False)
     selected_series = config.get("selected_series", list(returns_df.columns))
     min_wt = config.get("min_wt", {})  # percent 0-100
     max_wt = config.get("max_wt", {})  # percent 0-100
@@ -349,7 +360,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
         return window_results, portfolio_returns
 
     # Compute windows
-    windows = _compute_windows(df, window_type, window_size, opt_step)
+    windows = _compute_windows(df, window_type, window_size, opt_step, fill_in_sample)
     total_windows = len(windows)
 
     window_results = []

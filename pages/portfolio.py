@@ -263,6 +263,19 @@ def build_po_main_layout():
                                             size="sm",
                                             disabled=True,
                                         ),
+                                        html.Div([
+                                            dmc.Text("Fill In-Sample", size="sm", mb=3, fw=500),
+                                            dmc.SegmentedControl(
+                                                id="po-fill-in-sample-select",
+                                                data=[
+                                                    {"value": "off", "label": "Off"},
+                                                    {"value": "on", "label": "On"},
+                                                ],
+                                                value="off",
+                                                size="sm",
+                                                disabled=True,
+                                            ),
+                                        ]),
                                         dmc.Select(
                                             id="po-opt-model-select",
                                             label="Model",
@@ -582,6 +595,7 @@ layout = dmc.Container(
         dcc.Store(id="po-exp-wt-cov-store", data=False, storage_type="session"),
         dcc.Store(id="po-halflife-store", data=63, storage_type="session"),
         dcc.Store(id="po-missing-data-store", data="fill_na", storage_type="session"),
+        dcc.Store(id="po-fill-in-sample-store", data="off", storage_type="session"),
         # Results stores
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
@@ -650,6 +664,7 @@ clientside_callback(
                 'po-exp-wt-cov-store',
                 'po-halflife-store',
                 'po-missing-data-store',
+                'po-fill-in-sample-store',
                 'po-results-store',
                 'po-active-tab-store'
             ];
@@ -755,16 +770,25 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Toggle window size / opt step disabled based on window type
+# Store sync: fill in-sample
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-fill-in-sample-store", "data"),
+    Input("po-fill-in-sample-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Toggle window size / opt step / fill in-sample disabled based on window type
 clientside_callback(
     """
     function(value) {
         var disabled = (value === "full");
-        return [disabled, disabled];
+        return [disabled, disabled, disabled];
     }
     """,
     Output("po-window-size-input", "disabled"),
     Output("po-opt-step-input", "disabled"),
+    Output("po-fill-in-sample-select", "disabled"),
     Input("po-opt-window-select", "value"),
     prevent_initial_call=True,
 )
@@ -1606,6 +1630,7 @@ def po_update_date_range_store(start, end):
     State("po-opt-step-input", "value"),
     State("po-opt-model-select", "value"),
     State("po-missing-data-select", "value"),
+    State("po-fill-in-sample-select", "value"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
@@ -1614,7 +1639,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         date_range, vol_scaler, vol_scaling_assignments,
                         min_wt, max_wt, force_max, exp_wt_cov, halflife,
                         portfolio_name, opt_window, window_size, opt_step,
-                        opt_model, missing_data, current_results):
+                        opt_model, missing_data, fill_in_sample_value, current_results):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -1650,6 +1675,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "exp_wt_cov": bool(exp_wt_cov),
             "halflife": int(halflife or 63),
             "missing_data": missing_data or "fill_na",
+            "fill_in_sample": fill_in_sample_value == "on",
             "selected_series": opt_cols,
             "min_wt": min_wt or {},
             "max_wt": max_wt or {},
