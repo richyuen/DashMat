@@ -920,6 +920,7 @@ clientside_callback(
     Output("growth-chart-switch", "value"),
     Output("monthly-view-checkbox", "value"),
     Output("series-select", "data"),
+    Output("pending-new-series-store", "data", allow_duplicate=True),
     Input("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
     State("periodicity-value-store", "data"),
@@ -935,15 +936,16 @@ clientside_callback(
     State("growth-chart-switch-store", "data"),
     State("monthly-view-store", "data"),
     State("monthly-series-store", "data"),
+    State("pending-new-series-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def restore_application_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series):
+def restore_application_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series, pending_series):
     if not raw_data:
         # Reset defaults (visibility handled by clientside callback)
         return (
             [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", []
+            "annual", [], []
         )
 
     try:
@@ -986,6 +988,11 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
         valid_selection = [s for s in current_selection if s in df.columns]
         if not valid_selection:
             valid_selection = list(df.columns)
+
+        # Auto-add any pending new series from portfolio optimization
+        for s in (pending_series or []):
+            if s in df.columns and s not in valid_selection:
+                valid_selection.append(s)
         
         monthly_series_options = [{"value": s, "label": s} for s in valid_selection]
         
@@ -1002,7 +1009,7 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
         return (
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            monthly_view, valid_selection
+            monthly_view, valid_selection, []
         )
 
     except Exception:
@@ -1010,7 +1017,7 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
         return (
             [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", []
+            "annual", [], []
         )
 
 
@@ -1072,7 +1079,8 @@ clientside_callback(
                 'monthly-series-store',
                 'date-range-store',
                 'vol-scaler-value-store',
-                'vol-scaling-assignments-store'
+                'vol-scaling-assignments-store',
+                'pending-new-series-store'
             ];
 
             keysToRemove.forEach(key => {

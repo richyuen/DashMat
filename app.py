@@ -26,6 +26,7 @@ app.layout = dmc.MantineProvider(
     children=[
         dcc.Store(id="raw-data-store", data=None, storage_type="session"),
         dcc.Store(id="original-periodicity-store", data="daily", storage_type="session"),
+        dcc.Store(id="pending-new-series-store", data=[], storage_type="session"),
         page_container,
     ]
 )

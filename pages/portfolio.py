@@ -668,7 +668,8 @@ clientside_callback(
                 'po-missing-data-store',
                 'po-fill-in-sample-store',
                 'po-results-store',
-                'po-active-tab-store'
+                'po-active-tab-store',
+                'pending-new-series-store'
             ];
             keysToRemove.forEach(key => {
                 sessionStorage.removeItem(key);
@@ -1624,6 +1625,7 @@ def po_update_date_range_store(start, end):
     Output("po-results-store", "data", allow_duplicate=True),
     Output("raw-data-store", "data", allow_duplicate=True),
     Output("po-opt-status-store", "data"),
+    Output("pending-new-series-store", "data", allow_duplicate=True),
     Input("po-run-button", "n_clicks"),
     State("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
@@ -1647,6 +1649,7 @@ def po_update_date_range_store(start, end):
     State("po-missing-data-select", "value"),
     State("po-fill-in-sample-select", "value"),
     State("po-results-store", "data"),
+    State("pending-new-series-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -1654,7 +1657,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         date_range, vol_scaler, vol_scaling_assignments,
                         min_wt, max_wt, force_max, exp_wt_cov, halflife,
                         portfolio_name, opt_window, window_size, opt_step,
-                        opt_model, missing_data, fill_in_sample_value, current_results):
+                        opt_model, missing_data, fill_in_sample_value, current_results,
+                        pending_series):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -1675,6 +1679,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             return (
                 no_update, no_update,
                 {"status": "error", "name": portfolio_name, "message": "No data available for selected series."},
+                no_update,
             )
 
         # Filter to only selected series (exclude benchmark columns)
@@ -1732,21 +1737,27 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "config": config,
         }
 
+        # Add to pending list so Analytics Tool auto-selects this series
+        updated_pending = list(pending_series or []) + [final_name]
+
         return (
             current_results,
             new_raw_data,
             {"status": "complete", "name": final_name},
+            updated_pending,
         )
 
     except ValueError as e:
         return (
             no_update, no_update,
             {"status": "error", "name": portfolio_name, "message": str(e)},
+            no_update,
         )
     except Exception as e:
         return (
             no_update, no_update,
             {"status": "error", "name": portfolio_name, "message": f"Optimization failed: {str(e)}"},
+            no_update,
         )
 
 
