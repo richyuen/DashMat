@@ -413,6 +413,29 @@ layout = dmc.Container(
                                 ]),
                             ],
                         ),
+                        dmc.Menu(
+                            trigger="hover",
+                            openDelay=100,
+                            closeDelay=200,
+                            children=[
+                                dmc.MenuTarget(dmc.Button("Edit", variant="subtle", size="sm")),
+                                dmc.MenuDropdown(children=[
+                                    dmc.MenuItem("Clear all series", id="po-menu-clear-all-series"),
+                                    dmc.MenuItem("Clear session storage and refresh", id="po-menu-clear-local-storage"),
+                                ]),
+                            ],
+                        ),
+                        dmc.Menu(
+                            trigger="hover",
+                            openDelay=100,
+                            closeDelay=200,
+                            children=[
+                                dmc.MenuTarget(dmc.Button("View", variant="subtle", size="sm")),
+                                dmc.MenuDropdown(children=[
+                                    dmc.MenuItem("Analytics Tool", id="po-menu-view-analytics"),
+                                ]),
+                            ],
+                        ),
                         dmc.Box(style={"flexGrow": 1}),
                     ],
                 ),
@@ -434,7 +457,8 @@ layout = dmc.Container(
         dmc.Modal(
             id="po-series-selection-modal",
             title="Select Series",
-            fullScreen=True,
+            size="auto",
+            centered=True,
             transitionProps={"transition": "fade", "duration": 200},
             children=[
                 dmc.Alert(
@@ -448,7 +472,7 @@ layout = dmc.Container(
                 html.Div(
                     id="po-series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
-                    style={"maxHeight": "calc(100vh - 160px)", "overflowY": "auto", "overflowX": "auto"},
+                    style={"maxHeight": "70vh", "overflowY": "auto", "overflowX": "auto"},
                 ),
                 dmc.Group(
                     mt="md",
@@ -563,7 +587,7 @@ layout = dmc.Container(
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
         # Navigation
-        dcc.Location(id="po-url-location", refresh=True),
+        dcc.Location(id="po-url-location", refresh=False),
     ],
 )
 
@@ -582,6 +606,63 @@ clientside_callback(
     """,
     Output("po-url-location", "pathname"),
     Input("po-menu-exit", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Navigate to Analytics Tool page (client-side, preserves shared stores)
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { return '/analyticstool'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-url-location", "pathname", allow_duplicate=True),
+    Input("po-menu-view-analytics", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Clear session storage and refresh page
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            const keysToRemove = [
+                'raw-data-store',
+                'original-periodicity-store',
+                'po-series-select',
+                'po-series-order-store',
+                'po-benchmark-assignments-store',
+                'po-long-short-store',
+                'po-vol-scaling-assignments-store',
+                'po-min-wt-store',
+                'po-max-wt-store',
+                'po-force-max-store',
+                'po-periodicity-value-store',
+                'po-vol-scaler-value-store',
+                'po-date-range-store',
+                'po-series-select-value-store',
+                'po-opt-window-store',
+                'po-window-size-store',
+                'po-opt-step-store',
+                'po-opt-model-store',
+                'po-portfolio-name-store',
+                'po-exp-wt-cov-store',
+                'po-halflife-store',
+                'po-missing-data-store',
+                'po-results-store',
+                'po-active-tab-store'
+            ];
+            keysToRemove.forEach(key => {
+                sessionStorage.removeItem(key);
+            });
+            window.location.reload();
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-url-location", "pathname", allow_duplicate=True),
+    Input("po-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -745,6 +826,8 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         valid_vol = stored_vol if stored_vol is not None else 0
         current_selection = stored_series or []
         valid_selection = [s for s in current_selection if s in df.columns]
+        if not valid_selection:
+            valid_selection = list(df.columns)
         return (
             {"display": "none"},
             {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
@@ -1378,6 +1461,34 @@ def po_on_modal_cancel(n_clicks):
 
 
 # ---------------------------------------------------------------------------
+# Edit menu: Clear all series
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("original-periodicity-store", "data", allow_duplicate=True),
+    Output("po-series-select", "data", allow_duplicate=True),
+    Output("po-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-long-short-store", "data", allow_duplicate=True),
+    Output("po-series-order-store", "data", allow_duplicate=True),
+    Output("po-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("po-min-wt-store", "data", allow_duplicate=True),
+    Output("po-max-wt-store", "data", allow_duplicate=True),
+    Output("po-force-max-store", "data", allow_duplicate=True),
+    Output("po-periodicity-value-store", "data", allow_duplicate=True),
+    Output("po-vol-scaler-value-store", "data", allow_duplicate=True),
+    Output("po-series-select-value-store", "data", allow_duplicate=True),
+    Output("po-results-store", "data", allow_duplicate=True),
+    Input("po-menu-clear-all-series", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_clear_all_series(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return None, "daily", [], {}, {}, [], {}, {}, {}, {}, None, 0, [], {}
+
+
+# ---------------------------------------------------------------------------
 # Date range initialization
 # ---------------------------------------------------------------------------
 
@@ -1657,8 +1768,8 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
         return [], None, [], []
     names = list(results.keys())
     options = [{"value": n, "label": n} for n in names]
-    # Keep current selection if still valid
-    sel = current_select if current_select in names else (names[-1] if names else None)
+    # Always select the newest portfolio (last added)
+    sel = names[-1] if names else None
     multi = [v for v in (current_multi or []) if v in names]
     if not multi and names:
         multi = [names[-1]]

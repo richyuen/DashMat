@@ -709,6 +709,25 @@ layout = dmc.Container(
                                 ),
                             ],
                         ),
+                        # View Menu
+                        dmc.Menu(
+                            trigger="hover",
+                            openDelay=100,
+                            closeDelay=200,
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button("View", variant="subtle", size="sm"),
+                                ),
+                                dmc.MenuDropdown(
+                                    children=[
+                                        dmc.MenuItem(
+                                            "Portfolio Optimization",
+                                            id="menu-view-portfolio",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
                         # Spacer
                         dmc.Box(style={"flexGrow": 1}),
                         # Help Menu (right)
@@ -836,7 +855,7 @@ layout = dmc.Container(
         dcc.Download(id="download-excel"),
         dcc.Download(id="download-sample-daily"),
         dcc.Download(id="download-sample-monthly"),
-        dcc.Location(id="url-location", refresh=True),
+        dcc.Location(id="url-location", refresh=False),
         # Moved series-select and edit-mode to global scope
         dcc.Store(id="series-select", data=[], storage_type="session"),
         dcc.Store(id="series-edit-mode", data=None),
@@ -946,6 +965,8 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
         # Monthly Series Options & Selection
         current_selection = stored_series or []
         valid_selection = [s for s in current_selection if s in df.columns]
+        if not valid_selection:
+            valid_selection = list(df.columns)
         
         monthly_series_options = [{"value": s, "label": s} for s in valid_selection]
         
@@ -988,6 +1009,22 @@ clientside_callback(
     """,
     Output("url-location", "pathname"),
     Input("menu-exit", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# Navigate to Portfolio Optimization page (client-side, preserves shared stores)
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            return '/portfolio';
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("url-location", "pathname", allow_duplicate=True),
+    Input("menu-view-portfolio", "n_clicks"),
     prevent_initial_call=True,
 )
 
