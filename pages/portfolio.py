@@ -1,7 +1,9 @@
 """Portfolio Optimization page for DashMat."""
 
+from io import BytesIO
 import json
 
+import dash_ag_grid as dag
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 import numpy as np
@@ -15,6 +17,7 @@ from dash.exceptions import PreventUpdate
 
 from utils.parsing import detect_periodicity, parse_uploaded_file
 from utils.returns import (
+    calculate_excess_returns,
     df_to_json,
     get_available_periodicities,
     get_working_returns,
@@ -25,8 +28,56 @@ from utils.returns import (
     annualization_factor,
 )
 from utils.optimization import run_portfolio_optimization
+from utils.statistics import calculate_statistics_cached
 
 register_page(__name__, path="/portfolio", name="Portfolio Optimization", title="Portfolio Optimization")
+
+# Statistics row order and formatting
+STATS_CONFIG = [
+    ("Start Date", None),
+    ("End Date", None),
+    ("Number of Periods", None),
+    ("Cumulative Return", ".2%"),
+    ("Annualized Return", ".2%"),
+    ("Annualized Volatility", ".2%"),
+    ("Sharpe Ratio", ".2f"),
+    ("Sortino Ratio", ".2f"),
+    ("Annualized Excess Return", ".2%"),
+    ("Annualized Tracking Error", ".2%"),
+    ("Information Ratio", ".2f"),
+    ("Correlation", ".2f"),
+    ("Hit Rate", ".2%"),
+    ("Hit Rate (vs Benchmark)", ".2%"),
+    ("Best Period Return", ".2%"),
+    ("Worst Period Return", ".2%"),
+    ("Maximum Drawdown", ".2%"),
+    ("Skewness", ".2f"),
+    ("Kurtosis", ".2f"),
+    ("1Y Annualized Return", ".2%"),
+    ("1Y Annualized Volatility", ".2%"),
+    ("1Y Sharpe Ratio", ".2f"),
+    ("1Y Sortino Ratio", ".2f"),
+    ("1Y Excess Return", ".2%"),
+    ("1Y Tracking Error", ".2%"),
+    ("1Y Information Ratio", ".2f"),
+    ("1Y Correlation", ".2f"),
+    ("3Y Annualized Return", ".2%"),
+    ("3Y Annualized Volatility", ".2%"),
+    ("3Y Sharpe Ratio", ".2f"),
+    ("3Y Sortino Ratio", ".2f"),
+    ("3Y Excess Return", ".2%"),
+    ("3Y Tracking Error", ".2%"),
+    ("3Y Information Ratio", ".2f"),
+    ("3Y Correlation", ".2f"),
+    ("5Y Annualized Return", ".2%"),
+    ("5Y Annualized Volatility", ".2%"),
+    ("5Y Sharpe Ratio", ".2f"),
+    ("5Y Sortino Ratio", ".2f"),
+    ("5Y Excess Return", ".2%"),
+    ("5Y Tracking Error", ".2%"),
+    ("5Y Information Ratio", ".2f"),
+    ("5Y Correlation", ".2f"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +290,7 @@ def build_po_main_layout():
                                                     {"value": "rolling", "label": "Rolling"},
                                                     {"value": "full", "label": "Full"},
                                                 ],
-                                                value="full",
+                                                value="rolling",
                                                 size="sm",
                                             ),
                                         ]),
@@ -251,7 +302,7 @@ def build_po_main_layout():
                                             step=1,
                                             w=110,
                                             size="sm",
-                                            disabled=True,
+                                            disabled=False,
                                         ),
                                         dmc.NumberInput(
                                             id="po-opt-step-input",
@@ -261,7 +312,7 @@ def build_po_main_layout():
                                             step=1,
                                             w=100,
                                             size="sm",
-                                            disabled=True,
+                                            disabled=False,
                                         ),
                                         html.Div([
                                             dmc.Text("Fill In-Sample", size="sm", mb=3, fw=500),
@@ -273,7 +324,7 @@ def build_po_main_layout():
                                                 ],
                                                 value="off",
                                                 size="sm",
-                                                disabled=True,
+                                                disabled=False,
                                             ),
                                         ]),
                                         dmc.Select(
@@ -353,17 +404,112 @@ def build_po_main_layout():
                 children=[
                     dmc.TabsList(children=[
                         dmc.TabsTab("Weights", value="weight"),
-                        dmc.TabsTab("Growth of $1", value="growth"),
                         dmc.TabsTab("Attribution", value="attribution"),
+                        dmc.TabsTab("Statistics", value="statistics"),
+                        dmc.TabsTab("Returns", value="returns"),
+                        dmc.TabsTab("Growth of $1", value="growth"),
                     ]),
                     dmc.TabsPanel(
                         value="weight",
                         pt="md",
-                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
-                            dcc.Loading(
-                                type="default",
-                                children=[html.Div(id="po-weight-chart-container")],
+                            dmc.Group(mb="md", children=[
+                                dmc.SegmentedControl(
+                                    id="po-weight-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="chart",
+                                    size="sm",
+                                ),
+                            ]),
+                            html.Div(
+                                id="po-weight-chart-container",
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                children=[html.Div(id="po-weight-chart-content")],
+                            ),
+                            html.Div(
+                                id="po-weight-grid-container",
+                                style={"display": "none"},
+                                children=[
+                                    dag.AgGrid(
+                                        id="po-weight-grid",
+                                        columnDefs=[],
+                                        rowData=[],
+                                        defaultColDef={"sortable": True, "resizable": True},
+                                        style={"height": "100%", "width": "100%"},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="attribution",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            dmc.Group(mb="md", children=[
+                                dmc.SegmentedControl(
+                                    id="po-attribution-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="chart",
+                                    size="sm",
+                                ),
+                            ]),
+                            html.Div(
+                                id="po-attribution-chart-container",
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                children=[html.Div(id="po-attribution-chart-content")],
+                            ),
+                            html.Div(
+                                id="po-attribution-grid-container",
+                                style={"display": "none"},
+                                children=[
+                                    dag.AgGrid(
+                                        id="po-attribution-grid",
+                                        columnDefs=[],
+                                        rowData=[],
+                                        defaultColDef={"sortable": True, "resizable": True},
+                                        style={"height": "100%", "width": "100%"},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="statistics",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            dag.AgGrid(
+                                id="po-statistics-grid",
+                                columnDefs=[],
+                                rowData=[],
+                                defaultColDef={"sortable": True, "resizable": True},
+                                style={"height": "100%", "width": "100%"},
+                                dashGridOptions={"animateRows": True},
+                            ),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="returns",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            dag.AgGrid(
+                                id="po-returns-grid",
+                                columnDefs=[],
+                                rowData=[],
+                                defaultColDef={"sortable": True, "resizable": True},
+                                style={"height": "100%", "width": "100%"},
+                                dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
                             ),
                         ],
                     ),
@@ -375,17 +521,6 @@ def build_po_main_layout():
                             dcc.Loading(
                                 type="default",
                                 children=[html.Div(id="po-growth-chart-container")],
-                            ),
-                        ],
-                    ),
-                    dmc.TabsPanel(
-                        value="attribution",
-                        pt="md",
-                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
-                        children=[
-                            dcc.Loading(
-                                type="default",
-                                children=[html.Div(id="po-attribution-chart-container")],
                             ),
                         ],
                     ),
@@ -422,6 +557,8 @@ layout = dmc.Container(
                                 dmc.MenuDropdown(children=[
                                     dmc.MenuItem("Add series from file", id="po-menu-add-series"),
                                     dmc.MenuDivider(),
+                                    dmc.MenuItem("Download Excel", id="po-menu-download-excel"),
+                                    dmc.MenuDivider(),
                                     dmc.MenuItem("Exit", id="po-menu-exit"),
                                 ]),
                             ],
@@ -433,7 +570,6 @@ layout = dmc.Container(
                             children=[
                                 dmc.MenuTarget(dmc.Button("Edit", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
-                                    dmc.MenuItem("Clear all series", id="po-menu-clear-all-series"),
                                     dmc.MenuItem("Clear session storage and refresh", id="po-menu-clear-local-storage"),
                                 ]),
                             ],
@@ -587,7 +723,7 @@ layout = dmc.Container(
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
-        dcc.Store(id="po-opt-window-store", data="full", storage_type="session"),
+        dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
         dcc.Store(id="po-window-size-store", data=252, storage_type="session"),
         dcc.Store(id="po-opt-step-store", data=252, storage_type="session"),
         dcc.Store(id="po-opt-model-store", data="risk_parity", storage_type="session"),
@@ -600,6 +736,11 @@ layout = dmc.Container(
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
+        # Chart/table switch stores
+        dcc.Store(id="po-weight-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="po-attribution-chart-switch-store", data="chart", storage_type="session"),
+        # Excel download
+        dcc.Download(id="po-download-excel"),
         # Navigation
         dcc.Location(id="po-url-location", refresh=False),
         # One-shot interval to trigger visibility check after session-storage hydration
@@ -646,6 +787,25 @@ clientside_callback(
             const keysToRemove = [
                 'raw-data-store',
                 'original-periodicity-store',
+                'pending-new-series-store',
+                'series-select',
+                'benchmark-assignments-store',
+                'long-short-store',
+                'periodicity-value-store',
+                'returns-type-value-store',
+                'series-select-value-store',
+                'series-order-store',
+                'active-tab-store',
+                'rolling-window-store',
+                'rolling-return-type-store',
+                'rolling-chart-switch-store',
+                'drawdown-chart-switch-store',
+                'growth-chart-switch-store',
+                'monthly-view-store',
+                'monthly-series-store',
+                'date-range-store',
+                'vol-scaler-value-store',
+                'vol-scaling-assignments-store',
                 'po-series-select',
                 'po-series-order-store',
                 'po-benchmark-assignments-store',
@@ -669,7 +829,8 @@ clientside_callback(
                 'po-fill-in-sample-store',
                 'po-results-store',
                 'po-active-tab-store',
-                'pending-new-series-store'
+                'po-weight-chart-switch-store',
+                'po-attribution-chart-switch-store'
             ];
             keysToRemove.forEach(key => {
                 sessionStorage.removeItem(key);
@@ -800,7 +961,7 @@ clientside_callback(
 clientside_callback(
     """
     function(tab) {
-        if (tab === "growth") {
+        if (tab === "growth" || tab === "statistics" || tab === "returns") {
             return [{display: "none"}, {display: "none"}, {display: "block"}];
         }
         return [{display: "block"}, {display: "block"}, {display: "none"}];
@@ -810,6 +971,60 @@ clientside_callback(
     Output("po-delete-portfolio-button", "style"),
     Output("po-growth-multiselect-wrapper", "style"),
     Input("po-vis-tabs", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for weight chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
+    Output("po-weight-chart-switch-store", "data"),
+    Input("po-weight-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for weight view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_scroll_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
+    Output("po-weight-grid-container", "style"),
+    Output("po-weight-chart-container", "style"),
+    Input("po-weight-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for attribution chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
+    Output("po-attribution-chart-switch-store", "data"),
+    Input("po-attribution-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for attribution view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_scroll_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
+    Output("po-attribution-grid-container", "style"),
+    Output("po-attribution-chart-container", "style"),
+    Input("po-attribution-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -1501,33 +1716,6 @@ def po_on_modal_cancel(n_clicks):
 
 
 # ---------------------------------------------------------------------------
-# Edit menu: Clear all series
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("raw-data-store", "data", allow_duplicate=True),
-    Output("original-periodicity-store", "data", allow_duplicate=True),
-    Output("po-series-select", "data", allow_duplicate=True),
-    Output("po-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("po-long-short-store", "data", allow_duplicate=True),
-    Output("po-series-order-store", "data", allow_duplicate=True),
-    Output("po-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("po-min-wt-store", "data", allow_duplicate=True),
-    Output("po-max-wt-store", "data", allow_duplicate=True),
-    Output("po-force-max-store", "data", allow_duplicate=True),
-    Output("po-periodicity-value-store", "data", allow_duplicate=True),
-    Output("po-vol-scaler-value-store", "data", allow_duplicate=True),
-    Output("po-series-select-value-store", "data", allow_duplicate=True),
-    Output("po-results-store", "data", allow_duplicate=True),
-    Input("po-menu-clear-all-series", "n_clicks"),
-    prevent_initial_call=True,
-)
-def po_clear_all_series(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    return None, "daily", [], {}, {}, [], {}, {}, {}, {}, None, 0, [], {}
-
-
 # ---------------------------------------------------------------------------
 # Date range initialization
 # ---------------------------------------------------------------------------
@@ -1823,8 +2011,9 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
     # Always select the newest portfolio (last added)
     sel = names[-1] if names else None
     multi = [v for v in (current_multi or []) if v in names]
-    if not multi and names:
-        multi = [names[-1]]
+    newest = names[-1] if names else None
+    if newest and newest not in multi:
+        multi.append(newest)
     return options, sel, options, multi
 
 
@@ -1875,14 +2064,15 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-weight-chart-container", "children"),
+    Output("po-weight-chart-content", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
+    Input("po-weight-chart-switch", "value"),
     prevent_initial_call=True,
 )
-def po_render_weight_chart(selected_portfolio, results, active_tab):
-    if active_tab != "weight" or not selected_portfolio or not results:
+def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value):
+    if active_tab != "weight" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -1984,10 +2174,11 @@ def po_render_growth_chart(selected_portfolios, results, active_tab):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-attribution-chart-container", "children"),
+    Output("po-attribution-chart-content", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
+    Input("po-attribution-chart-switch", "value"),
     State("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
@@ -1998,10 +2189,10 @@ def po_render_growth_chart(selected_portfolios, results, active_tab):
     State("po-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_attribution_chart(selected_portfolio, results, active_tab, raw_data,
-                                 orig_periodicity, periodicity, bench, ls, date_range,
-                                 vol_scaler, vol_scaling):
-    if active_tab != "attribution" or not selected_portfolio or not results:
+def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value,
+                                 raw_data, orig_periodicity, periodicity, bench, ls,
+                                 date_range, vol_scaler, vol_scaling):
+    if active_tab != "attribution" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -2069,3 +2260,436 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, raw_dat
 
     except Exception:
         return dmc.Text("Error computing attribution.", c="dimmed")
+
+
+# ---------------------------------------------------------------------------
+# Weight table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-weight-grid", "columnDefs"),
+    Output("po-weight-grid", "rowData"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-weight-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+def po_render_weight_table(selected_portfolio, results, active_tab, switch_value):
+    if active_tab != "weight" or switch_value != "table" or not selected_portfolio or not results:
+        return [], []
+    if selected_portfolio not in results:
+        return [], []
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", [])
+
+    if not window_weights:
+        return [], []
+
+    asset_names = list(window_weights[0]["weights"].keys())
+
+    column_defs = [
+        {"field": "Apply Start", "pinned": "left", "width": 120},
+        {"field": "Apply End", "width": 120},
+    ]
+    for a in asset_names:
+        column_defs.append({
+            "field": a,
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+            "width": 100,
+        })
+
+    row_data = []
+    for ww in window_weights:
+        row = {
+            "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
+            "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
+        }
+        for a in asset_names:
+            row[a] = ww["weights"].get(a, 0)
+        row_data.append(row)
+
+    return column_defs, row_data
+
+
+# ---------------------------------------------------------------------------
+# Attribution table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-attribution-grid", "columnDefs"),
+    Output("po-attribution-grid", "rowData"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-attribution-chart-switch", "value"),
+    State("raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+def po_render_attribution_table(selected_portfolio, results, active_tab, switch_value,
+                                raw_data, periodicity, bench, ls, date_range,
+                                vol_scaler, vol_scaling):
+    if active_tab != "attribution" or switch_value != "table" or not selected_portfolio or not results:
+        return [], []
+    if selected_portfolio not in results:
+        return [], []
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", [])
+    config = portfolio_data.get("config", {})
+    opt_series = config.get("selected_series", [])
+
+    if not window_weights or not opt_series or not raw_data:
+        return [], []
+
+    try:
+        working_df = get_working_returns(
+            raw_data,
+            periodicity or "daily",
+            tuple(opt_series),
+            json.dumps(bench) if bench else "{}",
+            json.dumps(ls) if ls else "{}",
+            json.dumps(date_range) if date_range else "null",
+            vol_scaler or 0,
+            json.dumps(vol_scaling) if vol_scaling else "{}",
+        )
+
+        weights_df = pd.DataFrame(0.0, index=working_df.index, columns=opt_series)
+        for ww in window_weights:
+            start = pd.Timestamp(ww["apply_start"])
+            end = pd.Timestamp(ww["apply_end"])
+            mask = (weights_df.index >= start) & (weights_df.index <= end)
+            for s in opt_series:
+                weights_df.loc[mask, s] = ww["weights"].get(s, 0)
+
+        attribution = weights_df * working_df[opt_series].fillna(0)
+        attribution_monthly = attribution.resample("ME").sum()
+        attribution_monthly = attribution_monthly.dropna(how="all")
+
+        if attribution_monthly.empty:
+            return [], []
+
+        column_defs = [
+            {
+                "field": "Date",
+                "pinned": "left",
+                "width": 120,
+            },
+        ]
+        for s in opt_series:
+            if s in attribution_monthly.columns:
+                column_defs.append({
+                    "field": s,
+                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                    "width": 100,
+                })
+
+        # Add Total column
+        attribution_monthly["Total"] = attribution_monthly[opt_series].sum(axis=1)
+        column_defs.append({
+            "field": "Total",
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+            "width": 100,
+        })
+
+        df_reset = attribution_monthly.reset_index()
+        df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
+        row_data = df_reset.to_dict("records")
+
+        return column_defs, row_data
+
+    except Exception:
+        return [], []
+
+
+# ---------------------------------------------------------------------------
+# Statistics tab
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-statistics-grid", "columnDefs"),
+    Output("po-statistics-grid", "rowData"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-growth-portfolio-multiselect", "value"),
+    prevent_initial_call=True,
+)
+def po_render_statistics(results, active_tab, selected_portfolios):
+    if active_tab != "statistics" or not results:
+        return [], []
+
+    show = selected_portfolios or list(results.keys())
+
+    try:
+        # Build a combined returns DataFrame from selected portfolio results
+        all_returns = {}
+        for pname in show:
+            pdata = results.get(pname)
+            if not pdata:
+                continue
+            returns_json = pdata.get("returns_json")
+            if returns_json:
+                s = pd.read_json(returns_json, typ="series")
+                s.index = pd.to_datetime(s.index)
+                all_returns[pname] = s
+
+        if not all_returns:
+            return [], []
+
+        combined_df = pd.DataFrame(all_returns)
+        combined_df = combined_df.sort_index()
+        combined_df.index.name = "Date"
+
+        # Convert to raw-data JSON format for calculate_statistics_cached
+        raw_json = df_to_json(combined_df)
+        portfolio_names = list(all_returns.keys())
+
+        stats = calculate_statistics_cached(
+            raw_json,
+            "daily",
+            tuple(portfolio_names),
+            "{}",
+            "{}",
+            "null",
+            0,
+            "{}",
+        )
+
+        if not stats:
+            return [], []
+
+        column_defs = [
+            {"field": "Statistic", "pinned": "left", "width": 200},
+        ]
+        for series_stats in stats:
+            series_name = series_stats["Series"]
+            column_defs.append({
+                "field": series_name,
+                "width": 120,
+                "valueFormatter": {
+                    "function": "(!params.data._format || params.value == null) ? params.value : d3.format(params.data._format)(params.value)"
+                },
+            })
+
+        row_data = []
+        for stat_name, fmt in STATS_CONFIG:
+            row = {"Statistic": stat_name, "_format": fmt}
+            for series_stats in stats:
+                series_name = series_stats["Series"]
+                value = series_stats.get(stat_name)
+                if value is None or (isinstance(value, float) and pd.isna(value)):
+                    row[series_name] = None
+                else:
+                    row[series_name] = value
+            row_data.append(row)
+
+        return column_defs, row_data
+
+    except Exception:
+        return [], []
+
+
+# ---------------------------------------------------------------------------
+# Returns tab
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-returns-grid", "columnDefs"),
+    Output("po-returns-grid", "rowData"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-growth-portfolio-multiselect", "value"),
+    prevent_initial_call=True,
+)
+def po_render_returns(results, active_tab, selected_portfolios):
+    if active_tab != "returns" or not results:
+        return [], []
+
+    show = selected_portfolios or list(results.keys())
+
+    try:
+        all_returns = {}
+        for pname in show:
+            pdata = results.get(pname)
+            if not pdata:
+                continue
+            returns_json = pdata.get("returns_json")
+            if returns_json:
+                s = pd.read_json(returns_json, typ="series")
+                s.index = pd.to_datetime(s.index)
+                all_returns[pname] = s
+
+        if not all_returns:
+            return [], []
+
+        combined_df = pd.DataFrame(all_returns)
+        combined_df = combined_df.sort_index()
+        combined_df.index.name = "Date"
+
+        column_defs = [
+            {
+                "field": "Date",
+                "pinned": "left",
+                "width": 120,
+            },
+        ]
+        for col in combined_df.columns:
+            column_defs.append({
+                "field": col,
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "width": 120,
+            })
+
+        df_reset = combined_df.reset_index()
+        df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
+        row_data = df_reset.to_dict("records")
+
+        return column_defs, row_data
+
+    except Exception:
+        return [], []
+
+
+# ---------------------------------------------------------------------------
+# Excel export
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-download-excel", "data"),
+    Input("po-menu-download-excel", "n_clicks"),
+    State("po-results-store", "data"),
+    State("raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
+                      date_range, vol_scaler, vol_scaling):
+    if n_clicks is None or not results:
+        raise PreventUpdate
+
+    try:
+        # Build combined returns DataFrame
+        all_returns = {}
+        for pname, pdata in results.items():
+            returns_json = pdata.get("returns_json")
+            if returns_json:
+                s = pd.read_json(returns_json, typ="series")
+                s.index = pd.to_datetime(s.index)
+                all_returns[pname] = s
+
+        if not all_returns:
+            raise PreventUpdate
+
+        combined_df = pd.DataFrame(all_returns).sort_index()
+        combined_df.index.name = "Date"
+        portfolio_names = list(all_returns.keys())
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            # Sheet 1: Statistics
+            try:
+                raw_json = df_to_json(combined_df)
+                stats = calculate_statistics_cached(
+                    raw_json, "daily", tuple(portfolio_names),
+                    "{}", "{}", "null", 0, "{}",
+                )
+                if stats:
+                    stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}
+                    for series_stats in stats:
+                        sname = series_stats["Series"]
+                        stats_data[sname] = [series_stats.get(sn) for sn, _ in STATS_CONFIG]
+                    pd.DataFrame(stats_data).to_excel(writer, sheet_name="Statistics", index=False)
+            except Exception:
+                pass
+
+            # Sheet 2: Returns
+            try:
+                combined_df.to_excel(writer, sheet_name="Returns")
+            except Exception:
+                pass
+
+            # Sheet 3+: Weights (one sheet per portfolio)
+            for pname, pdata in results.items():
+                try:
+                    window_weights = pdata.get("window_weights", [])
+                    if not window_weights:
+                        continue
+                    asset_names = list(window_weights[0]["weights"].keys())
+                    rows = []
+                    for ww in window_weights:
+                        row = {
+                            "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
+                            "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
+                        }
+                        for a in asset_names:
+                            row[a] = ww["weights"].get(a, 0)
+                        rows.append(row)
+                    sheet_name = f"Weights-{pname}"[:31]  # Excel sheet name limit
+                    pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
+                except Exception:
+                    pass
+
+            # Sheet: Growth of $1
+            try:
+                growth_data = {}
+                for pname in portfolio_names:
+                    if pname in all_returns:
+                        growth_data[pname] = (1 + all_returns[pname]).cumprod()
+                if growth_data:
+                    pd.DataFrame(growth_data).to_excel(writer, sheet_name="Growth of $1")
+            except Exception:
+                pass
+
+            # Sheet: Attribution (one per portfolio)
+            for pname, pdata in results.items():
+                try:
+                    config = pdata.get("config", {})
+                    opt_series = config.get("selected_series", [])
+                    window_weights = pdata.get("window_weights", [])
+                    if not window_weights or not opt_series or not raw_data:
+                        continue
+
+                    working_df = get_working_returns(
+                        raw_data,
+                        periodicity or "daily",
+                        tuple(opt_series),
+                        json.dumps(bench) if bench else "{}",
+                        json.dumps(ls) if ls else "{}",
+                        json.dumps(date_range) if date_range else "null",
+                        vol_scaler or 0,
+                        json.dumps(vol_scaling) if vol_scaling else "{}",
+                    )
+
+                    weights_df = pd.DataFrame(0.0, index=working_df.index, columns=opt_series)
+                    for ww in window_weights:
+                        start = pd.Timestamp(ww["apply_start"])
+                        end = pd.Timestamp(ww["apply_end"])
+                        mask = (weights_df.index >= start) & (weights_df.index <= end)
+                        for s_name in opt_series:
+                            weights_df.loc[mask, s_name] = ww["weights"].get(s_name, 0)
+
+                    attribution = weights_df * working_df[opt_series].fillna(0)
+                    attribution_monthly = attribution.resample("ME").sum().dropna(how="all")
+                    if not attribution_monthly.empty:
+                        sheet_name = f"Attrib-{pname}"[:31]
+                        attribution_monthly.to_excel(writer, sheet_name=sheet_name)
+                except Exception:
+                    pass
+
+        output.seek(0)
+        return dcc.send_bytes(output.getvalue(), "portfolio_optimization.xlsx")
+
+    except Exception:
+        raise PreventUpdate
