@@ -33,6 +33,11 @@ PERIODICITY_LABELS = {
 }
 
 
+def df_to_json(df: pd.DataFrame) -> str:
+    """Convert DataFrame to JSON string for storage."""
+    return df.to_json(date_format="iso", orient="split")
+
+
 def compound_returns(returns: pd.Series) -> float:
     """Compound a series of returns into a single return.
 

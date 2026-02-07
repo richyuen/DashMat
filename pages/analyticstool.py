@@ -22,6 +22,7 @@ from utils.returns import (
     calculate_excess_returns,
     calculate_rolling_returns,
     create_monthly_view,
+    df_to_json,
     get_available_periodicities,
     get_working_returns,
     json_to_df,
@@ -87,11 +88,6 @@ STATS_CONFIG = [
     ("5Y Information Ratio", ".2f"),
     ("5Y Correlation", ".2f"),
 ]
-
-
-def df_to_json(df: pd.DataFrame) -> str:
-    """Convert DataFrame to JSON string for storage."""
-    return df.to_json(date_format="iso", orient="split")
 
 
 def build_welcome_screen():
@@ -809,9 +805,7 @@ layout = dmc.Container(
         ),
 
         # Hidden stores for state management (using local storage for persistence)
-        # These MUST remain in the static layout to be available for callbacks
-        dcc.Store(id="raw-data-store", data=None, storage_type="session"),
-        dcc.Store(id="original-periodicity-store", data="daily", storage_type="session"),
+        # raw-data-store and original-periodicity-store are defined in app.py (shared across pages)
         dcc.Store(id="benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="long-short-store", data={}, storage_type="session"),
         dcc.Store(id="periodicity-value-store", data="daily", storage_type="session"),

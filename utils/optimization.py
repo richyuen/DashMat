@@ -1,0 +1,445 @@
+"""Portfolio optimization engine using riskfolio-lib."""
+
+from dataclasses import dataclass
+import numpy as np
+import pandas as pd
+import riskfolio as rp
+
+
+@dataclass
+class WindowResult:
+    """Result of a single optimization window."""
+    apply_start: pd.Timestamp
+    apply_end: pd.Timestamp
+    weights: dict  # {series_name: weight}
+
+
+def _compute_windows(df, window_type, window_size, opt_step):
+    """Compute optimization windows as (est_start, est_end, apply_start, apply_end) tuples.
+
+    Args:
+        df: DataFrame with DatetimeIndex
+        window_type: 'full', 'expanding', or 'rolling'
+        window_size: Number of periods for initial window
+        opt_step: Number of periods to step forward
+
+    Returns:
+        List of (est_start_idx, est_end_idx, apply_start_idx, apply_end_idx) tuples
+    """
+    n = len(df)
+
+    if window_type == "full":
+        return [(0, n - 1, 0, n - 1)]
+
+    if window_size > n:
+        raise ValueError(
+            f"Insufficient data for window size: {window_size} periods required but only {n} available"
+        )
+
+    windows = []
+
+    if window_type == "expanding":
+        # First window: estimate on [0:window_size], apply to [0:window_size + opt_step - 1]
+        est_end = window_size - 1
+        apply_start = 0
+        apply_end = min(window_size + opt_step - 1, n - 1)
+        windows.append((0, est_end, apply_start, apply_end))
+
+        # Subsequent windows: expand estimation, apply to next opt_step chunk
+        while apply_end < n - 1:
+            est_end = min(apply_end, n - 1)
+            new_apply_start = apply_end + 1
+            new_apply_end = min(new_apply_start + opt_step - 1, n - 1)
+            windows.append((0, est_end, new_apply_start, new_apply_end))
+            apply_end = new_apply_end
+
+    elif window_type == "rolling":
+        # First window: estimate on [0:window_size], apply to [0:window_size + opt_step - 1]
+        est_start = 0
+        est_end = window_size - 1
+        apply_start = 0
+        apply_end = min(window_size + opt_step - 1, n - 1)
+        windows.append((est_start, est_end, apply_start, apply_end))
+
+        # Subsequent windows: slide by opt_step
+        while apply_end < n - 1:
+            est_start = est_start + opt_step
+            est_end = est_start + window_size - 1
+            if est_end >= n:
+                est_end = n - 1
+            new_apply_start = apply_end + 1
+            new_apply_end = min(new_apply_start + opt_step - 1, n - 1)
+            windows.append((est_start, est_end, new_apply_start, new_apply_end))
+            apply_end = new_apply_end
+
+    return windows
+
+
+def _validate_weight_constraints(asset_names, lower_bounds, upper_bounds, forced_weights):
+    """Validate that weight constraints are feasible.
+
+    Args:
+        asset_names: List of asset names
+        lower_bounds: Dict {name: lower_bound} (0-1 scale)
+        upper_bounds: Dict {name: upper_bound} (0-1 scale)
+        forced_weights: Dict {name: weight} for forced assets (0-1 scale)
+
+    Raises:
+        ValueError if constraints are infeasible
+    """
+    forced_total = sum(forced_weights.values())
+    if forced_total > 1.0 + 1e-9:
+        raise ValueError(
+            f"Forced weights sum to {forced_total*100:.1f}%, which exceeds 100%. "
+            f"Reduce forced allocations."
+        )
+
+    free_assets = [a for a in asset_names if a not in forced_weights]
+    if not free_assets:
+        # All assets are forced - check they sum to ~1
+        if abs(forced_total - 1.0) > 0.01:
+            raise ValueError(
+                f"All series use Force Max but weights sum to {forced_total*100:.1f}%, not 100%."
+            )
+        return
+
+    remaining_budget = 1.0 - forced_total
+
+    free_lower_sum = sum(lower_bounds.get(a, 0) for a in free_assets)
+    free_upper_sum = sum(upper_bounds.get(a, 1) for a in free_assets)
+
+    if free_lower_sum > remaining_budget + 1e-9:
+        raise ValueError(
+            f"Minimum weights for free series sum to {free_lower_sum*100:.1f}%, "
+            f"but only {remaining_budget*100:.1f}% budget remains after forced allocations. "
+            f"Reduce minimum weights or forced allocations."
+        )
+
+    if free_upper_sum < remaining_budget - 1e-9:
+        raise ValueError(
+            f"Maximum weights for free series sum to {free_upper_sum*100:.1f}%, "
+            f"but {remaining_budget*100:.1f}% budget needs to be allocated. "
+            f"Increase maximum weights or reduce forced allocations."
+        )
+
+
+def _extract_pca_factors(returns_df, n_factors=3):
+    """Extract PCA-based statistical factors from returns.
+
+    Args:
+        returns_df: DataFrame of asset returns (clean, no NaN)
+        n_factors: Number of PCA factors to extract
+
+    Returns:
+        DataFrame of factor returns
+    """
+    from sklearn.decomposition import PCA
+
+    n_factors = min(n_factors, returns_df.shape[1], returns_df.shape[0])
+    if n_factors < 1:
+        n_factors = 1
+
+    pca = PCA(n_components=n_factors)
+    factor_returns = pca.fit_transform(returns_df.values)
+    factor_df = pd.DataFrame(
+        factor_returns,
+        index=returns_df.index,
+        columns=[f"Factor_{i+1}" for i in range(n_factors)],
+    )
+    return factor_df
+
+
+def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper_bounds,
+                             forced_weights, free_series, exp_wt_cov=False, halflife=63):
+    """Run optimization for a single window.
+
+    Args:
+        window_data: DataFrame of returns for this estimation window
+        model: Optimization model name
+        asset_names: List of asset names participating in this window
+        lower_bounds: Dict {name: lower_bound} (0-1 scale)
+        upper_bounds: Dict {name: upper_bound} (0-1 scale)
+        forced_weights: Dict {name: weight} for forced assets
+        free_series: List of free (non-forced) asset names
+        exp_wt_cov: Whether to use exponentially weighted covariance
+        halflife: Halflife for exponentially weighted covariance
+
+    Returns:
+        Dict of {asset_name: weight}
+    """
+    if not free_series:
+        # All forced - just return forced weights
+        return dict(forced_weights)
+
+    if len(free_series) == 1:
+        # Only one free series - it gets the remaining budget
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        result[free_series[0]] = max(0, remaining)
+        return result
+
+    # Equal weight model doesn't need optimization
+    if model == "equal_weight":
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        equal_wt = remaining / len(free_series)
+        for s in free_series:
+            result[s] = equal_wt
+        return result
+
+    # Build riskfolio Portfolio
+    # Use only the columns that are in asset_names
+    port_data = window_data[asset_names].copy()
+
+    port = rp.Portfolio(returns=port_data)
+
+    # Compute stats
+    port.assets_stats(method_mu="hist", method_cov="hist")
+
+    # Override covariance if exponentially weighted
+    if exp_wt_cov:
+        port.cov = port_data.ewm(halflife=halflife).cov().iloc[-len(asset_names):]
+
+    # Build bounds arrays (ordered by asset_names)
+    n_assets = len(asset_names)
+    lower_arr = np.zeros(n_assets)
+    upper_arr = np.ones(n_assets)
+
+    for i, name in enumerate(asset_names):
+        if name in forced_weights:
+            lower_arr[i] = forced_weights[name]
+            upper_arr[i] = forced_weights[name]
+        else:
+            lower_arr[i] = lower_bounds.get(name, 0)
+            upper_arr[i] = upper_bounds.get(name, 1)
+
+    # Set bounds for Classic/CVaR optimization (uses lowerlng/upperlng)
+    port.lowerlng = pd.DataFrame(lower_arr, index=asset_names, columns=["lower"])
+    port.upperlng = pd.DataFrame(upper_arr, index=asset_names, columns=["upper"])
+
+    # For risk parity, convert box constraints to linear inequality constraints
+    # ainequality * w <= binequality
+    # lower_i <= w_i  =>  -w_i <= -lower_i  (row: -e_i, bound: -lower_i)
+    # w_i <= upper_i  =>  w_i <= upper_i     (row: e_i, bound: upper_i)
+    has_nontrivial_bounds = any(lower_arr[i] > 0 or upper_arr[i] < 1 for i in range(n_assets))
+    if has_nontrivial_bounds:
+        A_rows = []
+        b_rows = []
+        for i in range(n_assets):
+            if lower_arr[i] > 0:
+                row = np.zeros(n_assets)
+                row[i] = -1.0
+                A_rows.append(row)
+                b_rows.append(-lower_arr[i])
+            if upper_arr[i] < 1:
+                row = np.zeros(n_assets)
+                row[i] = 1.0
+                A_rows.append(row)
+                b_rows.append(upper_arr[i])
+        if A_rows:
+            port.ainequality = pd.DataFrame(np.array(A_rows), columns=asset_names)
+            port.binequality = pd.DataFrame(np.array(b_rows), columns=["b"])
+
+    try:
+        if model == "risk_parity":
+            w = port.rp_optimization(model="Classic", rm="MV", hist=True)
+        elif model == "factor_risk_parity":
+            factors = _extract_pca_factors(port_data)
+            port.factors = factors
+            w = port.rp_optimization(model="FM", rm="MV", hist=True)
+        elif model == "hrp":
+            w = port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)
+        elif model == "minimize_cvar":
+            w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
+        else:
+            raise ValueError(f"Unknown model: {model}")
+    except Exception:
+        # Fallback to equal weight on optimization failure
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        equal_wt = remaining / len(free_series)
+        for s in free_series:
+            result[s] = equal_wt
+        return result
+
+    if w is None or w.empty:
+        # Fallback to equal weight
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        equal_wt = remaining / len(free_series)
+        for s in free_series:
+            result[s] = equal_wt
+        return result
+
+    # Convert result to dict
+    result = {}
+    for name in asset_names:
+        if name in w.index:
+            result[name] = float(w.loc[name, "weights"])
+        elif name in forced_weights:
+            result[name] = forced_weights[name]
+        else:
+            result[name] = 0.0
+
+    return result
+
+
+def run_portfolio_optimization(returns_df, config, progress_callback=None):
+    """Run portfolio optimization.
+
+    Args:
+        returns_df: DataFrame of working returns (selected series, aligned, date-filtered)
+        config: Dict with optimization parameters
+        progress_callback: Dash set_progress function for background callbacks
+
+    Returns:
+        Tuple of (list[WindowResult], pd.Series of portfolio returns)
+
+    Raises:
+        ValueError: If constraints are infeasible or insufficient data
+    """
+    model = config.get("model", "risk_parity")
+    window_type = config.get("window_type", "full")
+    window_size = config.get("window_size", 252)
+    opt_step = config.get("opt_step", 252)
+    exp_wt_cov = config.get("exp_wt_cov", False)
+    halflife = config.get("halflife", 63)
+    missing_data = config.get("missing_data", "fill_na")
+    selected_series = config.get("selected_series", list(returns_df.columns))
+    min_wt = config.get("min_wt", {})  # percent 0-100
+    max_wt = config.get("max_wt", {})  # percent 0-100
+    force_max = config.get("force_max", {})
+
+    # Filter to selected series only
+    available_cols = [s for s in selected_series if s in returns_df.columns]
+    if not available_cols:
+        raise ValueError("No valid series selected for optimization.")
+
+    df = returns_df[available_cols].copy()
+
+    # Convert percent constraints to decimal
+    lower_bounds = {s: min_wt.get(s, 0) / 100.0 for s in available_cols}
+    upper_bounds = {s: max_wt.get(s, 100) / 100.0 for s in available_cols}
+
+    # Identify forced weights
+    forced_weights = {}
+    for s in available_cols:
+        if force_max.get(s, False):
+            forced_weights[s] = upper_bounds[s]
+
+    free_series = [s for s in available_cols if s not in forced_weights]
+
+    # Validate constraints globally
+    _validate_weight_constraints(available_cols, lower_bounds, upper_bounds, forced_weights)
+
+    # Check if all (or all but one) are forced - skip optimization
+    if len(free_series) <= 1:
+        # Deterministic weights
+        weights = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        if free_series:
+            weights[free_series[0]] = max(0, remaining)
+
+        portfolio_returns = (df * pd.Series(weights)).sum(axis=1)
+        window_results = [WindowResult(
+            apply_start=df.index[0],
+            apply_end=df.index[-1],
+            weights=weights,
+        )]
+        return window_results, portfolio_returns
+
+    # Compute windows
+    windows = _compute_windows(df, window_type, window_size, opt_step)
+    total_windows = len(windows)
+
+    window_results = []
+    weights_df = pd.DataFrame(0.0, index=df.index, columns=available_cols)
+
+    for i, (est_start, est_end, apply_start, apply_end) in enumerate(windows):
+        # Report progress
+        if progress_callback is not None:
+            pct = int((i / total_windows) * 100)
+            progress_callback(
+                (
+                    [{"value": pct, "color": "blue"}],
+                    f"Optimizing window {i+1}/{total_windows}",
+                )
+            )
+
+        # Extract estimation window data
+        est_data = df.iloc[est_start:est_end + 1].copy()
+
+        # Handle missing data
+        if missing_data == "fill_0":
+            est_data = est_data.fillna(0)
+            window_assets = available_cols
+        else:
+            # fill_na: exclude series with any NaN in this window
+            valid_cols = [c for c in available_cols if not est_data[c].isna().any()]
+            if not valid_cols:
+                # No complete series - fallback to fill_0 for this window
+                est_data = est_data.fillna(0)
+                window_assets = available_cols
+            else:
+                est_data = est_data[valid_cols]
+                window_assets = valid_cols
+
+        # Compute forced/free for this window
+        window_forced = {s: v for s, v in forced_weights.items() if s in window_assets}
+        window_free = [s for s in window_assets if s not in window_forced]
+
+        # Per-window constraint adjustment for fill_na excluded series
+        window_lower = {s: lower_bounds[s] for s in window_assets}
+        window_upper = {s: upper_bounds[s] for s in window_assets}
+
+        # Try per-window validation, fallback to equal weight if infeasible
+        try:
+            _validate_weight_constraints(window_assets, window_lower, window_upper, window_forced)
+        except ValueError:
+            # Fallback to equal weight for this window
+            w_result = dict(window_forced)
+            remaining = 1.0 - sum(window_forced.values())
+            if window_free:
+                eq = remaining / len(window_free)
+                for s in window_free:
+                    w_result[s] = eq
+            # Add zero for excluded series
+            for s in available_cols:
+                if s not in w_result:
+                    w_result[s] = 0.0
+            w_result_final = w_result
+        else:
+            # Run optimization
+            w_result = _optimize_single_window(
+                est_data, model, window_assets, window_lower, window_upper,
+                window_forced, window_free, exp_wt_cov, halflife,
+            )
+            # Add zero weight for excluded series
+            w_result_final = {s: w_result.get(s, 0.0) for s in available_cols}
+
+        # Record window result
+        apply_start_ts = df.index[apply_start]
+        apply_end_ts = df.index[apply_end]
+        window_results.append(WindowResult(
+            apply_start=apply_start_ts,
+            apply_end=apply_end_ts,
+            weights=w_result_final,
+        ))
+
+        # Apply weights to periods
+        for s in available_cols:
+            weights_df.iloc[apply_start:apply_end + 1, weights_df.columns.get_loc(s)] = w_result_final[s]
+
+    # Final progress
+    if progress_callback is not None:
+        progress_callback(
+            (
+                [{"value": 100, "color": "blue"}],
+                "Computing portfolio returns...",
+            )
+        )
+
+    # Calculate portfolio returns
+    portfolio_returns = (df.fillna(0) * weights_df).sum(axis=1)
+
+    return window_results, portfolio_returns

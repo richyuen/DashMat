@@ -41,14 +41,27 @@ layout = dmc.Container(
                                         dmc.ListItem("Export data to Excel"),
                                     ],
                                 ),
-                                dmc.Anchor(
-                                    dmc.Button(
-                                        "Open Dashboard",
-                                        size="lg",
-                                        variant="filled",
-                                    ),
-                                    href="/dashboard",
+                                dmc.Group(
+                                    gap="md",
                                     mt="md",
+                                    children=[
+                                        dmc.Anchor(
+                                            dmc.Button(
+                                                "Analytics Tool",
+                                                size="lg",
+                                                variant="filled",
+                                            ),
+                                            href="/analyticstool",
+                                        ),
+                                        dmc.Anchor(
+                                            dmc.Button(
+                                                "Portfolio Optimization",
+                                                size="lg",
+                                                variant="outline",
+                                            ),
+                                            href="/portfolio",
+                                        ),
+                                    ],
                                 ),
                             ],
                         ),
