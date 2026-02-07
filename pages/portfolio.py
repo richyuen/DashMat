@@ -613,7 +613,7 @@ clientside_callback(
 clientside_callback(
     """
     function(n_clicks) {
-        if (n_clicks) { return '/analyticstool'; }
+        if (n_clicks) { window.location.pathname = '/analyticstool'; }
         return window.dash_clientside.no_update;
     }
     """,

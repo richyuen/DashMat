@@ -1018,7 +1018,7 @@ clientside_callback(
     """
     function(n_clicks) {
         if (n_clicks) {
-            return '/portfolio';
+            window.location.pathname = '/portfolio';
         }
         return window.dash_clientside.no_update;
     }
