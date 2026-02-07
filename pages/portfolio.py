@@ -377,8 +377,8 @@ def build_po_main_layout():
                         id="po-delete-portfolio-button",
                         color="red",
                         variant="subtle",
-                        size="lg",
-                        style={"alignSelf": "flex-end"},
+                        size="sm",
+                        style={"alignSelf": "flex-end", "marginBottom": "8px"},
                     ),
                     html.Div(
                         id="po-growth-multiselect-wrapper",
