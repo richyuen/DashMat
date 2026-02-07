@@ -878,15 +878,19 @@ layout = dmc.Container(
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
         ),
+
+        # One-shot interval to trigger visibility check after session-storage hydration
+        dcc.Interval(id="at-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
     ],
 )
 
 
-# Toggle welcome/main visibility based on raw-data-store (clientside for reliable
-# session-storage hydration on cross-page navigation)
+# Toggle welcome/main visibility based on raw-data-store.
+# Uses a one-shot Interval to guarantee session-storage has hydrated on
+# cross-page navigation, plus raw-data-store Input for same-page uploads.
 clientside_callback(
     """
-    function(data) {
+    function(n_intervals, data) {
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
@@ -895,6 +899,7 @@ clientside_callback(
     """,
     Output("welcome-screen-container", "style"),
     Output("main-app-container", "style"),
+    Input("at-page-load-trigger", "n_intervals"),
     Input("raw-data-store", "data"),
 )
 

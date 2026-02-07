@@ -602,6 +602,8 @@ layout = dmc.Container(
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
         # Navigation
         dcc.Location(id="po-url-location", refresh=False),
+        # One-shot interval to trigger visibility check after session-storage hydration
+        dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
     ],
 )
 
@@ -816,13 +818,14 @@ clientside_callback(
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Toggle welcome/main visibility (clientside for reliable session-storage
-# hydration on cross-page navigation)
+# Toggle welcome/main visibility.
+# Uses a one-shot Interval to guarantee session-storage has hydrated on
+# cross-page navigation, plus raw-data-store Input for same-page uploads.
 # ---------------------------------------------------------------------------
 
 clientside_callback(
     """
-    function(data) {
+    function(n_intervals, data) {
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
@@ -831,6 +834,7 @@ clientside_callback(
     """,
     Output("po-welcome-screen", "style"),
     Output("po-main-container", "style"),
+    Input("po-page-load-trigger", "n_intervals"),
     Input("raw-data-store", "data"),
 )
 
