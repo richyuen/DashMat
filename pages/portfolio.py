@@ -1,6 +1,6 @@
 """Portfolio Optimization page for DashMat."""
 
-from io import BytesIO
+from io import BytesIO, StringIO
 import json
 
 import dash_ag_grid as dag
@@ -90,6 +90,7 @@ def _periodicity_defaults(periodicity):
         return 52, 52, 13
     if periodicity == "monthly":
         return 12, 12, 6
+    # daily, daily_trading, or any other
     return 252, 252, 63
 
 
@@ -1073,15 +1074,15 @@ clientside_callback(
 def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol):
     if not raw_data:
         return (
-            [{"value": "daily", "label": "Daily"}],
-            "daily",
+            [{"value": "daily_trading", "label": "Daily (Trading)"}],
+            "daily_trading",
             0,
             [],
         )
     try:
         df = json_to_df(raw_data)
         periodicity_options = get_available_periodicities(orig_periodicity or "daily")
-        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else (orig_periodicity or "daily")
+        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else ("daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading"))
         valid_vol = stored_vol if stored_vol is not None else 0
         current_selection = stored_series or []
         valid_selection = [s for s in current_selection if s in df.columns]
@@ -1095,8 +1096,8 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         )
     except Exception:
         return (
-            [{"value": "daily", "label": "Daily"}],
-            "daily",
+            [{"value": "daily_trading", "label": "Daily (Trading)"}],
+            "daily_trading",
             0,
             [],
         )
@@ -1200,7 +1201,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             combined_periodicity = new_periodicity
 
         periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = combined_periodicity
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
 
         new_series = [col for col in new_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
@@ -2146,7 +2147,7 @@ def po_render_growth_chart(selected_portfolios, results, active_tab):
         returns_json = results[pname].get("returns_json")
         if not returns_json:
             continue
-        returns = pd.read_json(returns_json, typ="series")
+        returns = pd.read_json(StringIO(returns_json), typ="series")
         returns.index = pd.to_datetime(returns.index)
         returns = returns.sort_index()
         growth = (1 + returns).cumprod()
@@ -2436,7 +2437,7 @@ def po_render_statistics(results, active_tab, selected_portfolios):
                 continue
             returns_json = pdata.get("returns_json")
             if returns_json:
-                s = pd.read_json(returns_json, typ="series")
+                s = pd.read_json(StringIO(returns_json), typ="series")
                 s.index = pd.to_datetime(s.index)
                 all_returns[pname] = s
 
@@ -2522,7 +2523,7 @@ def po_render_returns(results, active_tab, selected_portfolios):
                 continue
             returns_json = pdata.get("returns_json")
             if returns_json:
-                s = pd.read_json(returns_json, typ="series")
+                s = pd.read_json(StringIO(returns_json), typ="series")
                 s.index = pd.to_datetime(s.index)
                 all_returns[pname] = s
 
@@ -2585,7 +2586,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
         for pname, pdata in results.items():
             returns_json = pdata.get("returns_json")
             if returns_json:
-                s = pd.read_json(returns_json, typ="series")
+                s = pd.read_json(StringIO(returns_json), typ="series")
                 s.index = pd.to_datetime(s.index)
                 all_returns[pname] = s
 

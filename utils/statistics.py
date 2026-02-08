@@ -6,7 +6,7 @@ import pandas as pd
 from scipy import stats
 
 import cache_config
-from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns, annualization_factor
+from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns, annualization_factor, is_daily
 
 
 
@@ -192,7 +192,7 @@ def calculate_statistics(
         ls_returns = ret
 
         # Use calendar-based annualization for daily/weekly data
-        use_calendar_days = periodicity == "daily" or periodicity.startswith("weekly_")
+        use_calendar_days = is_daily(periodicity) or periodicity.startswith("weekly_")
 
         if use_calendar_days:
             ls_ann_ret = annualized_return_calendar_days(ls_returns, periodicity)
@@ -272,7 +272,7 @@ def calculate_statistics(
     else:
         # Normal mode (non-long-short)
         # Use calendar-based annualization for daily/weekly data
-        use_calendar_days = periodicity == "daily" or periodicity.startswith("weekly_")
+        use_calendar_days = is_daily(periodicity) or periodicity.startswith("weekly_")
 
         if use_calendar_days:
             ann_ret = annualized_return_calendar_days(ret, periodicity)
@@ -417,7 +417,7 @@ def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark
             
         # Determine the period offset based on periodicity
         periodicity_str = periodicity or "daily"
-        if periodicity_str == "daily":
+        if is_daily(periodicity_str):
             period_offset = pd.DateOffset(days=1)
         elif periodicity_str == "monthly":
             period_offset = pd.tseries.offsets.MonthEnd(1)
@@ -490,7 +490,7 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
 
         # Determine the period offset based on periodicity
         periodicity_str = periodicity or "daily"
-        if periodicity_str == "daily":
+        if is_daily(periodicity_str):
             period_offset = pd.DateOffset(days=1)
         elif periodicity_str == "monthly":
             period_offset = pd.tseries.offsets.MonthEnd(1)

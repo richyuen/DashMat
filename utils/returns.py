@@ -5,6 +5,7 @@ import json
 from io import StringIO
 import numpy as np
 import pandas as pd
+import pandas_market_calendars as mcal
 
 from utils.parsing import detect_periodicity
 from utils.constants import WINDOW_MAP_DAYS, WINDOW_DAYS_MAP, WINDOW_YEARS_MAP
@@ -14,6 +15,7 @@ import cache_config
 # Mapping of periodicity options to pandas resample codes
 RESAMPLE_CODES = {
     "daily": None,  # No resampling needed
+    "daily_trading": None,  # Filtered to NYSE trading days
     "monthly": "ME",
     "weekly_monday": "W-MON",
     "weekly_tuesday": "W-TUE",
@@ -23,7 +25,8 @@ RESAMPLE_CODES = {
 }
 
 PERIODICITY_LABELS = {
-    "daily": "Daily",
+    "daily_trading": "Daily (Trading)",
+    "daily": "Daily (Original)",
     "monthly": "Monthly",
     "weekly_monday": "Weekly (Monday)",
     "weekly_tuesday": "Weekly (Tuesday)",
@@ -31,6 +34,66 @@ PERIODICITY_LABELS = {
     "weekly_thursday": "Weekly (Thursday)",
     "weekly_friday": "Weekly (Friday)",
 }
+
+
+def is_daily(periodicity: str) -> bool:
+    """Check if periodicity is any daily variant (original or trading)."""
+    return periodicity in ("daily", "daily_trading")
+
+
+def filter_to_trading_days(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate returns onto NYSE trading days.
+
+    Non-trading-day returns (weekends, holidays) are compounded into the
+    next trading day.  E.g. if Sat/Sun have non-zero returns, the following
+    Monday's value becomes ``(1+r_sat)*(1+r_sun)*(1+r_mon) - 1``.
+
+    Uses pandas_market_calendars for exact NYSE calendar.
+    """
+    if df.empty:
+        return df
+    nyse = mcal.get_calendar("NYSE")
+    start = df.index.min()
+    end = df.index.max()
+    # Extend end slightly so weekend returns at the tail have a trading day
+    valid_days = nyse.valid_days(start_date=start, end_date=end + pd.Timedelta(days=7))
+    valid_days = valid_days.tz_localize(None)
+    td_arr = valid_days.values
+
+    # Fast path: every row is already a trading day — just filter
+    if df.index.isin(valid_days).all():
+        return df[df.index.isin(valid_days)]
+
+    # Map each date to its next trading day via searchsorted
+    indices = np.searchsorted(td_arr, df.index.values, side="left")
+    indices = np.clip(indices, 0, len(td_arr) - 1)
+    assigned = pd.DatetimeIndex(td_arr[indices])
+
+    # Compound: (1+r).prod() - 1  per trading-day group, skipping NaN
+    result = (1 + df).groupby(assigned).prod(min_count=1) - 1
+    result.index.name = df.index.name
+    return result
+
+
+def fill_calendar_gaps(df: pd.DataFrame) -> pd.DataFrame:
+    """Reindex to every calendar day and fill interior gaps with zero.
+
+    Each column is filled independently: only dates between that column's
+    first and last valid observation get zero-filled; dates outside the
+    column's range stay NaN.
+    """
+    if df.empty:
+        return df
+    full_range = pd.date_range(df.index.min(), df.index.max(), freq="D")
+    result = df.reindex(full_range)
+    for col in result.columns:
+        first = result[col].first_valid_index()
+        last = result[col].last_valid_index()
+        if first is not None:
+            mask = (result.index >= first) & (result.index <= last)
+            result.loc[mask, col] = result.loc[mask, col].fillna(0)
+    result.index.name = df.index.name
+    return result
 
 
 def df_to_json(df: pd.DataFrame) -> str:
@@ -63,7 +126,7 @@ def mask_partial_periods(resampled_df: pd.DataFrame, original_df: pd.DataFrame, 
     2. Full Last Month: Data must end on the last 4 calendar days.
     3. Full First/Last Week: Must have exactly 7 calendar days coverage.
     """
-    if periodicity == "daily":
+    if is_daily(periodicity):
         return resampled_df
 
     # Create a copy to avoid modifying the input
@@ -142,7 +205,10 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
     Optimized for performance with vectorized operations where possible.
     """
     if periodicity == "daily":
-        return df
+        return fill_calendar_gaps(df)
+
+    if periodicity == "daily_trading":
+        return filter_to_trading_days(df)
 
     # Check if data is already in the target periodicity
     current_periodicity = detect_periodicity(df)
@@ -238,7 +304,9 @@ def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
     """Resample returns with caching to avoid repeated computation."""
     df = json_to_df(json_str)
     if periodicity == "daily":
-        return df
+        return fill_calendar_gaps(df)
+    if periodicity == "daily_trading":
+        return filter_to_trading_days(df)
     return resample_returns(df, periodicity)
 
 
@@ -426,7 +494,7 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
         periods_per_year = annualization_factor(periodicity or "daily")
 
         # For daily data, use calendar days; for other periodicities, use number of periods
-        use_calendar_days = (periodicity or "daily") == "daily"
+        use_calendar_days = is_daily(periodicity or "daily")
 
         if use_calendar_days:
             # Map rolling window to calendar days
@@ -642,7 +710,7 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
                 first_year_data = series_returns[series_returns.index.year == first_year]
                 if len(first_year_data) > 0:
                     current_periodicity = selected_periodicity or "daily"
-                    if current_periodicity == "daily":
+                    if is_daily(current_periodicity):
                         # For daily data, check if it starts in January (up to 4th)
                         first_date = first_year_data.index.min()
                         if not (first_date.month == 1 and first_date.day <= 4):
@@ -657,8 +725,8 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
                 if len(last_year_data) > 0:
                     last_date = last_year_data.index.max()
                     current_periodicity = selected_periodicity or "daily"
-                    
-                    if current_periodicity == "daily":
+
+                    if is_daily(current_periodicity):
                         if not (last_date.month == 12 and last_date.day >= 28):
                             annual_returns = annual_returns.drop(last_year, errors='ignore')
                     elif current_periodicity == "monthly":
@@ -752,7 +820,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         # Convert to DataFrame for processing
         s_data = rets.to_frame(name='returns')
 
-        if selected_periodicity == "daily":
+        if is_daily(selected_periodicity):
             # Use resample_returns to handle aggregation and partial period masking
             # This ensures consistent logic with other parts of the app
             try:
@@ -888,6 +956,7 @@ def annualization_factor(periodicity: str) -> float:
     """Get annualization factor based on periodicity."""
     factors = {
         "daily": 252,
+        "daily_trading": 252,
         "weekly_monday": 52,
         "weekly_tuesday": 52,
         "weekly_wednesday": 52,

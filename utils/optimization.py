@@ -453,4 +453,9 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     # Calculate portfolio returns
     portfolio_returns = (df.fillna(0) * weights_df).sum(axis=1)
 
+    # Trim to periods where weights were actually applied (non-zero row sum)
+    # so that pre-application periods don't appear as zero returns
+    has_weights = weights_df.sum(axis=1) > 0
+    portfolio_returns = portfolio_returns[has_weights]
+
     return window_results, portfolio_returns

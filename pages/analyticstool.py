@@ -698,10 +698,6 @@ layout = dmc.Container(
                                 dmc.MenuDropdown(
                                     children=[
                                         dmc.MenuItem(
-                                            "Clear all series",
-                                            id="menu-clear-all-series",
-                                        ),
-                                        dmc.MenuItem(
                                             "Clear session storage and refresh",
                                             id="menu-clear-local-storage",
                                         ),
@@ -920,7 +916,7 @@ clientside_callback(
     Output("growth-chart-switch", "value"),
     Output("monthly-view-checkbox", "value"),
     Output("series-select", "data"),
-    Output("pending-new-series-store", "data", allow_duplicate=True),
+    Input("at-page-load-trigger", "n_intervals"),
     Input("raw-data-store", "data"),
     State("original-periodicity-store", "data"),
     State("periodicity-value-store", "data"),
@@ -939,13 +935,13 @@ clientside_callback(
     State("pending-new-series-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def restore_application_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series, pending_series):
+def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series, pending_series):
     if not raw_data:
         # Reset defaults (visibility handled by clientside callback)
         return (
-            [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
+            [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", [], []
+            "annual", []
         )
 
     try:
@@ -953,7 +949,7 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
         
         # Periodicity
         periodicity_options = get_available_periodicities(orig_periodicity or "daily")
-        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else (orig_periodicity or "daily")
+        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else ("daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading"))
         
         # Returns Type
         valid_returns = stored_returns if stored_returns in ["total", "excess"] else "total"
@@ -1009,15 +1005,15 @@ def restore_application_state(raw_data, orig_periodicity, stored_periodicity, st
         return (
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            monthly_view, valid_selection, []
+            monthly_view, valid_selection
         )
 
     except Exception:
         # Fallback to defaults on error (visibility handled by clientside callback)
         return (
-            [{"value": "daily", "label": "Daily"}], "daily", "total", 0, "statistics",
+            [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", [], []
+            "annual", []
         )
 
 
@@ -1058,11 +1054,12 @@ clientside_callback(
     """
     function(n_clicks) {
         if (n_clicks) {
-            // Clear all sessionStorage keys specific to Analytics Tool
+            // Clear all sessionStorage keys for both pages
             const keysToRemove = [
-                'series-select',
                 'raw-data-store',
                 'original-periodicity-store',
+                'pending-new-series-store',
+                'series-select',
                 'benchmark-assignments-store',
                 'long-short-store',
                 'periodicity-value-store',
@@ -1080,7 +1077,29 @@ clientside_callback(
                 'date-range-store',
                 'vol-scaler-value-store',
                 'vol-scaling-assignments-store',
-                'pending-new-series-store'
+                'po-series-select',
+                'po-series-order-store',
+                'po-benchmark-assignments-store',
+                'po-long-short-store',
+                'po-vol-scaling-assignments-store',
+                'po-min-wt-store',
+                'po-max-wt-store',
+                'po-force-max-store',
+                'po-periodicity-value-store',
+                'po-vol-scaler-value-store',
+                'po-date-range-store',
+                'po-series-select-value-store',
+                'po-opt-window-store',
+                'po-window-size-store',
+                'po-opt-step-store',
+                'po-opt-model-store',
+                'po-portfolio-name-store',
+                'po-exp-wt-cov-store',
+                'po-halflife-store',
+                'po-missing-data-store',
+                'po-fill-in-sample-store',
+                'po-results-store',
+                'po-active-tab-store'
             ];
 
             keysToRemove.forEach(key => {
@@ -1378,28 +1397,6 @@ def reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_val
     return new_order, current_selected
 
 
-@callback(
-    Output("raw-data-store", "data", allow_duplicate=True),
-    Output("original-periodicity-store", "data", allow_duplicate=True),
-    Output("benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("long-short-store", "data", allow_duplicate=True),
-    Output("periodicity-value-store", "data", allow_duplicate=True),
-    Output("returns-type-value-store", "data", allow_duplicate=True),
-    Output("series-select-value-store", "data", allow_duplicate=True),
-    Output("series-order-store", "data", allow_duplicate=True),
-    Output("series-select", "data", allow_duplicate=True),
-    Output("vol-scaler-value-store", "data", allow_duplicate=True),
-    Output("vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Input("menu-clear-all-series", "n_clicks"),
-    prevent_initial_call=True,
-)
-def clear_all_series(n_clicks):
-    """Clear all loaded series and reset application state."""
-    if n_clicks is None:
-        raise PreventUpdate
-
-    # Reset all stores to initial state
-    return None, "daily", {}, {}, None, None, [], [], [], 0, {}
 
 
 
@@ -1677,7 +1674,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 
         # Get available periodicities
         periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "monthly"
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
 
         # Keep current selection and add new series
         new_series = [col for col in new_df.columns if col not in (current_selection or [])]
@@ -3137,8 +3134,9 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
         # Determine the period offset based on periodicity
+        from utils.returns import is_daily
         periodicity_str = periodicity or "daily"
-        if periodicity_str == "daily":
+        if is_daily(periodicity_str):
             period_offset = pd.DateOffset(days=1)
         elif periodicity_str == "monthly":
             period_offset = pd.tseries.offsets.MonthEnd(1)
