@@ -2358,9 +2358,10 @@ def update_vol_scaling_assignments(checkbox_values, checkbox_ids, raw_data):
     Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
+    State("date-range-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def initialize_date_range(raw_data, periodicity, selected_series):
+def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
     """Initialize date range to maximum range when data is loaded."""
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
@@ -2377,12 +2378,17 @@ def initialize_date_range(raw_data, periodicity, selected_series):
             return None, None, disabled_style, True, True, None
 
         # Get maximum range (earliest start, latest end)
-        start_date = df.index.min().strftime("%Y-%m-%d")
-        end_date = df.index.max().strftime("%Y-%m-%d")
+        data_start = df.index.min().strftime("%Y-%m-%d")
+        data_end = df.index.max().strftime("%Y-%m-%d")
 
-        date_range = {"start": start_date, "end": end_date}
+        # Use stored dates if they fall within the available data range
+        if stored_range and stored_range.get("start") and stored_range.get("end"):
+            s = stored_range["start"]
+            e = stored_range["end"]
+            if s >= data_start and e <= data_end:
+                return s, e, enabled_style, False, False, {"start": s, "end": e}
 
-        return start_date, end_date, enabled_style, False, False, date_range
+        return data_start, data_end, enabled_style, False, False, {"start": data_start, "end": data_end}
 
     except Exception:
         return None, None, disabled_style, True, True, None

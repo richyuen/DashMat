@@ -241,7 +241,7 @@ def build_po_main_layout():
                                     align="flex-end",
                                     mb="sm",
                                     children=[
-                                        # Row 1: Portfolio Name, Model, Exp Wt Cov, Run
+                                        # Row 1: Portfolio Name, Model, Exp Wt Cov, Half-Life
                                         dmc.TextInput(
                                             id="po-portfolio-name-input",
                                             label="Portfolio Name",
@@ -267,39 +267,21 @@ def build_po_main_layout():
                                         html.Div([
                                             dmc.Text("Exp Wt Cov", size="sm", fw=500,
                                                      style={"marginBottom": "4px"}),
-                                            dmc.Group(
-                                                gap="xs",
-                                                align="center",
-                                                style={"minHeight": "30px"},
-                                                children=[
-                                                    dmc.Switch(
-                                                        id="po-exp-wt-cov-switch",
-                                                        checked=False,
-                                                        size="sm",
-                                                    ),
-                                                    html.Div(
-                                                        id="po-halflife-wrapper",
-                                                        style={"display": "none"},
-                                                        children=[
-                                                            dmc.NumberInput(
-                                                                id="po-halflife-input",
-                                                                value=63,
-                                                                min=1,
-                                                                step=1,
-                                                                w=80,
-                                                                size="sm",
-                                                            ),
-                                                        ],
-                                                    ),
-                                                ],
+                                            dmc.Switch(
+                                                id="po-exp-wt-cov-switch",
+                                                checked=False,
+                                                size="sm",
+                                                style={"minHeight": "30px", "display": "flex", "alignItems": "center"},
                                             ),
                                         ]),
-                                        dmc.Button(
-                                            "Run",
-                                            id="po-run-button",
-                                            color="blue",
+                                        dmc.NumberInput(
+                                            id="po-halflife-input",
+                                            label="Half-Life (Periods)",
+                                            value=63,
+                                            min=1,
+                                            step=1,
+                                            w=90,
                                             size="sm",
-                                            leftSection=DashIconify(icon="tabler:player-play"),
                                             disabled=True,
                                         ),
                                     ],
@@ -307,6 +289,7 @@ def build_po_main_layout():
                                 dmc.Group(
                                     gap="md",
                                     align="flex-end",
+                                    mb="sm",
                                     children=[
                                         # Row 2: Window, Fill In-Sample, Window Size, Opt Step, Missing Data
                                         html.Div([
@@ -337,7 +320,7 @@ def build_po_main_layout():
                                         ]),
                                         dmc.NumberInput(
                                             id="po-window-size-input",
-                                            label="Window Size",
+                                            label="Window Size (Periods)",
                                             value=252,
                                             min=2,
                                             step=1,
@@ -356,7 +339,7 @@ def build_po_main_layout():
                                                         value=1,
                                                         min=1,
                                                         step=1,
-                                                        w=60,
+                                                        w=90,
                                                         size="sm",
                                                         disabled=False,
                                                     ),
@@ -387,6 +370,15 @@ def build_po_main_layout():
                                             ),
                                         ]),
                                     ],
+                                ),
+                                # Row 3: Run button
+                                dmc.Button(
+                                    "Run",
+                                    id="po-run-button",
+                                    color="blue",
+                                    size="sm",
+                                    leftSection=DashIconify(icon="tabler:player-play"),
+                                    disabled=True,
                                 ),
                             ]),
                         ],
@@ -1073,17 +1065,10 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Toggle halflife visibility based on exp wt cov switch
+# Toggle halflife disabled based on exp wt cov switch
 clientside_callback(
-    """
-    function(checked) {
-        if (checked) {
-            return {display: "block"};
-        }
-        return {display: "none"};
-    }
-    """,
-    Output("po-halflife-wrapper", "style"),
+    "function(checked) { return !checked; }",
+    Output("po-halflife-input", "disabled"),
     Input("po-exp-wt-cov-switch", "checked"),
     prevent_initial_call=True,
 )
@@ -1352,8 +1337,7 @@ clientside_callback(
     """
     function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, missing, fillIS) {
         return [optWindow, windowSize, optStep, optStepUnit, model, name || "OptResult",
-                expWt || false, halflife, missing, fillIS,
-                expWt ? {display: "block"} : {display: "none"}];
+                expWt || false, halflife, !expWt, missing, fillIS];
     }
     """,
     Output("po-opt-window-select", "value"),
@@ -1364,9 +1348,9 @@ clientside_callback(
     Output("po-portfolio-name-input", "value"),
     Output("po-exp-wt-cov-switch", "checked"),
     Output("po-halflife-input", "value", allow_duplicate=True),
+    Output("po-halflife-input", "disabled", allow_duplicate=True),
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
-    Output("po-halflife-wrapper", "style", allow_duplicate=True),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
