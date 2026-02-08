@@ -2322,8 +2322,13 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
             for s in opt_series:
                 weights_df.loc[mask, s] = ww["weights"].get(s, 0)
 
+        # Trim to periods where weights are applied (non-zero row sum)
+        has_weights = weights_df.sum(axis=1) > 0
+        weights_df = weights_df[has_weights]
+        working_trimmed = working_df.loc[has_weights, opt_series].fillna(0)
+
         # Compute attribution = weight * return
-        attribution = weights_df * working_df[opt_series].fillna(0)
+        attribution = weights_df * working_trimmed
 
         # Resample to monthly for readability
         attribution_monthly = attribution.resample("ME").sum()
@@ -2464,7 +2469,12 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
             for s in opt_series:
                 weights_df.loc[mask, s] = ww["weights"].get(s, 0)
 
-        attribution = weights_df * working_df[opt_series].fillna(0)
+        # Trim to periods where weights are applied (non-zero row sum)
+        has_weights = weights_df.sum(axis=1) > 0
+        weights_df = weights_df[has_weights]
+        working_trimmed = working_df.loc[has_weights, opt_series].fillna(0)
+
+        attribution = weights_df * working_trimmed
         attribution_monthly = attribution.resample("ME").sum()
         attribution_monthly = attribution_monthly.dropna(how="all")
 
@@ -2514,9 +2524,10 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-growth-portfolio-multiselect", "value"),
+    State("po-periodicity-select", "value"),
     prevent_initial_call=True,
 )
-def po_render_statistics(results, active_tab, selected_portfolios):
+def po_render_statistics(results, active_tab, selected_portfolios, periodicity):
     if active_tab != "statistics" or not results:
         return [], []
 
@@ -2548,7 +2559,7 @@ def po_render_statistics(results, active_tab, selected_portfolios):
 
         stats = calculate_statistics_cached(
             raw_json,
-            "daily",
+            periodicity or "daily",
             tuple(portfolio_names),
             "{}",
             "{}",

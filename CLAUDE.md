@@ -10,8 +10,10 @@ DashMat is a Python dashboard for working with market returns time series data. 
 - **Dash AG Grid 31+** - Advanced data grid for displaying returns
 - **Dash Iconify** - Icon library
 - **pandas 2.0+** - Data manipulation and time series handling
+- **riskfolio-lib 6.0+** - Portfolio optimization (risk parity, HRP, CVaR, etc.)
 - **scipy** - Scientific computing for distribution metrics
 - **Flask-Caching** - Performance optimization via memoization
+- **pandas_market_calendars** - NYSE trading calendar for daily_trading periodicity
 - **openpyxl, xlsxwriter** - Excel file handling
 
 ## Environment Setup
@@ -51,10 +53,12 @@ DashMat/
 ├── pages/
 │   ├── __init__.py
 │   ├── home.py               # Welcome/portal page (links to /dashboard)
-│   └── analyticstool.py      # Main analytics dashboard (~3,700 lines)
+│   ├── analyticstool.py      # Main analytics dashboard (~3,700 lines)
+│   └── portfolio.py          # Portfolio optimization page
 └── utils/
     ├── __init__.py
     ├── constants.py           # Window/day mappings for rolling calculations
+    ├── optimization.py        # Portfolio optimization engine (riskfolio-lib)
     ├── parsing.py             # File parsing, percent detection, periodicity
     ├── returns.py             # Return calculations, resampling, compounding
     ├── sample_data.py         # Sample data generation for downloads
@@ -128,6 +132,40 @@ DashMat/
 **Weekly End-of-Week Options**: Monday, Tuesday, Wednesday, Thursday, Friday
 
 **Auto-resampling**: When appending daily data to an existing monthly dataset, daily data is automatically resampled to monthly frequency.
+
+### Portfolio Optimization (pages/portfolio.py)
+
+Separate page (`/portfolio`) for running portfolio optimizations on loaded series.
+
+**Optimization Controls** (two-row layout):
+- Row 1: Portfolio Name, Model, Exp Wt Cov (+ Halflife), Run button
+- Row 2: Window (Expanding/Rolling/Full), Fill In-Sample, Window Size, Opt Step + Unit, Missing Data
+
+**Opt Step Unit**: Dropdown next to Opt Step input with two modes:
+- **Months** (default): Rebalance points snap to calendar month-end dates (`pd.offsets.MonthEnd`)
+- **Periods**: Raw period count stepping (legacy behavior)
+
+**Models**: Risk Parity, Factor Risk Parity, HRP, Minimize CVaR, Equal Weight
+
+**Window Types**:
+- **Rolling**: Fixed-size estimation window slides forward
+- **Expanding**: Estimation window grows from start
+- **Full**: Single window using all data
+
+**Weight Constraints**: Per-series min/max weight bounds and force-to-max toggle, configured in Series Selection modal
+
+**Results Storage** (`po-results-store`):
+```python
+{
+    "PortfolioName": {
+        "window_weights": [{"apply_start": "...", "apply_end": "...", "weights": {...}}, ...],
+        "returns_json": "<JSON Series>",
+        "config": {...},
+    }
+}
+```
+
+**Cross-page sync**: `po_sync_results_with_raw_data` callback fires on page load (`po-page-load-trigger`) to prune portfolios deleted from other pages.
 
 ## State Management
 
