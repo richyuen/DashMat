@@ -216,19 +216,25 @@ def _validate_weight_constraints(asset_names, lower_bounds, upper_bounds, forced
         )
 
 
-def _extract_pca_factors(returns_df, n_factors=3):
+def _extract_pca_factors(returns_df, n_factors=None):
     """Extract PCA-based statistical factors from returns.
 
     Args:
         returns_df: DataFrame of asset returns (clean, no NaN)
-        n_factors: Number of PCA factors to extract
+        n_factors: Number of PCA factors to extract. Defaults to
+                   min(n_assets - 1, n_observations) to ensure the factor
+                   model is a true dimensionality reduction (not full rank).
 
     Returns:
         DataFrame of factor returns
     """
     from sklearn.decomposition import PCA
 
-    n_factors = min(n_factors, returns_df.shape[1], returns_df.shape[0])
+    n_assets = returns_df.shape[1]
+    n_obs = returns_df.shape[0]
+    if n_factors is None:
+        n_factors = max(1, n_assets - 1)
+    n_factors = min(n_factors, n_assets - 1, n_obs)
     if n_factors < 1:
         n_factors = 1
 
@@ -286,8 +292,13 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
 
     port = rp.Portfolio(returns=port_data)
 
-    # Compute stats
+    # Compute asset-level stats (mu, cov) for all models
     port.assets_stats(method_mu="hist", method_cov="hist")
+
+    # For factor risk parity, also compute factor-level stats
+    if model == "factor_risk_parity":
+        port.factors = _extract_pca_factors(port_data)
+        port.factors_stats(method_mu="hist", method_cov="hist")
 
     # Override covariance if exponentially weighted
     if exp_wt_cov:
@@ -337,8 +348,6 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         if model == "risk_parity":
             w = port.rp_optimization(model="Classic", rm="MV", hist=True)
         elif model == "factor_risk_parity":
-            factors = _extract_pca_factors(port_data)
-            port.factors = factors
             w = port.rp_optimization(model="FM", rm="MV", hist=True)
         elif model == "hrp":
             w = port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)

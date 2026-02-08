@@ -861,7 +861,7 @@ layout = dmc.Container(
         # Optimization stores
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
         dcc.Store(id="po-window-size-store", data=252, storage_type="session"),
-        dcc.Store(id="po-opt-step-store", data=252, storage_type="session"),
+        dcc.Store(id="po-opt-step-store", data=1, storage_type="session"),
         dcc.Store(id="po-opt-step-unit-store", data="months", storage_type="session"),
         dcc.Store(id="po-opt-model-store", data="risk_parity", storage_type="session"),
         dcc.Store(id="po-portfolio-name-store", data="OptResult", storage_type="session"),
