@@ -719,7 +719,7 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-max-wt-store", data={}),
         dcc.Store(id="po-temp-force-max-store", data={}),
         # Controls stores
-        dcc.Store(id="po-periodicity-value-store", data="daily", storage_type="session"),
+        dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),

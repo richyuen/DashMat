@@ -823,7 +823,7 @@ layout = dmc.Container(
         # raw-data-store and original-periodicity-store are defined in app.py (shared across pages)
         dcc.Store(id="benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="long-short-store", data={}, storage_type="session"),
-        dcc.Store(id="periodicity-value-store", data="daily", storage_type="session"),
+        dcc.Store(id="periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="returns-type-value-store", data="total", storage_type="session"),
         dcc.Store(id="series-select-value-store", data=[], storage_type="session"),
         dcc.Store(id="series-order-store", data=[], storage_type="session"),
