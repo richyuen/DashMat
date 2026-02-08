@@ -85,13 +85,13 @@ STATS_CONFIG = [
 # ---------------------------------------------------------------------------
 
 def _periodicity_defaults(periodicity):
-    """Return (window_size, opt_step, halflife) defaults for a periodicity."""
+    """Return (window_size, opt_step_periods, opt_step_months, halflife) defaults."""
     if periodicity and periodicity.startswith("weekly"):
-        return 52, 52, 13
+        return 52, 4, 1, 13
     if periodicity == "monthly":
-        return 12, 12, 6
+        return 12, 1, 1, 6
     # daily, daily_trading, or any other
-    return 252, 252, 63
+    return 252, 21, 1, 63
 
 
 # ---------------------------------------------------------------------------
@@ -236,52 +236,27 @@ def build_po_main_layout():
                         children=[
                             dmc.AccordionControl("Optimization"),
                             dmc.AccordionPanel(children=[
-                                dmc.Group(
-                                    align="flex-end",
-                                    gap="md",
+                                dmc.SimpleGrid(
+                                    cols=4,
+                                    spacing="md",
+                                    verticalSpacing="sm",
                                     children=[
-                                        html.Div([
-                                            dmc.Text("Exp Wt Cov", size="sm", mb=3, fw=500),
-                                            dmc.Switch(
-                                                id="po-exp-wt-cov-switch",
-                                                checked=False,
-                                                size="sm",
-                                            ),
-                                        ]),
-                                        html.Div(
-                                            id="po-halflife-wrapper",
-                                            style={"display": "none"},
-                                            children=[
-                                                dmc.NumberInput(
-                                                    id="po-halflife-input",
-                                                    label="Halflife",
-                                                    value=63,
-                                                    min=1,
-                                                    step=1,
-                                                    w=100,
-                                                    size="sm",
-                                                ),
+                                        # Row 1, Col 1: Model
+                                        dmc.Select(
+                                            id="po-opt-model-select",
+                                            label="Model",
+                                            data=[
+                                                {"value": "risk_parity", "label": "Risk Parity"},
+                                                {"value": "factor_risk_parity", "label": "Factor Risk Parity"},
+                                                {"value": "hrp", "label": "HRP"},
+                                                {"value": "minimize_cvar", "label": "Minimize CVaR"},
+                                                {"value": "equal_weight", "label": "Equal Weight"},
                                             ],
-                                        ),
-                                        html.Div([
-                                            dmc.Text("Missing Data", size="sm", mb=3, fw=500),
-                                            dmc.SegmentedControl(
-                                                id="po-missing-data-select",
-                                                data=[
-                                                    {"value": "fill_na", "label": "Fill NA"},
-                                                    {"value": "fill_0", "label": "Fill 0"},
-                                                ],
-                                                value="fill_na",
-                                                size="sm",
-                                            ),
-                                        ]),
-                                        dmc.TextInput(
-                                            id="po-portfolio-name-input",
-                                            label="Portfolio Name",
-                                            value="OptResult",
-                                            w=150,
+                                            value="risk_parity",
                                             size="sm",
+                                            clearable=False,
                                         ),
+                                        # Row 1, Col 2: Window (segmented)
                                         html.Div([
                                             dmc.Text("Window", size="sm", mb=3, fw=500),
                                             dmc.SegmentedControl(
@@ -295,26 +270,77 @@ def build_po_main_layout():
                                                 size="sm",
                                             ),
                                         ]),
+                                        # Row 1, Col 3: Window Size
                                         dmc.NumberInput(
                                             id="po-window-size-input",
                                             label="Window Size",
                                             value=252,
                                             min=2,
                                             step=1,
-                                            w=110,
                                             size="sm",
                                             disabled=False,
                                         ),
-                                        dmc.NumberInput(
-                                            id="po-opt-step-input",
-                                            label="Opt Step",
-                                            value=252,
-                                            min=1,
-                                            step=1,
-                                            w=100,
-                                            size="sm",
-                                            disabled=False,
+                                        # Row 1, Col 4: Exp Wt Cov + Halflife
+                                        dmc.Group(
+                                            gap="xs",
+                                            align="flex-end",
+                                            children=[
+                                                html.Div([
+                                                    dmc.Text("Exp Wt Cov", size="sm", mb=3, fw=500),
+                                                    dmc.Switch(
+                                                        id="po-exp-wt-cov-switch",
+                                                        checked=False,
+                                                        size="sm",
+                                                    ),
+                                                ]),
+                                                html.Div(
+                                                    id="po-halflife-wrapper",
+                                                    style={"display": "none"},
+                                                    children=[
+                                                        dmc.NumberInput(
+                                                            id="po-halflife-input",
+                                                            label="Halflife",
+                                                            value=63,
+                                                            min=1,
+                                                            step=1,
+                                                            w=100,
+                                                            size="sm",
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
                                         ),
+                                        # Row 2, Col 1: Opt Step + Unit
+                                        html.Div([
+                                            dmc.Text("Opt Step", size="sm", mb=3, fw=500),
+                                            dmc.Group(
+                                                gap="xs",
+                                                wrap="nowrap",
+                                                children=[
+                                                    dmc.NumberInput(
+                                                        id="po-opt-step-input",
+                                                        value=1,
+                                                        min=1,
+                                                        step=1,
+                                                        w=70,
+                                                        size="sm",
+                                                        disabled=False,
+                                                    ),
+                                                    dmc.Select(
+                                                        id="po-opt-step-unit-select",
+                                                        data=[
+                                                            {"value": "months", "label": "Months"},
+                                                            {"value": "periods", "label": "Periods"},
+                                                        ],
+                                                        value="months",
+                                                        w=110,
+                                                        size="sm",
+                                                        clearable=False,
+                                                    ),
+                                                ],
+                                            ),
+                                        ]),
+                                        # Row 2, Col 2: Fill In-Sample
                                         html.Div([
                                             dmc.Text("Fill In-Sample", size="sm", mb=3, fw=500),
                                             dmc.SegmentedControl(
@@ -328,28 +354,40 @@ def build_po_main_layout():
                                                 disabled=False,
                                             ),
                                         ]),
-                                        dmc.Select(
-                                            id="po-opt-model-select",
-                                            label="Model",
-                                            data=[
-                                                {"value": "risk_parity", "label": "Risk Parity"},
-                                                {"value": "factor_risk_parity", "label": "Factor Risk Parity"},
-                                                {"value": "hrp", "label": "HRP"},
-                                                {"value": "minimize_cvar", "label": "Minimize CVaR"},
-                                                {"value": "equal_weight", "label": "Equal Weight"},
+                                        # Row 2, Col 3: Missing Data
+                                        html.Div([
+                                            dmc.Text("Missing Data", size="sm", mb=3, fw=500),
+                                            dmc.SegmentedControl(
+                                                id="po-missing-data-select",
+                                                data=[
+                                                    {"value": "fill_na", "label": "Fill NA"},
+                                                    {"value": "fill_0", "label": "Fill 0"},
+                                                ],
+                                                value="fill_na",
+                                                size="sm",
+                                            ),
+                                        ]),
+                                        # Row 2, Col 4: Portfolio Name + Run button
+                                        dmc.Group(
+                                            gap="xs",
+                                            align="flex-end",
+                                            children=[
+                                                dmc.TextInput(
+                                                    id="po-portfolio-name-input",
+                                                    label="Portfolio Name",
+                                                    value="OptResult",
+                                                    w=150,
+                                                    size="sm",
+                                                ),
+                                                dmc.Button(
+                                                    "Run",
+                                                    id="po-run-button",
+                                                    color="blue",
+                                                    size="sm",
+                                                    leftSection=DashIconify(icon="tabler:player-play"),
+                                                    disabled=True,
+                                                ),
                                             ],
-                                            value="risk_parity",
-                                            w=180,
-                                            size="sm",
-                                            clearable=False,
-                                        ),
-                                        dmc.Button(
-                                            "Run Optimization",
-                                            id="po-run-button",
-                                            color="blue",
-                                            size="sm",
-                                            leftSection=DashIconify(icon="tabler:player-play"),
-                                            disabled=True,
                                         ),
                                     ],
                                 ),
@@ -727,6 +765,7 @@ layout = dmc.Container(
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
         dcc.Store(id="po-window-size-store", data=252, storage_type="session"),
         dcc.Store(id="po-opt-step-store", data=252, storage_type="session"),
+        dcc.Store(id="po-opt-step-unit-store", data="months", storage_type="session"),
         dcc.Store(id="po-opt-model-store", data="risk_parity", storage_type="session"),
         dcc.Store(id="po-portfolio-name-store", data="OptResult", storage_type="session"),
         dcc.Store(id="po-exp-wt-cov-store", data=False, storage_type="session"),
@@ -822,6 +861,7 @@ clientside_callback(
                 'po-opt-window-store',
                 'po-window-size-store',
                 'po-opt-step-store',
+                'po-opt-step-unit-store',
                 'po-opt-model-store',
                 'po-portfolio-name-store',
                 'po-exp-wt-cov-store',
@@ -943,17 +983,26 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Toggle window size / opt step / fill in-sample disabled based on window type
+# Store sync: opt step unit
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-opt-step-unit-store", "data"),
+    Input("po-opt-step-unit-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Toggle window size / opt step / fill in-sample / opt step unit disabled based on window type
 clientside_callback(
     """
     function(value) {
         var disabled = (value === "full");
-        return [disabled, disabled, disabled];
+        return [disabled, disabled, disabled, disabled];
     }
     """,
     Output("po-window-size-input", "disabled"),
     Output("po-opt-step-input", "disabled"),
     Output("po-fill-in-sample-select", "disabled"),
+    Output("po-opt-step-unit-select", "disabled"),
     Input("po-opt-window-select", "value"),
     prevent_initial_call=True,
 )
@@ -1129,11 +1178,24 @@ def po_toggle_run_button(name, selected):
     Output("po-opt-step-input", "value"),
     Output("po-halflife-input", "value"),
     Input("po-periodicity-select", "value"),
+    State("po-opt-step-unit-select", "value"),
     prevent_initial_call=True,
 )
-def po_update_periodicity_defaults(periodicity):
-    ws, step, hl = _periodicity_defaults(periodicity)
+def po_update_periodicity_defaults(periodicity, unit):
+    ws, step_periods, step_months, hl = _periodicity_defaults(periodicity)
+    step = step_months if unit == "months" else step_periods
     return ws, step, hl
+
+
+@callback(
+    Output("po-opt-step-input", "value", allow_duplicate=True),
+    Input("po-opt-step-unit-select", "value"),
+    State("po-periodicity-select", "value"),
+    prevent_initial_call=True,
+)
+def po_update_opt_step_on_unit_change(unit, periodicity):
+    ws, step_periods, step_months, hl = _periodicity_defaults(periodicity)
+    return step_months if unit == "months" else step_periods
 
 
 # ---------------------------------------------------------------------------
@@ -1834,6 +1896,7 @@ def po_update_date_range_store(start, end):
     State("po-opt-window-select", "value"),
     State("po-window-size-input", "value"),
     State("po-opt-step-input", "value"),
+    State("po-opt-step-unit-select", "value"),
     State("po-opt-model-select", "value"),
     State("po-missing-data-select", "value"),
     State("po-fill-in-sample-select", "value"),
@@ -1846,6 +1909,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         date_range, vol_scaler, vol_scaling_assignments,
                         min_wt, max_wt, force_max, exp_wt_cov, halflife,
                         portfolio_name, opt_window, window_size, opt_step,
+                        opt_step_unit_value,
                         opt_model, missing_data, fill_in_sample_value, current_results,
                         pending_series):
     if not n_clicks or not raw_data or not selected_series:
@@ -1881,6 +1945,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "window_type": opt_window or "full",
             "window_size": int(window_size or 252),
             "opt_step": int(opt_step or 252),
+            "opt_step_unit": opt_step_unit_value or "months",
             "exp_wt_cov": bool(exp_wt_cov),
             "halflife": int(halflife or 63),
             "missing_data": missing_data or "fill_na",

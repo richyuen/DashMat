@@ -14,16 +14,18 @@ class WindowResult:
     weights: dict  # {series_name: weight}
 
 
-def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=False):
+def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=False,
+                     opt_step_unit="periods"):
     """Compute optimization windows as (est_start, est_end, apply_start, apply_end) tuples.
 
     Args:
         df: DataFrame with DatetimeIndex
         window_type: 'full', 'expanding', or 'rolling'
         window_size: Number of periods for initial window
-        opt_step: Number of periods to step forward
+        opt_step: Number of periods (or months if opt_step_unit='months') to step forward
         fill_in_sample: If True, first window weights apply from period 0 (in-sample).
                         If False, first window weights apply from period window_size (out-of-sample only).
+        opt_step_unit: 'periods' for raw count stepping, 'months' for calendar-month-anchored stepping
 
     Returns:
         List of (est_start_idx, est_end_idx, apply_start_idx, apply_end_idx) tuples
@@ -38,20 +40,20 @@ def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=Fals
             f"Insufficient data for window size: {window_size} periods required but only {n} available"
         )
 
+    if opt_step_unit == "months":
+        return _compute_windows_monthly(df, window_type, window_size, opt_step, fill_in_sample)
+
     windows = []
 
     if window_type == "expanding":
         est_end = window_size - 1
         if fill_in_sample:
-            # Apply from period 0 (includes in-sample)
             apply_start = 0
         else:
-            # Apply from period window_size (out-of-sample only)
             apply_start = window_size
         apply_end = min(window_size + opt_step - 1, n - 1)
         windows.append((0, est_end, apply_start, apply_end))
 
-        # Subsequent windows: expand estimation, apply to next opt_step chunk
         while apply_end < n - 1:
             est_end = min(apply_end, n - 1)
             new_apply_start = apply_end + 1
@@ -63,15 +65,12 @@ def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=Fals
         est_start = 0
         est_end = window_size - 1
         if fill_in_sample:
-            # Apply from period 0 (includes in-sample)
             apply_start = 0
         else:
-            # Apply from period window_size (out-of-sample only)
             apply_start = window_size
         apply_end = min(window_size + opt_step - 1, n - 1)
         windows.append((est_start, est_end, apply_start, apply_end))
 
-        # Subsequent windows: slide by opt_step
         while apply_end < n - 1:
             est_start = est_start + opt_step
             est_end = est_start + window_size - 1
@@ -81,6 +80,90 @@ def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=Fals
             new_apply_end = min(new_apply_start + opt_step - 1, n - 1)
             windows.append((est_start, est_end, new_apply_start, new_apply_end))
             apply_end = new_apply_end
+
+    return windows
+
+
+def _compute_windows_monthly(df, window_type, window_size, opt_step_months, fill_in_sample):
+    """Compute optimization windows anchored to calendar month-end dates.
+
+    Rebalance points snap to the last available date in df.index on or before
+    each target calendar month-end.
+
+    Args:
+        df: DataFrame with DatetimeIndex (must be sorted)
+        window_type: 'expanding' or 'rolling'
+        window_size: Number of periods for estimation window
+        opt_step_months: Number of calendar months between rebalance points
+        fill_in_sample: If True, first window applies from period 0
+
+    Returns:
+        List of (est_start_idx, est_end_idx, apply_start_idx, apply_end_idx) tuples
+    """
+    n = len(df)
+    idx = df.index
+
+    # Find the first anchor: month-end at or after the end of the first estimation window
+    first_est_end_date = idx[window_size - 1]
+    # Snap to the calendar month-end on or after this date
+    anchor_date = first_est_end_date + pd.offsets.MonthEnd(0)
+    # Find the last index date <= anchor_date
+    anchor_pos = idx.searchsorted(anchor_date, side="right") - 1
+    if anchor_pos < window_size - 1:
+        # Month-end fell before our minimum window; move to next month-end
+        anchor_date = first_est_end_date + pd.offsets.MonthEnd(1)
+        anchor_pos = idx.searchsorted(anchor_date, side="right") - 1
+
+    if anchor_pos < 0 or anchor_pos >= n:
+        raise ValueError("Cannot find a valid month-end anchor within the data range.")
+
+    # Build list of anchor positions (index positions where rebalancing occurs)
+    anchors = []
+    current_anchor_date = anchor_date
+    while True:
+        pos = idx.searchsorted(current_anchor_date, side="right") - 1
+        if pos >= n:
+            pos = n - 1
+        if pos < 0:
+            break
+        # Avoid duplicate anchors
+        if not anchors or pos > anchors[-1]:
+            anchors.append(pos)
+        # Step forward by opt_step_months
+        current_anchor_date = current_anchor_date + pd.DateOffset(months=opt_step_months)
+        # Snap to month-end
+        current_anchor_date = current_anchor_date + pd.offsets.MonthEnd(0)
+        if pos >= n - 1:
+            break
+
+    if not anchors:
+        raise ValueError("No valid rebalance points found for the given data and step size.")
+
+    windows = []
+
+    for i, anchor in enumerate(anchors):
+        # Estimation window: data up to and including anchor
+        if window_type == "expanding":
+            est_start = 0
+        else:  # rolling
+            est_start = max(0, anchor - window_size + 1)
+        est_end = anchor
+
+        # Application window: weights apply from anchor+1 until the next anchor
+        if i == 0 and fill_in_sample:
+            apply_start = 0
+        else:
+            apply_start = anchor + 1
+            if apply_start >= n:
+                continue
+
+        if i < len(anchors) - 1:
+            apply_end = anchors[i + 1]
+        else:
+            apply_end = n - 1
+
+        if apply_start <= apply_end:
+            windows.append((est_start, est_end, apply_start, apply_end))
 
     return windows
 
@@ -312,6 +395,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     window_type = config.get("window_type", "full")
     window_size = config.get("window_size", 252)
     opt_step = config.get("opt_step", 252)
+    opt_step_unit = config.get("opt_step_unit", "periods")
     exp_wt_cov = config.get("exp_wt_cov", False)
     halflife = config.get("halflife", 63)
     missing_data = config.get("missing_data", "fill_na")
@@ -360,7 +444,8 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
         return window_results, portfolio_returns
 
     # Compute windows
-    windows = _compute_windows(df, window_type, window_size, opt_step, fill_in_sample)
+    windows = _compute_windows(df, window_type, window_size, opt_step, fill_in_sample,
+                               opt_step_unit=opt_step_unit)
     total_windows = len(windows)
 
     window_results = []
