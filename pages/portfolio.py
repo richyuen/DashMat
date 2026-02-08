@@ -236,12 +236,19 @@ def build_po_main_layout():
                         children=[
                             dmc.AccordionControl("Optimization"),
                             dmc.AccordionPanel(children=[
-                                dmc.SimpleGrid(
-                                    cols=4,
-                                    spacing="md",
-                                    verticalSpacing="sm",
+                                dmc.Group(
+                                    gap="md",
+                                    align="flex-end",
+                                    mb="sm",
                                     children=[
-                                        # Row 1, Col 1: Model
+                                        # Row 1: Portfolio Name, Model, Exp Wt Cov, Run
+                                        dmc.TextInput(
+                                            id="po-portfolio-name-input",
+                                            label="Portfolio Name",
+                                            value="OptResult",
+                                            w=120,
+                                            size="sm",
+                                        ),
                                         dmc.Select(
                                             id="po-opt-model-select",
                                             label="Model",
@@ -253,10 +260,55 @@ def build_po_main_layout():
                                                 {"value": "equal_weight", "label": "Equal Weight"},
                                             ],
                                             value="risk_parity",
+                                            w=170,
                                             size="sm",
                                             clearable=False,
                                         ),
-                                        # Row 1, Col 2: Window (segmented)
+                                        html.Div([
+                                            dmc.Text("Exp Wt Cov", size="sm", fw=500,
+                                                     style={"marginBottom": "4px"}),
+                                            dmc.Group(
+                                                gap="xs",
+                                                align="center",
+                                                style={"minHeight": "30px"},
+                                                children=[
+                                                    dmc.Switch(
+                                                        id="po-exp-wt-cov-switch",
+                                                        checked=False,
+                                                        size="sm",
+                                                    ),
+                                                    html.Div(
+                                                        id="po-halflife-wrapper",
+                                                        style={"display": "none"},
+                                                        children=[
+                                                            dmc.NumberInput(
+                                                                id="po-halflife-input",
+                                                                value=63,
+                                                                min=1,
+                                                                step=1,
+                                                                w=80,
+                                                                size="sm",
+                                                            ),
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                        ]),
+                                        dmc.Button(
+                                            "Run",
+                                            id="po-run-button",
+                                            color="blue",
+                                            size="sm",
+                                            leftSection=DashIconify(icon="tabler:player-play"),
+                                            disabled=True,
+                                        ),
+                                    ],
+                                ),
+                                dmc.Group(
+                                    gap="md",
+                                    align="flex-end",
+                                    children=[
+                                        # Row 2: Window, Fill In-Sample, Window Size, Opt Step, Missing Data
                                         html.Div([
                                             dmc.Text("Window", size="sm", mb=3, fw=500),
                                             dmc.SegmentedControl(
@@ -270,77 +322,6 @@ def build_po_main_layout():
                                                 size="sm",
                                             ),
                                         ]),
-                                        # Row 1, Col 3: Window Size
-                                        dmc.NumberInput(
-                                            id="po-window-size-input",
-                                            label="Window Size",
-                                            value=252,
-                                            min=2,
-                                            step=1,
-                                            size="sm",
-                                            disabled=False,
-                                        ),
-                                        # Row 1, Col 4: Exp Wt Cov + Halflife
-                                        dmc.Group(
-                                            gap="xs",
-                                            align="flex-end",
-                                            children=[
-                                                html.Div([
-                                                    dmc.Text("Exp Wt Cov", size="sm", mb=3, fw=500),
-                                                    dmc.Switch(
-                                                        id="po-exp-wt-cov-switch",
-                                                        checked=False,
-                                                        size="sm",
-                                                    ),
-                                                ]),
-                                                html.Div(
-                                                    id="po-halflife-wrapper",
-                                                    style={"display": "none"},
-                                                    children=[
-                                                        dmc.NumberInput(
-                                                            id="po-halflife-input",
-                                                            label="Halflife",
-                                                            value=63,
-                                                            min=1,
-                                                            step=1,
-                                                            w=100,
-                                                            size="sm",
-                                                        ),
-                                                    ],
-                                                ),
-                                            ],
-                                        ),
-                                        # Row 2, Col 1: Opt Step + Unit
-                                        html.Div([
-                                            dmc.Text("Opt Step", size="sm", mb=3, fw=500),
-                                            dmc.Group(
-                                                gap="xs",
-                                                wrap="nowrap",
-                                                children=[
-                                                    dmc.NumberInput(
-                                                        id="po-opt-step-input",
-                                                        value=1,
-                                                        min=1,
-                                                        step=1,
-                                                        w=70,
-                                                        size="sm",
-                                                        disabled=False,
-                                                    ),
-                                                    dmc.Select(
-                                                        id="po-opt-step-unit-select",
-                                                        data=[
-                                                            {"value": "months", "label": "Months"},
-                                                            {"value": "periods", "label": "Periods"},
-                                                        ],
-                                                        value="months",
-                                                        w=110,
-                                                        size="sm",
-                                                        clearable=False,
-                                                    ),
-                                                ],
-                                            ),
-                                        ]),
-                                        # Row 2, Col 2: Fill In-Sample
                                         html.Div([
                                             dmc.Text("Fill In-Sample", size="sm", mb=3, fw=500),
                                             dmc.SegmentedControl(
@@ -354,7 +335,45 @@ def build_po_main_layout():
                                                 disabled=False,
                                             ),
                                         ]),
-                                        # Row 2, Col 3: Missing Data
+                                        dmc.NumberInput(
+                                            id="po-window-size-input",
+                                            label="Window Size",
+                                            value=252,
+                                            min=2,
+                                            step=1,
+                                            w=90,
+                                            size="sm",
+                                            disabled=False,
+                                        ),
+                                        html.Div([
+                                            dmc.Text("Opt Step", size="sm", mb=3, fw=500),
+                                            dmc.Group(
+                                                gap="xs",
+                                                wrap="nowrap",
+                                                children=[
+                                                    dmc.NumberInput(
+                                                        id="po-opt-step-input",
+                                                        value=1,
+                                                        min=1,
+                                                        step=1,
+                                                        w=60,
+                                                        size="sm",
+                                                        disabled=False,
+                                                    ),
+                                                    dmc.Select(
+                                                        id="po-opt-step-unit-select",
+                                                        data=[
+                                                            {"value": "months", "label": "Months"},
+                                                            {"value": "periods", "label": "Periods"},
+                                                        ],
+                                                        value="months",
+                                                        w=100,
+                                                        size="sm",
+                                                        clearable=False,
+                                                    ),
+                                                ],
+                                            ),
+                                        ]),
                                         html.Div([
                                             dmc.Text("Missing Data", size="sm", mb=3, fw=500),
                                             dmc.SegmentedControl(
@@ -367,28 +386,6 @@ def build_po_main_layout():
                                                 size="sm",
                                             ),
                                         ]),
-                                        # Row 2, Col 4: Portfolio Name + Run button
-                                        dmc.Group(
-                                            gap="xs",
-                                            align="flex-end",
-                                            children=[
-                                                dmc.TextInput(
-                                                    id="po-portfolio-name-input",
-                                                    label="Portfolio Name",
-                                                    value="OptResult",
-                                                    w=150,
-                                                    size="sm",
-                                                ),
-                                                dmc.Button(
-                                                    "Run",
-                                                    id="po-run-button",
-                                                    color="blue",
-                                                    size="sm",
-                                                    leftSection=DashIconify(icon="tabler:player-play"),
-                                                    disabled=True,
-                                                ),
-                                            ],
-                                        ),
                                     ],
                                 ),
                             ]),
@@ -421,14 +418,13 @@ def build_po_main_layout():
                     ),
                     html.Div(
                         id="po-growth-multiselect-wrapper",
-                        style={"display": "none"},
+                        style={"display": "none", "flex": "1"},
                         children=[
                             dmc.MultiSelect(
                                 id="po-growth-portfolio-multiselect",
                                 label="Compare",
                                 data=[],
                                 value=[],
-                                w=400,
                                 size="sm",
                             ),
                         ],
