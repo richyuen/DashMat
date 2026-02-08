@@ -669,50 +669,39 @@ layout = dmc.Container(
             ],
         ),
 
-        # Progress modal
+        # Optimization status modal (progress → completion in one modal)
         dmc.Modal(
             id="po-progress-modal",
             opened=False,
             closeOnClickOutside=False,
             withCloseButton=False,
-            size="sm",
+            size="xs",
+            styles={"body": {"padding": "0"}},
             children=[
-                dmc.Stack(
-                    align="center",
+                # Running state
+                html.Div(
+                    id="po-running-indicator",
                     children=[
-                        dmc.RingProgress(
-                            id="po-progress-ring",
-                            sections=[{"value": 0, "color": "blue"}],
-                            size=120,
-                            thickness=12,
-                            label=dmc.Text("0%", ta="center", size="lg", fw=700),
-                        ),
-                        dmc.Text(id="po-progress-text", children="Starting..."),
-                        dmc.Button("Cancel", id="po-cancel-button", color="red", variant="outline"),
+                        dmc.Stack(align="center", gap="md", py="xl",
+                                  justify="center", style={"minHeight": "200px"},
+                                  children=[
+                            dmc.Loader(type="dots", size="xl"),
+                            dmc.Text("Running optimization...", size="sm", c="dimmed"),
+                        ]),
                     ],
                 ),
-            ],
-        ),
-
-        # Completion modal
-        dmc.Modal(
-            id="po-completion-modal",
-            opened=False,
-            closeOnClickOutside=False,
-            size="sm",
-            children=[
-                dmc.Stack(
-                    align="center",
+                # Completion state (hidden initially)
+                html.Div(
+                    id="po-completion-indicator",
+                    style={"display": "none"},
                     children=[
-                        dmc.RingProgress(
-                            id="po-completion-ring",
-                            sections=[{"value": 100, "color": "green"}],
-                            size=120,
-                            thickness=12,
-                            label=DashIconify(icon="tabler:check", width=40, color="green"),
-                        ),
-                        dmc.Text(id="po-completion-text", children=""),
-                        dmc.Button("Close", id="po-close-completion-button"),
+                        dmc.Stack(align="center", gap="md", py="xl",
+                                  justify="center", style={"minHeight": "200px"},
+                                  children=[
+                            DashIconify(id="po-completion-icon", icon="tabler:check", width=48, color="green"),
+                            dmc.Text(id="po-completion-text", children="", size="sm", c="dimmed"),
+                            dmc.Button("Close", id="po-close-completion-button", size="sm", variant="light"),
+                        ]),
                     ],
                 ),
             ],
@@ -1044,6 +1033,21 @@ clientside_callback(
     Output("po-weight-grid-container", "style"),
     Output("po-weight-chart-container", "style"),
     Input("po-weight-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Open progress modal instantly when Run is clicked
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            return true;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-progress-modal", "opened"),
+    Input("po-run-button", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -2026,39 +2030,67 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-completion-modal", "opened"),
+    Output("po-running-indicator", "style"),
+    Output("po-completion-indicator", "style"),
     Output("po-completion-text", "children"),
-    Output("po-completion-ring", "sections"),
+    Output("po-completion-icon", "icon"),
+    Output("po-completion-icon", "color"),
+    Output("po-progress-modal", "closeOnClickOutside"),
     Input("po-opt-status-store", "data"),
     prevent_initial_call=True,
 )
 def po_show_completion(status):
     if not status:
         raise PreventUpdate
+    hide = {"display": "none"}
+    show = {"display": "block"}
     if status.get("status") == "complete":
         return (
-            True,
+            hide, show,
             f"Portfolio '{status['name']}' created successfully.",
-            [{"value": 100, "color": "green"}],
+            "tabler:check", "green",
+            True,
         )
     elif status.get("status") == "error":
         return (
-            True,
+            hide, show,
             status.get("message", "An error occurred."),
-            [{"value": 100, "color": "red"}],
+            "tabler:x", "red",
+            True,
         )
     raise PreventUpdate
 
 
-@callback(
-    Output("po-completion-modal", "opened", allow_duplicate=True),
+# Close button in completion state
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { return false; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-progress-modal", "opened", allow_duplicate=True),
     Input("po-close-completion-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def po_close_completion(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    return False
+
+# Reset modal to running state when it closes (for next invocation)
+clientside_callback(
+    """
+    function(opened) {
+        if (!opened) {
+            return [{display: "block"}, {display: "none"}, false];
+        }
+        return [window.dash_clientside.no_update, window.dash_clientside.no_update,
+                window.dash_clientside.no_update];
+    }
+    """,
+    Output("po-running-indicator", "style", allow_duplicate=True),
+    Output("po-completion-indicator", "style", allow_duplicate=True),
+    Output("po-progress-modal", "closeOnClickOutside", allow_duplicate=True),
+    Input("po-progress-modal", "opened"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------
