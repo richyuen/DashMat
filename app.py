@@ -1,20 +1,14 @@
 """DashMat - Market Returns Time Series Dashboard."""
 
-import diskcache
 import dash_mantine_components as dmc
-from dash import Dash, DiskcacheManager, dcc, page_container
+from dash import Dash, dcc, page_container
 from cache_config import init_cache
-
-# Background callback manager using diskcache
-cache_disk = diskcache.Cache("./cache")
-background_callback_manager = DiskcacheManager(cache_disk)
 
 # Initialize the app with multi-page support
 app = Dash(
     __name__,
     use_pages=True,
     suppress_callback_exceptions=True,
-    background_callback_manager=background_callback_manager,
 )
 
 # Initialize cache for performance optimization (after app creation)

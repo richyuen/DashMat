@@ -1701,6 +1701,7 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     Output("po-min-wt-store", "data"),
     Output("po-max-wt-store", "data"),
     Output("po-force-max-store", "data"),
+    Output("po-results-store", "data", allow_duplicate=True),
     Input("po-modal-ok-button", "n_clicks"),
     State({"type": "po-series-include-checkbox", "series": ALL}, "checked"),
     State({"type": "po-series-include-checkbox", "series": ALL}, "id"),
@@ -1713,11 +1714,12 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     State("po-temp-min-wt-store", "data"),
     State("po-temp-max-wt-store", "data"),
     State("po-temp-force-max-store", "data"),
+    State("po-results-store", "data"),
     prevent_initial_call=True,
 )
 def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls,
                    temp_order, temp_deleted, raw_data, temp_vol_scaling,
-                   temp_min_wt, temp_max_wt, temp_force_max):
+                   temp_min_wt, temp_max_wt, temp_force_max, current_results):
     if not n_clicks:
         raise PreventUpdate
 
@@ -1733,6 +1735,7 @@ def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls,
                 temp_select.append(s)
 
     updated_raw_data = raw_data
+    updated_results = no_update
     if temp_deleted and raw_data:
         df = json_to_df(raw_data)
         to_drop = [s for s in temp_deleted if s in df.columns]
@@ -1754,9 +1757,16 @@ def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls,
             if temp_force_max:
                 temp_force_max = {k: v for k, v in temp_force_max.items() if k not in to_drop}
             temp_select = [s for s in temp_select if s not in to_drop]
+            # Remove deleted portfolios from results store
+            if current_results:
+                deleted_portfolios = [s for s in to_drop if s in current_results]
+                if deleted_portfolios:
+                    updated_results = {k: v for k, v in current_results.items()
+                                       if k not in deleted_portfolios}
 
     return (temp_select, temp_bench, temp_ls, temp_order, False, temp_select,
-            updated_raw_data, temp_vol_scaling, temp_min_wt, temp_max_wt, temp_force_max)
+            updated_raw_data, temp_vol_scaling, temp_min_wt, temp_max_wt, temp_force_max,
+            updated_results)
 
 
 # ---------------------------------------------------------------------------

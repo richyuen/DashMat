@@ -9,4 +9,3 @@ scipy>=1.11.0
 Flask-Caching>=2.1.0
 pandas_market_calendars>=4.0.0
 riskfolio-lib>=6.0.0
-dash[diskcache]
