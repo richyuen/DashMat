@@ -587,6 +587,7 @@ layout = dmc.Container(
                             trigger="hover",
                             openDelay=100,
                             closeDelay=200,
+                            position="bottom-start",
                             children=[
                                 dmc.MenuTarget(dmc.Button("File", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
@@ -602,6 +603,7 @@ layout = dmc.Container(
                             trigger="hover",
                             openDelay=100,
                             closeDelay=200,
+                            position="bottom-start",
                             children=[
                                 dmc.MenuTarget(dmc.Button("Edit", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
@@ -613,6 +615,7 @@ layout = dmc.Container(
                             trigger="hover",
                             openDelay=100,
                             closeDelay=200,
+                            position="bottom-start",
                             children=[
                                 dmc.MenuTarget(dmc.Button("View", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
@@ -621,6 +624,23 @@ layout = dmc.Container(
                             ],
                         ),
                         dmc.Box(style={"flexGrow": 1}),
+                        # Help Menu (right)
+                        dmc.Menu(
+                            trigger="hover",
+                            openDelay=100,
+                            closeDelay=200,
+                            position="bottom-start",
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button("Help", variant="subtle", size="sm"),
+                                ),
+                                dmc.MenuDropdown(
+                                    children=[
+                                        dmc.MenuItem("User Guide", id="po-menu-help-guide"),
+                                    ],
+                                ),
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -707,6 +727,106 @@ layout = dmc.Container(
             ],
         ),
 
+        # Help Modal
+        dmc.Modal(
+            id="po-help-modal",
+            title="User Guide",
+            size="lg",
+            children=[
+                dmc.Accordion(
+                    variant="separated",
+                    children=[
+                        dmc.AccordionItem(
+                            value="getting-started",
+                            children=[
+                                dmc.AccordionControl("Getting Started"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Upload returns data via File > Add series from file (shared with Analytics Tool). "
+                                    "Select series as inputs for portfolio optimization. "
+                                    "Configure optimization parameters and run to generate portfolio weights and returns.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="controls",
+                            children=[
+                                dmc.AccordionControl("Controls"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text("Series Selection: Open the modal to select, reorder, and rename series. Assign benchmarks and configure weight constraints per series.", size="sm"),
+                                    dmc.Text("Periodicity: Auto-detected data frequency. Daily data can be converted to Weekly or Monthly.", size="sm"),
+                                    dmc.Text("Vol Scaler: Scale returns to a target annualized volatility (0-100%).", size="sm"),
+                                    dmc.Text("Date Range: Start and end date pickers to filter the data range.", size="sm"),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="optimization-controls",
+                            children=[
+                                dmc.AccordionControl("Optimization Controls"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text("Portfolio Name: Label for the optimization result.", size="sm"),
+                                    dmc.Text("Model: Choose from Risk Parity, Factor Risk Parity, HRP, Minimize CVaR, or Equal Weight.", size="sm"),
+                                    dmc.Text("Exp Wt Cov: Exponentially weight the covariance matrix. When enabled, configure the Halflife (number of periods) for more responsive estimates.", size="sm"),
+                                    dmc.Text("Run: Execute the optimization with the current settings.", size="sm"),
+                                    dmc.Text("Window: Expanding (growing window from start), Rolling (fixed-size sliding window), or Full (single optimization over all data).", size="sm"),
+                                    dmc.Text("Fill In-Sample: Apply the first window's weights to pre-window dates for a complete return series.", size="sm"),
+                                    dmc.Text("Window Size: Number of periods used for the estimation window.", size="sm"),
+                                    dmc.Text("Opt Step + Unit: Rebalance frequency. Months snaps to calendar month-end dates. Periods uses a raw period count.", size="sm"),
+                                    dmc.Text("Missing Data: Choose how to handle missing values \u2014 forward-fill or fill with zeros.", size="sm"),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="weight-constraints",
+                            children=[
+                                dmc.AccordionControl("Weight Constraints"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Configure per-series minimum and maximum weight bounds in the Series Selection modal. "
+                                    "Use Force to Max to lock a series at its maximum weight.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="results",
+                            children=[
+                                dmc.AccordionControl("Results"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Use the Portfolio dropdown to view results for a specific optimization. "
+                                    "Use the Compare dropdown to overlay multiple portfolios for side-by-side comparison.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="tabs",
+                            children=[
+                                dmc.AccordionControl("Tabs"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text("Weights: Portfolio weight allocation over time, displayed as chart or table.", size="sm"),
+                                    dmc.Text("Attribution: Return contribution by asset, displayed as chart or table.", size="sm"),
+                                    dmc.Text("Statistics: Key financial metrics for the portfolio.", size="sm"),
+                                    dmc.Text("Returns: Portfolio return stream data grid.", size="sm"),
+                                    dmc.Text("Growth of $1: Compound growth chart showing cumulative portfolio performance.", size="sm"),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="export",
+                            children=[
+                                dmc.AccordionControl("Export"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Download portfolio results as an Excel workbook via File > Download Excel.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
+
         # Welcome screen
         html.Div(
             id="po-welcome-screen",
@@ -777,6 +897,14 @@ layout = dmc.Container(
 # ===========================================================================
 # Clientside callbacks
 # ===========================================================================
+
+# Open Help modal
+clientside_callback(
+    "function(n) { return true; }",
+    Output("po-help-modal", "opened"),
+    Input("po-menu-help-guide", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 # Navigate to home on Exit
 clientside_callback(

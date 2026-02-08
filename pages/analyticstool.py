@@ -157,6 +157,13 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+clientside_callback(
+    "function(n) { return true; }",
+    Output("help-modal", "opened"),
+    Input("menu-help-guide", "n_clicks"),
+    prevent_initial_call=True,
+)
+
 
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
                       active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
@@ -662,6 +669,7 @@ layout = dmc.Container(
                             trigger="hover",
                             openDelay=100,
                             closeDelay=200,
+                            position="bottom-start",
                             children=[
                                 dmc.MenuTarget(
                                     dmc.Button("File", variant="subtle", size="sm"),
@@ -672,6 +680,7 @@ layout = dmc.Container(
                                             "Add series from file",
                                             id="menu-add-series",
                                         ),
+                                        dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Download Excel",
                                             id="menu-download-excel",
@@ -691,6 +700,7 @@ layout = dmc.Container(
                             trigger="hover",
                             openDelay=100,
                             closeDelay=200,
+                            position="bottom-start",
                             children=[
                                 dmc.MenuTarget(
                                     dmc.Button("Edit", variant="subtle", size="sm"),
@@ -710,6 +720,7 @@ layout = dmc.Container(
                             trigger="hover",
                             openDelay=100,
                             closeDelay=200,
+                            position="bottom-start",
                             children=[
                                 dmc.MenuTarget(
                                     dmc.Button("View", variant="subtle", size="sm"),
@@ -731,13 +742,14 @@ layout = dmc.Container(
                             trigger="hover",
                             openDelay=100,
                             closeDelay=200,
+                            position="bottom-start",
                             children=[
                                 dmc.MenuTarget(
                                     dmc.Button("Help", variant="subtle", size="sm"),
                                 ),
                                 dmc.MenuDropdown(
                                     children=[
-                                        dmc.MenuItem("(No help topics available)", disabled=True),
+                                        dmc.MenuItem("User Guide", id="menu-help-guide"),
                                     ],
                                 ),
                             ],
@@ -784,6 +796,111 @@ layout = dmc.Container(
                     children=[
                         dmc.Button("Cancel", id="modal-cancel-button", variant="outline", color="red"),
                         dmc.Button("OK", id="modal-ok-button", color="blue"),
+                    ],
+                ),
+            ],
+        ),
+
+        # Help Modal
+        dmc.Modal(
+            id="help-modal",
+            title="User Guide",
+            size="lg",
+            children=[
+                dmc.Accordion(
+                    variant="separated",
+                    children=[
+                        dmc.AccordionItem(
+                            value="getting-started",
+                            children=[
+                                dmc.AccordionControl("Getting Started"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Upload Excel (.xlsx, .xls) or CSV files containing returns data. "
+                                    "Rows should be dates and columns should be series names. "
+                                    "Values can be in decimal format (0.05) or percent format (5%). "
+                                    "Percent signs are auto-detected and converted. "
+                                    "Sample data files are available from File > Download sample data.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="series-selection",
+                            children=[
+                                dmc.AccordionControl("Series Selection"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Click the Series Selection button to open the modal. "
+                                    "Select, reorder (move up/down), and rename series. "
+                                    "Assign a benchmark to any series for relative analysis. "
+                                    "Enable Long-Short to treat the series-benchmark difference as an absolute return stream. "
+                                    "Enable Vol Scaling per series to scale returns to a target volatility.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="periodicity",
+                            children=[
+                                dmc.AccordionControl("Periodicity"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Periodicity is auto-detected on upload. "
+                                    "Daily data can be converted to Weekly (with Monday through Friday end-of-week options) or Monthly. "
+                                    "Monthly data cannot be upsampled to daily. "
+                                    "When appending daily data to an existing monthly dataset, daily data is automatically resampled to monthly.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="returns",
+                            children=[
+                                dmc.AccordionControl("Returns"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Toggle between Total Returns and Excess Returns. "
+                                    "Excess Returns show the arithmetic difference between a series and its assigned benchmark. "
+                                    "Long-Short treats the series-benchmark difference as an absolute return stream.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="vol-scaler",
+                            children=[
+                                dmc.AccordionControl("Vol Scaler"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Scale returns to a target annualized volatility (0-100%). "
+                                    "When set to a non-zero value, each series with vol scaling enabled "
+                                    "will have its returns scaled so that its annualized volatility matches the target.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="tabs",
+                            children=[
+                                dmc.AccordionControl("Tabs"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text("Statistics: 40+ financial metrics per series including return, risk, drawdown, and distribution statistics.", size="sm"),
+                                    dmc.Text("Returns: Raw returns data grid with sortable columns and pagination.", size="sm"),
+                                    dmc.Text("Rolling: Rolling metrics (return, volatility, Sharpe, etc.) over configurable windows (3m to 10y), displayed as chart or table.", size="sm"),
+                                    dmc.Text("Calendar Year: Annual or monthly heatmap of returns with color-coded cells.", size="sm"),
+                                    dmc.Text("Growth of $1: Compound growth chart or table showing cumulative performance.", size="sm"),
+                                    dmc.Text("Drawdown: Peak-to-trough drawdown series displayed as chart or table.", size="sm"),
+                                    dmc.Text("Correlation: Correlation heatmap or scatter correlogram (scatter matrix) between series.", size="sm"),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="export",
+                            children=[
+                                dmc.AccordionControl("Export"),
+                                dmc.AccordionPanel(dmc.Text(
+                                    "Download all tabs as a multi-sheet Excel workbook via File > Download Excel. "
+                                    "The export includes Statistics, Returns, Rolling, Calendar Year, Growth of $1, Drawdown, and Correlation sheets.",
+                                    size="sm",
+                                )),
+                            ],
+                        ),
                     ],
                 ),
             ],
