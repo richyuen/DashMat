@@ -2090,6 +2090,29 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
 
 
 # ---------------------------------------------------------------------------
+# Sync results store when raw data changes (e.g. series deleted in Analytics Tool)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-results-store", "data", allow_duplicate=True),
+    Input("raw-data-store", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-results-store", "data"),
+    prevent_initial_call=True,
+)
+def po_sync_results_with_raw_data(raw_data, _n, results):
+    if not results:
+        raise PreventUpdate
+    if not raw_data:
+        return {}
+    df = json_to_df(raw_data)
+    pruned = {k: v for k, v in results.items() if k in df.columns}
+    if len(pruned) == len(results):
+        raise PreventUpdate
+    return pruned
+
+
+# ---------------------------------------------------------------------------
 # Delete portfolio
 # ---------------------------------------------------------------------------
 
