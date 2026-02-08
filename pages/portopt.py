@@ -1104,6 +1104,70 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+# Store sync: opt window
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-opt-window-store", "data"),
+    Input("po-opt-window-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: window size
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-window-size-store", "data"),
+    Input("po-window-size-input", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: opt step
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-opt-step-store", "data"),
+    Input("po-opt-step-input", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: opt model
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-opt-model-store", "data"),
+    Input("po-opt-model-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: portfolio name
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-portfolio-name-store", "data"),
+    Input("po-portfolio-name-input", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: exp wt cov
+clientside_callback(
+    "function(checked) { return checked; }",
+    Output("po-exp-wt-cov-store", "data"),
+    Input("po-exp-wt-cov-switch", "checked"),
+    prevent_initial_call=True,
+)
+
+# Store sync: halflife
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-halflife-store", "data"),
+    Input("po-halflife-input", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: missing data
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-missing-data-store", "data"),
+    Input("po-missing-data-select", "value"),
+    prevent_initial_call=True,
+)
+
 # Toggle window size / opt step / fill in-sample / opt step unit disabled based on window type
 clientside_callback(
     """
@@ -1281,6 +1345,44 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
 
 
 # ---------------------------------------------------------------------------
+# Restore optimization controls from stores on page load
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """
+    function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, missing, fillIS) {
+        return [optWindow, windowSize, optStep, optStepUnit, model, name || "OptResult",
+                expWt || false, halflife, missing, fillIS,
+                expWt ? {display: "block"} : {display: "none"}];
+    }
+    """,
+    Output("po-opt-window-select", "value"),
+    Output("po-window-size-input", "value", allow_duplicate=True),
+    Output("po-opt-step-input", "value", allow_duplicate=True),
+    Output("po-opt-step-unit-select", "value"),
+    Output("po-opt-model-select", "value"),
+    Output("po-portfolio-name-input", "value"),
+    Output("po-exp-wt-cov-switch", "checked"),
+    Output("po-halflife-input", "value", allow_duplicate=True),
+    Output("po-missing-data-select", "value"),
+    Output("po-fill-in-sample-select", "value"),
+    Output("po-halflife-wrapper", "style", allow_duplicate=True),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-opt-window-store", "data"),
+    State("po-window-size-store", "data"),
+    State("po-opt-step-store", "data"),
+    State("po-opt-step-unit-store", "data"),
+    State("po-opt-model-store", "data"),
+    State("po-portfolio-name-store", "data"),
+    State("po-exp-wt-cov-store", "data"),
+    State("po-halflife-store", "data"),
+    State("po-missing-data-store", "data"),
+    State("po-fill-in-sample-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+# ---------------------------------------------------------------------------
 # Run button enable/disable
 # ---------------------------------------------------------------------------
 
@@ -1307,9 +1409,26 @@ def po_toggle_run_button(name, selected):
     Output("po-halflife-input", "value"),
     Input("po-periodicity-select", "value"),
     State("po-opt-step-unit-select", "value"),
+    State("po-window-size-store", "data"),
+    State("po-opt-step-store", "data"),
+    State("po-halflife-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_periodicity_defaults(periodicity, unit):
+def po_update_periodicity_defaults(periodicity, unit, stored_ws, stored_step, stored_hl):
+    # If all three stores have values, this is the initial fire from page-load
+    # restore setting the periodicity — return stored values instead of defaults.
+    # On subsequent user-initiated periodicity changes the UI values (now matching
+    # stored values) will have been synced back to stores, but the periodicity
+    # itself changed so the defaults are appropriate.
+    trigger = callback_context.triggered_id
+    if trigger == "po-periodicity-select" and stored_ws is not None:
+        ws_default, step_p, step_m, hl_default = _periodicity_defaults(periodicity)
+        step_default = step_m if unit == "months" else step_p
+        # If stored values differ from this periodicity's defaults, user had
+        # customised them — preserve them.
+        if (stored_ws != ws_default or stored_step != step_default
+                or stored_hl != hl_default):
+            return stored_ws, stored_step, stored_hl
     ws, step_periods, step_months, hl = _periodicity_defaults(periodicity)
     step = step_months if unit == "months" else step_periods
     return ws, step, hl
@@ -1319,9 +1438,16 @@ def po_update_periodicity_defaults(periodicity, unit):
     Output("po-opt-step-input", "value", allow_duplicate=True),
     Input("po-opt-step-unit-select", "value"),
     State("po-periodicity-select", "value"),
+    State("po-opt-step-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_opt_step_on_unit_change(unit, periodicity):
+def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
+    # On initial restore, preserve stored opt step value
+    if stored_step is not None:
+        ws, step_p, step_m, hl = _periodicity_defaults(periodicity)
+        step_default = step_m if unit == "months" else step_p
+        if stored_step != step_default:
+            return stored_step
     ws, step_periods, step_months, hl = _periodicity_defaults(periodicity)
     return step_months if unit == "months" else step_periods
 
@@ -1931,9 +2057,10 @@ def po_on_modal_cancel(n_clicks):
     Input("analyticstool-raw-data-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
+    State("po-date-range-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_date_range(raw_data, periodicity, selected_series):
+def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
@@ -1946,9 +2073,17 @@ def po_init_date_range(raw_data, periodicity, selected_series):
         if not available:
             return None, None, disabled_style, True, True, None
 
-        start_date = df.index.min().strftime("%Y-%m-%d")
-        end_date = df.index.max().strftime("%Y-%m-%d")
-        return start_date, end_date, enabled_style, False, False, {"start": start_date, "end": end_date}
+        data_start = df.index.min().strftime("%Y-%m-%d")
+        data_end = df.index.max().strftime("%Y-%m-%d")
+
+        # Use stored dates if they fall within the available data range
+        if stored_range and stored_range.get("start") and stored_range.get("end"):
+            s = stored_range["start"]
+            e = stored_range["end"]
+            if s >= data_start and e <= data_end:
+                return s, e, enabled_style, False, False, {"start": s, "end": e}
+
+        return data_start, data_end, enabled_style, False, False, {"start": data_start, "end": data_end}
     except Exception:
         return None, None, disabled_style, True, True, None
 
