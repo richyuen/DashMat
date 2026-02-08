@@ -30,7 +30,7 @@ from utils.returns import (
 from utils.optimization import run_portfolio_optimization
 from utils.statistics import calculate_statistics_cached
 
-register_page(__name__, path="/portfolio", name="Portfolio Optimization", title="Portfolio Optimization")
+register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
 
 # Statistics row order and formatting
 STATS_CONFIG = [
@@ -938,9 +938,9 @@ clientside_callback(
     function(n_clicks) {
         if (n_clicks) {
             const keysToRemove = [
-                'raw-data-store',
-                'original-periodicity-store',
-                'pending-new-series-store',
+                'analyticstool-raw-data-store',
+                'analyticstool-original-periodicity-store',
+                'analyticstool-pending-new-series-store',
                 'series-select',
                 'benchmark-assignments-store',
                 'long-short-store',
@@ -1214,7 +1214,7 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 # Toggle welcome/main visibility.
 # Uses a one-shot Interval to guarantee session-storage has hydrated on
-# cross-page navigation, plus raw-data-store Input for same-page uploads.
+# cross-page navigation, plus analyticstool-raw-data-store Input for same-page uploads.
 # ---------------------------------------------------------------------------
 
 clientside_callback(
@@ -1229,7 +1229,7 @@ clientside_callback(
     Output("po-welcome-screen", "style"),
     Output("po-main-container", "style"),
     Input("po-page-load-trigger", "n_intervals"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
 )
 
 # ---------------------------------------------------------------------------
@@ -1241,8 +1241,8 @@ clientside_callback(
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
     Output("po-series-select", "data"),
-    Input("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
     State("po-periodicity-value-store", "data"),
     State("po-series-select-value-store", "data"),
     State("po-vol-scaler-value-store", "data"),
@@ -1331,8 +1331,8 @@ def po_update_opt_step_on_unit_change(unit, periodicity):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("raw-data-store", "data", allow_duplicate=True),
-    Output("original-periodicity-store", "data", allow_duplicate=True),
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
     Output("po-periodicity-select", "data"),
     Output("po-periodicity-select", "value"),
     Output("po-periodicity-select", "disabled"),
@@ -1352,8 +1352,8 @@ def po_update_opt_step_on_unit_change(unit, periodicity):
     Output("po-temp-force-max-store", "data", allow_duplicate=True),
     Input("po-upload-data", "contents"),
     State("po-upload-data", "filename"),
-    State("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -1466,7 +1466,7 @@ def po_open_modal(n_clicks, current_select, current_bench, current_ls, current_o
 @callback(
     Output("po-series-selection-container", "children"),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("po-temp-series-select", "data"),
     Input("po-temp-series-order-store", "data"),
     Input("po-temp-deleted-series-store", "data"),
@@ -1638,7 +1638,7 @@ def po_update_series_selectors(raw_data, selected_series, series_order, deleted_
     Output("po-temp-benchmark-assignments-store", "data"),
     Input({"type": "po-benchmark-select", "series": ALL}, "value"),
     State({"type": "po-benchmark-select", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_update_benchmarks(values, ids, raw_data):
@@ -1659,7 +1659,7 @@ def po_update_benchmarks(values, ids, raw_data):
     Output("po-temp-long-short-store", "data"),
     Input({"type": "po-long-short-checkbox", "series": ALL}, "checked"),
     State({"type": "po-long-short-checkbox", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_update_ls(values, ids, raw_data):
@@ -1676,7 +1676,7 @@ def po_update_ls(values, ids, raw_data):
     Output("po-temp-vol-scaling-assignments-store", "data"),
     Input({"type": "po-scale-vol-checkbox", "series": ALL}, "checked"),
     State({"type": "po-scale-vol-checkbox", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_update_vol_scaling(values, ids, raw_data):
@@ -1773,7 +1773,7 @@ def po_delete_series(n_clicks_list, deleted_series, checkbox_values, checkbox_id
     Input({"type": "po-move-up-button", "series": ALL}, "n_clicks"),
     Input({"type": "po-move-down-button", "series": ALL}, "n_clicks"),
     State("po-temp-series-order-store", "data"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State({"type": "po-series-include-checkbox", "series": ALL}, "checked"),
     State({"type": "po-series-include-checkbox", "series": ALL}, "id"),
     prevent_initial_call=True,
@@ -1828,7 +1828,7 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     Output("po-series-order-store", "data", allow_duplicate=True),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
     Output("po-series-select-value-store", "data", allow_duplicate=True),
-    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
     Output("po-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("po-min-wt-store", "data"),
     Output("po-max-wt-store", "data"),
@@ -1841,7 +1841,7 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     State("po-temp-long-short-store", "data"),
     State("po-temp-series-order-store", "data"),
     State("po-temp-deleted-series-store", "data"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State("po-temp-vol-scaling-assignments-store", "data"),
     State("po-temp-min-wt-store", "data"),
     State("po-temp-max-wt-store", "data"),
@@ -1928,7 +1928,7 @@ def po_on_modal_cancel(n_clicks):
     Output("po-common-range-button", "disabled"),
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
     prevent_initial_call="initial_duplicate",
@@ -1963,7 +1963,7 @@ def po_init_date_range(raw_data, periodicity, selected_series):
     Output("po-date-range-store", "data"),
     Input("po-common-range-button", "n_clicks"),
     Input("po-maximum-range-button", "n_clicks"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     prevent_initial_call=True,
@@ -2012,12 +2012,12 @@ def po_update_date_range_store(start, end):
 
 @callback(
     Output("po-results-store", "data", allow_duplicate=True),
-    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
     Output("po-opt-status-store", "data"),
-    Output("pending-new-series-store", "data", allow_duplicate=True),
+    Output("analyticstool-pending-new-series-store", "data", allow_duplicate=True),
     Input("po-run-button", "n_clicks"),
-    State("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -2039,7 +2039,7 @@ def po_update_date_range_store(start, end):
     State("po-missing-data-select", "value"),
     State("po-fill-in-sample-select", "value"),
     State("po-results-store", "data"),
-    State("pending-new-series-store", "data"),
+    State("analyticstool-pending-new-series-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -2255,7 +2255,7 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
 
 @callback(
     Output("po-results-store", "data", allow_duplicate=True),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
@@ -2278,12 +2278,12 @@ def po_sync_results_with_raw_data(raw_data, _n, results):
 
 @callback(
     Output("po-results-store", "data", allow_duplicate=True),
-    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
     Output("po-weight-portfolio-select", "value", allow_duplicate=True),
     Input("po-delete-portfolio-button", "n_clicks"),
     State("po-weight-portfolio-select", "value"),
     State("po-results-store", "data"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
@@ -2434,8 +2434,8 @@ def po_render_growth_chart(selected_portfolios, results, active_tab):
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-attribution-chart-switch", "value"),
-    State("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -2584,7 +2584,7 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-attribution-chart-switch", "value"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -2831,7 +2831,7 @@ def po_render_returns(results, active_tab, selected_portfolios):
     Output("po-download-excel", "data"),
     Input("po-menu-download-excel", "n_clicks"),
     State("po-results-store", "data"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),

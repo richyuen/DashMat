@@ -937,7 +937,7 @@ layout = dmc.Container(
         ),
 
         # Hidden stores for state management (using local storage for persistence)
-        # raw-data-store and original-periodicity-store are defined in app.py (shared across pages)
+        # analyticstool-raw-data-store and analyticstool-original-periodicity-store are defined in app.py (shared across pages)
         dcc.Store(id="benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="long-short-store", data={}, storage_type="session"),
         dcc.Store(id="periodicity-value-store", data="daily_trading", storage_type="session"),
@@ -998,9 +998,9 @@ layout = dmc.Container(
 )
 
 
-# Toggle welcome/main visibility based on raw-data-store.
+# Toggle welcome/main visibility based on analyticstool-raw-data-store.
 # Uses a one-shot Interval to guarantee session-storage has hydrated on
-# cross-page navigation, plus raw-data-store Input for same-page uploads.
+# cross-page navigation, plus analyticstool-raw-data-store Input for same-page uploads.
 clientside_callback(
     """
     function(n_intervals, data) {
@@ -1013,7 +1013,7 @@ clientside_callback(
     Output("welcome-screen-container", "style"),
     Output("main-app-container", "style"),
     Input("at-page-load-trigger", "n_intervals"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
 )
 
 
@@ -1034,8 +1034,8 @@ clientside_callback(
     Output("monthly-view-checkbox", "value"),
     Output("series-select", "data"),
     Input("at-page-load-trigger", "n_intervals"),
-    Input("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
     State("periodicity-value-store", "data"),
     State("series-select-value-store", "data"),
     State("returns-type-value-store", "data"),
@@ -1049,7 +1049,7 @@ clientside_callback(
     State("growth-chart-switch-store", "data"),
     State("monthly-view-store", "data"),
     State("monthly-series-store", "data"),
-    State("pending-new-series-store", "data"),
+    State("analyticstool-pending-new-series-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series, pending_series):
@@ -1155,7 +1155,7 @@ clientside_callback(
     """
     function(n_clicks) {
         if (n_clicks) {
-            window.location.pathname = '/portfolio';
+            window.location.pathname = '/portopt';
         }
         return window.dash_clientside.no_update;
     }
@@ -1173,9 +1173,9 @@ clientside_callback(
         if (n_clicks) {
             // Clear all sessionStorage keys for both pages
             const keysToRemove = [
-                'raw-data-store',
-                'original-periodicity-store',
-                'pending-new-series-store',
+                'analyticstool-raw-data-store',
+                'analyticstool-original-periodicity-store',
+                'analyticstool-pending-new-series-store',
                 'series-select',
                 'benchmark-assignments-store',
                 'long-short-store',
@@ -1379,7 +1379,7 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     Output("series-order-store", "data", allow_duplicate=True),
     Output("series-selection-modal", "opened", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True), # Sync persistence
-    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
     Output("vol-scaling-assignments-store", "data", allow_duplicate=True),
     Input("modal-ok-button", "n_clicks"),
     State({"type": "series-include-checkbox", "series": ALL}, "checked"),
@@ -1388,7 +1388,7 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     State("temp-long-short-store", "data"),
     State("temp-series-order-store", "data"),
     State("temp-deleted-series-store", "data"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State("temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
@@ -1455,7 +1455,7 @@ def on_modal_cancel(n_clicks):
     Input({"type": "move-up-button", "series": ALL}, "n_clicks"),
     Input({"type": "move-down-button", "series": ALL}, "n_clicks"),
     State("temp-series-order-store", "data"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State({"type": "series-include-checkbox", "series": ALL}, "checked"),
     State({"type": "series-include-checkbox", "series": ALL}, "id"),
     prevent_initial_call=True,
@@ -1726,8 +1726,8 @@ clientside_callback(
 
 
 @callback(
-    Output("raw-data-store", "data"),
-    Output("original-periodicity-store", "data"),
+    Output("analyticstool-raw-data-store", "data"),
+    Output("analyticstool-original-periodicity-store", "data"),
     Output("periodicity-select", "data"),
     Output("periodicity-select", "value"),
     Output("periodicity-select", "disabled"),
@@ -1747,8 +1747,8 @@ clientside_callback(
     Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
-    State("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
     State("series-select", "data"),
     State("benchmark-assignments-store", "data"),
     State("long-short-store", "data"),
@@ -1846,7 +1846,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 @callback(
     Output("series-selection-container", "children"),
     Output("temp-series-order-store", "data", allow_duplicate=True),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("temp-series-select", "data"),
     Input("temp-series-order-store", "data"),
     Input("series-edit-mode", "data"),
@@ -2175,7 +2175,7 @@ def cancel_edit_mode(n_clicks_list):
 
 
 @callback(
-    Output("raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
     Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("temp-long-short-store", "data", allow_duplicate=True),
     Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
@@ -2188,7 +2188,7 @@ def cancel_edit_mode(n_clicks_list):
     State({"type": "save-edit-button", "series": ALL}, "id"),
     State({"type": "edit-series-input", "series": ALL}, "value"),
     State({"type": "edit-series-input", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
     State("temp-vol-scaling-assignments-store", "data"),
@@ -2286,7 +2286,7 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
     Output("temp-benchmark-assignments-store", "data"),
     Input({"type": "benchmark-select", "series": ALL}, "value"),
     State({"type": "benchmark-select", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def update_benchmark_assignments(benchmark_values, benchmark_ids, raw_data):
@@ -2308,7 +2308,7 @@ def update_benchmark_assignments(benchmark_values, benchmark_ids, raw_data):
     Output("temp-long-short-store", "data"),
     Input({"type": "long-short-checkbox", "series": ALL}, "checked"),
     State({"type": "long-short-checkbox", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def update_long_short_assignments(checkbox_values, checkbox_ids, raw_data):
@@ -2330,7 +2330,7 @@ def update_long_short_assignments(checkbox_values, checkbox_ids, raw_data):
     Output("temp-vol-scaling-assignments-store", "data"),
     Input({"type": "scale-vol-checkbox", "series": ALL}, "checked"),
     State({"type": "scale-vol-checkbox", "series": ALL}, "id"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def update_vol_scaling_assignments(checkbox_values, checkbox_ids, raw_data):
@@ -2355,7 +2355,7 @@ def update_vol_scaling_assignments(checkbox_values, checkbox_ids, raw_data):
     Output("common-range-button", "disabled"),
     Output("maximum-range-button", "disabled"),
     Output("date-range-store", "data", allow_duplicate=True),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     prevent_initial_call="initial_duplicate",
@@ -2394,7 +2394,7 @@ def initialize_date_range(raw_data, periodicity, selected_series):
     Output("date-range-store", "data"),
     Input("common-range-button", "n_clicks"),
     Input("maximum-range-button", "n_clicks"),
-    State("raw-data-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     State("periodicity-select", "value"),
     State("series-select", "data"),
     prevent_initial_call=True,
@@ -2454,7 +2454,7 @@ def update_date_range_store(start_date, end_date):
     Output("returns-grid", "columnDefs"),
     Output("returns-grid", "rowData"),
     Output("menu-download-excel", "disabled"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("returns-type-select", "value"),
@@ -2519,7 +2519,7 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
     Output("rolling-grid", "columnDefs"),
     Output("rolling-grid", "rowData"),
     Input("main-tabs", "value"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("rolling-window-select", "value"),
@@ -2600,7 +2600,7 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
 @callback(
     Output("rolling-chart-wrapper", "children"),
     Input("main-tabs", "value"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("rolling-window-select", "value"),
@@ -2779,8 +2779,8 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
     Output("calendar-grid", "columnDefs"),
     Output("calendar-grid", "rowData"),
     Input("main-tabs", "value"),
-    Input("raw-data-store", "data"),
-    Input("original-periodicity-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
+    Input("analyticstool-original-periodicity-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("returns-type-select", "value"),
@@ -2885,7 +2885,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
 @callback(
     Output("statistics-grid", "columnDefs"),
     Output("statistics-grid", "rowData"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("benchmark-assignments-store", "data"),
@@ -3003,7 +3003,7 @@ clientside_callback(
 @callback(
     Output("correlogram-container", "children"),
     Input("main-tabs", "value"),  # Lazy loading: only update when tab is active
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("returns-type-select", "value"),
@@ -3212,7 +3212,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     Output("growth-charts-container", "children"),
     Input("main-tabs", "value"),
     Input("growth-chart-switch", "value"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("benchmark-assignments-store", "data"),
@@ -3396,7 +3396,7 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
     Output("growth-grid", "rowData"),
     Input("main-tabs", "value"),
     Input("growth-chart-switch", "value"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("benchmark-assignments-store", "data"),
@@ -3465,7 +3465,7 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     Output("drawdown-charts", "children"),
     Input("main-tabs", "value"),
     Input("drawdown-chart-switch", "value"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("returns-type-select", "value"),
@@ -3549,7 +3549,7 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
     Output("drawdown-grid", "rowData"),
     Input("main-tabs", "value"),
     Input("drawdown-chart-switch", "value"),
-    Input("raw-data-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
     Input("periodicity-select", "value"),
     Input("series-select", "data"),
     Input("returns-type-select", "value"),
@@ -3620,8 +3620,8 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
 @callback(
     Output("download-excel", "data"),
     Input("menu-download-excel", "n_clicks"),
-    State("raw-data-store", "data"),
-    State("original-periodicity-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
     State("periodicity-select", "value"),
     State("series-select", "data"),
     State("returns-type-select", "value"),

@@ -18,9 +18,9 @@ cache = init_cache(app.server)
 # Shared stores are defined here so they are accessible across all pages
 app.layout = dmc.MantineProvider(
     children=[
-        dcc.Store(id="raw-data-store", data=None, storage_type="session"),
-        dcc.Store(id="original-periodicity-store", data="daily", storage_type="session"),
-        dcc.Store(id="pending-new-series-store", data=[], storage_type="session"),
+        dcc.Store(id="analyticstool-raw-data-store", data=None, storage_type="session"),
+        dcc.Store(id="analyticstool-original-periodicity-store", data="daily", storage_type="session"),
+        dcc.Store(id="analyticstool-pending-new-series-store", data=[], storage_type="session"),
         page_container,
     ]
 )
