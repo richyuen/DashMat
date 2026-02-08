@@ -233,7 +233,9 @@ def _extract_pca_factors(returns_df, n_factors=None):
     n_assets = returns_df.shape[1]
     n_obs = returns_df.shape[0]
     if n_factors is None:
-        n_factors = max(1, n_assets - 1)
+        # Use roughly half the assets — enough to capture the main factor
+        # structure while keeping the decomposition a true reduction.
+        n_factors = max(1, n_assets // 2)
     n_factors = min(n_factors, n_assets - 1, n_obs)
     if n_factors < 1:
         n_factors = 1
@@ -348,9 +350,10 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         if model == "risk_parity":
             w = port.rp_optimization(model="Classic", rm="MV", hist=True)
         elif model == "factor_risk_parity":
-            w = port.rp_optimization(model="FM", rm="MV", hist=True)
+            w = port.rp_optimization(model="FM", rm="MV", hist=False)
         elif model == "hrp":
-            w = port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)
+            hc_port = rp.HCPortfolio(returns=port_data)
+            w = hc_port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
         else:
