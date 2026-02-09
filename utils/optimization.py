@@ -1,9 +1,13 @@
 """Portfolio optimization engine using riskfolio-lib."""
 
 from dataclasses import dataclass
+import warnings
 import numpy as np
 import pandas as pd
 import riskfolio as rp
+
+# Suppress cvxpy deprecation warning from riskfolio-lib internals
+warnings.filterwarnings("ignore", category=UserWarning, module="cvxpy")
 
 
 @dataclass
@@ -319,9 +323,10 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             lower_arr[i] = lower_bounds.get(name, 0)
             upper_arr[i] = upper_bounds.get(name, 1)
 
-    # Set bounds for Classic/CVaR optimization (uses lowerlng/upperlng)
-    port.lowerlng = pd.DataFrame(lower_arr, index=asset_names, columns=["lower"])
-    port.upperlng = pd.DataFrame(upper_arr, index=asset_names, columns=["upper"])
+    # Set bounds for Classic optimization (uses lowerlng/upperlng)
+    # Use numpy arrays (not DataFrames) for cvxpy compatibility in Sharpe formulation
+    port.lowerlng = lower_arr.reshape(-1, 1)
+    port.upperlng = upper_arr.reshape(-1, 1)
 
     # For risk parity, convert box constraints to linear inequality constraints
     # ainequality * w <= binequality
@@ -354,6 +359,8 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         elif model == "hrp":
             hc_port = rp.HCPortfolio(returns=port_data)
             w = hc_port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)
+        elif model == "maximize_sharpe":
+            w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=True)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
         else:

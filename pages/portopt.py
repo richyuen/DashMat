@@ -256,6 +256,7 @@ def build_po_main_layout():
                                                 {"value": "risk_parity", "label": "Risk Parity"},
                                                 {"value": "factor_risk_parity", "label": "Factor Risk Parity"},
                                                 {"value": "hrp", "label": "Hierarchical Risk Parity"},
+                                                {"value": "maximize_sharpe", "label": "Maximize Sharpe Ratio"},
                                                 {"value": "minimize_cvar", "label": "Minimize CVaR"},
                                                 {"value": "equal_weight", "label": "Equal Weight"},
                                             ],
@@ -758,7 +759,7 @@ layout = dmc.Container(
                                 dmc.AccordionControl("Optimization Controls"),
                                 dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
                                     dmc.Text("Portfolio Name: Label for the optimization result.", size="sm"),
-                                    dmc.Text("Model: Choose from Risk Parity, Factor Risk Parity, HRP, Minimize CVaR, or Equal Weight.", size="sm"),
+                                    dmc.Text("Model: Choose from Risk Parity, Factor Risk Parity, Hierarchical Risk Parity, Maximize Sharpe Ratio, Minimize CVaR, or Equal Weight.", size="sm"),
                                     dmc.Text("Exp Wt Cov: Exponentially weight the covariance matrix. When enabled, configure the Halflife (number of periods) for more responsive estimates.", size="sm"),
                                     dmc.Text("Run: Execute the optimization with the current settings.", size="sm"),
                                     dmc.Text("Window: Expanding (growing window from start), Rolling (fixed-size sliding window), or Full (single optimization over all data).", size="sm"),
