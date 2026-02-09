@@ -37,6 +37,7 @@ from utils.statistics import (
     calculate_statistics_cached,
     generate_correlogram_cached,
 )
+from utils.charting import apply_chart_theme
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -161,6 +162,80 @@ clientside_callback(
     "function(n) { return true; }",
     Output("help-modal", "opened"),
     Input("menu-help-guide", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Save session: download all sessionStorage as JSON
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        var data = {};
+        for (var i = 0; i < sessionStorage.length; i++) {
+            var key = sessionStorage.key(i);
+            data[key] = sessionStorage.getItem(key);
+        }
+        var blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'dashmat_session.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("save-session-dummy", "data"),
+    Input("menu-save-session", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Load session: trigger hidden upload file dialog
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        setTimeout(function() {
+            var el = document.querySelector('#load-session-upload input[type="file"]');
+            if (el) el.click();
+        }, 100);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("load-session-dummy", "data"),
+    Input("menu-load-session", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Load session: restore sessionStorage from uploaded file and reload
+clientside_callback(
+    """
+    function(contents) {
+        if (!contents) return window.dash_clientside.no_update;
+        var raw = atob(contents.split(',')[1]);
+        var data = JSON.parse(raw);
+        sessionStorage.clear();
+        for (var key in data) {
+            sessionStorage.setItem(key, data[key]);
+        }
+        window.location.reload();
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("load-session-dummy", "data", allow_duplicate=True),
+    Input("load-session-upload", "contents"),
+    prevent_initial_call=True,
+)
+
+# Toggle dark mode
+clientside_callback(
+    """function(n, current) {
+        if (!n) return window.dash_clientside.no_update;
+        return current === 'dark' ? 'light' : 'dark';
+    }""",
+    Output("theme-store", "data", allow_duplicate=True),
+    Input("menu-toggle-dark-mode", "n_clicks"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -682,6 +757,15 @@ layout = dmc.Container(
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
+                                            "Save Session",
+                                            id="menu-save-session",
+                                        ),
+                                        dmc.MenuItem(
+                                            "Load Session",
+                                            id="menu-load-session",
+                                        ),
+                                        dmc.MenuDivider(),
+                                        dmc.MenuItem(
                                             "Download Excel",
                                             id="menu-download-excel",
                                             disabled=True,
@@ -730,6 +814,11 @@ layout = dmc.Container(
                                         dmc.MenuItem(
                                             "Portfolio Optimization",
                                             id="menu-view-portfolio",
+                                        ),
+                                        dmc.MenuDivider(),
+                                        dmc.MenuItem(
+                                            "Toggle Dark Mode",
+                                            id="menu-toggle-dark-mode",
                                         ),
                                     ],
                                 ),
@@ -968,6 +1057,18 @@ layout = dmc.Container(
         dcc.Download(id="download-excel"),
         dcc.Download(id="download-sample-daily"),
         dcc.Download(id="download-sample-monthly"),
+        # Save/Load session
+        dcc.Store(id="save-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="load-session-dummy", data=None, storage_type="memory"),
+        html.Div(
+            dcc.Upload(
+                id="load-session-upload",
+                children=html.Div(),
+                multiple=False,
+                accept=".json",
+            ),
+            style={"display": "none"},
+        ),
         dcc.Location(id="url-location", refresh=False),
         # Moved series-select and edit-mode to global scope
         dcc.Store(id="series-select", data=[], storage_type="session"),
@@ -2617,9 +2718,10 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
     Input("date-range-store", "data"),
     Input("vol-scaler-value-store", "data"),
     Input("vol-scaling-assignments-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
     """Update the Rolling Returns chart with rolling window calculations."""
     # Create empty figure
     empty_fig = go.Figure()
@@ -2629,6 +2731,7 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
         yaxis_title="",
         template="plotly_white",
     )
+    apply_chart_theme(empty_fig, theme)
     empty_graph = dcc.Graph(figure=empty_fig, style={"height": "550px"})
 
     # Lazy loading: only calculate when rolling tab is active
@@ -2724,6 +2827,7 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
                 x=1
             )
         )
+        apply_chart_theme(fig, theme)
 
         return dcc.Graph(figure=fig, style={"height": "100%"})
 
@@ -3020,9 +3124,10 @@ clientside_callback(
     Input("vol-scaling-assignments-store", "data"),
     Input("correlation-view-switch", "value"),
     Input("correlogram-block-width", "value"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view, block_width):
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -3089,9 +3194,10 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                 yaxis=dict(autorange='reversed'),
                 template="plotly_white",
             )
+            apply_chart_theme(heatmap_fig, theme)
 
             return dcc.Graph(figure=heatmap_fig, style={"height": "100%"})
-        
+
         # 2. Correlogram (Scatter Matrix)
         else:
             display_df = result['display_df']
@@ -3208,6 +3314,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
                      fig.update_yaxes(showticklabels=False, col=i+1)
 
 
+            apply_chart_theme(fig, theme)
             return dcc.Graph(figure=fig, style=graph_style)
 
     except Exception:
@@ -3226,9 +3333,10 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     Input("date-range-store", "data"),
     Input("vol-scaler-value-store", "data"),
     Input("vol-scaling-assignments-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
     """Update Growth of $1 charts (lazy loaded)."""
     # Lazy loading: only generate when growth tab is active and chart view is selected
     if active_tab != "growth" or chart_checked != "chart":
@@ -3386,9 +3494,11 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
                 ),
             )
 
+            apply_chart_theme(fig, theme)
             individual_charts.append(dcc.Graph(figure=fig, style={"marginBottom": "2rem"}))
 
         # Combine all charts
+        apply_chart_theme(main_fig, theme)
         charts = [dcc.Graph(figure=main_fig, style={"height": "100%", "marginBottom": "3rem"})] + individual_charts
 
         return html.Div(charts, style={"height": "100%"})
@@ -3480,9 +3590,10 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     Input("date-range-store", "data"),
     Input("vol-scaler-value-store", "data"),
     Input("vol-scaling-assignments-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
     """Update Drawdown charts (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and chart view is selected
     if active_tab != "drawdown" or chart_checked != "chart":
@@ -3542,6 +3653,7 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
                 template="plotly_white",
             )
 
+            apply_chart_theme(fig, theme)
             charts.append(dcc.Graph(figure=fig, style={"marginBottom": "2rem"}))
 
         return html.Div(charts)

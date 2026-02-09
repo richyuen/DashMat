@@ -36,7 +36,14 @@
       "Bash(git -C \"C:\\\\Git\\\\DashMat\" add CLAUDE.md pages/analyticstool.py)",
       "Bash(git -C \"C:\\\\Git\\\\DashMat\" commit -m \"$\\(cat <<''EOF''\ndocs: update CLAUDE.md and remove correlogram series limit\n\nUpdate CLAUDE.md to reflect current codebase: add missing files\n\\(constants.py, sample_data.py, TESTING_CHECKLIST.md\\), fix callback\ncount \\(59 = 34 server + 25 clientside\\), document performance\noptimizations, cache threshold \\(500\\), sample data downloads, and\nauto-resampling. Remove the 10-series correlogram limit from\nanalyticstool.py.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "WebSearch",
-      "Bash(C:Usersryuen.condaenvsdashmatpython.exe -c \"import sys; sys.path.insert\\(0, ''C:/Git/DashMat''\\); from app import app; print\\(''OK''\\)\")"
+      "Bash(C:Usersryuen.condaenvsdashmatpython.exe -c \"import sys; sys.path.insert\\(0, ''C:/Git/DashMat''\\); from app import app; print\\(''OK''\\)\")",
+      "Bash(git -C C:GitDashMat status)",
+      "Bash(git mv:*)",
+      "Bash(del C:GitDashMattest_edge1.py)",
+      "Bash(del C:GitDashMattest_edge2.py)",
+      "Bash(conda activate:*)",
+      "Bash(cd:*)",
+      "Bash(git rm:*)"
     ]
   }
 }

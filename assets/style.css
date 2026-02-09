@@ -1,0 +1,11 @@
+[data-mantine-color-scheme="dark"] .ag-theme-alpine {
+    --ag-background-color: #1a1b1e;
+    --ag-header-background-color: #25262b;
+    --ag-odd-row-background-color: #1a1b1e;
+    --ag-row-hover-color: #2c2e33;
+    --ag-foreground-color: #c1c2c5;
+    --ag-header-foreground-color: #c1c2c5;
+    --ag-border-color: #373a40;
+    --ag-row-border-color: #373a40;
+    --ag-secondary-foreground-color: #909296;
+}

@@ -54,7 +54,7 @@ DashMat/
 │   ├── __init__.py
 │   ├── home.py               # Welcome/portal page (links to /dashboard)
 │   ├── analyticstool.py      # Main analytics dashboard (~3,700 lines)
-│   └── portfolio.py          # Portfolio optimization page
+│   └── portopt.py            # Portfolio optimization page
 └── utils/
     ├── __init__.py
     ├── constants.py           # Window/day mappings for rolling calculations
@@ -133,9 +133,9 @@ DashMat/
 
 **Auto-resampling**: When appending daily data to an existing monthly dataset, daily data is automatically resampled to monthly frequency.
 
-### Portfolio Optimization (pages/portfolio.py)
+### Portfolio Optimization (pages/portopt.py)
 
-Separate page (`/portfolio`) for running portfolio optimizations on loaded series.
+Separate page (`/portopt`) for running portfolio optimizations on loaded series.
 
 **Optimization Controls** (three-row layout):
 - Row 1: Portfolio Name, Model, Exp Wt Cov, Half-Life (Periods)
