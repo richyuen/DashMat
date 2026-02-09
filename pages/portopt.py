@@ -771,6 +771,67 @@ layout = dmc.Container(
                             ],
                         ),
                         dmc.AccordionItem(
+                            value="models",
+                            children=[
+                                dmc.AccordionControl("Models"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text([
+                                        dmc.Text("Risk Parity", fw=700, span=True),
+                                        " — Allocates weights so that each asset contributes equally to total portfolio "
+                                        "risk (volatility). Assets with lower volatility receive higher weights. Unlike "
+                                        "equal weighting, this accounts for correlations between assets: a highly "
+                                        "correlated pair will receive less combined weight than two uncorrelated assets. "
+                                        "Does not consider expected returns — focused purely on risk diversification.",
+                                    ], size="sm"),
+                                    dmc.Text([
+                                        dmc.Text("Factor Risk Parity", fw=700, span=True),
+                                        " — A variation of Risk Parity that decomposes portfolio risk through a factor "
+                                        "model. PCA (Principal Component Analysis) extracts statistical factors from the "
+                                        "return data, and the optimizer equalizes each asset's contribution to risk as "
+                                        "measured through the factor covariance structure. This tends to look through "
+                                        "surface-level correlations to the underlying drivers of risk, producing "
+                                        "allocations that differ from standard Risk Parity when assets share common "
+                                        "factor exposures (e.g., equity-like assets grouped by sector or style).",
+                                    ], size="sm"),
+                                    dmc.Text([
+                                        dmc.Text("Hierarchical Risk Parity (HRP)", fw=700, span=True),
+                                        " — Uses hierarchical clustering to group assets by correlation similarity, then "
+                                        "allocates risk top-down through the cluster tree. First, assets are organized "
+                                        "into a dendrogram based on their correlation structure. Then, capital is split "
+                                        "between clusters inversely proportional to their variance, and recursively "
+                                        "within each cluster. HRP does not require covariance matrix inversion, making "
+                                        "it more stable than mean-variance approaches with many assets or short "
+                                        "estimation windows.",
+                                    ], size="sm"),
+                                    dmc.Text([
+                                        dmc.Text("Maximize Sharpe Ratio", fw=700, span=True),
+                                        " — Finds the portfolio on the efficient frontier with the highest return per "
+                                        "unit of risk (Sharpe ratio = annualized return / annualized volatility, "
+                                        "assuming zero risk-free rate). This is the tangency portfolio in mean-variance "
+                                        "optimization. It uses both expected returns (estimated from historical mean) "
+                                        "and covariance, so results are sensitive to the estimation window. Tends to "
+                                        "concentrate in assets with the highest historical Sharpe ratios.",
+                                    ], size="sm"),
+                                    dmc.Text([
+                                        dmc.Text("Minimize CVaR", fw=700, span=True),
+                                        " — Minimizes Conditional Value-at-Risk (CVaR), also known as Expected "
+                                        "Shortfall. CVaR measures the average loss in the worst tail of the return "
+                                        "distribution (default: worst 5%). Unlike volatility, which treats upside and "
+                                        "downside equally, CVaR focuses specifically on downside tail risk. This model "
+                                        "is more conservative than minimum variance and better captures the risk of "
+                                        "assets with skewed or fat-tailed return distributions.",
+                                    ], size="sm"),
+                                    dmc.Text([
+                                        dmc.Text("Equal Weight", fw=700, span=True),
+                                        " — Assigns equal weight to every selected asset (1/N). No optimization is "
+                                        "performed. Serves as a simple, robust baseline that avoids estimation error "
+                                        "entirely. Often surprisingly competitive with optimized portfolios, especially "
+                                        "when estimation windows are short or assets have similar risk characteristics.",
+                                    ], size="sm"),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
                             value="weight-constraints",
                             children=[
                                 dmc.AccordionControl("Weight Constraints"),
