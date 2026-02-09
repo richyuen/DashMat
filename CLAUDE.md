@@ -137,15 +137,16 @@ DashMat/
 
 Separate page (`/portfolio`) for running portfolio optimizations on loaded series.
 
-**Optimization Controls** (two-row layout):
-- Row 1: Portfolio Name, Model, Exp Wt Cov (+ Halflife), Run button
-- Row 2: Window (Expanding/Rolling/Full), Fill In-Sample, Window Size, Opt Step + Unit, Missing Data
+**Optimization Controls** (three-row layout):
+- Row 1: Portfolio Name, Model, Exp Wt Cov, Half-Life (Periods)
+- Row 2: Window (Expanding/Rolling/Full), Fill In-Sample, Window Size (Periods), Opt Step + Unit, Missing Data
+- Row 3: Run button
 
 **Opt Step Unit**: Dropdown next to Opt Step input with two modes:
 - **Months** (default): Rebalance points snap to calendar month-end dates (`pd.offsets.MonthEnd`)
 - **Periods**: Raw period count stepping (legacy behavior)
 
-**Models**: Risk Parity, Factor Risk Parity, HRP, Minimize CVaR, Equal Weight
+**Models**: Risk Parity, Factor Risk Parity, Hierarchical Risk Parity, Maximize Sharpe Ratio, Minimize CVaR, Equal Weight
 
 **Window Types**:
 - **Rolling**: Fixed-size estimation window slides forward
