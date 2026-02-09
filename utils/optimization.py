@@ -363,6 +363,8 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=True)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
+        elif model == "minimize_variance":
+            w = port.optimization(model="Classic", rm="MV", obj="MinRisk", hist=True)
         else:
             raise ValueError(f"Unknown model: {model}")
     except Exception:
@@ -563,3 +565,80 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     portfolio_returns = portfolio_returns[has_weights]
 
     return window_results, portfolio_returns
+
+
+def compute_risk_contributions(weights_dict, returns_df):
+    """Compute percentage risk contribution of each asset.
+
+    Args:
+        weights_dict: Dict of {asset_name: weight}
+        returns_df: DataFrame of returns for assets in weights_dict
+
+    Returns:
+        Dict of {asset_name: pct_contribution} where values sum to 1.0
+    """
+    cols = [c for c in returns_df.columns if c in weights_dict]
+    w = np.array([weights_dict[c] for c in cols])
+    cov = returns_df[cols].cov().values
+    marginal = cov @ w
+    total_var = w @ cov @ w
+    if total_var == 0:
+        return {c: 1.0 / len(cols) for c in cols}
+    rc = w * marginal / total_var
+    return dict(zip(cols, rc))
+
+
+def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50):
+    """Compute the efficient frontier for a given risk measure.
+
+    Args:
+        returns_df: DataFrame of asset returns (clean, no NaN)
+        ann_factor: Annualization factor (252 for daily, 52 for weekly, 12 for monthly)
+        rm: Risk measure - "MV" for volatility, "CVaR" for Conditional Value-at-Risk
+        n_points: Number of frontier points
+
+    Returns:
+        Tuple of (frontier_points, asset_points) where:
+        - frontier_points: list of {"return": float, "risk": float}
+        - asset_points: list of {"name": str, "return": float, "risk": float}
+    """
+    port = rp.Portfolio(returns=returns_df)
+    port.assets_stats(method_mu="hist", method_cov="hist")
+
+    frontier = port.efficient_frontier(
+        model="Classic", rm=rm, points=n_points, rf=0, hist=True
+    )
+
+    mu = port.mu.values.flatten()
+    cov = port.cov.values
+    returns_arr = returns_df.values
+    alpha = 0.05
+
+    def _compute_risk(w):
+        """Compute risk for a weight vector using the selected risk measure."""
+        if rm == "CVaR":
+            port_returns = returns_arr @ w
+            sorted_r = np.sort(port_returns)
+            cutoff = max(1, int(np.ceil(len(sorted_r) * alpha)))
+            return -sorted_r[:cutoff].mean() * np.sqrt(ann_factor)
+        return np.sqrt(w @ cov @ w) * np.sqrt(ann_factor)
+
+    results = []
+    for col in frontier.columns:
+        w = frontier[col].values
+        ret = (w @ mu) * ann_factor
+        risk = _compute_risk(w)
+        results.append({"return": ret, "risk": risk})
+
+    assets = []
+    for i, name in enumerate(returns_df.columns):
+        # Single-asset weight vector
+        w_single = np.zeros(len(returns_df.columns))
+        w_single[i] = 1.0
+        assets.append({
+            "name": name,
+            "return": mu[i] * ann_factor,
+            "risk": _compute_risk(w_single),
+        })
+
+    return results, assets

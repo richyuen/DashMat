@@ -27,8 +27,9 @@ from utils.returns import (
     resample_returns_cached,
     annualization_factor,
 )
-from utils.optimization import run_portfolio_optimization
+from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
 from utils.statistics import calculate_statistics_cached
+from utils.charting import apply_chart_theme
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
 
@@ -257,6 +258,7 @@ def build_po_main_layout():
                                                 {"value": "factor_risk_parity", "label": "Factor Risk Parity"},
                                                 {"value": "hrp", "label": "Hierarchical Risk Parity"},
                                                 {"value": "maximize_sharpe", "label": "Maximize Sharpe Ratio"},
+                                                {"value": "minimize_variance", "label": "Minimize Variance"},
                                                 {"value": "minimize_cvar", "label": "Minimize CVaR"},
                                                 {"value": "equal_weight", "label": "Equal Weight"},
                                             ],
@@ -432,10 +434,13 @@ def build_po_main_layout():
                 children=[
                     dmc.TabsList(children=[
                         dmc.TabsTab("Weights", value="weight"),
-                        dmc.TabsTab("Attribution", value="attribution"),
+                        dmc.TabsTab("Turnover", value="turnover"),
                         dmc.TabsTab("Statistics", value="statistics"),
                         dmc.TabsTab("Returns", value="returns"),
                         dmc.TabsTab("Growth of $1", value="growth"),
+                        dmc.TabsTab("Attribution", value="attribution"),
+                        dmc.TabsTab("Risk", value="risk"),
+                        dmc.TabsTab("Frontier", value="frontier"),
                     ]),
                     dmc.TabsPanel(
                         value="weight",
@@ -508,6 +513,114 @@ def build_po_main_layout():
                                         dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
                                     ),
                                 ],
+                            ),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="risk",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            dmc.Group(mb="md", children=[
+                                dmc.SegmentedControl(
+                                    id="po-risk-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="chart",
+                                    size="sm",
+                                ),
+                            ]),
+                            html.Div(
+                                id="po-risk-chart-container",
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                children=[html.Div(id="po-risk-chart-content")],
+                            ),
+                            html.Div(
+                                id="po-risk-grid-container",
+                                style={"display": "none"},
+                                children=[
+                                    dag.AgGrid(
+                                        id="po-risk-grid",
+                                        columnDefs=[],
+                                        rowData=[],
+                                        defaultColDef={"sortable": True, "resizable": True},
+                                        style={"height": "100%", "width": "100%"},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="turnover",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            dmc.Group(mb="md", children=[
+                                dmc.SegmentedControl(
+                                    id="po-turnover-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="chart",
+                                    size="sm",
+                                ),
+                            ]),
+                            html.Div(
+                                id="po-turnover-chart-container",
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                children=[html.Div(id="po-turnover-chart-content")],
+                            ),
+                            html.Div(
+                                id="po-turnover-grid-container",
+                                style={"display": "none"},
+                                children=[
+                                    dag.AgGrid(
+                                        id="po-turnover-grid",
+                                        columnDefs=[],
+                                        rowData=[],
+                                        defaultColDef={"sortable": True, "resizable": True},
+                                        style={"height": "100%", "width": "100%"},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="frontier",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+                        children=[
+                            dmc.Group(mb="md", children=[
+                                dmc.Select(
+                                    id="po-frontier-window-select",
+                                    label="Window",
+                                    data=[],
+                                    value=None,
+                                    w=200,
+                                    size="sm",
+                                    clearable=False,
+                                ),
+                                dmc.Select(
+                                    id="po-frontier-rm-select",
+                                    label="Risk Measure",
+                                    data=[
+                                        {"value": "MV", "label": "Volatility"},
+                                        {"value": "CVaR", "label": "CVaR"},
+                                    ],
+                                    value="MV",
+                                    w=150,
+                                    size="sm",
+                                    clearable=False,
+                                ),
+                            ]),
+                            dcc.Loading(
+                                type="default",
+                                children=[html.Div(id="po-frontier-chart-content")],
                             ),
                         ],
                     ),
@@ -586,6 +699,9 @@ layout = dmc.Container(
                                 dmc.MenuDropdown(children=[
                                     dmc.MenuItem("Add series from file", id="po-menu-add-series"),
                                     dmc.MenuDivider(),
+                                    dmc.MenuItem("Save Session", id="po-menu-save-session"),
+                                    dmc.MenuItem("Load Session", id="po-menu-load-session"),
+                                    dmc.MenuDivider(),
                                     dmc.MenuItem("Download Excel", id="po-menu-download-excel"),
                                     dmc.MenuDivider(),
                                     dmc.MenuItem("Exit", id="po-menu-exit"),
@@ -613,6 +729,8 @@ layout = dmc.Container(
                                 dmc.MenuTarget(dmc.Button("View", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
                                     dmc.MenuItem("Analytics Tool", id="po-menu-view-analytics"),
+                                    dmc.MenuDivider(),
+                                    dmc.MenuItem("Toggle Dark Mode", id="po-menu-toggle-dark-mode"),
                                 ]),
                             ],
                         ),
@@ -822,6 +940,14 @@ layout = dmc.Container(
                                         "assets with skewed or fat-tailed return distributions.",
                                     ], size="sm"),
                                     dmc.Text([
+                                        dmc.Text("Minimize Variance", fw=700, span=True),
+                                        " — Finds the portfolio with the lowest possible volatility (annualized "
+                                        "standard deviation). This is the left-most point on the efficient frontier. "
+                                        "It uses only the covariance matrix (not expected returns), making it more "
+                                        "stable than Sharpe maximization. Tends to concentrate in the lowest-volatility "
+                                        "assets and those with low correlations to each other.",
+                                    ], size="sm"),
+                                    dmc.Text([
                                         dmc.Text("Equal Weight", fw=700, span=True),
                                         " — Assigns equal weight to every selected asset (1/N). No optimization is "
                                         "performed. Serves as a simple, robust baseline that avoids estimation error "
@@ -859,10 +985,13 @@ layout = dmc.Container(
                                 dmc.AccordionControl("Tabs"),
                                 dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
                                     dmc.Text("Weights: Portfolio weight allocation over time, displayed as chart or table.", size="sm"),
-                                    dmc.Text("Attribution: Return contribution by asset, displayed as chart or table.", size="sm"),
+                                    dmc.Text("Turnover: Weight changes at each rebalance point.", size="sm"),
                                     dmc.Text("Statistics: Key financial metrics for the portfolio.", size="sm"),
                                     dmc.Text("Returns: Portfolio return stream data grid.", size="sm"),
                                     dmc.Text("Growth of $1: Compound growth chart showing cumulative portfolio performance.", size="sm"),
+                                    dmc.Text("Attribution: Return contribution by asset, displayed as chart or table.", size="sm"),
+                                    dmc.Text("Risk: Per-asset risk contribution across all optimization windows as stacked bar chart.", size="sm"),
+                                    dmc.Text("Frontier: Mean-variance efficient frontier with selectable window and risk measure.", size="sm"),
                                 ])),
                             ],
                         ),
@@ -938,6 +1067,20 @@ layout = dmc.Container(
         # Chart/table switch stores
         dcc.Store(id="po-weight-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-attribution-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="po-risk-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="po-turnover-chart-switch-store", data="chart", storage_type="session"),
+        # Save/Load session
+        dcc.Store(id="po-save-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="po-load-session-dummy", data=None, storage_type="memory"),
+        html.Div(
+            dcc.Upload(
+                id="po-load-session-upload",
+                children=html.Div(),
+                multiple=False,
+                accept=".json",
+            ),
+            style={"display": "none"},
+        ),
         # Excel download
         dcc.Download(id="po-download-excel"),
         # Navigation
@@ -1038,7 +1181,9 @@ clientside_callback(
                 'po-results-store',
                 'po-active-tab-store',
                 'po-weight-chart-switch-store',
-                'po-attribution-chart-switch-store'
+                'po-attribution-chart-switch-store',
+                'po-risk-chart-switch-store',
+                'po-turnover-chart-switch-store'
             ];
             keysToRemove.forEach(key => {
                 sessionStorage.removeItem(key);
@@ -1238,6 +1383,9 @@ clientside_callback(
         if (tab === "growth" || tab === "statistics" || tab === "returns") {
             return [{display: "none"}, {display: "none"}, {display: "block"}];
         }
+        if (tab === "frontier") {
+            return [{display: "block"}, {display: "none"}, {display: "none"}];
+        }
         return [{display: "block"}, {display: "block"}, {display: "none"}];
     }
     """,
@@ -1314,6 +1462,134 @@ clientside_callback(
     Output("po-attribution-grid-container", "style"),
     Output("po-attribution-chart-container", "style"),
     Input("po-attribution-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for risk chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
+    Output("po-risk-chart-switch-store", "data"),
+    Input("po-risk-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for risk view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_scroll_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
+    Output("po-risk-grid-container", "style"),
+    Output("po-risk-chart-container", "style"),
+    Input("po-risk-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for turnover chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
+    Output("po-turnover-chart-switch-store", "data"),
+    Input("po-turnover-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for turnover view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_scroll_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
+    Output("po-turnover-grid-container", "style"),
+    Output("po-turnover-chart-container", "style"),
+    Input("po-turnover-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Save session: download all sessionStorage as JSON
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        var data = {};
+        for (var i = 0; i < sessionStorage.length; i++) {
+            var key = sessionStorage.key(i);
+            data[key] = sessionStorage.getItem(key);
+        }
+        var blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'dashmat_session.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-save-session-dummy", "data"),
+    Input("po-menu-save-session", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Load session: trigger hidden upload file dialog
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        setTimeout(function() {
+            var el = document.querySelector('#po-load-session-upload input[type="file"]');
+            if (el) el.click();
+        }, 100);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-load-session-dummy", "data"),
+    Input("po-menu-load-session", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+# Load session: restore sessionStorage from uploaded file and reload
+clientside_callback(
+    """
+    function(contents) {
+        if (!contents) return window.dash_clientside.no_update;
+        var raw = atob(contents.split(',')[1]);
+        var data = JSON.parse(raw);
+        sessionStorage.clear();
+        for (var key in data) {
+            sessionStorage.setItem(key, data[key]);
+        }
+        window.location.reload();
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-load-session-dummy", "data", allow_duplicate=True),
+    Input("po-load-session-upload", "contents"),
+    prevent_initial_call=True,
+)
+
+# Toggle dark mode
+clientside_callback(
+    """function(n, current) {
+        if (!n) return window.dash_clientside.no_update;
+        return current === 'dark' ? 'light' : 'dark';
+    }""",
+    Output("theme-store", "data", allow_duplicate=True),
+    Input("po-menu-toggle-dark-mode", "n_clicks"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -2505,9 +2781,10 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value):
+def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme):
     if active_tab != "weight" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -2556,6 +2833,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
         height=500,
         legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
     )
+    apply_chart_theme(fig, theme)
 
     return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
@@ -2569,9 +2847,10 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     Input("po-growth-portfolio-multiselect", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_growth_chart(selected_portfolios, results, active_tab):
+def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
     if active_tab != "growth" or not selected_portfolios or not results:
         return html.Div()
 
@@ -2601,6 +2880,7 @@ def po_render_growth_chart(selected_portfolios, results, active_tab):
         height=500,
         legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
     )
+    apply_chart_theme(fig, theme)
 
     return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
@@ -2623,11 +2903,12 @@ def po_render_growth_chart(selected_portfolios, results, active_tab):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value,
                                  raw_data, orig_periodicity, periodicity, bench, ls,
-                                 date_range, vol_scaler, vol_scaling):
+                                 date_range, vol_scaler, vol_scaling, theme):
     if active_tab != "attribution" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -2696,6 +2977,7 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
             height=500,
             legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
         )
+        apply_chart_theme(fig, theme)
 
         return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
@@ -3140,3 +3422,466 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
 
     except Exception:
         raise PreventUpdate
+
+
+# ---------------------------------------------------------------------------
+# Risk Contribution chart
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-risk-chart-content", "children"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-risk-chart-switch", "value"),
+    State("analyticstool-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-series-select", "data"),
+    State("theme-store", "data"),
+    prevent_initial_call=True,
+)
+def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
+                         raw_data, periodicity, bench, ls, date_range,
+                         vol_scaler, vol_scaling, series_select, theme):
+    if active_tab != "risk" or switch_value != "chart" or not selected_portfolio or not results:
+        return html.Div()
+    if selected_portfolio not in results:
+        return html.Div()
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", [])
+    config = portfolio_data.get("config", {})
+    opt_series = config.get("selected_series", [])
+
+    if not window_weights or not opt_series or not raw_data:
+        return dmc.Text("No risk data available.", c="dimmed")
+
+    try:
+        working_df = get_working_returns(
+            raw_data,
+            periodicity or "daily",
+            tuple(opt_series),
+            json.dumps(bench) if bench else "{}",
+            json.dumps(ls) if ls else "{}",
+            json.dumps(date_range) if date_range else "null",
+            vol_scaler or 0,
+            json.dumps(vol_scaling) if vol_scaling else "{}",
+        )
+
+        # Compute risk contributions for each window (stacked bar like attribution)
+        all_dates = []
+        all_contributions = {s: [] for s in opt_series}
+
+        for ww in window_weights:
+            start = pd.Timestamp(ww["apply_start"])
+            end = pd.Timestamp(ww["apply_end"])
+            mask = (working_df.index >= start) & (working_df.index <= end)
+            window_returns = working_df.loc[mask, opt_series].dropna()
+            if window_returns.empty:
+                continue
+            rc = compute_risk_contributions(ww["weights"], window_returns)
+            all_dates.append(end)
+            for s in opt_series:
+                all_contributions[s].append(rc.get(s, 0) * 100)
+
+        if not all_dates:
+            return dmc.Text("No risk data available.", c="dimmed")
+
+        fig = go.Figure()
+        for s in opt_series:
+            fig.add_trace(go.Bar(
+                x=all_dates,
+                y=all_contributions[s],
+                name=s,
+            ))
+
+        fig.update_layout(
+            barmode="relative",
+            title=f"Risk Contribution: {selected_portfolio}",
+            yaxis_title="Contribution (%)",
+            hovermode="x unified",
+            margin={"t": 40, "b": 40, "l": 60, "r": 20},
+            height=500,
+            legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
+        )
+        apply_chart_theme(fig, theme)
+
+        return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+
+    except Exception:
+        return dmc.Text("Error computing risk contributions.", c="dimmed")
+
+
+# ---------------------------------------------------------------------------
+# Risk Contribution table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-risk-grid", "columnDefs"),
+    Output("po-risk-grid", "rowData"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-risk-chart-switch", "value"),
+    State("analyticstool-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-series-select", "data"),
+    prevent_initial_call=True,
+)
+def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
+                         raw_data, periodicity, bench, ls, date_range,
+                         vol_scaler, vol_scaling, series_select):
+    if active_tab != "risk" or switch_value != "table" or not selected_portfolio or not results:
+        return [], []
+    if selected_portfolio not in results:
+        return [], []
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", [])
+    config = portfolio_data.get("config", {})
+    opt_series = config.get("selected_series", [])
+
+    if not window_weights or not opt_series or not raw_data:
+        return [], []
+
+    try:
+        working_df = get_working_returns(
+            raw_data,
+            periodicity or "daily",
+            tuple(opt_series),
+            json.dumps(bench) if bench else "{}",
+            json.dumps(ls) if ls else "{}",
+            json.dumps(date_range) if date_range else "null",
+            vol_scaler or 0,
+            json.dumps(vol_scaling) if vol_scaling else "{}",
+        )
+
+        column_defs = [
+            {"field": "Window Start", "pinned": "left", "width": 120},
+            {"field": "Window End", "width": 120},
+        ]
+        for a in opt_series:
+            column_defs.append({
+                "field": a,
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "width": 100,
+            })
+
+        row_data = []
+        for ww in window_weights:
+            start = pd.Timestamp(ww["apply_start"])
+            end = pd.Timestamp(ww["apply_end"])
+            # Get returns for this window
+            mask = (working_df.index >= start) & (working_df.index <= end)
+            window_returns = working_df.loc[mask, opt_series].dropna()
+            if window_returns.empty:
+                continue
+            rc = compute_risk_contributions(ww["weights"], window_returns)
+            row = {
+                "Window Start": start.strftime("%Y-%m-%d"),
+                "Window End": end.strftime("%Y-%m-%d"),
+            }
+            for a in opt_series:
+                row[a] = rc.get(a, 0)
+            row_data.append(row)
+
+        return column_defs, row_data
+
+    except Exception:
+        return [], []
+
+
+# ---------------------------------------------------------------------------
+# Turnover chart
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-turnover-chart-content", "children"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-turnover-chart-switch", "value"),
+    State("theme-store", "data"),
+    prevent_initial_call=True,
+)
+def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
+    if active_tab != "turnover" or switch_value != "chart" or not selected_portfolio or not results:
+        return html.Div()
+    if selected_portfolio not in results:
+        return html.Div()
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", [])
+
+    if not window_weights:
+        return dmc.Text("No turnover data available.", c="dimmed")
+    if len(window_weights) < 2:
+        return dmc.Text("Turnover requires multiple rebalance windows (not available for Full window).", c="dimmed")
+
+    dates = []
+    turnovers = []
+    for i in range(1, len(window_weights)):
+        prev_w = window_weights[i - 1]["weights"]
+        curr_w = window_weights[i]["weights"]
+        all_assets = set(prev_w.keys()) | set(curr_w.keys())
+        turnover = sum(abs(curr_w.get(a, 0) - prev_w.get(a, 0)) for a in all_assets) / 2
+        dates.append(pd.Timestamp(window_weights[i]["apply_start"]))
+        turnovers.append(turnover * 100)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=dates,
+        y=turnovers,
+        text=[f"{v:.1f}%" for v in turnovers],
+        textposition="auto",
+    ))
+    fig.update_layout(
+        title=f"Portfolio Turnover: {selected_portfolio}",
+        yaxis_title="Turnover (%)",
+        xaxis_title="Rebalance Date",
+        hovermode="x unified",
+        margin={"t": 40, "b": 40, "l": 60, "r": 20},
+        height=500,
+    )
+    apply_chart_theme(fig, theme)
+
+    return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+
+
+# ---------------------------------------------------------------------------
+# Turnover table
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-turnover-grid", "columnDefs"),
+    Output("po-turnover-grid", "rowData"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-turnover-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value):
+    if active_tab != "turnover" or switch_value != "table" or not selected_portfolio or not results:
+        return [], []
+    if selected_portfolio not in results:
+        return [], []
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", [])
+
+    if not window_weights or len(window_weights) < 2:
+        return [], []
+
+    # Get all asset names
+    all_assets = list(window_weights[0]["weights"].keys())
+
+    column_defs = [
+        {"field": "Rebalance Date", "pinned": "left", "width": 130},
+        {
+            "field": "Turnover",
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+            "width": 100,
+        },
+    ]
+    for a in all_assets:
+        column_defs.append({
+            "field": a,
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+            "width": 100,
+        })
+
+    row_data = []
+    for i in range(1, len(window_weights)):
+        prev_w = window_weights[i - 1]["weights"]
+        curr_w = window_weights[i]["weights"]
+        turnover = sum(abs(curr_w.get(a, 0) - prev_w.get(a, 0)) for a in all_assets) / 2
+        row = {
+            "Rebalance Date": pd.Timestamp(window_weights[i]["apply_start"]).strftime("%Y-%m-%d"),
+            "Turnover": turnover,
+        }
+        for a in all_assets:
+            row[a] = curr_w.get(a, 0) - prev_w.get(a, 0)
+        row_data.append(row)
+
+    return column_defs, row_data
+
+
+# ---------------------------------------------------------------------------
+# Efficient Frontier: populate window dropdown
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-frontier-window-select", "data"),
+    Output("po-frontier-window-select", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    prevent_initial_call=True,
+)
+def po_populate_frontier_windows(selected_portfolio, results, active_tab):
+    if active_tab != "frontier" or not selected_portfolio or not results:
+        return [], None
+    portfolio_data = results.get(selected_portfolio, {})
+    window_weights = portfolio_data.get("window_weights", [])
+    if not window_weights:
+        return [], None
+    options = []
+    for i, ww in enumerate(window_weights):
+        start = pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d")
+        end = pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d")
+        options.append({"value": str(i), "label": f"{start} \u2192 {end}"})
+    # Default to last window
+    return options, str(len(window_weights) - 1)
+
+
+# ---------------------------------------------------------------------------
+# Efficient Frontier chart
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-frontier-chart-content", "children"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-frontier-window-select", "value"),
+    Input("po-frontier-rm-select", "value"),
+    State("analyticstool-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-series-select", "data"),
+    State("theme-store", "data"),
+    prevent_initial_call=True,
+)
+def po_render_frontier_chart(selected_portfolio, results, active_tab,
+                             window_idx, rm,
+                             raw_data, periodicity, bench, ls, date_range,
+                             vol_scaler, vol_scaling, series_select, theme):
+    if active_tab != "frontier" or not selected_portfolio or not results:
+        return html.Div()
+    if selected_portfolio not in results:
+        return html.Div()
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", [])
+    config = portfolio_data.get("config", {})
+    opt_series = config.get("selected_series", [])
+
+    if not window_weights or not opt_series or not raw_data:
+        return dmc.Text("No frontier data available.", c="dimmed")
+
+    try:
+        working_df = get_working_returns(
+            raw_data,
+            periodicity or "daily",
+            tuple(opt_series),
+            json.dumps(bench) if bench else "{}",
+            json.dumps(ls) if ls else "{}",
+            json.dumps(date_range) if date_range else "null",
+            vol_scaler or 0,
+            json.dumps(vol_scaling) if vol_scaling else "{}",
+        )
+
+        # Select the window's data
+        idx = int(window_idx) if window_idx is not None else len(window_weights) - 1
+        idx = min(idx, len(window_weights) - 1)
+        ww = window_weights[idx]
+        start = pd.Timestamp(ww["apply_start"])
+        end = pd.Timestamp(ww["apply_end"])
+        mask = (working_df.index >= start) & (working_df.index <= end)
+        est_data = working_df.loc[mask, opt_series].dropna()
+
+        if est_data.empty or len(est_data) < 3:
+            return dmc.Text("Insufficient data for efficient frontier in this window.", c="dimmed")
+
+        # Determine annualization factor
+        p = periodicity or "daily"
+        if p.startswith("weekly"):
+            ann = 52
+        elif p == "monthly":
+            ann = 12
+        else:
+            ann = 252
+
+        risk_measure = rm or "MV"
+        frontier_pts, asset_pts = compute_efficient_frontier(est_data, ann, rm=risk_measure)
+
+        # Compute selected portfolio's risk/return using this window's weights
+        w_arr = np.array([ww["weights"].get(c, 0) for c in opt_series])
+        mu = est_data.mean().values
+        cov = est_data.cov().values
+        port_ret = (w_arr @ mu) * ann
+
+        if risk_measure == "CVaR":
+            port_returns = est_data.values @ w_arr
+            sorted_r = np.sort(port_returns)
+            cutoff = max(1, int(np.ceil(len(sorted_r) * 0.05)))
+            port_risk = -sorted_r[:cutoff].mean() * np.sqrt(ann)
+        else:
+            port_risk = np.sqrt(w_arr @ cov @ w_arr) * np.sqrt(ann)
+
+        fig = go.Figure()
+
+        # Frontier line
+        fig.add_trace(go.Scatter(
+            x=[pt["risk"] * 100 for pt in frontier_pts],
+            y=[pt["return"] * 100 for pt in frontier_pts],
+            mode="lines",
+            name="Efficient Frontier",
+            line={"color": "royalblue", "width": 2},
+        ))
+
+        # Selected portfolio marker
+        fig.add_trace(go.Scatter(
+            x=[port_risk * 100],
+            y=[port_ret * 100],
+            mode="markers+text",
+            name=selected_portfolio,
+            marker={"size": 14, "color": "red", "symbol": "star"},
+            text=[selected_portfolio],
+            textposition="top center",
+        ))
+
+        # Individual assets
+        fig.add_trace(go.Scatter(
+            x=[a["risk"] * 100 for a in asset_pts],
+            y=[a["return"] * 100 for a in asset_pts],
+            mode="markers+text",
+            name="Assets",
+            marker={"size": 8, "color": "gray"},
+            text=[a["name"] for a in asset_pts],
+            textposition="top center",
+            textfont={"size": 9},
+        ))
+
+        x_label = "Annualized CVaR (%)" if risk_measure == "CVaR" else "Annualized Volatility (%)"
+        fig.update_layout(
+            title=f"Efficient Frontier: {selected_portfolio}",
+            xaxis_title=x_label,
+            yaxis_title="Annualized Return (%)",
+            hovermode="closest",
+            margin={"t": 40, "b": 40, "l": 60, "r": 20},
+            height=500,
+            showlegend=True,
+            legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
+        )
+        apply_chart_theme(fig, theme)
+
+        return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+
+    except Exception:
+        return dmc.Text("Error computing efficient frontier.", c="dimmed")
