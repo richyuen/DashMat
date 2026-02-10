@@ -301,14 +301,21 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
                 cov_values[i, j] = row_vals.get(col_name, 0.0)
         cov_df = pd.DataFrame(cov_values, index=asset_names, columns=asset_names)
     elif window_data is not None:
-        # Estimate from historical returns
-        cov_df = window_data[asset_names].cov()
+        # Estimate from historical returns — drop rows with NaN for clean estimation
+        clean_data = window_data[asset_names].dropna()
+        if len(clean_data) < 2:
+            # Not enough clean data — use fillna(0) as fallback
+            clean_data = window_data[asset_names].fillna(0)
+        cov_df = clean_data.cov()
     else:
         raise ValueError("No covariance matrix provided and no historical data to estimate from.")
 
-    # Create Portfolio object
+    # Create Portfolio object — use clean data (drop NaN rows)
     if window_data is not None:
-        port = rp.Portfolio(returns=window_data[asset_names].copy())
+        clean_returns = window_data[asset_names].dropna()
+        if len(clean_returns) < 10:
+            clean_returns = window_data[asset_names].fillna(0)
+        port = rp.Portfolio(returns=clean_returns.copy())
     else:
         # Create a minimal dummy returns DataFrame
         dummy = pd.DataFrame(
@@ -783,8 +790,23 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
                 )
             )
 
+        # Handle missing data for ex ante
+        if missing_data == "fill_0":
+            ex_ante_df = df.fillna(0)
+        else:
+            # Drop columns with any NaN, or fillna(0) if none survive
+            valid_cols = [c for c in available_cols if not df[c].isna().any()]
+            if not valid_cols:
+                ex_ante_df = df.fillna(0)
+            else:
+                ex_ante_df = df[valid_cols].copy()
+                # Ensure all available_cols are present (fill missing cols with 0)
+                for c in available_cols:
+                    if c not in ex_ante_df.columns:
+                        ex_ante_df[c] = 0.0
+
         weights = _optimize_single_window(
-            df, model, available_cols, lower_bounds, upper_bounds,
+            ex_ante_df, model, available_cols, lower_bounds, upper_bounds,
             forced_weights, free_series, exp_wt_cov, halflife,
             ex_ante_returns=ex_ante_returns,
             ex_ante_cov=ex_ante_cov,
