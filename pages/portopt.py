@@ -1118,6 +1118,17 @@ layout = dmc.Container(
         dcc.Location(id="po-url-location", refresh=False),
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
+
+        # UI Blocker for file dialog (Overlay)
+        dcc.Store(id="po-ui-blocker-store", data=False),
+        dcc.Interval(id="po-ui-blocker-timeout", interval=15000, disabled=True),  # 15 second timeout
+        dmc.LoadingOverlay(
+            id="po-ui-blocker-overlay",
+            visible=False,
+            zIndex=2000,
+            overlayProps={"radius": "sm", "blur": 2},
+            loaderProps={"variant": "bars"},
+        ),
     ],
 )
 
@@ -1238,14 +1249,30 @@ clientside_callback(
                 var uploadDiv = document.getElementById('po-upload-data');
                 if (uploadDiv) {
                     var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) { input.click(); }
+                    if (input) {
+                        // Listen for window focus to detect cancel
+                        var onFocus = function() {
+                            window.removeEventListener('focus', onFocus);
+                            setTimeout(function() {
+                                if (!input.files || input.files.length === 0) {
+                                    window.dash_clientside.set_props('po-ui-blocker-store', {data: false});
+                                    window.dash_clientside.set_props('po-ui-blocker-timeout', {disabled: true});
+                                }
+                            }, 500);
+                        };
+                        window.addEventListener('focus', onFocus);
+                        input.click();
+                    }
                 }
             }, 100);
+            // Show Blocker (True), Enable Timeout (False)
+            return [true, false];
         }
-        return window.dash_clientside.no_update;
+        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
     }
     """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("po-menu-add-series", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -1259,16 +1286,56 @@ clientside_callback(
                 var uploadDiv = document.getElementById('po-upload-data');
                 if (uploadDiv) {
                     var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) { input.click(); }
+                    if (input) {
+                        var onFocus = function() {
+                            window.removeEventListener('focus', onFocus);
+                            setTimeout(function() {
+                                if (!input.files || input.files.length === 0) {
+                                    window.dash_clientside.set_props('po-ui-blocker-store', {data: false});
+                                    window.dash_clientside.set_props('po-ui-blocker-timeout', {disabled: true});
+                                }
+                            }, 500);
+                        };
+                        window.addEventListener('focus', onFocus);
+                        input.click();
+                    }
                 }
             }, 100);
+            // Show Blocker (True), Enable Timeout (False)
+            return [true, false];
         }
-        return window.dash_clientside.no_update;
+        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
     }
     """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("po-welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
+)
+
+# UI Blocker: timeout fallback
+clientside_callback(
+    """
+    function(n) {
+        // Hide Blocker (False), Disable Timeout (True)
+        return [false, true];
+    }
+    """,
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Input("po-ui-blocker-timeout", "n_intervals"),
+    prevent_initial_call=True,
+)
+
+# UI Blocker: sync overlay visibility
+clientside_callback(
+    """
+    function(is_loading) {
+        return is_loading || false;
+    }
+    """,
+    Output("po-ui-blocker-overlay", "visible"),
+    Input("po-ui-blocker-store", "data"),
 )
 
 # Store sync: periodicity
@@ -1835,6 +1902,9 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     Output("po-sheet-select-dropdown", "value", allow_duplicate=True),
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    # Blocker outputs
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("po-upload-data", "contents"),
     State("po-upload-data", "filename"),
     State("analyticstool-raw-data-store", "data"),
@@ -1871,6 +1941,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no, n_no, n_no,
                 True, dropdown_data, sheet_names[0], contents, filename,  # open sheet modal
+                False, True,  # hide blocker
             )
 
         new_df = parse_uploaded_file(contents, filename)
@@ -1918,6 +1989,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             current_max_wt or {},
             current_force_max or {},
             *sheet_no,
+            False, True,  # hide blocker
         )
     except Exception as e:
         return (
@@ -1925,6 +1997,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             f"Error loading file: {str(e)}", "red", False,
             n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
             *sheet_no,
+            False, True,  # hide blocker
         )
 
 
@@ -1955,6 +2028,9 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
     Output("po-upload-data", "contents", allow_duplicate=True),
+    # Blocker outputs
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("po-sheet-select-ok-button", "n_clicks"),
     State("po-sheet-select-dropdown", "value"),
     State("po-sheet-select-contents-store", "data"),
@@ -2027,6 +2103,7 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
             current_max_wt or {},
             current_force_max or {},
             False, None, None, None,  # close sheet modal, clear stash, reset upload
+            False, True,  # hide blocker
         )
     except Exception as e:
         return (
@@ -2034,6 +2111,7 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
             f"Error loading file: {str(e)}", "red", False,
             n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
             False, None, None, None,  # close sheet modal, clear stash, reset upload
+            False, True,  # hide blocker
         )
 
 
@@ -2045,6 +2123,9 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
     Output("po-upload-data", "contents", allow_duplicate=True),
+    # Blocker outputs
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("po-sheet-select-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -2052,7 +2133,7 @@ def po_on_sheet_select_cancel(n_clicks):
     """Cancel sheet selection and clear stashed data."""
     if not n_clicks:
         raise PreventUpdate
-    return False, None, None, None
+    return False, None, None, None, False, True
 
 
 # Clear the file input so the same file can be re-uploaded
