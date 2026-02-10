@@ -1954,6 +1954,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     Output("po-sheet-select-modal", "opened", allow_duplicate=True),
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("po-upload-data", "contents", allow_duplicate=True),
     Input("po-sheet-select-ok-button", "n_clicks"),
     State("po-sheet-select-dropdown", "value"),
     State("po-sheet-select-contents-store", "data"),
@@ -2025,14 +2026,14 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
             current_min_wt or {},
             current_max_wt or {},
             current_force_max or {},
-            False, None, None,  # close sheet modal, clear stash
+            False, None, None, None,  # close sheet modal, clear stash, reset upload
         )
     except Exception as e:
         return (
             n_no, n_no, n_no, n_no, n_no, n_no,
             f"Error loading file: {str(e)}", "red", False,
             n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
-            False, None, None,  # close sheet modal, clear stash
+            False, None, None, None,  # close sheet modal, clear stash, reset upload
         )
 
 
@@ -2043,6 +2044,7 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
     Output("po-sheet-select-modal", "opened", allow_duplicate=True),
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("po-upload-data", "contents", allow_duplicate=True),
     Input("po-sheet-select-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -2050,7 +2052,7 @@ def po_on_sheet_select_cancel(n_clicks):
     """Cancel sheet selection and clear stashed data."""
     if not n_clicks:
         raise PreventUpdate
-    return False, None, None
+    return False, None, None, None
 
 
 # ---------------------------------------------------------------------------

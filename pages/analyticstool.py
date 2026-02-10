@@ -2024,6 +2024,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Output("sheet-select-modal", "opened", allow_duplicate=True),
     Output("sheet-select-contents-store", "data", allow_duplicate=True),
     Output("sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("upload-data", "contents", allow_duplicate=True),
     Input("sheet-select-ok-button", "n_clicks"),
     State("sheet-select-dropdown", "value"),
     State("sheet-select-contents-store", "data"),
@@ -2102,7 +2103,7 @@ def on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filen
             [],
             current_vol_scaling or {},
             False, True,  # Hide blocker
-            False, None, None,  # Close sheet modal, clear stash
+            False, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
     except Exception as e:
@@ -2115,7 +2116,7 @@ def on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filen
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
             False, True,  # Hide blocker
-            False, None, None,  # Close sheet modal, clear stash
+            False, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
 
@@ -2126,6 +2127,7 @@ def on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filen
     Output("sheet-select-modal", "opened", allow_duplicate=True),
     Output("sheet-select-contents-store", "data", allow_duplicate=True),
     Output("sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("upload-data", "contents", allow_duplicate=True),
     Output("ui-blocker-store", "data", allow_duplicate=True),
     Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
     Input("sheet-select-cancel-button", "n_clicks"),
@@ -2135,7 +2137,7 @@ def on_sheet_select_cancel(n_clicks):
     """Cancel sheet selection and clear stashed data."""
     if not n_clicks:
         raise PreventUpdate
-    return False, None, None, False, True
+    return False, None, None, None, False, True
 
 
 @callback(
