@@ -250,59 +250,90 @@ def build_po_main_layout():
                                             w=120,
                                             size="sm",
                                         ),
-                                        dmc.Select(
-                                            id="po-opt-model-select",
-                                            label="Model",
-                                            data=[
-                                                {"value": "risk_parity", "label": "Risk Parity"},
-                                                {"value": "factor_risk_parity", "label": "Factor Risk Parity"},
-                                                {"value": "hrp", "label": "Hierarchical Risk Parity"},
-                                                {"value": "maximize_sharpe", "label": "Maximize Sharpe Ratio"},
-                                                {"value": "minimize_variance", "label": "Minimize Variance"},
-                                                {"value": "minimize_cvar", "label": "Minimize CVaR"},
-                                                {"value": "equal_weight", "label": "Equal Weight"},
-                                                {"value": "ex_ante_mv", "label": "Ex Ante Mean-Variance"},
-                                                {"value": "black_litterman", "label": "Black-Litterman"},
+                                        html.Div([
+                                            dmc.Text("Model", size="sm", fw=500, mb=3),
+                                            dmc.Select(
+                                                id="po-opt-model-select",
+                                                data=[
+                                                    {"value": "risk_parity", "label": "Risk Parity"},
+                                                    {"value": "mean_variance", "label": "Mean-Variance"},
+                                                    {"value": "hierarchical_risk_parity", "label": "Hierarchical RP"},
+                                                    {"value": "maximize_sharpe", "label": "Maximize Sharpe Ratio"},
+                                                    {"value": "minimize_variance", "label": "Minimize Variance"},
+                                                    {"value": "minimize_cvar", "label": "Minimize CVaR"},
+                                                    {"value": "equal_weight", "label": "Equal Weight"},
+                                                    {"value": "ex_ante_mv", "label": "Ex Ante Mean-Variance"},
+                                                    {"value": "black_litterman", "label": "Black-Litterman"},
+                                                ],
+                                                value="risk_parity",
+                                                w=210,
+                                                size="sm",
+                                                clearable=False,
+                                            ),
+                                        ]),
+                                        html.Div(
+                                            id="po-objective-container",
+                                            children=[
+                                                dmc.Text("Objective", size="sm", fw=500, mb=3),
+                                                dmc.Select(
+                                                    id="po-objective-select",
+                                                    data=[
+                                                        {"label": "Maximize Sharpe Ratio", "value": "maximize_sharpe"},
+                                                        {"label": "Minimize Variance", "value": "minimize_variance"},
+                                                        {"label": "Maximize Return", "value": "maximize_return"},
+                                                    ],
+                                                    value="maximize_sharpe",
+                                                    searchable=False,
+                                                    clearable=False,
+                                                    w=150,
+                                                    size="sm",
+                                                ),
                                             ],
-                                            value="risk_parity",
-                                            w=210,
-                                            size="sm",
-                                            clearable=False,
+                                            style={"display": "none"},
                                         ),
-                                        dmc.Select(
-                                            id="po-objective-select",
-                                            label="Objective",
-                                            data=[
-                                                {"value": "maximize_sharpe", "label": "Max Sharpe"},
-                                                {"value": "minimize_variance", "label": "Min Variance"},
-                                                {"value": "maximize_return", "label": "Max Return"},
+                                        html.Div(
+                                            id="po-ex-ante-mode-container",
+                                            children=[
+                                                dmc.Text("Input Mode", size="sm", fw=500, mb=3),
+                                                html.Div(
+                                                    dmc.SegmentedControl(
+                                                        id="po-ex-ante-mode-select",
+                                                        data=[
+                                                            {"label": "Returns / Covariance", "value": "ret_cov"},
+                                                            {"label": "Returns / Vol / Correlation", "value": "ret_vol_corr"},
+                                                        ],
+                                                        value="ret_cov",
+                                                        size="xs",
+                                                    ),
+                                                    style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                                ),
                                             ],
-                                            value="maximize_sharpe",
-                                            w=140,
-                                            size="sm",
-                                            clearable=False,
                                             style={"display": "none"},
                                         ),
                                         html.Div([
-                                            dmc.Text("Exp Wt Cov", size="sm", fw=500),
-                                            dmc.Switch(
-                                                id="po-exp-wt-cov-switch",
-                                                checked=False,
-                                                size="sm",
-                                                style={"minHeight": "30px", "display": "flex", "alignItems": "center"},
+                                            dmc.Text("Exp Wt Cov", size="sm", fw=500, mb=3),
+                                            html.Div(
+                                                dmc.Switch(
+                                                    id="po-exp-wt-cov-switch",
+                                                    checked=False,
+                                                    size="sm",
+                                                ),
+                                                style={"height": "36px", "display": "flex", "alignItems": "center"},
                                             ),
                                         ]),
-                                        dmc.NumberInput(
-                                            id="po-halflife-input",
-                                            label="Half-Life (Periods)",
-                                            value=63,
-                                            min=1,
-                                            step=1,
-                                            w=90,
-                                            size="sm",
-                                            disabled=True,
-                                            style={"whiteSpace": "nowrap"},
-                                        ),
+                                        html.Div([
+                                            dmc.Text("Half-Life", size="sm", fw=500, mb=3),
+                                            dmc.NumberInput(
+                                                id="po-halflife-input",
+                                                value=63,
+                                                min=1,
+                                                step=1,
+                                                w=90,
+                                                size="sm",
+                                                disabled=True,
+                                                style={"whiteSpace": "nowrap"},
+                                            ),
+                                        ]),
                                     ],
                                 ),
                                 dmc.Group(
@@ -390,16 +421,21 @@ def build_po_main_layout():
                                         ]),
                                     ],
                                 ),
-                                # Ex Ante Input Panel (hidden by default)
+                                        # Ex Ante Input Panel (hidden by default)
                                 html.Div(
                                     id="po-ex-ante-panel",
                                     style={"display": "none"},
                                     children=[
                                         dmc.Divider(label="Ex Ante Inputs", labelPosition="center", mb="sm", mt="sm"),
-                                        # Expected Returns
-                                        dmc.Text("Expected Returns (annualized, decimal)", size="sm", fw=600, mb="xs"),
+                                        
+                                        # Expected Returns & Volatility
                                         dmc.Text(
-                                            "Enter values in the table below or upload a CSV with columns: Asset, Return",
+                                            "Expected Returns",
+                                            id="po-ex-ante-returns-title",
+                                            size="sm", fw=600, mb="xs"
+                                        ),
+                                        dmc.Text(
+                                            "Enter values in the table below (e.g. enter 5 for 5%)",
                                             size="xs", c="dimmed", mb="xs",
                                         ),
                                         dmc.Group(
@@ -418,7 +454,7 @@ def build_po_main_layout():
                                                     accept=".csv",
                                                 ),
                                                 dmc.Button(
-                                                    "Clear Returns",
+                                                    "Clear",
                                                     id="po-ex-ante-returns-clear",
                                                     variant="subtle",
                                                     size="xs",
@@ -432,10 +468,14 @@ def build_po_main_layout():
                                                 dag.AgGrid(
                                                     id="po-ex-ante-returns-grid",
                                                     columnDefs=[
-                                                        {"field": "Asset", "editable": False, "width": 180},
-                                                        {"field": "Return", "editable": True, "width": 120,
+                                                        {"field": "Asset", "editable": False, "width": 140},
+                                                        {"field": "Return", "editable": True, "width": 110,
                                                          "type": "numericColumn",
-                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
+                                                         "valueFormatter": {"function": "d3.format('.2%')(params.value)"}},
+                                                        {"field": "Volatility", "editable": True, "width": 110,
+                                                         "type": "numericColumn",
+                                                         "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
+                                                         "hide": True}, # Hidden by default
                                                     ],
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False},
@@ -445,16 +485,18 @@ def build_po_main_layout():
                                             ],
                                             style={"marginBottom": "12px"},
                                         ),
-                                        # Covariance Matrix
-                                        dmc.Text("Covariance Matrix (optional — estimated from data if omitted)", size="sm", fw=600, mb="xs"),
+                                        
+                                        # Matrix Input (Covariance or Correlation)
+                                        dmc.Text("Covariance Matrix", id="po-ex-ante-matrix-title", size="sm", fw=600, mb="xs"),
                                         dmc.Group(
                                             gap="xs",
                                             mb="sm",
                                             children=[
                                                 dcc.Upload(
-                                                    id="po-ex-ante-cov-upload",
+                                                    id="po-ex-ante-matrix-upload",
                                                     children=dmc.Button(
                                                         "Upload Cov CSV",
+                                                        id="po-ex-ante-matrix-upload-btn",
                                                         variant="outline",
                                                         size="xs",
                                                         leftSection=DashIconify(icon="tabler:upload"),
@@ -463,14 +505,37 @@ def build_po_main_layout():
                                                     accept=".csv",
                                                 ),
                                                 dmc.Button(
-                                                    "Clear Cov",
-                                                    id="po-ex-ante-cov-clear",
-                                                    variant="subtle",
+                                                    "Estimate from Data",
+                                                    id="po-estimate-matrix-btn",
+                                                    variant="outline",
                                                     size="xs",
-                                                    color="red",
+                                                    leftSection=DashIconify(icon="tabler:calculator"),
                                                 ),
-                                                dmc.Text(id="po-ex-ante-cov-status", size="xs", c="dimmed"),
+                                                dmc.Button(
+                                                    "Clear Matrix",
+                                                    id="po-ex-ante-matrix-clear",
+                                                    variant="outline",
+                                                    color="red",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:trash"),
+                                                ),
                                             ],
+                                        ),
+                                        
+                                        html.Div(
+                                            id="po-ex-ante-matrix-grid-container",
+                                            children=[
+                                                dag.AgGrid(
+                                                    id="po-ex-ante-matrix-grid",
+                                                    columnDefs=[], # Populated dynamically
+                                                    rowData=[],
+                                                    defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100, 
+                                                                   "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
+                                                    style={"height": "300px"},
+                                                    dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True},
+                                                ),
+                                            ],
+                                            style={"marginBottom": "12px"},
                                         ),
                                         # Black-Litterman Views (shown only for BL)
                                         html.Div(
@@ -1267,6 +1332,9 @@ layout = dmc.Container(
         # Ex ante stores
         dcc.Store(id="po-ex-ante-returns-store", data={}, storage_type="session"),
         dcc.Store(id="po-ex-ante-cov-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-vol-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-corr-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-mode-store", data="ret_cov", storage_type="session"),
         dcc.Store(id="po-bl-views-store", data=[], storage_type="session"),
         dcc.Store(id="po-bl-tau-store", data=0.05, storage_type="session"),
         dcc.Store(id="po-objective-store", data="maximize_sharpe", storage_type="session"),
@@ -1672,12 +1740,14 @@ clientside_callback(
         return [
             isExAnte ? {"display": "block"} : {"display": "none"},
             isExAnte ? {"display": "block"} : {"display": "none"},
+            isExAnte ? {"display": "block"} : {"display": "none"},
             isBL ? {"display": "block"} : {"display": "none"},
         ];
     }
     """,
     Output("po-ex-ante-panel", "style"),
-    Output("po-objective-select", "style"),
+    Output("po-objective-container", "style"),
+    Output("po-ex-ante-mode-container", "style"),
     Output("po-bl-views-panel", "style"),
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
@@ -1703,44 +1773,75 @@ clientside_callback(
 # Populate expected returns grid when selected series changes (ex ante models)
 @callback(
     Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
+    Output("po-ex-ante-returns-grid", "columnDefs"),
     Input("po-series-select", "data"),
+    Input("po-ex-ante-mode-store", "data"),
     State("po-ex-ante-returns-store", "data"),
+    State("po-ex-ante-vol-store", "data"),
     prevent_initial_call=True,
 )
-def po_populate_returns_grid(selected_series, existing_returns):
+def po_populate_returns_grid(selected_series, mode, existing_returns, existing_vol):
     """Populate the expected returns grid with selected series names."""
     if not selected_series:
-        return []
+        return [], []
+    
     existing_returns = existing_returns or {}
+    existing_vol = existing_vol or {}
+    mode = mode or "ret_cov"
+    
+    # Hide volatility column unless in Vol/Corr mode
+    hide_vol = (mode != "ret_vol_corr")
+    
+    column_defs = [
+        {"field": "Asset", "editable": False, "width": 140},
+        {"field": "Return", "editable": True, "width": 110,
+         "type": "numericColumn",
+         "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
+         "valueParser": {"function": "Number(params.newValue) / 100"}},
+        {"field": "Volatility", "editable": True, "width": 110,
+         "type": "numericColumn",
+         "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
+         "valueParser": {"function": "Number(params.newValue) / 100"},
+         "hide": hide_vol},
+    ]
+
     rows = []
     for s in selected_series:
         rows.append({
             "Asset": s,
             "Return": existing_returns.get(s, 0.0),
+            "Volatility": existing_vol.get(s, 0.0),
         })
-    return rows
+    return rows, column_defs
 
 
 # Sync returns grid edits to store
 @callback(
     Output("po-ex-ante-returns-store", "data"),
+    Output("po-ex-ante-vol-store", "data"),
     Input("po-ex-ante-returns-grid", "rowData"),
     prevent_initial_call=True,
 )
 def po_sync_returns_grid_to_store(row_data):
     """Save grid edits to session store."""
     if not row_data:
-        return {}
-    result = {}
+        return {}, {}
+    returns = {}
+    vols = {}
     for row in row_data:
         asset = row.get("Asset", "")
         ret = row.get("Return", 0.0)
+        vol = row.get("Volatility", 0.0)
         if asset:
             try:
-                result[asset] = float(ret)
+                returns[asset] = float(ret)
             except (ValueError, TypeError):
-                result[asset] = 0.0
-    return result
+                returns[asset] = 0.0
+            try:
+                vols[asset] = float(vol)
+            except (ValueError, TypeError):
+                vols[asset] = 0.0
+    return returns, vols
 
 
 # Upload returns CSV
@@ -1791,41 +1892,305 @@ def po_clear_returns(n_clicks, selected_series):
     return rows, {}
 
 
-# Upload covariance CSV
+# Update ex ante mode store
 @callback(
-    Output("po-ex-ante-cov-store", "data"),
-    Output("po-ex-ante-cov-status", "children"),
-    Input("po-ex-ante-cov-upload", "contents"),
-    State("po-ex-ante-cov-upload", "filename"),
+    Output("po-ex-ante-mode-store", "data"),
+    Input("po-ex-ante-mode-select", "value"),
+)
+def po_update_ex_ante_mode_store(value):
+    return value or "ret_cov"
+
+
+# Update matrix UI (title, upload button) based on mode
+@callback(
+    Output("po-ex-ante-matrix-title", "children"),
+    Output("po-ex-ante-matrix-upload-btn", "children"),
+    Output("po-ex-ante-returns-title", "children"),
+    Input("po-ex-ante-mode-store", "data"),
+)
+def po_update_matrix_ui(mode):
+    mode = mode or "ret_cov"
+    if mode == "ret_vol_corr":
+        return "Correlation Matrix", "Upload Corr CSV", "Expected Returns and Volatility"
+    return "Covariance Matrix", "Upload Cov CSV", "Expected Returns"
+
+
+# Populate matrix grid
+@callback(
+    Output("po-ex-ante-matrix-grid", "rowData", allow_duplicate=True),
+    Output("po-ex-ante-matrix-grid", "columnDefs"),
+    Input("po-series-select", "data"),
+    Input("po-ex-ante-mode-store", "data"),
+    State("po-ex-ante-cov-store", "data"),
+    State("po-ex-ante-corr-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def po_upload_cov_csv(contents, filename):
-    """Parse uploaded covariance CSV into nested dict."""
+def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
+    """Populate the matrix grid. Auto-estimate if empty."""
+    if not selected_series:
+        return [], []
+    
+    mode = mode or "ret_cov"
+    is_corr = (mode == "ret_vol_corr")
+    
+    existing_matrix = corr_store if is_corr else cov_store
+    existing_matrix = existing_matrix or {}
+    
+    # Check if empty or all zeros
+    has_content = False
+    if existing_matrix:
+        for r_data in existing_matrix.values():
+            for val in r_data.values():
+                if val != 0.0:
+                    has_content = True
+                    break
+            if has_content: break
+
+    matrix_to_use = existing_matrix
+    
+    # Auto-estimate if empty/zeros and data available
+    # User requirement 4: "If all zeroes... automatically estimate from the data" (interpreted here as init logic)
+    if not has_content and data:
+        try:
+            df = json_to_df(data)
+            
+            valid_series = [s for s in selected_series if s in df.columns]
+            if valid_series:
+                sub_df = df[valid_series]
+                rets = sub_df.pct_change().dropna()
+                if is_corr:
+                    est_df = rets.corr()
+                else:
+                    est_df = rets.cov() * 252
+                
+                # Convert to dict
+                new_matrix = {}
+                for r in valid_series:
+                    new_matrix[r] = {}
+                    for c in valid_series:
+                        new_matrix[r][c] = float(est_df.loc[r, c])
+                matrix_to_use = new_matrix
+        except Exception:
+            pass # Fallback to zeros
+
+    matrix_defs = [{"field": "Asset", "editable": False, "width": 140, "pinned": "left"}]
+    for s in selected_series:
+        matrix_defs.append({
+            "field": s,
+            "editable": True, 
+            "width": 110,
+            "type": "numericColumn",
+            "valueFormatter": {"function": "d3.format(',.4f')(params.value)"},
+        })
+
+    rows = []
+    for r_name in selected_series:
+        # User reported NaN in Asset column. Ensure string.
+        r_name_str = str(r_name)
+        row = {"Asset": r_name_str}
+        
+        row_vals = matrix_to_use.get(r_name_str, {})
+        if not row_vals and r_name in matrix_to_use: # Try original type key
+             row_vals = matrix_to_use.get(r_name, {})
+
+        for c_name in selected_series:
+            val = row_vals.get(c_name)
+            if val is None:
+                # User Point 3: Initialize Corr Matrix to zero (not 1s)
+                val = 0.0
+            row[c_name] = val
+        rows.append(row)
+        
+    return rows, matrix_defs
+
+# Estimate matrix from data button
+@callback(
+    Output("po-ex-ante-cov-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-matrix-grid", "rowData", allow_duplicate=True),
+    Input("po-estimate-matrix-btn", "n_clicks"),
+    State("analyticstool-raw-data-store", "data"),
+    State("po-series-select", "data"),
+    State("po-ex-ante-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def po_estimate_matrix_store(n_clicks, data, selected_series, mode):
+    if not n_clicks or not data or not selected_series:
+        raise PreventUpdate
+        
+    mode = mode or "ret_cov"
+    is_corr = (mode == "ret_vol_corr")
+    
+    try:
+        df = json_to_df(data)
+        
+        # Calculate Returns
+        valid_series = [s for s in selected_series if s in df.columns]
+        if not valid_series:
+            raise PreventUpdate
+            
+        sub_df = df[valid_series]
+        rets = sub_df.pct_change().dropna()
+        
+        if is_corr:
+            est_df = rets.corr()
+        else:
+            est_df = rets.cov() * 252 # Annualize
+            
+        # Convert to dict
+        matrix = {}
+        rows = []
+        for r in valid_series:
+            matrix[r] = {}
+            row = {"Asset": r}
+            for c in valid_series:
+                val = float(est_df.loc[r, c])
+                matrix[r][c] = val
+                row[c] = val
+            rows.append(row)
+            
+        if is_corr:
+            return no_update, matrix, rows
+        else:
+            return matrix, no_update, rows
+            
+    except Exception as e:
+        print(f"Error estimating matrix: {e}")
+        raise PreventUpdate
+
+
+# Sync matrix grid edits to store
+@callback(
+    Output("po-ex-ante-cov-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
+    Input("po-ex-ante-matrix-grid", "rowData"),
+    State("po-ex-ante-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def po_sync_matrix_grid(row_data, mode):
+    if not row_data:
+        raise PreventUpdate
+    
+    mode = mode or "ret_cov"
+    is_corr = (mode == "ret_vol_corr")
+    
+    # Parse grid into nested dict
+    matrix = {}
+    for row in row_data:
+        r_name = row.get("Asset")
+        if not r_name:
+            continue
+        matrix[r_name] = {}
+        for k, v in row.items():
+            if k == "Asset":
+                continue
+            try:
+                matrix[r_name][k] = float(v)
+            except (ValueError, TypeError):
+                matrix[r_name][k] = 0.0
+
+    if is_corr:
+        return no_update, matrix
+    else:
+        return matrix, no_update
+
+
+# Upload covariance/correlation CSV
+@callback(
+    Output("po-ex-ante-cov-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-matrix-grid", "rowData", allow_duplicate=True),
+    Input("po-ex-ante-matrix-upload", "contents"),
+    State("po-ex-ante-matrix-upload", "filename"),
+    State("po-ex-ante-mode-store", "data"),
+    State("po-series-select", "data"),
+    prevent_initial_call=True,
+)
+def po_upload_matrix_csv(contents, filename, mode, selected_series):
+    """Parse uploaded matrix CSV into store and update grid."""
     if contents is None:
         raise PreventUpdate
+        
+    mode = mode or "ret_cov"
+    is_corr = (mode == "ret_vol_corr")
+    
     import base64
     _, content_string = contents.split(",")
     decoded = base64.b64decode(content_string)
-    csv_df = pd.read_csv(StringIO(decoded.decode("utf-8")), index_col=0)
+    try:
+        csv_df = pd.read_csv(StringIO(decoded.decode("utf-8")), index_col=0)
+    except Exception:
+        # Better error handling needed but suppressing for now
+        raise PreventUpdate
+
     # Convert to nested dict {row_name: {col_name: value}}
-    cov_dict = {}
-    for row_name in csv_df.index:
-        cov_dict[str(row_name)] = {str(col): float(csv_df.loc[row_name, col]) for col in csv_df.columns}
-    status = f"Loaded {len(csv_df)}x{len(csv_df.columns)} matrix from {filename}"
-    return cov_dict, status
+    matrix = {}
+    # Use selected series to filter/fill if possible, or just take CSV as is
+    # Ideally we intersect with selected series
+    series = selected_series or list(csv_df.index)
+    
+    for r in series:
+        if r not in matrix:
+            matrix[r] = {}
+        for c in series:
+            if r in csv_df.index and c in csv_df.columns:
+                try:
+                    val = float(csv_df.loc[r, c])
+                except:
+                    val = 0.0
+            else:
+                val = 1.0 if (is_corr and r == c) else 0.0
+            matrix[r][c] = val
+            
+    # Also create rowData for grid update
+    rows = []
+    for r in series:
+        row = {"Asset": r}
+        for c in series:
+            row[c] = matrix[r][c]
+        rows.append(row)
+
+    if is_corr:
+        return no_update, matrix, rows
+    else:
+        return matrix, no_update, rows
 
 
-# Clear covariance
+# Clear matrix
 @callback(
     Output("po-ex-ante-cov-store", "data", allow_duplicate=True),
-    Output("po-ex-ante-cov-status", "children", allow_duplicate=True),
-    Input("po-ex-ante-cov-clear", "n_clicks"),
+    Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-matrix-grid", "rowData", allow_duplicate=True),
+    Input("po-ex-ante-matrix-clear", "n_clicks"),
+    State("po-ex-ante-mode-store", "data"),
+    State("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_clear_cov(n_clicks):
+def po_clear_matrix(n_clicks, mode, selected_series):
     if not n_clicks:
         raise PreventUpdate
-    return {}, "Cleared"
+    
+    mode = mode or "ret_cov"
+    is_corr = (mode == "ret_vol_corr")
+    series = selected_series or []
+    
+    matrix = {}
+    rows = []
+    
+    for r in series:
+        matrix[r] = {}
+        row = {"Asset": r}
+        for c in series:
+            val = 1.0 if (is_corr and r == c) else 0.0
+            matrix[r][c] = val
+            row[c] = val
+        rows.append(row)
+        
+    if is_corr:
+        return no_update, matrix, rows
+    else:
+        return matrix, no_update, rows
 
 
 # Add BL view row
@@ -3208,6 +3573,9 @@ def po_update_date_range_store(start, end):
     State("po-bl-views-store", "data"),
     State("po-bl-tau-input", "value"),
     State("po-objective-select", "value"),
+    State("po-ex-ante-vol-store", "data"),
+    State("po-ex-ante-corr-store", "data"),
+    State("po-ex-ante-mode-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -3218,7 +3586,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         opt_step_unit_value,
                         opt_model, missing_data, fill_in_sample_value, current_results,
                         pending_series,
-                        ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective):
+                        ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
+                        ex_ante_vol, ex_ante_corr, ex_ante_mode):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -3265,9 +3634,19 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         # Add ex ante params if applicable
         if opt_model in ("ex_ante_mv", "black_litterman"):
+            mode = ex_ante_mode or "ret_cov"
             config["ex_ante_returns"] = ex_ante_returns or {}
-            config["ex_ante_cov"] = ex_ante_cov or {}
+            config["ex_ante_vol"] = ex_ante_vol or {}
+            config["ex_ante_corr"] = ex_ante_corr or {}
+            config["ex_ante_mode"] = mode
             config["objective"] = objective or "maximize_sharpe"
+            
+            # If in Vol/Corr mode, ensure we don't pass stale covariance data,
+            # so the backend calculates it from Vol + Corr.
+            if mode == "ret_vol_corr":
+                config["ex_ante_cov"] = {}
+            else:
+                config["ex_ante_cov"] = ex_ante_cov or {}
         if opt_model == "black_litterman":
             config["bl_views"] = bl_views or []
             config["bl_tau"] = float(bl_tau or 0.05)

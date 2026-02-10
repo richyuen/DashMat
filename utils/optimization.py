@@ -259,8 +259,9 @@ def _extract_pca_factors(returns_df, n_factors=None):
 def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
                          forced_weights, free_series,
                          ex_ante_returns, ex_ante_cov, objective,
-                         window_data=None, exp_wt_cov=False, halflife=63):
-    """Run mean-variance optimization with user-supplied expected returns and covariance.
+        window_data=None, exp_wt_cov=False, halflife=63,
+        ex_ante_vol=None, ex_ante_corr=None):
+    """Run ex ante mean-variance optimization.
 
     Args:
         asset_names: List of asset names
@@ -274,6 +275,8 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
         window_data: Optional DataFrame of returns (used to create Portfolio object)
         exp_wt_cov: Whether to use exponentially weighted covariance (if estimating from data)
         halflife: Halflife for exponentially weighted covariance
+        ex_ante_vol: Dict {name: expected_annual_volatility} (decimal, e.g. 0.15 for 15%)
+        ex_ante_corr: Nested dict or 2D structure {row_name: {col_name: correlation}}
 
     Returns:
         Dict of {asset_name: weight}
@@ -301,6 +304,23 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
             row_vals = ex_ante_cov.get(row_name, {})
             for j, col_name in enumerate(asset_names):
                 cov_values[i, j] = row_vals.get(col_name, 0.0)
+        cov_df = pd.DataFrame(cov_values, index=asset_names, columns=asset_names)
+    elif ex_ante_vol and ex_ante_corr:
+        # Construct covariance from volatility and correlation: Cov = D * Corr * D
+        # where D is diag(volatility)
+        vol_vec = np.array([ex_ante_vol.get(name, 0.0) for name in asset_names])
+        corr_mat = np.eye(n_assets)
+        for i, row_name in enumerate(asset_names):
+            row_vals = ex_ante_corr.get(row_name, {})
+            for j, col_name in enumerate(asset_names):
+                corr_mat[i, j] = row_vals.get(col_name, 0.0 if i != j else 1.0)
+        
+        # Ensure symmetry for correlation (sometimes user input might be upper tri)
+        # But we assume the grid gives us full matrix or we trust the input loop
+        
+        # Cov_ij = Vol_i * Vol_j * Corr_ij
+        D = np.diag(vol_vec)
+        cov_values = D @ corr_mat @ D
         cov_df = pd.DataFrame(cov_values, index=asset_names, columns=asset_names)
     elif window_data is not None:
         # Estimate from historical returns — drop rows with NaN for clean estimation
@@ -564,6 +584,7 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
 def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper_bounds,
                              forced_weights, free_series, exp_wt_cov=False, halflife=63,
                              ex_ante_returns=None, ex_ante_cov=None,
+                             ex_ante_vol=None, ex_ante_corr=None,
                              bl_views=None, bl_tau=0.05, objective="maximize_sharpe"):
     """Run optimization for a single window.
 
@@ -609,6 +630,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             ex_ante_returns or {}, ex_ante_cov or {},
             objective, window_data,
             exp_wt_cov, halflife,
+            ex_ante_vol, ex_ante_corr,
         )
 
     if model == "black_litterman":
@@ -756,6 +778,8 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     # Ex ante config
     ex_ante_returns = config.get("ex_ante_returns", None)
     ex_ante_cov = config.get("ex_ante_cov", None)
+    ex_ante_vol = config.get("ex_ante_vol", None)
+    ex_ante_corr = config.get("ex_ante_corr", None)
     bl_views = config.get("bl_views", None)
     bl_tau = config.get("bl_tau", 0.05)
     objective = config.get("objective", "maximize_sharpe")
@@ -831,6 +855,8 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
             forced_weights, free_series, exp_wt_cov, halflife,
             ex_ante_returns=ex_ante_returns,
             ex_ante_cov=ex_ante_cov,
+            ex_ante_vol=ex_ante_vol,
+            ex_ante_corr=ex_ante_corr,
             bl_views=bl_views,
             bl_tau=bl_tau,
             objective=objective,
