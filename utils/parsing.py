@@ -5,12 +5,31 @@ import io
 import pandas as pd
 
 
-def parse_uploaded_file(contents: str, filename: str) -> pd.DataFrame:
+def get_sheet_names(contents: str, filename: str) -> list[str]:
+    """Return the list of sheet names for an Excel file.
+
+    Args:
+        contents: Base64 encoded file contents from dcc.Upload
+        filename: Original filename to determine file type
+
+    Returns:
+        List of sheet names, or empty list for non-Excel files.
+    """
+    if not filename.endswith((".xlsx", ".xls")):
+        return []
+    content_type, content_string = contents.split(",")
+    decoded = base64.b64decode(content_string)
+    xls = pd.ExcelFile(io.BytesIO(decoded))
+    return xls.sheet_names
+
+
+def parse_uploaded_file(contents: str, filename: str, sheet_name=0) -> pd.DataFrame:
     """Parse uploaded file contents into a DataFrame.
 
     Args:
         contents: Base64 encoded file contents from dcc.Upload
         filename: Original filename to determine file type
+        sheet_name: Sheet name or index for Excel files (default: 0, first sheet)
 
     Returns:
         DataFrame with DatetimeIndex and returns as columns
@@ -21,7 +40,7 @@ def parse_uploaded_file(contents: str, filename: str) -> pd.DataFrame:
     if filename.endswith(".csv"):
         df = pd.read_csv(io.StringIO(decoded.decode("utf-8")))
     elif filename.endswith((".xlsx", ".xls")):
-        df = pd.read_excel(io.BytesIO(decoded))
+        df = pd.read_excel(io.BytesIO(decoded), sheet_name=sheet_name)
     else:
         raise ValueError(f"Unsupported file type: {filename}")
 

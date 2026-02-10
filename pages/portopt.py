@@ -15,7 +15,7 @@ from dash import (
 )
 from dash.exceptions import PreventUpdate
 
-from utils.parsing import detect_periodicity, parse_uploaded_file
+from utils.parsing import detect_periodicity, get_sheet_names, parse_uploaded_file
 from utils.returns import (
     calculate_excess_returns,
     df_to_json,
@@ -800,6 +800,34 @@ layout = dmc.Container(
             ],
         ),
 
+        # Sheet Selection Modal (for multi-tab Excel files)
+        dmc.Modal(
+            id="po-sheet-select-modal",
+            title="Select Sheet",
+            size="sm",
+            centered=True,
+            closeOnClickOutside=False,
+            children=[
+                dmc.Text("This file contains multiple sheets. Select which sheet to import:", size="sm", mb="md"),
+                dmc.Select(
+                    id="po-sheet-select-dropdown",
+                    data=[],
+                    value=None,
+                    w="100%",
+                    size="sm",
+                    placeholder="Select a sheet",
+                ),
+                dmc.Group(
+                    mt="md",
+                    justify="flex-end",
+                    children=[
+                        dmc.Button("Cancel", id="po-sheet-select-cancel-button", variant="outline", color="red"),
+                        dmc.Button("OK", id="po-sheet-select-ok-button", color="blue"),
+                    ],
+                ),
+            ],
+        ),
+
         # Optimization status modal (progress → completion in one modal)
         dmc.Modal(
             id="po-progress-modal",
@@ -1044,6 +1072,9 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-min-wt-store", data={}),
         dcc.Store(id="po-temp-max-wt-store", data={}),
         dcc.Store(id="po-temp-force-max-store", data={}),
+        # Temp stores for sheet selection (stash upload while user picks a tab)
+        dcc.Store(id="po-sheet-select-contents-store", data=None),
+        dcc.Store(id="po-sheet-select-filename-store", data=None),
         # Controls stores
         dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
@@ -1798,6 +1829,12 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     Output("po-temp-min-wt-store", "data", allow_duplicate=True),
     Output("po-temp-max-wt-store", "data", allow_duplicate=True),
     Output("po-temp-force-max-store", "data", allow_duplicate=True),
+    # Sheet-select modal outputs
+    Output("po-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("po-sheet-select-dropdown", "data", allow_duplicate=True),
+    Output("po-sheet-select-dropdown", "value", allow_duplicate=True),
+    Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
     Input("po-upload-data", "contents"),
     State("po-upload-data", "filename"),
     State("analyticstool-raw-data-store", "data"),
@@ -1819,7 +1856,23 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
         raise PreventUpdate
 
     n_no = no_update
+    # Sheet-select outputs default to no_update
+    sheet_no = (n_no, n_no, n_no, n_no, n_no)
+
     try:
+        # Check for multi-tab Excel files
+        sheet_names = get_sheet_names(contents, filename)
+        if len(sheet_names) > 1:
+            # Stash contents and open the sheet-select modal
+            dropdown_data = [{"value": s, "label": s} for s in sheet_names]
+            return (
+                n_no, n_no, n_no, n_no, n_no, n_no,
+                n_no, n_no, True,  # hide alert
+                n_no, n_no, n_no, n_no, n_no,
+                n_no, n_no, n_no, n_no, n_no,
+                True, dropdown_data, sheet_names[0], contents, filename,  # open sheet modal
+            )
+
         new_df = parse_uploaded_file(contents, filename)
         new_periodicity = detect_periodicity(new_df)
 
@@ -1864,13 +1917,140 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             current_min_wt or {},
             current_max_wt or {},
             current_force_max or {},
+            *sheet_no,
         )
     except Exception as e:
         return (
             n_no, n_no, n_no, n_no, n_no, n_no,
             f"Error loading file: {str(e)}", "red", False,
             n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
+            *sheet_no,
         )
+
+
+# ---------------------------------------------------------------------------
+# Sheet selection modal: confirm
+# ---------------------------------------------------------------------------
+@callback(
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
+    Output("po-periodicity-select", "data", allow_duplicate=True),
+    Output("po-periodicity-select", "value", allow_duplicate=True),
+    Output("po-periodicity-select", "disabled", allow_duplicate=True),
+    Output("po-temp-series-select", "data", allow_duplicate=True),
+    Output("po-alert-message", "children", allow_duplicate=True),
+    Output("po-alert-message", "color", allow_duplicate=True),
+    Output("po-alert-message", "hide", allow_duplicate=True),
+    Output("po-periodicity-value-store", "data", allow_duplicate=True),
+    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-long-short-store", "data", allow_duplicate=True),
+    Output("po-temp-series-order-store", "data", allow_duplicate=True),
+    Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("po-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-min-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-max-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-force-max-store", "data", allow_duplicate=True),
+    Output("po-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    Input("po-sheet-select-ok-button", "n_clicks"),
+    State("po-sheet-select-dropdown", "value"),
+    State("po-sheet-select-contents-store", "data"),
+    State("po-sheet-select-filename-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
+    State("po-series-select", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-series-order-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-min-wt-store", "data"),
+    State("po-max-wt-store", "data"),
+    State("po-force-max-store", "data"),
+    prevent_initial_call=True,
+)
+def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filename,
+                          existing_data, existing_periodicity, current_selection,
+                          current_bench, current_ls, current_order,
+                          current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
+    """Parse the selected sheet and complete the import."""
+    if not n_clicks or not stashed_contents:
+        raise PreventUpdate
+
+    n_no = no_update
+    try:
+        new_df = parse_uploaded_file(stashed_contents, stashed_filename, sheet_name=selected_sheet)
+        new_periodicity = detect_periodicity(new_df)
+        filename = stashed_filename
+
+        if existing_data is not None:
+            existing_df = json_to_df(existing_data)
+            if existing_periodicity == "monthly" and new_periodicity == "daily":
+                new_df = resample_returns(new_df, "monthly")
+                combined_periodicity = "monthly"
+            elif new_periodicity == "monthly" and existing_periodicity == "daily":
+                existing_df = resample_returns(existing_df, "monthly")
+                combined_periodicity = "monthly"
+            else:
+                combined_periodicity = existing_periodicity
+            merged_df = merge_returns(existing_df, new_df)
+        else:
+            merged_df = new_df
+            combined_periodicity = new_periodicity
+
+        periodicity_options = get_available_periodicities(combined_periodicity)
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+
+        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        updated_selection = (current_selection or []) + new_series
+
+        alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename} (sheet: {selected_sheet})"
+
+        return (
+            df_to_json(merged_df),
+            combined_periodicity,
+            periodicity_options,
+            default_periodicity,
+            False,
+            updated_selection,
+            alert_msg, "green", False,
+            default_periodicity,
+            True,  # open series-selection modal
+            current_bench or {},
+            current_ls or {},
+            current_order or [],
+            [],
+            current_vol_scaling or {},
+            current_min_wt or {},
+            current_max_wt or {},
+            current_force_max or {},
+            False, None, None,  # close sheet modal, clear stash
+        )
+    except Exception as e:
+        return (
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            f"Error loading file: {str(e)}", "red", False,
+            n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
+            False, None, None,  # close sheet modal, clear stash
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sheet selection modal: cancel
+# ---------------------------------------------------------------------------
+@callback(
+    Output("po-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    Input("po-sheet-select-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_on_sheet_select_cancel(n_clicks):
+    """Cancel sheet selection and clear stashed data."""
+    if not n_clicks:
+        raise PreventUpdate
+    return False, None, None
 
 
 # ---------------------------------------------------------------------------

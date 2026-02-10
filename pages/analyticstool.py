@@ -16,7 +16,7 @@ from dash import Input, Output, State, callback, dcc, html, no_update, register_
 from dash.exceptions import PreventUpdate
 
 import cache_config
-from utils.parsing import detect_periodicity, parse_uploaded_file
+from utils.parsing import detect_periodicity, get_sheet_names, parse_uploaded_file
 from utils.returns import (
     calculate_calendar_year_returns,
     calculate_excess_returns,
@@ -887,6 +887,34 @@ layout = dmc.Container(
             ],
         ),
 
+        # Sheet Selection Modal (for multi-tab Excel files)
+        dmc.Modal(
+            id="sheet-select-modal",
+            title="Select Sheet",
+            size="sm",
+            centered=True,
+            closeOnClickOutside=False,
+            children=[
+                dmc.Text("This file contains multiple sheets. Select which sheet to import:", size="sm", mb="md"),
+                dmc.Select(
+                    id="sheet-select-dropdown",
+                    data=[],
+                    value=None,
+                    w="100%",
+                    size="sm",
+                    placeholder="Select a sheet",
+                ),
+                dmc.Group(
+                    mt="md",
+                    justify="flex-end",
+                    children=[
+                        dmc.Button("Cancel", id="sheet-select-cancel-button", variant="outline", color="red"),
+                        dmc.Button("OK", id="sheet-select-ok-button", color="blue"),
+                    ],
+                ),
+            ],
+        ),
+
         # Help Modal
         dmc.Modal(
             id="help-modal",
@@ -1051,6 +1079,9 @@ layout = dmc.Container(
         dcc.Store(id="temp-vol-scaling-assignments-store", data={}),
         dcc.Store(id="temp-series-order-store", data=[]),
         dcc.Store(id="temp-deleted-series-store", data=[]),
+        # Temp stores for sheet selection (stash upload while user picks a tab)
+        dcc.Store(id="sheet-select-contents-store", data=None),
+        dcc.Store(id="sheet-select-filename-store", data=None),
         dcc.Download(id="download-excel"),
         dcc.Download(id="download-sample-daily"),
         dcc.Download(id="download-sample-monthly"),
@@ -1843,6 +1874,12 @@ clientside_callback(
     Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("ui-blocker-store", "data", allow_duplicate=True),
     Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    # Sheet-select modal outputs
+    Output("sheet-select-modal", "opened", allow_duplicate=True),
+    Output("sheet-select-dropdown", "data", allow_duplicate=True),
+    Output("sheet-select-dropdown", "value", allow_duplicate=True),
+    Output("sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("sheet-select-filename-store", "data", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     State("analyticstool-raw-data-store", "data"),
@@ -1860,7 +1897,25 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     if contents is None:
         raise PreventUpdate
 
+    n_no = no_update
+    # Sheet-select outputs default to no_update
+    sheet_no = (n_no, n_no, n_no, n_no, n_no)
+
     try:
+        # Check for multi-tab Excel files
+        sheet_names = get_sheet_names(contents, filename)
+        if len(sheet_names) > 1:
+            # Stash contents and open the sheet-select modal
+            dropdown_data = [{"value": s, "label": s} for s in sheet_names]
+            return (
+                n_no, n_no, n_no, n_no, n_no, n_no,
+                n_no, n_no, True,  # hide alert
+                n_no, n_no, n_no, n_no, n_no,
+                n_no, n_no, n_no,
+                False, True,  # hide blocker
+                True, dropdown_data, sheet_names[0], contents, filename,  # open sheet modal
+            )
+
         # Parse the uploaded file
         new_df = parse_uploaded_file(contents, filename)
         new_periodicity = detect_periodicity(new_df)
@@ -1925,20 +1980,162 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             new_first_load,
             [], # Reset deleted series
             current_vol_scaling or {},
-            False, True # Hide blocker
+            False, True, # Hide blocker
+            *sheet_no,
         )
 
     except Exception as e:
         return (
-            no_update, no_update, no_update, no_update, no_update,
-            no_update,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
             f"Error loading file: {str(e)}",
             "red",
             False,
-            no_update, no_update, no_update, no_update, no_update,
-            no_update, no_update, no_update,
-            False, True # Hide blocker
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            False, True, # Hide blocker
+            *sheet_no,
         )
+
+
+# ---------------------------------------------------------------------------
+# Sheet selection modal: confirm
+# ---------------------------------------------------------------------------
+@callback(
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
+    Output("periodicity-select", "data", allow_duplicate=True),
+    Output("periodicity-select", "value", allow_duplicate=True),
+    Output("periodicity-select", "disabled", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
+    Output("alert-message", "children", allow_duplicate=True),
+    Output("alert-message", "color", allow_duplicate=True),
+    Output("alert-message", "hide", allow_duplicate=True),
+    Output("periodicity-value-store", "data", allow_duplicate=True),
+    Output("series-selection-modal", "opened", allow_duplicate=True),
+    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("temp-long-short-store", "data", allow_duplicate=True),
+    Output("temp-series-order-store", "data", allow_duplicate=True),
+    Output("first-load-store", "data", allow_duplicate=True),
+    Output("temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("ui-blocker-store", "data", allow_duplicate=True),
+    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Output("sheet-select-modal", "opened", allow_duplicate=True),
+    Output("sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("sheet-select-filename-store", "data", allow_duplicate=True),
+    Input("sheet-select-ok-button", "n_clicks"),
+    State("sheet-select-dropdown", "value"),
+    State("sheet-select-contents-store", "data"),
+    State("sheet-select-filename-store", "data"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
+    State("series-select", "data"),
+    State("benchmark-assignments-store", "data"),
+    State("long-short-store", "data"),
+    State("series-order-store", "data"),
+    State("first-load-store", "data"),
+    State("vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+def on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filename,
+                       existing_data, existing_periodicity, current_selection,
+                       current_bench, current_ls, current_order, first_load, current_vol_scaling):
+    """Parse the selected sheet and complete the import."""
+    if not n_clicks or not stashed_contents:
+        raise PreventUpdate
+
+    n_no = no_update
+    try:
+        new_df = parse_uploaded_file(stashed_contents, stashed_filename, sheet_name=selected_sheet)
+        new_periodicity = detect_periodicity(new_df)
+        filename = stashed_filename
+
+        if existing_data is not None:
+            existing_df = json_to_df(existing_data)
+            if existing_periodicity == "monthly" and new_periodicity == "daily":
+                new_df = resample_returns(new_df, "monthly")
+                combined_periodicity = "monthly"
+            elif new_periodicity == "monthly" and existing_periodicity == "daily":
+                existing_df = resample_returns(existing_df, "monthly")
+                combined_periodicity = "monthly"
+            else:
+                combined_periodicity = existing_periodicity
+            merged_df = merge_returns(existing_df, new_df)
+        else:
+            merged_df = new_df
+            combined_periodicity = new_periodicity
+
+        periodicity_options = get_available_periodicities(combined_periodicity)
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+
+        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        updated_selection = (current_selection or []) + new_series
+
+        if not first_load:
+            alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename} (sheet: {selected_sheet})"
+            alert_color = "green"
+            alert_hide = False
+            new_first_load = True
+        else:
+            alert_msg = n_no
+            alert_color = n_no
+            alert_hide = True
+            new_first_load = True
+
+        return (
+            df_to_json(merged_df),
+            combined_periodicity,
+            periodicity_options,
+            default_periodicity,
+            False,
+            updated_selection,
+            alert_msg,
+            alert_color,
+            alert_hide,
+            default_periodicity,
+            True,  # Open series-selection modal
+            current_bench or {},
+            current_ls or {},
+            current_order or [],
+            new_first_load,
+            [],
+            current_vol_scaling or {},
+            False, True,  # Hide blocker
+            False, None, None,  # Close sheet modal, clear stash
+        )
+
+    except Exception as e:
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            f"Error loading file: {str(e)}",
+            "red",
+            False,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            False, True,  # Hide blocker
+            False, None, None,  # Close sheet modal, clear stash
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sheet selection modal: cancel
+# ---------------------------------------------------------------------------
+@callback(
+    Output("sheet-select-modal", "opened", allow_duplicate=True),
+    Output("sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("ui-blocker-store", "data", allow_duplicate=True),
+    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Input("sheet-select-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_sheet_select_cancel(n_clicks):
+    """Cancel sheet selection and clear stashed data."""
+    if not n_clicks:
+        raise PreventUpdate
+    return False, None, None, False, True
 
 
 @callback(
