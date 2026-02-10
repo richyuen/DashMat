@@ -729,8 +729,8 @@ layout = dmc.Container(
                                 dmc.MenuTarget(dmc.Button("View", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
                                     dmc.MenuItem("Analytics Tool", id="po-menu-view-analytics"),
-                                    dmc.MenuDivider(),
-                                    dmc.MenuItem("Toggle Dark Mode", id="po-menu-toggle-dark-mode"),
+                                    #dmc.MenuDivider(),
+                                    #dmc.MenuItem("Toggle Dark Mode", id="po-menu-toggle-dark-mode"),
                                 ]),
                             ],
                         ),
@@ -2577,6 +2577,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             window_data.append({
                 "apply_start": wr.apply_start.isoformat(),
                 "apply_end": wr.apply_end.isoformat(),
+                "est_start": wr.est_start.isoformat(),
+                "est_end": wr.est_end.isoformat(),
                 "weights": wr.weights,
             })
 
@@ -3738,9 +3740,10 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
         return [], None
     options = []
     for i, ww in enumerate(window_weights):
-        start = pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d")
-        end = pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d")
-        options.append({"value": str(i), "label": f"{start} \u2192 {end}"})
+        # Show estimation window (used for optimization), not apply window
+        est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"])).strftime("%Y-%m-%d")
+        est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"])).strftime("%Y-%m-%d")
+        options.append({"value": str(i), "label": f"{est_start} - {est_end}"})
     # Default to last window
     return options, str(len(window_weights) - 1)
 
@@ -3791,19 +3794,35 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
             tuple(opt_series),
             json.dumps(bench) if bench else "{}",
             json.dumps(ls) if ls else "{}",
-            json.dumps(date_range) if date_range else "null",
+            "null",  # No date range filter - use estimation window dates instead
             vol_scaler or 0,
             json.dumps(vol_scaling) if vol_scaling else "{}",
         )
 
-        # Select the window's data
+
+        # Select the window's estimation data (not the apply period)
         idx = int(window_idx) if window_idx is not None else len(window_weights) - 1
         idx = min(idx, len(window_weights) - 1)
         ww = window_weights[idx]
-        start = pd.Timestamp(ww["apply_start"])
-        end = pd.Timestamp(ww["apply_end"])
-        mask = (working_df.index >= start) & (working_df.index <= end)
-        est_data = working_df.loc[mask, opt_series].dropna()
+
+        # Use estimation window to compute frontier (same window used for optimization)
+        est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"])) # Fallback for old data
+        est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"]))
+        mask = (working_df.index >= est_start) & (working_df.index <= est_end)
+        est_data = working_df.loc[mask, opt_series]
+
+        # Handle missing data according to optimization config
+        missing_data_method = config.get("missing_data", "fill_na")
+        if missing_data_method == "fill_0":
+            est_data = est_data.fillna(0)
+        else:
+            # fill_na: drop any column with NaN in this window
+            valid_cols = [c for c in opt_series if not est_data[c].isna().any()]
+            if valid_cols:
+                est_data = est_data[valid_cols]
+            else:
+                # Fallback to fill_0 if no complete series
+                est_data = est_data.fillna(0)
 
         if est_data.empty or len(est_data) < 3:
             return dmc.Text("Insufficient data for efficient frontier in this window.", c="dimmed")
@@ -3821,7 +3840,15 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
         frontier_pts, asset_pts = compute_efficient_frontier(est_data, ann, rm=risk_measure)
 
         # Compute selected portfolio's risk/return using this window's weights
-        w_arr = np.array([ww["weights"].get(c, 0) for c in opt_series])
+        # Align weights with the actual columns in est_data (some may have been filtered out)
+        actual_cols = list(est_data.columns)
+        w_arr = np.array([ww["weights"].get(c, 0) for c in actual_cols])
+
+        # Renormalize weights if some series were excluded
+        w_sum = w_arr.sum()
+        if w_sum > 0:
+            w_arr = w_arr / w_sum
+            
         mu = est_data.mean().values
         cov = est_data.cov().values
         port_ret = (w_arr @ mu) * ann
@@ -3883,5 +3910,8 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
 
         return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
-    except Exception:
-        return dmc.Text("Error computing efficient frontier.", c="dimmed")
+    except Exception as e:
+        import traceback
+        print(f"Frontier error: {e}")
+        print(traceback.format_exc())
+        return dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed")

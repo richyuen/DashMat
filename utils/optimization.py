@@ -16,6 +16,8 @@ class WindowResult:
     apply_start: pd.Timestamp
     apply_end: pd.Timestamp
     weights: dict  # {series_name: weight}
+    est_start: pd.Timestamp = None  # Estimation window start
+    est_end: pd.Timestamp = None    # Estimation window end    
 
 
 def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=False,
@@ -461,6 +463,8 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
             apply_start=df.index[0],
             apply_end=df.index[-1],
             weights=weights,
+            est_start=df.index[0],
+            est_end=df.index[-1],
         )]
         return window_results, portfolio_returns
 
@@ -537,10 +541,14 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
         # Record window result
         apply_start_ts = df.index[apply_start]
         apply_end_ts = df.index[apply_end]
+        est_start_ts = df.index[est_start]
+        est_end_ts = df.index[est_end]
         window_results.append(WindowResult(
             apply_start=apply_start_ts,
             apply_end=apply_end_ts,
             weights=w_result_final,
+            est_start=est_start_ts,
+            est_end=est_end_ts,
         ))
 
         # Apply weights to periods

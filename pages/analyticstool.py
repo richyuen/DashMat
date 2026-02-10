@@ -815,11 +815,8 @@ layout = dmc.Container(
                                             "Portfolio Optimization",
                                             id="menu-view-portfolio",
                                         ),
-                                        dmc.MenuDivider(),
-                                        dmc.MenuItem(
-                                            "Toggle Dark Mode",
-                                            id="menu-toggle-dark-mode",
-                                        ),
+                                        #dmc.MenuDivider(),
+                                        #dmc.MenuItem("Toggle Dark Mode",id="menu-toggle-dark-mode",),
                                     ],
                                 ),
                             ],
