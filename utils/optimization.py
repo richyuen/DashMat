@@ -256,8 +256,278 @@ def _extract_pca_factors(returns_df, n_factors=None):
     return factor_df
 
 
+def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
+                         forced_weights, free_series,
+                         ex_ante_returns, ex_ante_cov, objective,
+                         window_data=None):
+    """Run mean-variance optimization with user-supplied expected returns and covariance.
+
+    Args:
+        asset_names: List of asset names
+        lower_bounds: Dict {name: lower_bound} (0-1 scale)
+        upper_bounds: Dict {name: upper_bound} (0-1 scale)
+        forced_weights: Dict {name: weight} for forced assets
+        free_series: List of free (non-forced) asset names
+        ex_ante_returns: Dict {name: expected_annual_return} (decimal, e.g. 0.08 for 8%)
+        ex_ante_cov: Nested dict or 2D structure {row_name: {col_name: value}}
+        objective: 'maximize_sharpe', 'minimize_variance', or 'maximize_return'
+        window_data: Optional DataFrame of returns (used to create Portfolio object)
+
+    Returns:
+        Dict of {asset_name: weight}
+    """
+    if not free_series:
+        return dict(forced_weights)
+
+    if len(free_series) == 1:
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        result[free_series[0]] = max(0, remaining)
+        return result
+
+    n_assets = len(asset_names)
+
+    # Build mu vector (DataFrame with shape 1 x n_assets)
+    mu_values = [ex_ante_returns.get(name, 0.0) for name in asset_names]
+    mu_df = pd.DataFrame(mu_values, index=asset_names, columns=["mu"]).T
+
+    # Build cov matrix (DataFrame n_assets x n_assets)
+    cov_values = np.zeros((n_assets, n_assets))
+    for i, row_name in enumerate(asset_names):
+        row_vals = ex_ante_cov.get(row_name, {})
+        for j, col_name in enumerate(asset_names):
+            cov_values[i, j] = row_vals.get(col_name, 0.0)
+    cov_df = pd.DataFrame(cov_values, index=asset_names, columns=asset_names)
+
+    # Create Portfolio object
+    if window_data is not None:
+        port = rp.Portfolio(returns=window_data[asset_names].copy())
+    else:
+        # Create a minimal dummy returns DataFrame
+        dummy = pd.DataFrame(
+            np.random.randn(100, n_assets) * 0.01,
+            columns=asset_names
+        )
+        port = rp.Portfolio(returns=dummy)
+
+    # Set custom mu and cov
+    port.mu = mu_df
+    port.cov = cov_df
+
+    # Build bounds
+    lower_arr = np.zeros(n_assets)
+    upper_arr = np.ones(n_assets)
+    for i, name in enumerate(asset_names):
+        if name in forced_weights:
+            lower_arr[i] = forced_weights[name]
+            upper_arr[i] = forced_weights[name]
+        else:
+            lower_arr[i] = lower_bounds.get(name, 0)
+            upper_arr[i] = upper_bounds.get(name, 1)
+    port.lowerlng = lower_arr.reshape(-1, 1)
+    port.upperlng = upper_arr.reshape(-1, 1)
+
+    # Map objective to riskfolio params
+    obj_map = {
+        "maximize_sharpe": ("Sharpe", "MV"),
+        "minimize_variance": ("MinRisk", "MV"),
+        "maximize_return": ("MaxRet", "MV"),
+    }
+    obj_str, rm = obj_map.get(objective, ("Sharpe", "MV"))
+
+    try:
+        w = port.optimization(model="Classic", rm=rm, obj=obj_str, hist=False)
+    except Exception:
+        # Fallback to equal weight
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        eq = remaining / len(free_series) if free_series else 0
+        for s in free_series:
+            result[s] = eq
+        return result
+
+    if w is None or w.empty:
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        eq = remaining / len(free_series) if free_series else 0
+        for s in free_series:
+            result[s] = eq
+        return result
+
+    result = {}
+    for name in asset_names:
+        if name in w.index:
+            result[name] = float(w.loc[name, "weights"])
+        elif name in forced_weights:
+            result[name] = forced_weights[name]
+        else:
+            result[name] = 0.0
+    return result
+
+
+def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_bounds,
+                              forced_weights, free_series,
+                              bl_views, bl_tau, objective,
+                              exp_wt_cov=False, halflife=63):
+    """Run Black-Litterman optimization.
+
+    Uses historical returns for the equilibrium prior, then blends with user views.
+
+    Args:
+        window_data: DataFrame of returns for estimation
+        asset_names: List of asset names
+        lower_bounds: Dict {name: lower_bound} (0-1 scale)
+        upper_bounds: Dict {name: upper_bound} (0-1 scale)
+        forced_weights: Dict {name: weight} for forced assets
+        free_series: List of free (non-forced) asset names
+        bl_views: List of view dicts, each with:
+            - 'type': 'absolute' or 'relative'
+            - 'asset': asset name (for absolute) or asset_from (for relative)
+            - 'asset_to': asset name (for relative, the underperformer)
+            - 'return': expected return (decimal)
+            - 'confidence': confidence level 0-1 (default 1.0)
+        bl_tau: Scalar uncertainty parameter (default 0.05)
+        objective: 'maximize_sharpe', 'minimize_variance', or 'maximize_return'
+        exp_wt_cov: Whether to use exponentially weighted covariance
+        halflife: Halflife for exponentially weighted covariance
+
+    Returns:
+        Dict of {asset_name: weight}
+    """
+    if not free_series:
+        return dict(forced_weights)
+
+    if len(free_series) == 1:
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        result[free_series[0]] = max(0, remaining)
+        return result
+
+    n_assets = len(asset_names)
+    port_data = window_data[asset_names].copy()
+
+    port = rp.Portfolio(returns=port_data)
+    port.assets_stats(method_mu="hist", method_cov="hist")
+
+    if exp_wt_cov:
+        port.cov = port_data.ewm(halflife=halflife).cov().iloc[-n_assets:]
+
+    # Build P (views matrix) and Q (views vector)
+    n_views = len(bl_views)
+    if n_views == 0:
+        # No views: fall back to historical MV
+        P = np.zeros((1, n_assets))
+        Q = np.zeros((1, 1))
+    else:
+        P = np.zeros((n_views, n_assets))
+        Q = np.zeros((n_views, 1))
+
+        asset_idx = {name: i for i, name in enumerate(asset_names)}
+        for v_idx, view in enumerate(bl_views):
+            view_type = view.get("type", "absolute")
+            view_return = view.get("return", 0.0)
+            Q[v_idx, 0] = view_return
+
+            if view_type == "absolute":
+                asset_name = view.get("asset", "")
+                if asset_name in asset_idx:
+                    P[v_idx, asset_idx[asset_name]] = 1.0
+            elif view_type == "relative":
+                asset_from = view.get("asset", "")
+                asset_to = view.get("asset_to", "")
+                if asset_from in asset_idx:
+                    P[v_idx, asset_idx[asset_from]] = 1.0
+                if asset_to in asset_idx:
+                    P[v_idx, asset_idx[asset_to]] = -1.0
+
+    P_df = pd.DataFrame(P, columns=asset_names)
+    Q_df = pd.DataFrame(Q, columns=["views"])
+
+    # Build confidence diagonal (omega)
+    # Default omega = tau * diag(P * Sigma * P')
+    # Scale by inverse of confidence: higher confidence -> smaller omega entry
+    confidences = []
+    for view in bl_views:
+        conf = view.get("confidence", 1.0)
+        confidences.append(max(0.01, min(1.0, conf)))
+
+    try:
+        port.blacklitterman_stats(
+            P=P_df,
+            Q=Q_df,
+            delta=None,  # auto-compute market risk aversion
+            rf=0,
+            eq=True,  # use equilibrium returns as prior
+        )
+
+        # Scale omega by confidence (lower confidence = more uncertainty)
+        if hasattr(port, "cov_bl") and port.cov_bl is not None:
+            sigma = port.cov_bl.values if hasattr(port.cov_bl, 'values') else port.cov_bl
+        else:
+            sigma = port.cov.values
+
+        omega_diag = bl_tau * np.diag(P @ sigma @ P.T)
+        for i, conf in enumerate(confidences):
+            omega_diag[i] /= conf
+
+    except Exception:
+        pass  # Use whatever BL stats were computed
+
+    # Build bounds
+    lower_arr = np.zeros(n_assets)
+    upper_arr = np.ones(n_assets)
+    for i, name in enumerate(asset_names):
+        if name in forced_weights:
+            lower_arr[i] = forced_weights[name]
+            upper_arr[i] = forced_weights[name]
+        else:
+            lower_arr[i] = lower_bounds.get(name, 0)
+            upper_arr[i] = upper_bounds.get(name, 1)
+    port.lowerlng = lower_arr.reshape(-1, 1)
+    port.upperlng = upper_arr.reshape(-1, 1)
+
+    # Map objective
+    obj_map = {
+        "maximize_sharpe": ("Sharpe", "MV"),
+        "minimize_variance": ("MinRisk", "MV"),
+        "maximize_return": ("MaxRet", "MV"),
+    }
+    obj_str, rm = obj_map.get(objective, ("Sharpe", "MV"))
+
+    try:
+        w = port.optimization(model="BL", rm=rm, obj=obj_str, hist=False)
+    except Exception:
+        # Fallback to equal weight
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        eq = remaining / len(free_series) if free_series else 0
+        for s in free_series:
+            result[s] = eq
+        return result
+
+    if w is None or w.empty:
+        result = dict(forced_weights)
+        remaining = 1.0 - sum(forced_weights.values())
+        eq = remaining / len(free_series) if free_series else 0
+        for s in free_series:
+            result[s] = eq
+        return result
+
+    result = {}
+    for name in asset_names:
+        if name in w.index:
+            result[name] = float(w.loc[name, "weights"])
+        elif name in forced_weights:
+            result[name] = forced_weights[name]
+        else:
+            result[name] = 0.0
+    return result
+
+
 def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper_bounds,
-                             forced_weights, free_series, exp_wt_cov=False, halflife=63):
+                             forced_weights, free_series, exp_wt_cov=False, halflife=63,
+                             ex_ante_returns=None, ex_ante_cov=None,
+                             bl_views=None, bl_tau=0.05, objective="maximize_sharpe"):
     """Run optimization for a single window.
 
     Args:
@@ -293,6 +563,23 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         for s in free_series:
             result[s] = equal_wt
         return result
+
+    # Ex ante models use separate optimization functions
+    if model == "ex_ante_mv":
+        return _optimize_ex_ante_mv(
+            asset_names, lower_bounds, upper_bounds,
+            forced_weights, free_series,
+            ex_ante_returns or {}, ex_ante_cov or {},
+            objective, window_data,
+        )
+
+    if model == "black_litterman":
+        return _optimize_black_litterman(
+            window_data, asset_names, lower_bounds, upper_bounds,
+            forced_weights, free_series,
+            bl_views or [], bl_tau, objective,
+            exp_wt_cov, halflife,
+        )
 
     # Build riskfolio Portfolio
     # Use only the columns that are in asset_names
@@ -428,6 +715,13 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     max_wt = config.get("max_wt", {})  # percent 0-100
     force_max = config.get("force_max", {})
 
+    # Ex ante config
+    ex_ante_returns = config.get("ex_ante_returns", None)
+    ex_ante_cov = config.get("ex_ante_cov", None)
+    bl_views = config.get("bl_views", None)
+    bl_tau = config.get("bl_tau", 0.05)
+    objective = config.get("objective", "maximize_sharpe")
+
     # Filter to selected series only
     available_cols = [s for s in selected_series if s in returns_df.columns]
     if not available_cols:
@@ -468,6 +762,47 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
         )]
         return window_results, portfolio_returns
 
+    # ----- Ex ante models: single-period optimization (no windowing) -----
+    is_ex_ante = model in ("ex_ante_mv", "black_litterman")
+    if is_ex_ante:
+        if progress_callback is not None:
+            progress_callback(
+                (
+                    [{"value": 50, "color": "blue"}],
+                    "Running ex ante optimization...",
+                )
+            )
+
+        weights = _optimize_single_window(
+            df, model, available_cols, lower_bounds, upper_bounds,
+            forced_weights, free_series, exp_wt_cov, halflife,
+            ex_ante_returns=ex_ante_returns,
+            ex_ante_cov=ex_ante_cov,
+            bl_views=bl_views,
+            bl_tau=bl_tau,
+            objective=objective,
+        )
+
+        portfolio_returns = (df.fillna(0) * pd.Series(weights)).sum(axis=1)
+        window_results = [WindowResult(
+            apply_start=df.index[0],
+            apply_end=df.index[-1],
+            weights=weights,
+            est_start=df.index[0],
+            est_end=df.index[-1],
+        )]
+
+        if progress_callback is not None:
+            progress_callback(
+                (
+                    [{"value": 100, "color": "blue"}],
+                    "Optimization complete.",
+                )
+            )
+
+        return window_results, portfolio_returns
+
+    # ----- Standard models: windowed optimization -----
     # Compute windows
     windows = _compute_windows(df, window_type, window_size, opt_step, fill_in_sample,
                                opt_step_unit=opt_step_unit)

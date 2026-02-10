@@ -261,11 +261,27 @@ def build_po_main_layout():
                                                 {"value": "minimize_variance", "label": "Minimize Variance"},
                                                 {"value": "minimize_cvar", "label": "Minimize CVaR"},
                                                 {"value": "equal_weight", "label": "Equal Weight"},
+                                                {"value": "ex_ante_mv", "label": "Ex Ante Mean-Variance"},
+                                                {"value": "black_litterman", "label": "Black-Litterman"},
                                             ],
                                             value="risk_parity",
                                             w=210,
                                             size="sm",
                                             clearable=False,
+                                        ),
+                                        dmc.Select(
+                                            id="po-objective-select",
+                                            label="Objective",
+                                            data=[
+                                                {"value": "maximize_sharpe", "label": "Max Sharpe"},
+                                                {"value": "minimize_variance", "label": "Min Variance"},
+                                                {"value": "maximize_return", "label": "Max Return"},
+                                            ],
+                                            value="maximize_sharpe",
+                                            w=140,
+                                            size="sm",
+                                            clearable=False,
+                                            style={"display": "none"},
                                         ),
                                         html.Div([
                                             dmc.Text("Exp Wt Cov", size="sm", fw=500),
@@ -372,6 +388,156 @@ def build_po_main_layout():
                                                 size="sm",
                                             ),
                                         ]),
+                                    ],
+                                ),
+                                # Ex Ante Input Panel (hidden by default)
+                                html.Div(
+                                    id="po-ex-ante-panel",
+                                    style={"display": "none"},
+                                    children=[
+                                        dmc.Divider(label="Ex Ante Inputs", labelPosition="center", mb="sm", mt="sm"),
+                                        # Expected Returns
+                                        dmc.Text("Expected Returns (annualized, decimal)", size="sm", fw=600, mb="xs"),
+                                        dmc.Text(
+                                            "Enter values in the table below or upload a CSV with columns: Asset, Return",
+                                            size="xs", c="dimmed", mb="xs",
+                                        ),
+                                        dmc.Group(
+                                            gap="xs",
+                                            mb="sm",
+                                            children=[
+                                                dcc.Upload(
+                                                    id="po-ex-ante-returns-upload",
+                                                    children=dmc.Button(
+                                                        "Upload Returns CSV",
+                                                        variant="outline",
+                                                        size="xs",
+                                                        leftSection=DashIconify(icon="tabler:upload"),
+                                                    ),
+                                                    multiple=False,
+                                                    accept=".csv",
+                                                ),
+                                                dmc.Button(
+                                                    "Clear Returns",
+                                                    id="po-ex-ante-returns-clear",
+                                                    variant="subtle",
+                                                    size="xs",
+                                                    color="red",
+                                                ),
+                                            ],
+                                        ),
+                                        html.Div(
+                                            id="po-ex-ante-returns-grid-container",
+                                            children=[
+                                                dag.AgGrid(
+                                                    id="po-ex-ante-returns-grid",
+                                                    columnDefs=[
+                                                        {"field": "Asset", "editable": False, "width": 180},
+                                                        {"field": "Return", "editable": True, "width": 120,
+                                                         "type": "numericColumn",
+                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
+                                                    ],
+                                                    rowData=[],
+                                                    defaultColDef={"resizable": True, "sortable": False},
+                                                    style={"height": "200px"},
+                                                    dashGridOptions={"singleClickEdit": True},
+                                                ),
+                                            ],
+                                            style={"marginBottom": "12px"},
+                                        ),
+                                        # Covariance Matrix
+                                        dmc.Text("Covariance Matrix (optional — estimated from data if omitted)", size="sm", fw=600, mb="xs"),
+                                        dmc.Group(
+                                            gap="xs",
+                                            mb="sm",
+                                            children=[
+                                                dcc.Upload(
+                                                    id="po-ex-ante-cov-upload",
+                                                    children=dmc.Button(
+                                                        "Upload Cov CSV",
+                                                        variant="outline",
+                                                        size="xs",
+                                                        leftSection=DashIconify(icon="tabler:upload"),
+                                                    ),
+                                                    multiple=False,
+                                                    accept=".csv",
+                                                ),
+                                                dmc.Button(
+                                                    "Clear Cov",
+                                                    id="po-ex-ante-cov-clear",
+                                                    variant="subtle",
+                                                    size="xs",
+                                                    color="red",
+                                                ),
+                                                dmc.Text(id="po-ex-ante-cov-status", size="xs", c="dimmed"),
+                                            ],
+                                        ),
+                                        # Black-Litterman Views (shown only for BL)
+                                        html.Div(
+                                            id="po-bl-views-panel",
+                                            style={"display": "none"},
+                                            children=[
+                                                dmc.Divider(mb="sm"),
+                                                dmc.Text("Black-Litterman Views", size="sm", fw=600, mb="xs"),
+                                                dmc.Text(
+                                                    "Add absolute or relative views. Relative: 'Asset outperforms Asset_To by Return'.",
+                                                    size="xs", c="dimmed", mb="xs",
+                                                ),
+                                                dmc.Group(
+                                                    gap="xs",
+                                                    mb="sm",
+                                                    children=[
+                                                        dmc.Button(
+                                                            "Add View",
+                                                            id="po-bl-add-view",
+                                                            variant="outline",
+                                                            size="xs",
+                                                            leftSection=DashIconify(icon="tabler:plus"),
+                                                        ),
+                                                        dmc.Button(
+                                                            "Clear Views",
+                                                            id="po-bl-clear-views",
+                                                            variant="subtle",
+                                                            size="xs",
+                                                            color="red",
+                                                        ),
+                                                    ],
+                                                ),
+                                                dag.AgGrid(
+                                                    id="po-bl-views-grid",
+                                                    columnDefs=[
+                                                        {"field": "Type", "editable": True, "width": 100,
+                                                         "cellEditor": "agSelectCellEditor",
+                                                         "cellEditorParams": {"values": ["absolute", "relative"]}},
+                                                        {"field": "Asset", "editable": True, "width": 150},
+                                                        {"field": "Asset_To", "editable": True, "width": 150,
+                                                         "headerName": "vs Asset (rel)"},
+                                                        {"field": "Return", "editable": True, "width": 100,
+                                                         "type": "numericColumn",
+                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
+                                                        {"field": "Confidence", "editable": True, "width": 100,
+                                                         "type": "numericColumn",
+                                                         "valueFormatter": {"function": "d3.format('.2f')(params.value)"}},
+                                                    ],
+                                                    rowData=[],
+                                                    defaultColDef={"resizable": True, "sortable": False},
+                                                    style={"height": "200px"},
+                                                    dashGridOptions={"singleClickEdit": True},
+                                                ),
+                                                dmc.NumberInput(
+                                                    id="po-bl-tau-input",
+                                                    label="Tau (uncertainty)",
+                                                    value=0.05,
+                                                    min=0.001,
+                                                    max=1.0,
+                                                    step=0.01,
+                                                    w=120,
+                                                    size="sm",
+                                                    mt="sm",
+                                                    decimalScale=3,
+                                                ),
+                                            ],
+                                        ),
                                     ],
                                 ),
                                 # Row 3: Run button
@@ -1098,6 +1264,12 @@ layout = dmc.Container(
         dcc.Store(id="po-halflife-store", data=63, storage_type="session"),
         dcc.Store(id="po-missing-data-store", data="fill_na", storage_type="session"),
         dcc.Store(id="po-fill-in-sample-store", data="off", storage_type="session"),
+        # Ex ante stores
+        dcc.Store(id="po-ex-ante-returns-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-cov-store", data={}, storage_type="session"),
+        dcc.Store(id="po-bl-views-store", data=[], storage_type="session"),
+        dcc.Store(id="po-bl-tau-store", data=0.05, storage_type="session"),
+        dcc.Store(id="po-objective-store", data="maximize_sharpe", storage_type="session"),
         # Results stores
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
@@ -1480,6 +1652,228 @@ clientside_callback(
     Input("po-opt-window-select", "value"),
     prevent_initial_call=True,
 )
+
+# ---------------------------------------------------------------------------
+# Ex ante panel visibility: show/hide based on model selection
+# ---------------------------------------------------------------------------
+clientside_callback(
+    """
+    function(model) {
+        var isExAnte = (model === "ex_ante_mv" || model === "black_litterman");
+        var isBL = (model === "black_litterman");
+        return [
+            isExAnte ? {"display": "block"} : {"display": "none"},
+            isExAnte ? {"display": "block"} : {"display": "none"},
+            isBL ? {"display": "block"} : {"display": "none"},
+        ];
+    }
+    """,
+    Output("po-ex-ante-panel", "style"),
+    Output("po-objective-select", "style"),
+    Output("po-bl-views-panel", "style"),
+    Input("po-opt-model-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: objective
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-objective-store", "data"),
+    Input("po-objective-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: BL tau
+clientside_callback(
+    "function(value) { return value; }",
+    Output("po-bl-tau-store", "data"),
+    Input("po-bl-tau-input", "value"),
+    prevent_initial_call=True,
+)
+
+
+# Populate expected returns grid when selected series changes (ex ante models)
+@callback(
+    Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
+    Input("po-series-select", "data"),
+    State("po-ex-ante-returns-store", "data"),
+    prevent_initial_call=True,
+)
+def po_populate_returns_grid(selected_series, existing_returns):
+    """Populate the expected returns grid with selected series names."""
+    if not selected_series:
+        return []
+    existing_returns = existing_returns or {}
+    rows = []
+    for s in selected_series:
+        rows.append({
+            "Asset": s,
+            "Return": existing_returns.get(s, 0.0),
+        })
+    return rows
+
+
+# Sync returns grid edits to store
+@callback(
+    Output("po-ex-ante-returns-store", "data"),
+    Input("po-ex-ante-returns-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def po_sync_returns_grid_to_store(row_data):
+    """Save grid edits to session store."""
+    if not row_data:
+        return {}
+    result = {}
+    for row in row_data:
+        asset = row.get("Asset", "")
+        ret = row.get("Return", 0.0)
+        if asset:
+            try:
+                result[asset] = float(ret)
+            except (ValueError, TypeError):
+                result[asset] = 0.0
+    return result
+
+
+# Upload returns CSV
+@callback(
+    Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
+    Output("po-ex-ante-returns-store", "data", allow_duplicate=True),
+    Input("po-ex-ante-returns-upload", "contents"),
+    State("po-ex-ante-returns-upload", "filename"),
+    prevent_initial_call=True,
+)
+def po_upload_returns_csv(contents, filename):
+    """Parse uploaded CSV into returns grid."""
+    if contents is None:
+        raise PreventUpdate
+    import base64
+    _, content_string = contents.split(",")
+    decoded = base64.b64decode(content_string)
+    csv_df = pd.read_csv(StringIO(decoded.decode("utf-8")))
+    # Expect columns: Asset, Return (or first two columns)
+    if len(csv_df.columns) >= 2:
+        csv_df.columns = ["Asset", "Return"] + list(csv_df.columns[2:])
+    rows = []
+    store = {}
+    for _, row in csv_df.iterrows():
+        asset = str(row.iloc[0])
+        try:
+            ret = float(row.iloc[1])
+        except (ValueError, TypeError):
+            ret = 0.0
+        rows.append({"Asset": asset, "Return": ret})
+        store[asset] = ret
+    return rows, store
+
+
+# Clear returns
+@callback(
+    Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
+    Output("po-ex-ante-returns-store", "data", allow_duplicate=True),
+    Input("po-ex-ante-returns-clear", "n_clicks"),
+    State("po-series-select", "data"),
+    prevent_initial_call=True,
+)
+def po_clear_returns(n_clicks, selected_series):
+    """Reset returns grid to zeros."""
+    if not n_clicks:
+        raise PreventUpdate
+    rows = [{"Asset": s, "Return": 0.0} for s in (selected_series or [])]
+    return rows, {}
+
+
+# Upload covariance CSV
+@callback(
+    Output("po-ex-ante-cov-store", "data"),
+    Output("po-ex-ante-cov-status", "children"),
+    Input("po-ex-ante-cov-upload", "contents"),
+    State("po-ex-ante-cov-upload", "filename"),
+    prevent_initial_call=True,
+)
+def po_upload_cov_csv(contents, filename):
+    """Parse uploaded covariance CSV into nested dict."""
+    if contents is None:
+        raise PreventUpdate
+    import base64
+    _, content_string = contents.split(",")
+    decoded = base64.b64decode(content_string)
+    csv_df = pd.read_csv(StringIO(decoded.decode("utf-8")), index_col=0)
+    # Convert to nested dict {row_name: {col_name: value}}
+    cov_dict = {}
+    for row_name in csv_df.index:
+        cov_dict[str(row_name)] = {str(col): float(csv_df.loc[row_name, col]) for col in csv_df.columns}
+    status = f"Loaded {len(csv_df)}x{len(csv_df.columns)} matrix from {filename}"
+    return cov_dict, status
+
+
+# Clear covariance
+@callback(
+    Output("po-ex-ante-cov-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-cov-status", "children", allow_duplicate=True),
+    Input("po-ex-ante-cov-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_clear_cov(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return {}, "Cleared"
+
+
+# Add BL view row
+@callback(
+    Output("po-bl-views-grid", "rowData", allow_duplicate=True),
+    Input("po-bl-add-view", "n_clicks"),
+    State("po-bl-views-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def po_add_bl_view(n_clicks, current_rows):
+    if not n_clicks:
+        raise PreventUpdate
+    current_rows = current_rows or []
+    current_rows.append({
+        "Type": "absolute",
+        "Asset": "",
+        "Asset_To": "",
+        "Return": 0.0,
+        "Confidence": 1.0,
+    })
+    return current_rows
+
+
+# Clear BL views
+@callback(
+    Output("po-bl-views-grid", "rowData", allow_duplicate=True),
+    Input("po-bl-clear-views", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_clear_bl_views(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return []
+
+
+# Sync BL views grid to store
+@callback(
+    Output("po-bl-views-store", "data"),
+    Input("po-bl-views-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def po_sync_bl_views_to_store(row_data):
+    if not row_data:
+        return []
+    views = []
+    for row in row_data:
+        view = {
+            "type": row.get("Type", "absolute"),
+            "asset": row.get("Asset", ""),
+            "asset_to": row.get("Asset_To", ""),
+            "return": float(row.get("Return", 0.0) or 0.0),
+            "confidence": float(row.get("Confidence", 1.0) or 1.0),
+        }
+        if view["asset"]:  # Only include views with an asset specified
+            views.append(view)
+    return views
 
 # Toggle portfolio selector visibility based on active tab
 clientside_callback(
@@ -2800,6 +3194,12 @@ def po_update_date_range_store(start, end):
     State("po-fill-in-sample-select", "value"),
     State("po-results-store", "data"),
     State("analyticstool-pending-new-series-store", "data"),
+    # Ex ante states
+    State("po-ex-ante-returns-store", "data"),
+    State("po-ex-ante-cov-store", "data"),
+    State("po-bl-views-store", "data"),
+    State("po-bl-tau-input", "value"),
+    State("po-objective-select", "value"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -2809,7 +3209,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         portfolio_name, opt_window, window_size, opt_step,
                         opt_step_unit_value,
                         opt_model, missing_data, fill_in_sample_value, current_results,
-                        pending_series):
+                        pending_series,
+                        ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -2853,6 +3254,15 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "max_wt": max_wt or {},
             "force_max": force_max or {},
         }
+
+        # Add ex ante params if applicable
+        if opt_model in ("ex_ante_mv", "black_litterman"):
+            config["ex_ante_returns"] = ex_ante_returns or {}
+            config["ex_ante_cov"] = ex_ante_cov or {}
+            config["objective"] = objective or "maximize_sharpe"
+        if opt_model == "black_litterman":
+            config["bl_views"] = bl_views or []
+            config["bl_tau"] = float(bl_tau or 0.05)
 
         # Run optimization
         window_results, portfolio_returns = run_portfolio_optimization(opt_df, config)
