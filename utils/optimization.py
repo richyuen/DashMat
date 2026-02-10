@@ -352,18 +352,30 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
     }
     obj_str, rm = obj_map.get(objective, ("Sharpe", "MV"))
 
-    try:
-        w = port.optimization(model="Classic", rm=rm, obj=obj_str, hist=False)
-    except Exception:
-        # Fallback to equal weight
-        result = dict(forced_weights)
-        remaining = 1.0 - sum(forced_weights.values())
-        eq = remaining / len(free_series) if free_series else 0
-        for s in free_series:
-            result[s] = eq
-        return result
+    # If all expected returns are zero/near-zero, Sharpe is degenerate — fall back to MinRisk
+    mu_arr = mu_df.values.flatten()
+    if np.allclose(mu_arr, 0, atol=1e-10) and obj_str == "Sharpe":
+        obj_str = "MinRisk"
 
-    if w is None or w.empty:
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            w = port.optimization(model="Classic", rm=rm, obj=obj_str, hist=False)
+    except Exception:
+        w = None
+
+    # If primary objective failed, retry with MinRisk as fallback
+    if (w is None or w.empty) and obj_str != "MinRisk":
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                w = port.optimization(model="Classic", rm=rm, obj="MinRisk", hist=False)
+        except Exception:
+            w = None
+
+    # If all optimization attempts failed, fall back to equal weight
+    if w is None or (hasattr(w, 'empty') and w.empty):
         result = dict(forced_weights)
         remaining = 1.0 - sum(forced_weights.values())
         eq = remaining / len(free_series) if free_series else 0
