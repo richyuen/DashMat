@@ -2055,6 +2055,26 @@ def po_on_sheet_select_cancel(n_clicks):
     return False, None, None, None
 
 
+# Clear the file input so the same file can be re-uploaded
+clientside_callback(
+    """
+    function(opened) {
+        if (!opened) {
+            var el = document.getElementById('po-upload-data');
+            if (el) {
+                var inp = el.querySelector('input[type="file"]');
+                if (inp) inp.value = '';
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-sheet-select-modal", "title", allow_duplicate=True),
+    Input("po-sheet-select-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
 # ---------------------------------------------------------------------------
 # Series selection modal: open
 # ---------------------------------------------------------------------------

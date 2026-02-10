@@ -2140,6 +2140,26 @@ def on_sheet_select_cancel(n_clicks):
     return False, None, None, None, False, True
 
 
+# Clear the file input so the same file can be re-uploaded
+clientside_callback(
+    """
+    function(opened) {
+        if (!opened) {
+            var el = document.getElementById('upload-data');
+            if (el) {
+                var inp = el.querySelector('input[type="file"]');
+                if (inp) inp.value = '';
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("sheet-select-modal", "title", allow_duplicate=True),
+    Input("sheet-select-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
 @callback(
     Output("series-selection-container", "children"),
     Output("temp-series-order-store", "data", allow_duplicate=True),
