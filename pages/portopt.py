@@ -596,7 +596,7 @@ def build_po_main_layout():
             dmc.Tabs(
                 id="po-vis-tabs",
                 value="weight",
-                style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                style={"height": "600px", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                 children=[
                     dmc.TabsList(children=[
                         dmc.TabsTab("Weights", value="weight"),
@@ -843,7 +843,7 @@ def build_po_main_layout():
 
 layout = dmc.Container(
     fluid=True,
-    style={"height": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+    style={"minHeight": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "auto"},
     children=[
         # Menu bar
         dmc.Paper(
@@ -1637,20 +1637,28 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Toggle window size / opt step / fill in-sample / opt step unit disabled based on window type
+# Toggle window params based on model AND window type
 clientside_callback(
     """
-    function(value) {
-        var disabled = (value === "full");
-        return [disabled, disabled, disabled, disabled];
+    function(model, windowType) {
+        var isExAnte = (model === "ex_ante_mv" || model === "black_litterman");
+        if (isExAnte) {
+            // Disable all windowing controls for ex ante models
+            return [true, true, true, true, true];
+        }
+        // For standard models, disable size/step/fill if window type is 'full'
+        var isFull = (windowType === "full");
+        return [false, isFull, isFull, isFull, isFull];
     }
     """,
+    Output("po-opt-window-select", "disabled"),
     Output("po-window-size-input", "disabled"),
     Output("po-opt-step-input", "disabled"),
     Output("po-fill-in-sample-select", "disabled"),
     Output("po-opt-step-unit-select", "disabled"),
+    Input("po-opt-model-select", "value"),
     Input("po-opt-window-select", "value"),
-    prevent_initial_call=True,
+    prevent_initial_call=False,
 )
 
 # ---------------------------------------------------------------------------

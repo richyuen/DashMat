@@ -259,7 +259,7 @@ def _extract_pca_factors(returns_df, n_factors=None):
 def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
                          forced_weights, free_series,
                          ex_ante_returns, ex_ante_cov, objective,
-                         window_data=None):
+                         window_data=None, exp_wt_cov=False, halflife=63):
     """Run mean-variance optimization with user-supplied expected returns and covariance.
 
     Args:
@@ -272,6 +272,8 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
         ex_ante_cov: Nested dict or 2D structure {row_name: {col_name: value}}
         objective: 'maximize_sharpe', 'minimize_variance', or 'maximize_return'
         window_data: Optional DataFrame of returns (used to create Portfolio object)
+        exp_wt_cov: Whether to use exponentially weighted covariance (if estimating from data)
+        halflife: Halflife for exponentially weighted covariance
 
     Returns:
         Dict of {asset_name: weight}
@@ -306,7 +308,13 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
         if len(clean_data) < 2:
             # Not enough clean data — use fillna(0) as fallback
             clean_data = window_data[asset_names].fillna(0)
-        cov_df = clean_data.cov()
+        
+        if exp_wt_cov:
+            # Estimate using exponential weighting
+            n_assets = len(asset_names)
+            cov_df = clean_data.ewm(halflife=halflife).cov().iloc[-n_assets:]
+        else:
+            cov_df = clean_data.cov()
     else:
         raise ValueError("No covariance matrix provided and no historical data to estimate from.")
 
@@ -600,6 +608,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             forced_weights, free_series,
             ex_ante_returns or {}, ex_ante_cov or {},
             objective, window_data,
+            exp_wt_cov, halflife,
         )
 
     if model == "black_litterman":
