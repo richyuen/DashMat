@@ -784,6 +784,13 @@ layout = dmc.Container(
                     mb="md",
                     withCloseButton=True,
                 ),
+                dmc.Checkbox(
+                    id="po-select-all-checkbox",
+                    label="Select / Unselect All",
+                    checked=True,
+                    size="sm",
+                    mb="xs",
+                ),
                 html.Div(
                     id="po-series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
@@ -2454,6 +2461,19 @@ def po_update_force_max(values, ids):
     if not values or not ids:
         return {}
     return {ids[i]["series"]: (values[i] or False) for i in range(min(len(ids), len(values)))}
+
+
+@callback(
+    Output("po-temp-series-select", "data", allow_duplicate=True),
+    Input("po-select-all-checkbox", "checked"),
+    State("po-temp-series-order-store", "data"),
+    prevent_initial_call=True,
+)
+def po_toggle_select_all(checked, series_order):
+    """Select or unselect all series."""
+    if not series_order:
+        raise PreventUpdate
+    return list(series_order) if checked else []
 
 
 # ---------------------------------------------------------------------------

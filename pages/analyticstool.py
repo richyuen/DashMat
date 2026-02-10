@@ -887,6 +887,13 @@ layout = dmc.Container(
                     mb="md",
                     withCloseButton=True,
                 ),
+                dmc.Checkbox(
+                    id="select-all-checkbox",
+                    label="Select / Unselect All",
+                    checked=True,
+                    size="sm",
+                    mb="xs",
+                ),
                 html.Div(
                     id="series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
@@ -2413,6 +2420,17 @@ def update_series_selectors(raw_data, selected_series, series_order, edit_mode_s
     return series_rows, series_order
 
 
+@callback(
+    Output("temp-series-select", "data", allow_duplicate=True),
+    Input("select-all-checkbox", "checked"),
+    State("temp-series-order-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_select_all(checked, series_order):
+    """Select or unselect all series."""
+    if not series_order:
+        raise PreventUpdate
+    return list(series_order) if checked else []
 
 
 
