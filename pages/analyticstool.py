@@ -141,6 +141,22 @@ clientside_callback(
                 if (uploadDiv) {
                     var input = uploadDiv.querySelector('input[type="file"]');
                     if (input) {
+                        // Listen for window focus to detect cancel
+                        var onFocus = function() {
+                            window.removeEventListener('focus', onFocus);
+                            setTimeout(function() {
+                                if (!input.files || input.files.length === 0) {
+                                    // User cancelled - hide the blocker
+                                    var store = document.getElementById('ui-blocker-store');
+                                    if (store && store._dashprivate_setValue) {
+                                        store._dashprivate_setValue(false);
+                                    }
+                                    window.dash_clientside.set_props('ui-blocker-store', {data: false});
+                                    window.dash_clientside.set_props('ui-blocker-timeout', {disabled: true});
+                                }
+                            }, 500);
+                        };
+                        window.addEventListener('focus', onFocus);
                         input.click();
                     }
                 }
@@ -1375,6 +1391,18 @@ clientside_callback(
                 if (uploadDiv) {
                     var input = uploadDiv.querySelector('input[type="file"]');
                     if (input) {
+                        // Listen for window focus to detect cancel
+                        var onFocus = function() {
+                            window.removeEventListener('focus', onFocus);
+                            setTimeout(function() {
+                                if (!input.files || input.files.length === 0) {
+                                    // User cancelled - hide the blocker
+                                    window.dash_clientside.set_props('ui-blocker-store', {data: false});
+                                    window.dash_clientside.set_props('ui-blocker-timeout', {disabled: true});
+                                }
+                            }, 500);
+                        };
+                        window.addEventListener('focus', onFocus);
                         input.click();
                     }
                 }
