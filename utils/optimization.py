@@ -287,17 +287,24 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
 
     n_assets = len(asset_names)
 
-    # Build mu vector (DataFrame with shape 1 x n_assets)
+    # Build mu vector (DataFrame with shape 1 x n_assets, row vector — riskfolio expects mu @ w)
     mu_values = [ex_ante_returns.get(name, 0.0) for name in asset_names]
-    mu_df = pd.DataFrame(mu_values, index=asset_names, columns=["mu"]).T
+    mu_df = pd.DataFrame([mu_values], columns=asset_names)
 
-    # Build cov matrix (DataFrame n_assets x n_assets)
-    cov_values = np.zeros((n_assets, n_assets))
-    for i, row_name in enumerate(asset_names):
-        row_vals = ex_ante_cov.get(row_name, {})
-        for j, col_name in enumerate(asset_names):
-            cov_values[i, j] = row_vals.get(col_name, 0.0)
-    cov_df = pd.DataFrame(cov_values, index=asset_names, columns=asset_names)
+    # Build cov matrix — if user supplied one, use it; otherwise estimate from data
+    has_custom_cov = bool(ex_ante_cov)
+    if has_custom_cov:
+        cov_values = np.zeros((n_assets, n_assets))
+        for i, row_name in enumerate(asset_names):
+            row_vals = ex_ante_cov.get(row_name, {})
+            for j, col_name in enumerate(asset_names):
+                cov_values[i, j] = row_vals.get(col_name, 0.0)
+        cov_df = pd.DataFrame(cov_values, index=asset_names, columns=asset_names)
+    elif window_data is not None:
+        # Estimate from historical returns
+        cov_df = window_data[asset_names].cov()
+    else:
+        raise ValueError("No covariance matrix provided and no historical data to estimate from.")
 
     # Create Portfolio object
     if window_data is not None:
@@ -310,7 +317,10 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
         )
         port = rp.Portfolio(returns=dummy)
 
-    # Set custom mu and cov
+    # First compute default stats so internal structures are initialized
+    port.assets_stats(method_mu="hist", method_cov="hist")
+
+    # Override with custom mu and cov
     port.mu = mu_df
     port.cov = cov_df
 
