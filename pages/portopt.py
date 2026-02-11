@@ -1835,17 +1835,18 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
 @callback(
     Output("po-ex-ante-returns-store", "data"),
     Output("po-ex-ante-vol-store", "data"),
-    Input("po-ex-ante-returns-grid", "rowData"),
+    Input("po-ex-ante-returns-grid", "cellValueChanged"),
+    State("po-ex-ante-returns-grid", "rowData"),
     State("po-ex-ante-returns-store", "data"),
     State("po-ex-ante-vol-store", "data"),
     prevent_initial_call=True,
 )
-def po_sync_returns_grid_to_store(row_data, existing_returns, existing_vols):
+def po_sync_returns_grid_to_store(cell_change, row_data, existing_returns, existing_vols):
     """Save grid edits to session store, merging with existing data."""
-    if not row_data:
+    if not cell_change or not row_data:
         raise PreventUpdate
     
-    print(f"DEBUG: Grid edited! Row count: {len(row_data)}. Sample content: {row_data[0]}")
+    print(f"DEBUG: Grid edited! Change: {cell_change}")
     returns = existing_returns or {}
     vols = existing_vols or {}
     
@@ -2131,16 +2132,18 @@ def po_estimate_returns_from_data(n_clicks, data, selected_series, periodicity, 
 @callback(
     Output("po-ex-ante-cov-store", "data", allow_duplicate=True),
     Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
-    Input("po-ex-ante-matrix-grid", "rowData"),
+    Input("po-ex-ante-matrix-grid", "cellValueChanged"),
+    State("po-ex-ante-matrix-grid", "rowData"),
     State("po-ex-ante-mode-store", "data"),
     State("po-ex-ante-cov-store", "data"),
     State("po-ex-ante-corr-store", "data"),
     prevent_initial_call=True,
 )
-def po_sync_matrix_grid(row_data, mode, existing_cov, existing_corr):
-    if not row_data:
+def po_sync_matrix_grid(cell_change, row_data, mode, existing_cov, existing_corr):
+    if not cell_change or not row_data:
         raise PreventUpdate
     
+    # print(f"DEBUG: Matrix edited: {cell_change}")
     mode = mode or "ret_cov"
     is_corr = (mode == "ret_vol_corr")
     
