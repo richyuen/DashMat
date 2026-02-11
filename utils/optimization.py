@@ -1170,8 +1170,8 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
     if linear_constraints:
         A, B = _parse_linear_constraints(linear_constraints, returns_df.columns)
         if A is not None:
-            port.ainequality = A
-            port.binequality = B
+            port.ainequality = pd.DataFrame(A, columns=returns_df.columns)
+            port.binequality = pd.DataFrame(B, columns=["b"])
 
     frontier = port.efficient_frontier(
         model="Classic", rm=rm, points=n_points, rf=0, hist=not use_custom
