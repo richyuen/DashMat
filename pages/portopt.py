@@ -1845,6 +1845,7 @@ def po_sync_returns_grid_to_store(row_data, existing_returns, existing_vols):
     if not row_data:
         raise PreventUpdate
     
+    print(f"DEBUG: Grid edited! Row count: {len(row_data)}. Sample content: {row_data[0]}")
     returns = existing_returns or {}
     vols = existing_vols or {}
     
