@@ -1792,8 +1792,8 @@ clientside_callback(
     Output("po-ex-ante-returns-grid", "columnDefs"),
     Input("po-series-select", "data"),
     Input("po-ex-ante-mode-store", "data"),
-    State("po-ex-ante-returns-store", "data"),
-    State("po-ex-ante-vol-store", "data"),
+    Input("po-ex-ante-returns-store", "data"),
+    Input("po-ex-ante-vol-store", "data"),
     prevent_initial_call=True,
 )
 def po_populate_returns_grid(selected_series, mode, existing_returns, existing_vol):
@@ -1946,8 +1946,8 @@ def po_update_matrix_ui(mode):
     Output("po-ex-ante-matrix-grid", "columnDefs"),
     Input("po-series-select", "data"),
     Input("po-ex-ante-mode-store", "data"),
-    State("po-ex-ante-cov-store", "data"),
-    State("po-ex-ante-corr-store", "data"),
+    Input("po-ex-ante-cov-store", "data"),
+    Input("po-ex-ante-corr-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
@@ -2574,12 +2574,7 @@ clientside_callback(
 )
 def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol):
     if not raw_data:
-        return (
-            [{"value": "daily_trading", "label": "Daily (Trading)"}],
-            "daily_trading",
-            0,
-            [],
-        )
+        raise PreventUpdate
     try:
         df = json_to_df(raw_data)
         periodicity_options = get_available_periodicities(orig_periodicity or "daily")
