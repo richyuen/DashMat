@@ -861,7 +861,7 @@ def build_po_main_layout():
                                     label="Window",
                                     data=[],
                                     value=None,
-                                    w=200,
+                                    w=300,
                                     size="sm",
                                     clearable=False,
                                 ),
@@ -4227,7 +4227,7 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
 
     column_defs = [
         {"field": "Apply Start", "pinned": "left", "width": 120},
-        {"field": "Apply End", "width": 120},
+        {"field": "Apply End", "pinned": "left", "width": 120},
     ]
     for a in asset_names:
         column_defs.append({
@@ -4781,7 +4781,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
 
         column_defs = [
             {"field": "Window Start", "pinned": "left", "width": 120},
-            {"field": "Window End", "width": 120},
+            {"field": "Window End", "pinned": "left", "width": 120},
         ]
         for a in opt_series:
             column_defs.append({
