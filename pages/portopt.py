@@ -2159,7 +2159,7 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
             return matrix, no_update, rows
             
     except Exception as e:
-        print(f"Error estimating matrix: {e}")
+
         raise PreventUpdate
 
 
@@ -2221,7 +2221,7 @@ def po_estimate_returns_from_data(n_clicks, data, selected_series, periodicity, 
         return returns_dict, vol_dict, rows
 
     except Exception as e:
-        print(f"Error estimating returns: {e}")
+
         raise PreventUpdate
 
 
@@ -2880,7 +2880,7 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
             valid_selection,
         )
     except Exception as e:
-        print(f"Error restoring state: {e}")
+
         # Critical: Do not return defaults on error, as it wipes persistence.
         # Preserve whatever session state exists.
         raise PreventUpdate
@@ -5558,7 +5558,6 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
 
     except Exception as e:
         import traceback
-        print(f"Frontier error: {e}")
-        print(traceback.format_exc())
+
         return dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed")
 

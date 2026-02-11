@@ -610,7 +610,8 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
             omega_diag[i] /= conf
 
     except Exception as e:
-        print(f"DEBUG: BL stats calculation failed: {e}. Falling back to historical stats.")
+        # Print removed for production cleanly fallback to historical stats
+
         # Ensure we have valid stats from assets_stats
         if not hasattr(port, 'mu') or port.mu is None:
              port.assets_stats(method_mu="hist", method_cov="hist")
@@ -630,13 +631,13 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
 
     # Apply linear constraints if any
     if linear_constraints:
-        print(f"DEBUG: Processing {len(linear_constraints)} linear constraints for BL")
+
         A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
         if A_ui is not None:
              # Convert to DataFrame for riskfolio
             A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
             B_ui_df = pd.DataFrame(B_ui, columns=["b"])
-            print(f"DEBUG: Applied BL constraints. A shape: {A_ui_df.shape}")
+
             
             if hasattr(port, 'ainequality') and port.ainequality is not None:
                 port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
@@ -814,14 +815,13 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
 
     # Apply linear constraints from UI
     if linear_constraints:
-        print(f"DEBUG: Processing {len(linear_constraints)} linear constraints for Single Window")
+
         A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
         if A_ui is not None:
              # Convert to DataFrame for riskfolio
             A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
             B_ui_df = pd.DataFrame(B_ui, columns=["b"])
-            print(f"DEBUG: Applied Single Window constraints. A shape: {A_ui_df.shape}")
-            print(f"DEBUG: A_ui head: {A_ui_df.head()}")
+
             
             if hasattr(port, 'ainequality') and port.ainequality is not None:
                 port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
@@ -832,15 +832,15 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
 
     try:
         if model == "risk_parity":
-            print(f"DEBUG: Running Risk Parity with {len(asset_names)} assets")
-            if linear_constraints:
-                print(f"DEBUG: Constraints: {linear_constraints}")
+
+
             w = port.rp_optimization(model="Classic", rm="MV", hist=True)
         elif model == "factor_risk_parity":
             w = port.rp_optimization(model="FM", rm="MV", hist=False)
         elif model == "equal_weight":
             n_assets = len(asset_names)
-            port.mu = pd.DataFrame(np.zeros((n_assets, 1)), index=asset_names, columns=["mu"])
+            # Use Identity matrix for covariance to minimize variance -> equal weights
+            # We do NOT set port.mu as it causes dimension mismatch in Riskfolio with constraints
             port.cov = pd.DataFrame(np.eye(n_assets), index=asset_names, columns=asset_names)
             w = port.optimization(model="Classic", rm="MV", obj="MinRisk", hist=False)
         elif model == "hrp":
@@ -851,8 +851,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         elif model == "maximize_sharpe":
             use_hist = not exp_wt_cov
             # Explicitly ensure ainequality is set if provided
-            if hasattr(port, 'ainequality') and port.ainequality is not None:
-                print(f"DEBUG: Sharpe with ainequality shape {port.ainequality.shape}")
+
             w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=use_hist)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
@@ -1107,6 +1106,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
             w_result = _optimize_single_window(
                 est_data, model, window_assets, window_lower, window_upper,
                 window_forced, window_free, exp_wt_cov, halflife,
+                linear_constraints=linear_constraints,
             )
             # Add zero weight for excluded series
             w_result_final = {s: w_result.get(s, 0.0) for s in available_cols}
