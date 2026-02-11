@@ -861,7 +861,7 @@ def build_po_main_layout():
                                     label="Window",
                                     data=[],
                                     value=None,
-                                    w=300,
+                                    w=250,
                                     size="sm",
                                     clearable=False,
                                 ),
