@@ -243,18 +243,6 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Toggle dark mode
-clientside_callback(
-    """function(n, current) {
-        if (!n) return window.dash_clientside.no_update;
-        return current === 'dark' ? 'light' : 'dark';
-    }""",
-    Output("theme-store", "data", allow_duplicate=True),
-    Input("menu-toggle-dark-mode", "n_clicks"),
-    State("theme-store", "data"),
-    prevent_initial_call=True,
-)
-
 
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
                       active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
@@ -428,6 +416,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             children=[
                                 dag.AgGrid(
                                     id="returns-grid",
+                                    className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
                                     defaultColDef={
@@ -512,6 +501,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             children=[
                                 dag.AgGrid(
                                     id="rolling-grid",
+                                    className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
                                     defaultColDef={
@@ -549,6 +539,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             children=[
                                 dag.AgGrid(
                                     id="statistics-grid",
+                                    className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
                                     defaultColDef={
@@ -593,6 +584,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         ),
                         dag.AgGrid(
                             id="calendar-grid",
+                            className='ag-theme-alpine',
                             columnDefs=[],
                             rowData=[],
                             defaultColDef={
@@ -670,6 +662,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             children=[
                                 dag.AgGrid(
                                     id="growth-grid",
+                                    className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
                                     defaultColDef={
@@ -719,6 +712,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             children=[
                                 dag.AgGrid(
                                     id="drawdown-grid",
+                                    className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
                                     defaultColDef={
@@ -744,6 +738,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 layout = dmc.Container(
     fluid=True,
     style={"height": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "hidden"}, # 45px for header + 10px bottom margin
+    className='page-container',
     children=[
         # Stores for state management
         dmc.Paper(
@@ -831,8 +826,6 @@ layout = dmc.Container(
                                             "Portfolio Optimization",
                                             id="menu-view-portfolio",
                                         ),
-                                        #dmc.MenuDivider(),
-                                        #dmc.MenuItem("Toggle Dark Mode",id="menu-toggle-dark-mode",),
                                     ],
                                 ),
                             ],
@@ -877,6 +870,7 @@ layout = dmc.Container(
             id="series-selection-modal",
             title="Select Series",
             size="xl",
+            className='series-modal-dark',
             children=[
                 # Alert for messages (with close button)
                 dmc.Alert(

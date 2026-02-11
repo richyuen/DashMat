@@ -467,6 +467,7 @@ def build_po_main_layout():
                                             children=[
                                                 dag.AgGrid(
                                                     id="po-ex-ante-returns-grid",
+                                                    className='ag-theme-alpine',
                                                     columnDefs=[
                                                         {"field": "Asset", "editable": False, "width": 140},
                                                         {"field": "Return", "editable": True, "width": 110,
@@ -527,10 +528,10 @@ def build_po_main_layout():
                                             children=[
                                                 dag.AgGrid(
                                                     id="po-ex-ante-matrix-grid",
+                                                    className='ag-theme-alpine',
                                                     columnDefs=[], # Populated dynamically
                                                     rowData=[],
-                                                    defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100, 
-                                                                   "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
+                                                    defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100},
                                                     style={"height": "300px"},
                                                     dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True},
                                                 ),
@@ -570,6 +571,7 @@ def build_po_main_layout():
                                                 ),
                                                 dag.AgGrid(
                                                     id="po-bl-views-grid",
+                                                    className='ag-theme-alpine',
                                                     columnDefs=[
                                                         {"field": "Type", "editable": True, "width": 100,
                                                          "cellEditor": "agSelectCellEditor",
@@ -700,6 +702,7 @@ def build_po_main_layout():
                                 children=[
                                     dag.AgGrid(
                                         id="po-weight-grid",
+                                        className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
@@ -737,6 +740,7 @@ def build_po_main_layout():
                                 children=[
                                     dag.AgGrid(
                                         id="po-attribution-grid",
+                                        className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
@@ -774,6 +778,7 @@ def build_po_main_layout():
                                 children=[
                                     dag.AgGrid(
                                         id="po-risk-grid",
+                                        className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
@@ -811,6 +816,7 @@ def build_po_main_layout():
                                 children=[
                                     dag.AgGrid(
                                         id="po-turnover-grid",
+                                        className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
@@ -862,6 +868,7 @@ def build_po_main_layout():
                         children=[
                             dag.AgGrid(
                                 id="po-statistics-grid",
+                                className='ag-theme-alpine',
                                 columnDefs=[],
                                 rowData=[],
                                 defaultColDef={"sortable": True, "resizable": True},
@@ -877,6 +884,7 @@ def build_po_main_layout():
                         children=[
                             dag.AgGrid(
                                 id="po-returns-grid",
+                                className='ag-theme-alpine',
                                 columnDefs=[],
                                 rowData=[],
                                 defaultColDef={"sortable": True, "resizable": True},
@@ -909,6 +917,7 @@ def build_po_main_layout():
 layout = dmc.Container(
     fluid=True,
     style={"minHeight": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+    className='page-container',
     children=[
         # Menu bar
         dmc.Paper(
@@ -960,8 +969,6 @@ layout = dmc.Container(
                                 dmc.MenuTarget(dmc.Button("View", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
                                     dmc.MenuItem("Analytics Tool", id="po-menu-view-analytics"),
-                                    #dmc.MenuDivider(),
-                                    #dmc.MenuItem("Toggle Dark Mode", id="po-menu-toggle-dark-mode"),
                                 ]),
                             ],
                         ),
@@ -1006,6 +1013,7 @@ layout = dmc.Container(
             size="auto",
             centered=True,
             transitionProps={"transition": "fade", "duration": 200},
+            className='series-modal-dark',
             children=[
                 dmc.Alert(
                     id="po-alert-message",
@@ -1924,7 +1932,7 @@ def po_update_matrix_ui(mode):
     State("po-ex-ante-cov-store", "data"),
     State("po-ex-ante-corr-store", "data"),
     State("analyticstool-raw-data-store", "data"),
-    prevent_initial_call=True,
+    prevent_initial_call="initial_duplicate",
 )
 def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
     """Populate the matrix grid. Auto-estimate if empty."""
@@ -1950,19 +1958,23 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
     matrix_to_use = existing_matrix
     
     # Auto-estimate if empty/zeros and data available
-    # User requirement 4: "If all zeroes... automatically estimate from the data" (interpreted here as init logic)
     if not has_content and data:
         try:
             df = json_to_df(data)
+            print(f"[DEBUG matrix] df.shape={df.shape}, columns={list(df.columns)[:5]}")
+            print(f"[DEBUG matrix] selected_series={selected_series}")
             
             valid_series = [s for s in selected_series if s in df.columns]
+            print(f"[DEBUG matrix] valid_series={valid_series}")
             if valid_series:
                 sub_df = df[valid_series]
                 rets = sub_df.pct_change().dropna()
+                print(f"[DEBUG matrix] rets.shape={rets.shape}, rets.iloc[0]={rets.iloc[0].to_dict() if len(rets) > 0 else 'empty'}")
                 if is_corr:
                     est_df = rets.corr()
                 else:
                     est_df = rets.cov() * 252
+                print(f"[DEBUG matrix] est_df diagonal={[est_df.iloc[i,i] for i in range(len(est_df))]}")
                 
                 # Convert to dict
                 new_matrix = {}
@@ -1971,8 +1983,12 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
                     for c in valid_series:
                         new_matrix[r][c] = float(est_df.loc[r, c])
                 matrix_to_use = new_matrix
-        except Exception:
-            pass # Fallback to zeros
+        except Exception as e:
+            print(f"[DEBUG matrix] Exception: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"[DEBUG matrix] Skipping auto-estimate: has_content={has_content}, data={'present' if data else 'None'}")
 
     matrix_defs = [{"field": "Asset", "editable": False, "width": 140, "pinned": "left"}]
     for s in selected_series:
@@ -1986,22 +2002,21 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
 
     rows = []
     for r_name in selected_series:
-        # User reported NaN in Asset column. Ensure string.
         r_name_str = str(r_name)
         row = {"Asset": r_name_str}
         
         row_vals = matrix_to_use.get(r_name_str, {})
-        if not row_vals and r_name in matrix_to_use: # Try original type key
+        if not row_vals and r_name in matrix_to_use:
              row_vals = matrix_to_use.get(r_name, {})
 
         for c_name in selected_series:
             val = row_vals.get(c_name)
             if val is None:
-                # User Point 3: Initialize Corr Matrix to zero (not 1s)
                 val = 0.0
             row[c_name] = val
         rows.append(row)
-        
+    
+    print(f"[DEBUG matrix] Returning {len(rows)} rows, first row={rows[0] if rows else 'empty'}")
     return rows, matrix_defs
 
 # Estimate matrix from data button
@@ -2450,18 +2465,6 @@ clientside_callback(
     """,
     Output("po-load-session-dummy", "data", allow_duplicate=True),
     Input("po-load-session-upload", "contents"),
-    prevent_initial_call=True,
-)
-
-# Toggle dark mode
-clientside_callback(
-    """function(n, current) {
-        if (!n) return window.dash_clientside.no_update;
-        return current === 'dark' ? 'light' : 'dark';
-    }""",
-    Output("theme-store", "data", allow_duplicate=True),
-    Input("po-menu-toggle-dark-mode", "n_clicks"),
-    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 
