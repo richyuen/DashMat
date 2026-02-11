@@ -590,16 +590,21 @@ def build_po_main_layout():
                                                     columnDefs=[
                                                         {"field": "Type", "editable": True, "width": 100,
                                                          "cellEditor": "agSelectCellEditor",
-                                                         "cellEditorParams": {"values": ["absolute", "relative"]}},
-                                                        {"field": "Asset", "editable": True, "width": 150},
+                                                         "cellEditorParams": {"values": ["absolute", "relative"]},
+                                                         "headerClass": "center-header"},
+                                                        {"field": "Asset", "editable": True, "width": 150,
+                                                         "headerClass": "center-header"},
                                                         {"field": "Asset_To", "editable": True, "width": 150,
-                                                         "headerName": "vs Asset (rel)"},
+                                                         "headerName": "vs Asset (rel)",
+                                                         "headerClass": "center-header"},
                                                         {"field": "Return", "editable": True, "width": 100,
                                                          "type": "numericColumn",
-                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
+                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"},
+                                                         "headerClass": "center-header"},
                                                         {"field": "Confidence", "editable": True, "width": 100,
                                                          "type": "numericColumn",
-                                                         "valueFormatter": {"function": "d3.format('.2f')(params.value)"}},
+                                                         "valueFormatter": {"function": "d3.format('.2f')(params.value)"},
+                                                         "headerClass": "center-header"},
                                                     ],
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
@@ -1828,16 +1833,18 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
     hide_vol = (mode != "ret_vol_corr")
     
     column_defs = [
-        {"field": "Asset", "editable": False, "width": 140},
+        {"field": "Asset", "editable": False, "width": 140, "headerClass": "center-header"},
         {"field": "Return", "editable": True, "width": 110,
          "type": "numericColumn",
          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
-         "valueParser": {"function": "Number(params.newValue) / 100"}},
+         "valueParser": {"function": "Number(params.newValue) / 100"},
+         "headerClass": "center-header"},
         {"field": "Volatility", "editable": True, "width": 110,
          "type": "numericColumn",
          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
          "valueParser": {"function": "Number(params.newValue) / 100"},
-         "hide": hide_vol},
+         "hide": hide_vol,
+         "headerClass": "center-header"},
     ]
 
     rows = []
@@ -1982,7 +1989,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
     existing_matrix = existing_matrix or {}
 
     matrix_defs = [{"field": "Asset", "editable": False, "width": 140, "pinned": "left",
-                    "valueFormatter": {"function": "params.value"}}]
+                    "valueFormatter": {"function": "params.value"}, "headerClass": "center-header"}]
     for s in selected_series:
         matrix_defs.append({
             "field": s,
@@ -1990,6 +1997,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
             "width": 110,
             "type": "numericColumn",
             "valueFormatter": {"function": "d3.format(',.4f')(params.value)"},
+            "headerClass": "center-header",
         })
 
     rows = []
