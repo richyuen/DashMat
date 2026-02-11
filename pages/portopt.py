@@ -489,7 +489,7 @@ def build_po_main_layout():
                                                          "hide": True}, # Hidden by default
                                                     ],
                                                     rowData=[],
-                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True},
+                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                                     style={"height": "200px"},
                                                     dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
@@ -544,7 +544,7 @@ def build_po_main_layout():
                                                     columnDefs=[], # Populated dynamically
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100, "suppressHeaderMenuButton": True,
-                                                    "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
+                                                    "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                                     style={"height": "300px"},
                                                     dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
@@ -602,7 +602,7 @@ def build_po_main_layout():
                                                          "valueFormatter": {"function": "d3.format('.2f')(params.value)"}},
                                                     ],
                                                     rowData=[],
-                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True},
+                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                                     style={"height": "200px"},
                                                     dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
@@ -708,7 +708,7 @@ def build_po_main_layout():
                             ]),
                             html.Div(
                                 id="po-weight-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
                                 children=[html.Div(id="po-weight-chart-content")],
                             ),
                             html.Div(
@@ -722,7 +722,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -748,7 +748,7 @@ def build_po_main_layout():
                             ]),
                             html.Div(
                                 id="po-attribution-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
                                 children=[html.Div(id="po-attribution-chart-content")],
                             ),
                             html.Div(
@@ -762,7 +762,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -788,7 +788,7 @@ def build_po_main_layout():
                             ]),
                             html.Div(
                                 id="po-risk-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
                                 children=[html.Div(id="po-risk-chart-content")],
                             ),
                             html.Div(
@@ -802,7 +802,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -828,7 +828,7 @@ def build_po_main_layout():
                             ]),
                             html.Div(
                                 id="po-turnover-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"},
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
                                 children=[html.Div(id="po-turnover-chart-content")],
                             ),
                             html.Div(
@@ -842,7 +842,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -853,7 +853,7 @@ def build_po_main_layout():
                     dmc.TabsPanel(
                         value="frontier",
                         pt="md",
-                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
                             dmc.Group(mb="md", children=[
                                 dmc.Select(
@@ -896,7 +896,7 @@ def build_po_main_layout():
                                 className='ag-theme-alpine',
                                 columnDefs=[],
                                 rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True},
+                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                 style={"height": "100%", "width": "100%"},
                                 dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                             ),
@@ -914,7 +914,7 @@ def build_po_main_layout():
                                 className='ag-theme-alpine',
                                 columnDefs=[],
                                 rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True},
+                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                 style={"height": "100%", "width": "100%"},
                                 dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                             ),
@@ -4043,7 +4043,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
         yaxis={"range": [0, 100]},
         hovermode="x unified",
         margin={"t": 40, "b": 40, "l": 60, "r": 20},
-        height=500,
+        height=420,
         legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
     )
     apply_chart_theme(fig, theme)
@@ -4090,7 +4090,7 @@ def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
         yaxis_title="Value ($)",
         hovermode="x unified",
         margin={"t": 40, "b": 40, "l": 60, "r": 20},
-        height=500,
+        height=420,
         legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
     )
     apply_chart_theme(fig, theme)
@@ -4187,7 +4187,7 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
             yaxis_title="Contribution (%)",
             hovermode="x unified",
             margin={"t": 40, "b": 40, "l": 60, "r": 20},
-            height=500,
+            height=420,
             legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
         )
         apply_chart_theme(fig, theme)
@@ -4719,7 +4719,7 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
             yaxis_title="Contribution (%)",
             hovermode="x unified",
             margin={"t": 40, "b": 40, "l": 60, "r": 20},
-            height=500,
+            height=420,
             legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
         )
         apply_chart_theme(fig, theme)
@@ -4864,7 +4864,7 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
         xaxis_title="Rebalance Date",
         hovermode="x unified",
         margin={"t": 40, "b": 40, "l": 60, "r": 20},
-        height=500,
+        height=420,
     )
     apply_chart_theme(fig, theme)
 
@@ -4937,6 +4937,7 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
 @callback(
     Output("po-frontier-window-select", "data"),
     Output("po-frontier-window-select", "value"),
+    Output("po-frontier-window-select", "disabled"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -4944,11 +4945,17 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
 )
 def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     if active_tab != "frontier" or not selected_portfolio or not results:
-        return [], None
+        return [], None, False
     portfolio_data = results.get(selected_portfolio, {})
     window_weights = portfolio_data.get("window_weights", [])
+    config = portfolio_data.get("config", {})
+    model = config.get("model", "")
     if not window_weights:
-        return [], None
+        return [], None, False
+
+    # Ex ante / BL are single-period — disable window selection
+    is_single_period = model in ("ex_ante_mv", "black_litterman")
+
     options = []
     for i, ww in enumerate(window_weights):
         # Show estimation window (used for optimization), not apply window
@@ -4956,7 +4963,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
         est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"])).strftime("%Y-%m-%d")
         options.append({"value": str(i), "label": f"{est_start} - {est_end}"})
     # Default to last window
-    return options, str(len(window_weights) - 1)
+    return options, str(len(window_weights) - 1), is_single_period
 
 
 # ---------------------------------------------------------------------------
@@ -5048,21 +5055,131 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
             ann = 252
 
         risk_measure = rm or "MV"
-        frontier_pts, asset_pts = compute_efficient_frontier(est_data, ann, rm=risk_measure)
+        actual_cols = list(est_data.columns)
+
+        # ---- Build custom mu / cov for ex ante or Black-Litterman ----
+        import riskfolio as rp
+        model = config.get("model", "")
+        custom_mu = None
+        custom_cov = None
+
+        if model == "ex_ante_mv":
+            # Build mu from config ex_ante_returns (annualized decimals)
+            ex_ante_returns = config.get("ex_ante_returns", {})
+            mu_values = [ex_ante_returns.get(c, 0.0) for c in actual_cols]
+            # mu needs to be per-period for riskfolio (it will multiply by ann internally)
+            # BUT compute_efficient_frontier multiplies by ann_factor itself,
+            # so pass mu already de-annualized (per-period) and let the function re-annualize
+            custom_mu = pd.DataFrame([[ v / ann for v in mu_values]], columns=actual_cols)
+
+            # Build cov from config
+            ex_ante_cov = config.get("ex_ante_cov", None)
+            ex_ante_vol = config.get("ex_ante_vol", None)
+            ex_ante_corr = config.get("ex_ante_corr", None)
+
+            if ex_ante_cov:
+                cov_values = np.zeros((len(actual_cols), len(actual_cols)))
+                for i, rn in enumerate(actual_cols):
+                    row_vals = ex_ante_cov.get(rn, {})
+                    for j, cn in enumerate(actual_cols):
+                        cov_values[i, j] = row_vals.get(cn, 0.0)
+                # De-annualize covariance to per-period (riskfolio will re-annualize)
+                custom_cov = pd.DataFrame(cov_values / ann, index=actual_cols, columns=actual_cols)
+            elif ex_ante_vol and ex_ante_corr:
+                vol_vec = np.array([ex_ante_vol.get(c, 0.0) for c in actual_cols])
+                corr_mat = np.eye(len(actual_cols))
+                for i, rn in enumerate(actual_cols):
+                    row_vals = ex_ante_corr.get(rn, {})
+                    for j, cn in enumerate(actual_cols):
+                        corr_mat[i, j] = row_vals.get(cn, 0.0 if i != j else 1.0)
+                D = np.diag(vol_vec)
+                cov_ann = D @ corr_mat @ D
+                custom_cov = pd.DataFrame(cov_ann / ann, index=actual_cols, columns=actual_cols)
+            else:
+                # No custom cov provided — estimate from data but keep custom mu
+                custom_cov = None
+                custom_mu = None  # Fall back to fully historical
+
+        elif model == "black_litterman":
+            # Compute BL posterior mu/cov using riskfolio
+            bl_views = config.get("bl_views", [])
+            bl_tau = config.get("bl_tau", 0.05)
+            n_assets = len(actual_cols)
+
+            port = rp.Portfolio(returns=est_data.copy())
+            port.assets_stats(method_mu="hist", method_cov="hist")
+
+            # Exponentially weighted cov if configured
+            exp_wt_cov = config.get("exp_wt_cov", False)
+            halflife = config.get("halflife", 63)
+            if exp_wt_cov:
+                port.cov = est_data.ewm(halflife=halflife).cov().iloc[-n_assets:]
+
+            # Build P and Q matrices from views
+            n_views = len(bl_views)
+            if n_views == 0:
+                P = np.zeros((1, n_assets))
+                Q = np.zeros((1, 1))
+            else:
+                P = np.zeros((n_views, n_assets))
+                Q = np.zeros((n_views, 1))
+                asset_idx = {name: i for i, name in enumerate(actual_cols)}
+                for v_idx, view in enumerate(bl_views):
+                    view_type = view.get("type", "absolute")
+                    Q[v_idx, 0] = view.get("return", 0.0)
+                    if view_type == "absolute":
+                        asset_name = view.get("asset", "")
+                        if asset_name in asset_idx:
+                            P[v_idx, asset_idx[asset_name]] = 1.0
+                    elif view_type == "relative":
+                        asset_from = view.get("asset", "")
+                        asset_to = view.get("asset_to", "")
+                        if asset_from in asset_idx:
+                            P[v_idx, asset_idx[asset_from]] = 1.0
+                        if asset_to in asset_idx:
+                            P[v_idx, asset_idx[asset_to]] = -1.0
+
+            P_df = pd.DataFrame(P, columns=actual_cols)
+            Q_df = pd.DataFrame(Q, columns=["views"])
+
+            try:
+                port.blacklitterman_stats(P=P_df, Q=Q_df, delta=None, rf=0, eq=True)
+                # Use BL posterior mu and cov
+                if hasattr(port, "mu_bl") and port.mu_bl is not None:
+                    custom_mu = port.mu_bl
+                else:
+                    custom_mu = port.mu
+                if hasattr(port, "cov_bl") and port.cov_bl is not None:
+                    custom_cov = port.cov_bl
+                else:
+                    custom_cov = port.cov
+            except Exception:
+                # Fallback — use historical for frontier
+                custom_mu = None
+                custom_cov = None
+
+        frontier_pts, asset_pts = compute_efficient_frontier(
+            est_data, ann, rm=risk_measure,
+            custom_mu=custom_mu, custom_cov=custom_cov,
+        )
 
         # Compute selected portfolio's risk/return using this window's weights
         # Align weights with the actual columns in est_data (some may have been filtered out)
-        actual_cols = list(est_data.columns)
         w_arr = np.array([ww["weights"].get(c, 0) for c in actual_cols])
 
         # Renormalize weights if some series were excluded
         w_sum = w_arr.sum()
         if w_sum > 0:
             w_arr = w_arr / w_sum
-            
-        mu = est_data.mean().values
-        cov = est_data.cov().values
-        port_ret = (w_arr @ mu) * ann
+
+        # Use the same mu/cov that drove the frontier for the portfolio dot
+        if custom_mu is not None and custom_cov is not None:
+            mu_vec = custom_mu.values.flatten()
+            cov_mat = custom_cov.values
+        else:
+            mu_vec = est_data.mean().values
+            cov_mat = est_data.cov().values
+        port_ret = (w_arr @ mu_vec) * ann
 
         if risk_measure == "CVaR":
             port_returns = est_data.values @ w_arr
@@ -5070,7 +5187,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
             cutoff = max(1, int(np.ceil(len(sorted_r) * 0.05)))
             port_risk = -sorted_r[:cutoff].mean() * np.sqrt(ann)
         else:
-            port_risk = np.sqrt(w_arr @ cov @ w_arr) * np.sqrt(ann)
+            port_risk = np.sqrt(w_arr @ cov_mat @ w_arr) * np.sqrt(ann)
 
         fig = go.Figure()
 
@@ -5106,14 +5223,22 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
             textfont={"size": 9},
         ))
 
+        # Annotate frontier type in title
+        if model == "ex_ante_mv":
+            title_suffix = " (Ex Ante)"
+        elif model == "black_litterman":
+            title_suffix = " (Black-Litterman)"
+        else:
+            title_suffix = ""
+
         x_label = "Annualized CVaR (%)" if risk_measure == "CVaR" else "Annualized Volatility (%)"
         fig.update_layout(
-            title=f"Efficient Frontier: {selected_portfolio}",
+            title=f"Efficient Frontier: {selected_portfolio}{title_suffix}",
             xaxis_title=x_label,
             yaxis_title="Annualized Return (%)",
             hovermode="closest",
             margin={"t": 40, "b": 40, "l": 60, "r": 20},
-            height=500,
+            height=420,
             showlegend=True,
             legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
         )
@@ -5126,3 +5251,4 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
         print(f"Frontier error: {e}")
         print(traceback.format_exc())
         return dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed")
+

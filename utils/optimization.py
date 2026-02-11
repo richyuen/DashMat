@@ -1014,7 +1014,8 @@ def compute_risk_contributions(weights_dict, returns_df):
     return dict(zip(cols, rc))
 
 
-def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50):
+def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
+                               custom_mu=None, custom_cov=None):
     """Compute the efficient frontier for a given risk measure.
 
     Args:
@@ -1022,6 +1023,8 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50):
         ann_factor: Annualization factor (252 for daily, 52 for weekly, 12 for monthly)
         rm: Risk measure - "MV" for volatility, "CVaR" for Conditional Value-at-Risk
         n_points: Number of frontier points
+        custom_mu: Optional DataFrame of expected returns (already annualized, shape 1 x n_assets)
+        custom_cov: Optional DataFrame of covariance matrix (already annualized)
 
     Returns:
         Tuple of (frontier_points, asset_points) where:
@@ -1031,8 +1034,13 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50):
     port = rp.Portfolio(returns=returns_df)
     port.assets_stats(method_mu="hist", method_cov="hist")
 
+    use_custom = custom_mu is not None and custom_cov is not None
+    if use_custom:
+        port.mu = custom_mu
+        port.cov = custom_cov
+
     frontier = port.efficient_frontier(
-        model="Classic", rm=rm, points=n_points, rf=0, hist=True
+        model="Classic", rm=rm, points=n_points, rf=0, hist=not use_custom
     )
 
     mu = port.mu.values.flatten()
