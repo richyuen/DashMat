@@ -805,11 +805,14 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         A_lc, B_lc = _parse_linear_constraints(linear_constraints, asset_names)
         if A_lc is not None:
             if hasattr(port, 'ainequality') and port.ainequality is not None:
-                port.ainequality = pd.concat([port.ainequality, A_lc])
-                port.binequality = pd.concat([port.binequality, B_lc])
+                # Must convert to DataFrame to concat with existing DataFrame bounds
+                A_df = pd.DataFrame(A_lc, columns=asset_names)
+                B_df = pd.DataFrame(B_lc, columns=["b"])
+                port.ainequality = pd.concat([port.ainequality, A_df])
+                port.binequality = pd.concat([port.binequality, B_df])
             else:
-                port.ainequality = A_lc
-                port.binequality = B_lc
+                port.ainequality = pd.DataFrame(A_lc, columns=asset_names)
+                port.binequality = pd.DataFrame(B_lc, columns=["b"])
 
     try:
         if model == "risk_parity":
@@ -895,6 +898,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     bl_views = config.get("bl_views", None)
     bl_tau = config.get("bl_tau", 0.05)
     objective = config.get("objective", "maximize_sharpe")
+    objective = config.get("objective", "maximize_sharpe")
     linear_constraints = config.get("linear_constraints", None)
 
     # Filter to selected series only
@@ -917,7 +921,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     free_series = [s for s in available_cols if s not in forced_weights]
 
     # Validate constraints globally
-    _validate_weight_constraints(available_cols, lower_bounds, upper_bounds, forced_weights, linear_constraints)
+    _validate_weight_constraints(available_cols, lower_bounds, upper_bounds, forced_weights)
 
     # Check if all (or all but one) are forced - skip optimization
     if len(free_series) <= 1:

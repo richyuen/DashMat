@@ -623,6 +623,7 @@ def build_po_main_layout():
                                                     size="sm",
                                                     mt="sm",
                                                     decimalScale=3,
+                                                    mb="md",
                                                 ),
                                             ],
                                         ),
@@ -677,6 +678,7 @@ def build_po_main_layout():
                                                 ),
                                             ],
                                         ),
+                                        dmc.Divider(mb="md", mt="md"),
                                     ],
                                 ),
                                 # Row 3: Run button
@@ -2404,6 +2406,26 @@ def po_clear_bl_views(n_clicks):
         raise PreventUpdate
     return [], []
 
+# Sync Tau to store
+@callback(
+    Output("po-bl-tau-store", "data", allow_duplicate=True),
+    Input("po-bl-tau-input", "value"),
+    prevent_initial_call=True,
+)
+def po_sync_tau(value):
+    return value or 0.05
+
+# Init Tau from store
+@callback(
+    Output("po-bl-tau-input", "value", allow_duplicate=True),
+    Input("po-bl-tau-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def po_init_tau(store_value):
+    if store_value is None:
+        raise PreventUpdate
+    return store_value
+
 
 # Sync BL views grid to store (on edit)
 @callback(
@@ -2502,14 +2524,26 @@ def po_populate_linear_constraints_columns(selected_series):
     Output("po-linear-constraints-store", "data", allow_duplicate=True),
     Input("po-add-constraint-btn", "n_clicks"),
     State("po-linear-constraints-grid", "rowData"),
+    State("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_add_linear_constraint(n_clicks, current_rows):
+def po_add_linear_constraint(n_clicks, current_rows, selected_series):
     if not n_clicks:
         raise PreventUpdate
     current_rows = current_rows or []
-    # Create empty row with default name
-    new_row = {"Constraint": f"C{len(current_rows)+1}"}
+    
+    # Create new row with defaults
+    new_row = {
+        "Constraint": f"C{len(current_rows)+1}",
+        "Min": 0.0,
+        "Max": 1.0,
+    }
+    
+    # Set 0.0 for all selected assets
+    if selected_series:
+        for s in selected_series:
+            new_row[s] = 0.0
+            
     current_rows.append(new_row)
     return current_rows, current_rows
 
@@ -2901,16 +2935,31 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-run-button", "disabled"),
+     Output("po-run-button", "disabled"),
+    Output("po-menu-save-session", "disabled"),
+    Output("po-menu-download-excel", "disabled"),
     Input("po-portfolio-name-input", "value"),
     Input("po-series-select", "data"),
+    Input("po-welcome-screen", "style"),
+    Input("po-results-store", "data"),
 )
-def po_toggle_run_button(name, selected):
-    if not name or not name.strip():
-        return True
-    if not selected or len(selected) < 2:
-        return True
-    return False
+def po_toggle_ui_elements(name, selected, welcome_style, results_data):
+    # Run Button
+    run_disabled = True
+    if name and name.strip() and selected and len(selected) >= 2:
+        run_disabled = False
+
+    # Save Session Button
+    save_disabled = True
+    if welcome_style and welcome_style.get("display") == "none":
+        save_disabled = False
+        
+    # Download Excel Button
+    download_disabled = True
+    if results_data and len(results_data) > 0:
+        download_disabled = False
+
+    return run_disabled, save_disabled, download_disabled
 
 
 # ---------------------------------------------------------------------------
@@ -3971,6 +4020,10 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
         if opt_model == "black_litterman":
             config["bl_views"] = bl_views or []
             config["bl_tau"] = float(bl_tau or 0.05)
+
+        # Add linear constraints to config
+        config["linear_constraints"] = linear_constraints or []
+
 
         # Run optimization
         window_results, portfolio_returns = run_portfolio_optimization(opt_df, config)

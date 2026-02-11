@@ -239,10 +239,19 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("load-session-dummy", "data", allow_duplicate=True),
-    Input("load-session-upload", "contents"),
+    Output("load-session-dummy", "data", allow_duplicate=True),    Input("load-session-upload", "contents"),
     prevent_initial_call=True,
 )
+
+
+@callback(
+    Output("menu-save-session", "disabled"),
+    Input("welcome-screen", "style"),
+)
+def at_toggle_save_session(welcome_style):
+    if not welcome_style:
+        return True
+    return welcome_style.get("display") != "none"
 
 
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
@@ -818,6 +827,7 @@ layout = dmc.Container(
                                         dmc.MenuItem(
                                             "Save Session",
                                             id="menu-save-session",
+                                            disabled=True,
                                         ),
                                         dmc.MenuItem(
                                             "Load Session",
