@@ -663,7 +663,8 @@ def build_po_main_layout():
                                                          "headerClass": "center-header"},
                                                         {"field": "Return", "editable": True, "width": 100,
                                                          "type": "numericColumn",
-                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"},
+                                                         "valueFormatter": {"function": "d3.format('.2f')(params.value) + '%'"},
+                                                         "valueParser": {"function": "Number(params.newValue)"},
                                                          "headerClass": "center-header"},
                                                         {"field": "Confidence", "editable": True, "width": 100,
                                                          "type": "numericColumn",
@@ -4029,7 +4030,16 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             else:
                 config["ex_ante_cov"] = ex_ante_cov or {}
         if opt_model == "black_litterman":
-            config["bl_views"] = bl_views or []
+            # Scale views returns (e.g. 5 -> 0.05) if they come from the UI as percentages
+            views_list = bl_views or []
+            scaled_views = []
+            for v in views_list:
+                v_copy = v.copy()
+                # Check if it's likely a percentage (e.g. > 1 or user intent). 
+                # Since we changed the UI to store 5 for 5%, we ALWAYS divide by 100 here.
+                v_copy["return"] = float(v.get("return", 0.0)) / 100.0
+                scaled_views.append(v_copy)
+            config["bl_views"] = scaled_views
             config["bl_tau"] = float(bl_tau or 0.05)
 
         # Add linear constraints to config
