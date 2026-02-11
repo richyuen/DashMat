@@ -1932,11 +1932,10 @@ def po_update_matrix_ui(mode):
     Input("po-ex-ante-mode-store", "data"),
     State("po-ex-ante-cov-store", "data"),
     State("po-ex-ante-corr-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
-    """Populate the matrix grid. Auto-estimate if empty."""
+def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
+    """Populate the matrix grid structure. Does NOT auto-estimate — use Estimate from Data button."""
     if not selected_series:
         return [], []
     
@@ -1945,53 +1944,9 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
     
     existing_matrix = corr_store if is_corr else cov_store
     existing_matrix = existing_matrix or {}
-    
-    # Check if empty or all zeros
-    has_content = False
-    if existing_matrix:
-        for r_data in existing_matrix.values():
-            for val in r_data.values():
-                if val != 0.0:
-                    has_content = True
-                    break
-            if has_content: break
 
-    matrix_to_use = existing_matrix
-    
-    # Auto-estimate if empty/zeros and data available
-    if not has_content and data:
-        try:
-            df = json_to_df(data)
-            print(f"[DEBUG matrix] df.shape={df.shape}, columns={list(df.columns)[:5]}")
-            print(f"[DEBUG matrix] selected_series={selected_series}")
-            
-            valid_series = [s for s in selected_series if s in df.columns]
-            print(f"[DEBUG matrix] valid_series={valid_series}")
-            if valid_series:
-                sub_df = df[valid_series]
-                rets = sub_df.pct_change().dropna()
-                print(f"[DEBUG matrix] rets.shape={rets.shape}, rets.iloc[0]={rets.iloc[0].to_dict() if len(rets) > 0 else 'empty'}")
-                if is_corr:
-                    est_df = rets.corr()
-                else:
-                    est_df = rets.cov() * 252
-                print(f"[DEBUG matrix] est_df diagonal={[est_df.iloc[i,i] for i in range(len(est_df))]}")
-                
-                # Convert to dict
-                new_matrix = {}
-                for r in valid_series:
-                    new_matrix[r] = {}
-                    for c in valid_series:
-                        new_matrix[r][c] = float(est_df.loc[r, c])
-                matrix_to_use = new_matrix
-        except Exception as e:
-            print(f"[DEBUG matrix] Exception: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print(f"[DEBUG matrix] Skipping auto-estimate: has_content={has_content}, data={'present' if data else 'None'}")
-
-    matrix_defs = [{"field": "Asset", "editable": False, "width": 140, "pinned": "left"}]
+    matrix_defs = [{"field": "Asset", "editable": False, "width": 140, "pinned": "left",
+                    "valueFormatter": {"function": "params.value"}}]
     for s in selected_series:
         matrix_defs.append({
             "field": s,
@@ -2006,9 +1961,9 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
         r_name_str = str(r_name)
         row = {"Asset": r_name_str}
         
-        row_vals = matrix_to_use.get(r_name_str, {})
-        if not row_vals and r_name in matrix_to_use:
-             row_vals = matrix_to_use.get(r_name, {})
+        row_vals = existing_matrix.get(r_name_str, {})
+        if not row_vals and r_name in existing_matrix:
+             row_vals = existing_matrix.get(r_name, {})
 
         for c_name in selected_series:
             val = row_vals.get(c_name)
@@ -2017,7 +1972,6 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
             row[c_name] = val
         rows.append(row)
     
-    print(f"[DEBUG matrix] Returning {len(rows)} rows, first row={rows[0] if rows else 'empty'}")
     return rows, matrix_defs
 
 # Estimate matrix from data button
@@ -2029,9 +1983,12 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store, data):
     State("analyticstool-raw-data-store", "data"),
     State("po-series-select", "data"),
     State("po-ex-ante-mode-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-exp-wt-cov-switch", "checked"),
+    State("po-halflife-input", "value"),
     prevent_initial_call=True,
 )
-def po_estimate_matrix_store(n_clicks, data, selected_series, mode):
+def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity, exp_wt_cov, halflife):
     if not n_clicks or not data or not selected_series:
         raise PreventUpdate
         
@@ -2039,20 +1996,35 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode):
     is_corr = (mode == "ret_vol_corr")
     
     try:
-        df = json_to_df(data)
+        df = resample_returns_cached(data, periodicity or "daily")
         
         # Calculate Returns
         valid_series = [s for s in selected_series if s in df.columns]
         if not valid_series:
             raise PreventUpdate
             
-        sub_df = df[valid_series]
-        rets = sub_df.pct_change().dropna()
+        sub_df = df[valid_series].dropna()
         
         if is_corr:
-            est_df = rets.corr()
+            est_df = sub_df.corr()
         else:
-            est_df = rets.cov() * 252 # Annualize
+            # Annualize covariance based on selected periodicity
+            p = periodicity or "daily"
+            if p.startswith("weekly"):
+                ann = 52
+            elif p == "monthly":
+                ann = 12
+            else:
+                ann = 252
+            
+            if exp_wt_cov:
+                n_assets = len(valid_series)
+                hl = halflife or 63
+                est_df = sub_df.ewm(halflife=hl).cov().iloc[-n_assets:]
+                est_df.index = valid_series  # Reset MultiIndex to simple asset names
+                est_df = est_df * ann
+            else:
+                est_df = sub_df.cov() * ann
             
         # Convert to dict
         matrix = {}
