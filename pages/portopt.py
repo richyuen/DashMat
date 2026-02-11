@@ -531,7 +531,8 @@ def build_po_main_layout():
                                                     className='ag-theme-alpine',
                                                     columnDefs=[], # Populated dynamically
                                                     rowData=[],
-                                                    defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100},
+                                                    defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100,
+                                                    "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
                                                     style={"height": "300px"},
                                                     dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True},
                                                 ),
