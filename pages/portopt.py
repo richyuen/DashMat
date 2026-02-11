@@ -1798,6 +1798,7 @@ clientside_callback(
 )
 def po_populate_returns_grid(selected_series, mode, existing_returns, existing_vol):
     """Populate the expected returns grid with selected series names."""
+    print(f"DEBUG: po_populate_returns_grid triggered. Selected: {selected_series}, Store keys: {list(existing_returns.keys()) if existing_returns else 'None'}")
     if not selected_series:
         return [], []
     
@@ -1843,8 +1844,10 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
 def po_sync_returns_grid_to_store(row_data, existing_returns, existing_vols):
     """Save grid edits to session store, merging with existing data."""
     if not row_data:
+        # print("DEBUG: po_sync_returns_grid_to_store - Empty rowData, preventing update")
         raise PreventUpdate
     
+    # print(f"DEBUG: po_sync_returns_grid_to_store running with {len(row_data)} rows")
     returns = existing_returns or {}
     vols = existing_vols or {}
     
@@ -2573,7 +2576,9 @@ clientside_callback(
     prevent_initial_call="initial_duplicate",
 )
 def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol):
+    print(f"DEBUG: po_restore_state running. raw_data len: {len(raw_data) if raw_data else 'None'}, stored_series: {stored_series}")
     if not raw_data:
+        print("DEBUG: po_restore_state - No raw_data, preventing update")
         raise PreventUpdate
     try:
         df = json_to_df(raw_data)
