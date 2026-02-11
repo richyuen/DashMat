@@ -2577,26 +2577,37 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         raise PreventUpdate
     try:
         df = json_to_df(raw_data)
+        if df is None or df.empty:
+            raise PreventUpdate
+            
         periodicity_options = get_available_periodicities(orig_periodicity or "daily")
-        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else ("daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading"))
+        
+        # Validate stored values
+        valid_periodicity = stored_periodicity
+        if valid_periodicity not in [p["value"] for p in periodicity_options]:
+            valid_periodicity = "daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading")
+            
         valid_vol = stored_vol if stored_vol is not None else 0
+        
+        # Validate series
         current_selection = stored_series or []
         valid_selection = [s for s in current_selection if s in df.columns]
+        
+        # If no stored selection matches, select all (default behavior)
         if not valid_selection:
             valid_selection = list(df.columns)
+            
         return (
             periodicity_options,
             valid_periodicity,
             valid_vol,
             valid_selection,
         )
-    except Exception:
-        return (
-            [{"value": "daily_trading", "label": "Daily (Trading)"}],
-            "daily_trading",
-            0,
-            [],
-        )
+    except Exception as e:
+        print(f"Error restoring state: {e}")
+        # Critical: Do not return defaults on error, as it wipes persistence.
+        # Preserve whatever session state exists.
+        raise PreventUpdate
 
 
 # ---------------------------------------------------------------------------
