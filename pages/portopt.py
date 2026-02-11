@@ -233,6 +233,59 @@ def build_po_main_layout():
                 mb="xs",
                 variant="contained",
                 children=[
+                    # Linear Constraints Accordion Item
+                    dmc.AccordionItem(
+                        value="linear-constraints",
+                        children=[
+                            dmc.AccordionControl("Linear Constraints"),
+                            dmc.AccordionPanel(
+                                children=[
+                                    dmc.Text(
+                                        "Constrain asset weights. Examples: 'Asset A <= 0.2', 'Asset A + Asset B >= 0.5'.",
+                                        size="xs", c="dimmed", mb="xs",
+                                    ),
+                                    dmc.Group(
+                                        gap="xs",
+                                        mb="sm",
+                                        children=[
+                                            dmc.Button(
+                                                "Add Constraint",
+                                                id="po-add-constraint-btn",
+                                                variant="outline",
+                                                size="xs",
+                                                leftSection=DashIconify(icon="tabler:plus"),
+                                            ),
+                                            dmc.Button(
+                                                "Clear Constraints",
+                                                id="po-clear-constraints-btn",
+                                                variant="outline",
+                                                size="xs",
+                                                color="red",
+                                                leftSection=DashIconify(icon="tabler:trash"),
+                                            ),
+                                        ],
+                                    ),
+                                    dag.AgGrid(
+                                        enableEnterpriseModules=True,
+                                        licenseKey=AG_GRID_LICENSE_KEY,
+                                        id="po-linear-constraints-grid",
+                                        className='ag-theme-alpine',
+                                        columnDefs=[
+                                            {"field": "Constraint", "editable": True, "width": 120, "headerClass": "center-header"},
+                                            {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
+                                             "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+                                            {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
+                                             "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+                                        ],
+                                        rowData=[],
+                                        defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        style={"height": "200px"},
+                                        dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
                     dmc.AccordionItem(
                         value="optimization",
                         children=[
@@ -627,57 +680,7 @@ def build_po_main_layout():
                                                 ),
                                             ],
                                         ),
-                                        # Linear Constraints Panel
-                                        html.Div(
-                                            id="po-linear-constraints-panel",
-                                            style={"display": "none"},
-                                            children=[
-                                                dmc.Divider(mb="sm"),
-                                                dmc.Text("Linear Constraints", size="sm", fw=600, mb="xs"),
-                                                dmc.Text(
-                                                    "Constrain asset weights. Examples: 'Asset A <= 0.2', 'Asset A + Asset B >= 0.5'.",
-                                                    size="xs", c="dimmed", mb="xs",
-                                                ),
-                                                dmc.Group(
-                                                    gap="xs",
-                                                    mb="sm",
-                                                    children=[
-                                                        dmc.Button(
-                                                            "Add Constraint",
-                                                            id="po-add-constraint-btn",
-                                                            variant="outline",
-                                                            size="xs",
-                                                            leftSection=DashIconify(icon="tabler:plus"),
-                                                        ),
-                                                        dmc.Button(
-                                                            "Clear Constraints",
-                                                            id="po-clear-constraints-btn",
-                                                            variant="outline",
-                                                            size="xs",
-                                                            color="red",
-                                                            leftSection=DashIconify(icon="tabler:trash"),
-                                                        ),
-                                                    ],
-                                                ),
-                                                dag.AgGrid(
-                                                    enableEnterpriseModules=True,
-                                                    licenseKey=AG_GRID_LICENSE_KEY,
-                                                    id="po-linear-constraints-grid",
-                                                    className='ag-theme-alpine',
-                                                    columnDefs=[
-                                                        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "center-header"},
-                                                        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
-                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
-                                                        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
-                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
-                                                    ],
-                                                    rowData=[],
-                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
-                                                    style={"height": "200px"},
-                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
-                                                ),
-                                            ],
-                                        ),
+
                                         dmc.Divider(mb="md", mt="md"),
                                     ],
                                 ),
