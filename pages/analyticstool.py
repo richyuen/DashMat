@@ -425,6 +425,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "sortable": True,
                                         "resizable": True,
+                                        "suppressMenu": True,
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -514,6 +515,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "sortable": True,
                                         "resizable": True,
+                                        "suppressMenu": True,
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -522,6 +524,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "paginationPageSize": 100,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
+                                        "suppressCsvExport": True,
                                     },
                                 ),
                             ],
@@ -555,12 +558,14 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     rowData=[],
                                     defaultColDef={
                                         "resizable": True,
+                                        "suppressMenu": True,
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
+                                        "suppressCsvExport": True,
                                     },
                                 ),
                             ],
@@ -687,6 +692,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "sortable": True,
                                         "resizable": True,
+                                        "suppressMenu": True,
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -695,6 +701,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "paginationPageSize": 100,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
+                                        "suppressCsvExport": True,
                                     },
                                 ),
                             ],
@@ -741,6 +748,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "sortable": True,
                                         "resizable": True,
+                                        "suppressMenu": True,
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -749,6 +757,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "paginationPageSize": 100,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
+                                        "suppressCsvExport": True,
                                     },
                                 ),
                             ],
