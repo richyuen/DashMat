@@ -1308,7 +1308,7 @@ layout = dmc.Container(
 
         # ---- Stores ----
         # Series/config stores
-        dcc.Store(id="po-series-select", data=[], storage_type="local"),
+        dcc.Store(id="po-series-select", data=[], storage_type="session"),
         dcc.Store(id="po-series-order-store", data=[], storage_type="session"),
         dcc.Store(id="po-benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="po-long-short-store", data={}, storage_type="session"),
@@ -1333,7 +1333,7 @@ layout = dmc.Container(
         dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
-        dcc.Store(id="po-series-select-value-store", data=[], storage_type="local"),
+        dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
         dcc.Store(id="po-window-size-store", data=252, storage_type="session"),
@@ -1346,11 +1346,11 @@ layout = dmc.Container(
         dcc.Store(id="po-missing-data-store", data="fill_na", storage_type="session"),
         dcc.Store(id="po-fill-in-sample-store", data="off", storage_type="session"),
         # Ex ante stores
-        dcc.Store(id="po-ex-ante-returns-store", data={}, storage_type="local"),
-        dcc.Store(id="po-ex-ante-cov-store", data={}, storage_type="local"),
-        dcc.Store(id="po-ex-ante-vol-store", data={}, storage_type="local"),
-        dcc.Store(id="po-ex-ante-corr-store", data={}, storage_type="local"),
-        dcc.Store(id="po-ex-ante-mode-store", data="ret_cov", storage_type="local"),
+        dcc.Store(id="po-ex-ante-returns-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-cov-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-vol-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-corr-store", data={}, storage_type="session"),
+        dcc.Store(id="po-ex-ante-mode-store", data="ret_cov", storage_type="session"),
         dcc.Store(id="po-bl-views-store", data=[], storage_type="session"),
         dcc.Store(id="po-bl-tau-store", data=0.05, storage_type="session"),
         dcc.Store(id="po-objective-store", data="maximize_sharpe", storage_type="session"),
@@ -1846,7 +1846,6 @@ def po_sync_returns_grid_to_store(cell_change, row_data, existing_returns, exist
     if not cell_change or not row_data:
         raise PreventUpdate
     
-    print(f"DEBUG: Grid edited! Change: {cell_change}")
     returns = existing_returns or {}
     vols = existing_vols or {}
     
@@ -2143,7 +2142,6 @@ def po_sync_matrix_grid(cell_change, row_data, mode, existing_cov, existing_corr
     if not cell_change or not row_data:
         raise PreventUpdate
     
-    # print(f"DEBUG: Matrix edited: {cell_change}")
     mode = mode or "ret_cov"
     is_corr = (mode == "ret_vol_corr")
     
