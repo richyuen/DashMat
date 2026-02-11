@@ -227,9 +227,9 @@ def build_po_main_layout():
                 ],
             ),
 
-            # Optimization Accordion
+            # Linear Constraints Accordion
             dmc.Accordion(
-                value="optimization",
+                value=None,
                 mb="xs",
                 variant="contained",
                 children=[
@@ -286,6 +286,15 @@ def build_po_main_layout():
                             ),
                         ],
                     ),
+                ],
+            ),
+
+            # Optimization Accordion
+            dmc.Accordion(
+                value="optimization",
+                mb="xs",
+                variant="contained",
+                children=[
                     dmc.AccordionItem(
                         value="optimization",
                         children=[
