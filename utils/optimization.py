@@ -658,6 +658,9 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
     # Override covariance if exponentially weighted
     if exp_wt_cov:
         port.cov = port_data.ewm(halflife=halflife).cov().iloc[-len(asset_names):]
+        # Also override mu with exponentially weighted mean
+        port.mu = port_data.ewm(halflife=halflife).mean().iloc[-1:].T
+        port.mu.columns = ["mu"]
 
     # Build bounds arrays (ordered by asset_names)
     n_assets = len(asset_names)
@@ -709,7 +712,8 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             hc_port = rp.HCPortfolio(returns=port_data)
             w = hc_port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)
         elif model == "maximize_sharpe":
-            w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=True)
+            use_hist = not exp_wt_cov  # Use overridden mu/cov when exp_wt is on
+            w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=use_hist)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
         elif model == "minimize_variance":

@@ -256,7 +256,6 @@ def build_po_main_layout():
                                                 id="po-opt-model-select",
                                                 data=[
                                                     {"value": "risk_parity", "label": "Risk Parity"},
-                                                    {"value": "mean_variance", "label": "Mean-Variance"},
                                                     {"value": "hierarchical_risk_parity", "label": "Hierarchical RP"},
                                                     {"value": "maximize_sharpe", "label": "Maximize Sharpe Ratio"},
                                                     {"value": "minimize_variance", "label": "Minimize Variance"},
@@ -311,7 +310,7 @@ def build_po_main_layout():
                                             style={"display": "none"},
                                         ),
                                         html.Div([
-                                            dmc.Text("Exp Wt Cov", size="sm", fw=500, mb=3),
+                                            dmc.Text("Exp Wt", size="sm", fw=500, mb=3),
                                             html.Div(
                                                 dmc.Switch(
                                                     id="po-exp-wt-cov-switch",
@@ -459,6 +458,13 @@ def build_po_main_layout():
                                                     variant="subtle",
                                                     size="xs",
                                                     color="red",
+                                                ),
+                                                dmc.Button(
+                                                    "Estimate from Data",
+                                                    id="po-estimate-returns-btn",
+                                                    variant="outline",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:calculator"),
                                                 ),
                                             ],
                                         ),
@@ -1153,7 +1159,7 @@ layout = dmc.Container(
                                 dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
                                     dmc.Text("Portfolio Name: Label for the optimization result.", size="sm"),
                                     dmc.Text("Model: Choose from Risk Parity, Factor Risk Parity, Hierarchical Risk Parity, Maximize Sharpe Ratio, Minimize CVaR, or Equal Weight.", size="sm"),
-                                    dmc.Text("Exp Wt Cov: Exponentially weight the covariance matrix. When enabled, configure the Halflife (number of periods) for more responsive estimates.", size="sm"),
+                                    dmc.Text("Exp Wt: Exponentially weight estimates (covariance, mean returns). When enabled, configure the Halflife (number of periods) for more responsive estimates.", size="sm"),
                                     dmc.Text("Run: Execute the optimization with the current settings.", size="sm"),
                                     dmc.Text("Window: Expanding (growing window from start), Rolling (fixed-size sliding window), or Full (single optimization over all data).", size="sm"),
                                     dmc.Text("Fill In-Sample: Apply the first window's weights to pre-window dates for a complete return series.", size="sm"),
@@ -2045,6 +2051,68 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
             
     except Exception as e:
         print(f"Error estimating matrix: {e}")
+        raise PreventUpdate
+
+
+# Estimate expected returns & vols from data button
+@callback(
+    Output("po-ex-ante-returns-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-vol-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
+    Input("po-estimate-returns-btn", "n_clicks"),
+    State("analyticstool-raw-data-store", "data"),
+    State("po-series-select", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-exp-wt-cov-switch", "checked"),
+    State("po-halflife-input", "value"),
+    State("po-ex-ante-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def po_estimate_returns_from_data(n_clicks, data, selected_series, periodicity, exp_wt, halflife, mode):
+    if not n_clicks or not data or not selected_series:
+        raise PreventUpdate
+
+    try:
+        df = resample_returns_cached(data, periodicity or "daily")
+        valid_series = [s for s in selected_series if s in df.columns]
+        if not valid_series:
+            raise PreventUpdate
+
+        sub_df = df[valid_series].dropna()
+
+        # Annualization factor
+        p = periodicity or "daily"
+        if p.startswith("weekly"):
+            ann = 52
+        elif p == "monthly":
+            ann = 12
+        else:
+            ann = 252
+
+        if exp_wt:
+            hl = halflife or 63
+            mean_returns = sub_df.ewm(halflife=hl).mean().iloc[-1] * ann
+        else:
+            mean_returns = sub_df.mean() * ann
+
+        vols = sub_df.std() * (ann ** 0.5)
+
+        returns_dict = {s: float(mean_returns[s]) for s in valid_series}
+        vol_dict = {s: float(vols[s]) for s in valid_series}
+
+        mode = mode or "ret_cov"
+        rows = []
+        for s in valid_series:
+            rows.append({
+                "Asset": s,
+                "Return": returns_dict[s],
+                "Volatility": vol_dict[s],
+            })
+
+        return returns_dict, vol_dict, rows
+
+    except Exception as e:
+        print(f"Error estimating returns: {e}")
         raise PreventUpdate
 
 
