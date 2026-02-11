@@ -507,7 +507,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
 def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_bounds,
                               forced_weights, free_series,
                               bl_views, bl_tau, objective,
-                              exp_wt_cov=False, halflife=63):
+                              exp_wt_cov=False, halflife=63, linear_constraints=None):
     """Run Black-Litterman optimization.
 
     Uses historical returns for the equilibrium prior, then blends with user views.
@@ -609,8 +609,11 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
         for i, conf in enumerate(confidences):
             omega_diag[i] /= conf
 
-    except Exception:
-        pass  # Use whatever BL stats were computed
+    except Exception as e:
+        print(f"DEBUG: BL stats calculation failed: {e}. Falling back to historical stats.")
+        # Ensure we have valid stats from assets_stats
+        if not hasattr(port, 'mu') or port.mu is None:
+             port.assets_stats(method_mu="hist", method_cov="hist")
 
     # Build bounds
     lower_arr = np.zeros(n_assets)
@@ -627,11 +630,13 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
 
     # Apply linear constraints if any
     if linear_constraints:
+        print(f"DEBUG: Processing {len(linear_constraints)} linear constraints for BL")
         A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
         if A_ui is not None:
              # Convert to DataFrame for riskfolio
             A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
             B_ui_df = pd.DataFrame(B_ui, columns=["b"])
+            print(f"DEBUG: Applied BL constraints. A shape: {A_ui_df.shape}")
             
             if hasattr(port, 'ainequality') and port.ainequality is not None:
                 port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
@@ -737,7 +742,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             forced_weights, free_series,
             bl_views or [], bl_tau, objective,
             exp_wt_cov, halflife,
-            linear_constraints,
+            linear_constraints=linear_constraints,
         )
 
     # Build riskfolio Portfolio
@@ -807,13 +812,16 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
                 port.ainequality = pd.DataFrame(np.array(A_rows), columns=asset_names)
                 port.binequality = pd.DataFrame(np.array(b_rows), columns=["b"])
 
-    # Apply    # Apply linear constraints from UI
+    # Apply linear constraints from UI
     if linear_constraints:
+        print(f"DEBUG: Processing {len(linear_constraints)} linear constraints for Single Window")
         A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
         if A_ui is not None:
              # Convert to DataFrame for riskfolio
             A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
             B_ui_df = pd.DataFrame(B_ui, columns=["b"])
+            print(f"DEBUG: Applied Single Window constraints. A shape: {A_ui_df.shape}")
+            print(f"DEBUG: A_ui head: {A_ui_df.head()}")
             
             if hasattr(port, 'ainequality') and port.ainequality is not None:
                 port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
@@ -824,12 +832,13 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
 
     try:
         if model == "risk_parity":
+            print(f"DEBUG: Running Risk Parity with {len(asset_names)} assets")
+            if linear_constraints:
+                print(f"DEBUG: Constraints: {linear_constraints}")
             w = port.rp_optimization(model="Classic", rm="MV", hist=True)
         elif model == "factor_risk_parity":
             w = port.rp_optimization(model="FM", rm="MV", hist=False)
         elif model == "equal_weight":
-            # Equal Weight with constraints: Minimize variance with Identity covariance
-            # equivalent to minimizing sum of squared weights (closest to 1/N)
             n_assets = len(asset_names)
             port.mu = pd.DataFrame(np.zeros((n_assets, 1)), index=asset_names, columns=["mu"])
             port.cov = pd.DataFrame(np.eye(n_assets), index=asset_names, columns=asset_names)
@@ -838,9 +847,12 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             if linear_constraints:
                 raise ValueError("Hierarchical Risk Parity does not support linear constraints.")
             hc_port = rp.HCPortfolio(returns=port_data)
-            w = hc_port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)  # corrected indentation
+            w = hc_port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)
         elif model == "maximize_sharpe":
-            use_hist = not exp_wt_cov  # Use overridden mu/cov when exp_wt is on
+            use_hist = not exp_wt_cov
+            # Explicitly ensure ainequality is set if provided
+            if hasattr(port, 'ainequality') and port.ainequality is not None:
+                print(f"DEBUG: Sharpe with ainequality shape {port.ainequality.shape}")
             w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=use_hist)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)

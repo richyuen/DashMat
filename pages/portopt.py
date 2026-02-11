@@ -319,6 +319,7 @@ def build_po_main_layout():
                                                 id="po-opt-model-select",
                                                 data=[
                                                     {"value": "risk_parity", "label": "Risk Parity"},
+                                                    {"value": "factor_risk_parity", "label": "Factor Risk Parity"},
                                                     {"value": "hierarchical_risk_parity", "label": "Hierarchical RP"},
                                                     {"value": "maximize_sharpe", "label": "Maximize Sharpe Ratio"},
                                                     {"value": "minimize_variance", "label": "Minimize Variance"},
