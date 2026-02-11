@@ -441,10 +441,18 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
 
     # Apply linear constraints if any
     if linear_constraints:
-        A, B = _parse_linear_constraints(linear_constraints, asset_names)
-        if A is not None:
-            port.ainequality = A
-            port.binequality = B
+        A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
+        if A_ui is not None:
+             # Convert to DataFrame for riskfolio
+            A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
+            B_ui_df = pd.DataFrame(B_ui, columns=["b"])
+            
+            if hasattr(port, 'ainequality') and port.ainequality is not None:
+                port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
+                port.binequality = pd.concat([port.binequality, B_ui_df], ignore_index=True)
+            else:
+                port.ainequality = A_ui_df
+                port.binequality = B_ui_df
 
     # Map objective to riskfolio params
     obj_map = {
@@ -619,10 +627,18 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
 
     # Apply linear constraints if any
     if linear_constraints:
-        A, B = _parse_linear_constraints(linear_constraints, asset_names)
-        if A is not None:
-            port.ainequality = A
-            port.binequality = B
+        A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
+        if A_ui is not None:
+             # Convert to DataFrame for riskfolio
+            A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
+            B_ui_df = pd.DataFrame(B_ui, columns=["b"])
+            
+            if hasattr(port, 'ainequality') and port.ainequality is not None:
+                port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
+                port.binequality = pd.concat([port.binequality, B_ui_df], ignore_index=True)
+            else:
+                port.ainequality = A_ui_df
+                port.binequality = B_ui_df
 
     # Map objective
     obj_map = {
@@ -800,19 +816,20 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
                 port.ainequality = pd.DataFrame(np.array(A_rows), columns=asset_names)
                 port.binequality = pd.DataFrame(np.array(b_rows), columns=["b"])
 
-    # Apply additional linear constraints if any
+    # Apply    # Apply linear constraints from UI
     if linear_constraints:
-        A_lc, B_lc = _parse_linear_constraints(linear_constraints, asset_names)
-        if A_lc is not None:
+        A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
+        if A_ui is not None:
+             # Convert to DataFrame for riskfolio
+            A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
+            B_ui_df = pd.DataFrame(B_ui, columns=["b"])
+            
             if hasattr(port, 'ainequality') and port.ainequality is not None:
-                # Must convert to DataFrame to concat with existing DataFrame bounds
-                A_df = pd.DataFrame(A_lc, columns=asset_names)
-                B_df = pd.DataFrame(B_lc, columns=["b"])
-                port.ainequality = pd.concat([port.ainequality, A_df])
-                port.binequality = pd.concat([port.binequality, B_df])
+                port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
+                port.binequality = pd.concat([port.binequality, B_ui_df], ignore_index=True)
             else:
-                port.ainequality = pd.DataFrame(A_lc, columns=asset_names)
-                port.binequality = pd.DataFrame(B_lc, columns=["b"])
+                port.ainequality = A_ui_df
+                port.binequality = B_ui_df
 
     try:
         if model == "risk_parity":
@@ -1168,10 +1185,10 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
 
     # Apply linear constraints if any
     if linear_constraints:
-        A, B = _parse_linear_constraints(linear_constraints, returns_df.columns)
-        if A is not None:
-            port.ainequality = pd.DataFrame(A, columns=returns_df.columns)
-            port.binequality = pd.DataFrame(B, columns=["b"])
+        A_ui, B_ui = _parse_linear_constraints(linear_constraints, returns_df.columns)
+        if A_ui is not None:
+            port.ainequality = pd.DataFrame(A_ui, columns=returns_df.columns)
+            port.binequality = pd.DataFrame(B_ui, columns=["b"])
 
     frontier = port.efficient_frontier(
         model="Classic", rm=rm, points=n_points, rf=0, hist=not use_custom

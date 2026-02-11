@@ -1851,7 +1851,6 @@ clientside_callback(
             isExAnte ? styleBlock : styleNone,  // po-objective-container
             isExAnte ? styleBlock : styleNone,  // po-ex-ante-mode-container
             isBL ? styleBlock : styleNone,      // po-bl-views-panel
-            isExAnte ? styleBlock : styleNone,  // po-linear-constraints-panel
         ];
     }
     """,
@@ -1859,7 +1858,6 @@ clientside_callback(
     Output("po-objective-container", "style"),
     Output("po-ex-ante-mode-container", "style"),
     Output("po-bl-views-panel", "style"),
-    Output("po-linear-constraints-panel", "style"),
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
 )
