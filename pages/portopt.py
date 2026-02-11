@@ -1836,27 +1836,36 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
     Output("po-ex-ante-returns-store", "data"),
     Output("po-ex-ante-vol-store", "data"),
     Input("po-ex-ante-returns-grid", "rowData"),
+    State("po-ex-ante-returns-store", "data"),
+    State("po-ex-ante-vol-store", "data"),
     prevent_initial_call=True,
 )
-def po_sync_returns_grid_to_store(row_data):
-    """Save grid edits to session store."""
+def po_sync_returns_grid_to_store(row_data, existing_returns, existing_vols):
+    """Save grid edits to session store, merging with existing data."""
     if not row_data:
-        return {}, {}
-    returns = {}
-    vols = {}
+        raise PreventUpdate
+    
+    returns = existing_returns or {}
+    vols = existing_vols or {}
+    
     for row in row_data:
         asset = row.get("Asset", "")
+        if not asset:
+            continue
+            
         ret = row.get("Return", 0.0)
         vol = row.get("Volatility", 0.0)
-        if asset:
-            try:
-                returns[asset] = float(ret)
-            except (ValueError, TypeError):
-                returns[asset] = 0.0
-            try:
-                vols[asset] = float(vol)
-            except (ValueError, TypeError):
-                vols[asset] = 0.0
+        
+        try:
+            returns[asset] = float(ret)
+        except (ValueError, TypeError):
+            returns[asset] = 0.0
+            
+        try:
+            vols[asset] = float(vol)
+        except (ValueError, TypeError):
+            vols[asset] = 0.0
+            
     return returns, vols
 
 
@@ -2123,22 +2132,33 @@ def po_estimate_returns_from_data(n_clicks, data, selected_series, periodicity, 
     Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
     Input("po-ex-ante-matrix-grid", "rowData"),
     State("po-ex-ante-mode-store", "data"),
+    State("po-ex-ante-cov-store", "data"),
+    State("po-ex-ante-corr-store", "data"),
     prevent_initial_call=True,
 )
-def po_sync_matrix_grid(row_data, mode):
+def po_sync_matrix_grid(row_data, mode, existing_cov, existing_corr):
     if not row_data:
         raise PreventUpdate
     
     mode = mode or "ret_cov"
     is_corr = (mode == "ret_vol_corr")
     
-    # Parse grid into nested dict
-    matrix = {}
+    # Initialize with existing store data
+    matrix = (existing_corr if is_corr else existing_cov) or {}
+    
+    # Update with grid data
     for row in row_data:
         r_name = row.get("Asset")
         if not r_name:
             continue
-        matrix[r_name] = {}
+            
+        # Ensure row dict exists in store
+        if r_name not in matrix:
+            matrix[r_name] = {}
+        elif not isinstance(matrix[r_name], dict):
+             # Handle legacy/malformed data
+             matrix[r_name] = {}
+
         for k, v in row.items():
             if k == "Asset":
                 continue
