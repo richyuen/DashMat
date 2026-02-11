@@ -719,15 +719,6 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         result[free_series[0]] = max(0, remaining)
         return result
 
-    # Equal weight model doesn't need optimization
-    if model == "equal_weight":
-        result = dict(forced_weights)
-        remaining = 1.0 - sum(forced_weights.values())
-        equal_wt = remaining / len(free_series)
-        for s in free_series:
-            result[s] = equal_wt
-        return result
-
     # Ex ante models use separate optimization functions
     if model == "ex_ante_mv":
         return _optimize_ex_ante_mv(
@@ -836,9 +827,18 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             w = port.rp_optimization(model="Classic", rm="MV", hist=True)
         elif model == "factor_risk_parity":
             w = port.rp_optimization(model="FM", rm="MV", hist=False)
+        elif model == "equal_weight":
+            # Equal Weight with constraints: Minimize variance with Identity covariance
+            # equivalent to minimizing sum of squared weights (closest to 1/N)
+            n_assets = len(asset_names)
+            port.mu = pd.DataFrame(np.zeros((n_assets, 1)), index=asset_names, columns=["mu"])
+            port.cov = pd.DataFrame(np.eye(n_assets), index=asset_names, columns=asset_names)
+            w = port.optimization(model="Classic", rm="MV", obj="MinRisk", hist=False)
         elif model == "hrp":
+            if linear_constraints:
+                raise ValueError("Hierarchical Risk Parity does not support linear constraints.")
             hc_port = rp.HCPortfolio(returns=port_data)
-            w = hc_port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)
+            w = hc_port.optimization(model="HRP", rm="MV", codependence="pearson", leaf_order=True)  # corrected indentation
         elif model == "maximize_sharpe":
             use_hist = not exp_wt_cov  # Use overridden mu/cov when exp_wt is on
             w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=use_hist)
