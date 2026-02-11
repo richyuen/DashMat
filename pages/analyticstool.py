@@ -246,7 +246,7 @@ clientside_callback(
 
 @callback(
     Output("menu-save-session", "disabled"),
-    Input("welcome-screen", "style"),
+    Input("welcome-screen-container", "style"),
 )
 def at_toggle_save_session(welcome_style):
     if not welcome_style:
