@@ -277,14 +277,14 @@ def build_po_main_layout():
                                                 dmc.Select(
                                                     id="po-objective-select",
                                                     data=[
-                                                        {"label": "Maximize Sharpe Ratio", "value": "maximize_sharpe"},
+                                                        {"label": "Maximize Sharpe", "value": "maximize_sharpe"},
                                                         {"label": "Minimize Variance", "value": "minimize_variance"},
                                                         {"label": "Maximize Return", "value": "maximize_return"},
                                                     ],
                                                     value="maximize_sharpe",
                                                     searchable=False,
                                                     clearable=False,
-                                                    w=150,
+                                                    w=190,
                                                     size="sm",
                                                 ),
                                             ],
@@ -453,18 +453,19 @@ def build_po_main_layout():
                                                     accept=".csv",
                                                 ),
                                                 dmc.Button(
-                                                    "Clear",
-                                                    id="po-ex-ante-returns-clear",
-                                                    variant="subtle",
-                                                    size="xs",
-                                                    color="red",
-                                                ),
-                                                dmc.Button(
                                                     "Estimate from Data",
                                                     id="po-estimate-returns-btn",
                                                     variant="outline",
                                                     size="xs",
                                                     leftSection=DashIconify(icon="tabler:calculator"),
+                                                ),
+                                                dmc.Button(
+                                                    "Clear Returns",
+                                                    id="po-ex-ante-returns-clear",
+                                                    variant="outline",
+                                                    color="red",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:trash"),
                                                 ),
                                             ],
                                         ),
@@ -2616,6 +2617,25 @@ clientside_callback(
     State("po-halflife-store", "data"),
     State("po-missing-data-store", "data"),
     State("po-fill-in-sample-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# Restore ex ante controls from stores on page load
+# ---------------------------------------------------------------------------
+
+clientside_callback(
+    """
+    function(n, mode, objective) {
+        return [mode || "ret_cov", objective || "maximize_sharpe"];
+    }
+    """,
+    Output("po-ex-ante-mode-select", "value"),
+    Output("po-objective-select", "value"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-ex-ante-mode-store", "data"),
+    State("po-objective-store", "data"),
     prevent_initial_call=True,
 )
 
