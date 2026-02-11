@@ -30,6 +30,7 @@ from utils.returns import (
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
 from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
+from dbengine import AG_GRID_LICENSE_KEY
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
 
@@ -473,6 +474,9 @@ def build_po_main_layout():
                                             id="po-ex-ante-returns-grid-container",
                                             children=[
                                                 dag.AgGrid(
+                                                    enableEnterpriseModules=True,
+                                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                                    enableRangeSelection=True,
                                                     id="po-ex-ante-returns-grid",
                                                     className='ag-theme-alpine',
                                                     columnDefs=[
@@ -488,7 +492,7 @@ def build_po_main_layout():
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False},
                                                     style={"height": "200px"},
-                                                    dashGridOptions={"singleClickEdit": True},
+                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True},
                                                 ),
                                             ],
                                             style={"marginBottom": "12px"},
@@ -534,6 +538,9 @@ def build_po_main_layout():
                                             id="po-ex-ante-matrix-grid-container",
                                             children=[
                                                 dag.AgGrid(
+                                                    enableEnterpriseModules=True,
+                                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                                    enableRangeSelection=True,
                                                     id="po-ex-ante-matrix-grid",
                                                     className='ag-theme-alpine',
                                                     columnDefs=[], # Populated dynamically
@@ -541,7 +548,7 @@ def build_po_main_layout():
                                                     defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100,
                                                     "valueFormatter": {"function": "d3.format('.4f')(params.value)"}},
                                                     style={"height": "300px"},
-                                                    dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True},
+                                                    dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True},
                                                 ),
                                             ],
                                             style={"marginBottom": "12px"},
@@ -578,6 +585,9 @@ def build_po_main_layout():
                                                     ],
                                                 ),
                                                 dag.AgGrid(
+                                                    enableEnterpriseModules=True,
+                                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                                    enableRangeSelection=True,
                                                     id="po-bl-views-grid",
                                                     className='ag-theme-alpine',
                                                     columnDefs=[
@@ -597,7 +607,7 @@ def build_po_main_layout():
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False},
                                                     style={"height": "200px"},
-                                                    dashGridOptions={"singleClickEdit": True},
+                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True},
                                                 ),
                                                 dmc.NumberInput(
                                                     id="po-bl-tau-input",
@@ -709,13 +719,16 @@ def build_po_main_layout():
                                 style={"display": "none"},
                                 children=[
                                     dag.AgGrid(
+                                        enableEnterpriseModules=True,
+                                        licenseKey=AG_GRID_LICENSE_KEY,
+                                        enableRangeSelection=True,
                                         id="po-weight-grid",
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
                                         style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True},
                                     ),
                                 ],
                             ),
@@ -747,13 +760,16 @@ def build_po_main_layout():
                                 style={"display": "none"},
                                 children=[
                                     dag.AgGrid(
+                                        enableEnterpriseModules=True,
+                                        licenseKey=AG_GRID_LICENSE_KEY,
+                                        enableRangeSelection=True,
                                         id="po-attribution-grid",
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
                                         style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True},
                                     ),
                                 ],
                             ),
@@ -785,13 +801,16 @@ def build_po_main_layout():
                                 style={"display": "none"},
                                 children=[
                                     dag.AgGrid(
+                                        enableEnterpriseModules=True,
+                                        licenseKey=AG_GRID_LICENSE_KEY,
+                                        enableRangeSelection=True,
                                         id="po-risk-grid",
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
                                         style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True},
                                     ),
                                 ],
                             ),
@@ -823,13 +842,16 @@ def build_po_main_layout():
                                 style={"display": "none"},
                                 children=[
                                     dag.AgGrid(
+                                        enableEnterpriseModules=True,
+                                        licenseKey=AG_GRID_LICENSE_KEY,
+                                        enableRangeSelection=True,
                                         id="po-turnover-grid",
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
                                         defaultColDef={"sortable": True, "resizable": True},
                                         style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100},
+                                        dashGridOptions={"animateRows": True, "pagination": True, "paginationPageSize": 100, "suppressExcelExport": True},
                                     ),
                                 ],
                             ),
@@ -875,13 +897,16 @@ def build_po_main_layout():
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
                             dag.AgGrid(
+                                enableEnterpriseModules=True,
+                                licenseKey=AG_GRID_LICENSE_KEY,
+                                enableRangeSelection=True,
                                 id="po-statistics-grid",
                                 className='ag-theme-alpine',
                                 columnDefs=[],
                                 rowData=[],
                                 defaultColDef={"sortable": True, "resizable": True},
                                 style={"height": "100%", "width": "100%"},
-                                dashGridOptions={"animateRows": True},
+                                dashGridOptions={"animateRows": True, "suppressExcelExport": True},
                             ),
                         ],
                     ),
@@ -891,6 +916,9 @@ def build_po_main_layout():
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
                             dag.AgGrid(
+                                enableEnterpriseModules=True,
+                                licenseKey=AG_GRID_LICENSE_KEY,
+                                enableRangeSelection=True,
                                 id="po-returns-grid",
                                 className='ag-theme-alpine',
                                 columnDefs=[],

@@ -38,6 +38,7 @@ from utils.statistics import (
     generate_correlogram_cached,
 )
 from utils.charting import apply_chart_theme
+from dbengine import AG_GRID_LICENSE_KEY
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -415,6 +416,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             children=[
                                 dag.AgGrid(
+                                    enableEnterpriseModules=True,
+                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                    enableRangeSelection=True,
                                     id="returns-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
@@ -428,6 +432,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "animateRows": True,
                                         "pagination": True,
                                         "paginationPageSize": 100,
+                                        "suppressExcelExport": True,
                                     },
                                 ),
                             ],
@@ -500,6 +505,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             style=rolling_grid_style,
                             children=[
                                 dag.AgGrid(
+                                    enableEnterpriseModules=True,
+                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                    enableRangeSelection=True,
                                     id="rolling-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
@@ -513,6 +521,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "animateRows": True,
                                         "pagination": True,
                                         "paginationPageSize": 100,
+                                        "suppressExcelExport": True,
                                     },
                                 ),
                             ],
@@ -538,6 +547,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             children=[
                                 dag.AgGrid(
+                                    enableEnterpriseModules=True,
+                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                    enableRangeSelection=True,
                                     id="statistics-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
@@ -548,6 +560,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
+                                        "suppressExcelExport": True,
                                     },
                                 ),
                             ],
@@ -583,6 +596,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             ],
                         ),
                         dag.AgGrid(
+                            enableEnterpriseModules=True,
+                            licenseKey=AG_GRID_LICENSE_KEY,
+                            enableRangeSelection=True,
                             id="calendar-grid",
                             className='ag-theme-alpine',
                             columnDefs=[],
@@ -594,6 +610,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             style={"height": "100%", "width": "100%"},
                             dashGridOptions={
                                 "animateRows": True,
+                                "suppressExcelExport": True,
                             },
                         ),
                     ],
@@ -661,6 +678,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             style=growth_grid_style,
                             children=[
                                 dag.AgGrid(
+                                    enableEnterpriseModules=True,
+                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                    enableRangeSelection=True,
                                     id="growth-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
@@ -674,6 +694,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "animateRows": True,
                                         "pagination": True,
                                         "paginationPageSize": 100,
+                                        "suppressExcelExport": True,
                                     },
                                 ),
                             ],
@@ -711,6 +732,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             style=drawdown_grid_style,
                             children=[
                                 dag.AgGrid(
+                                    enableEnterpriseModules=True,
+                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                    enableRangeSelection=True,
                                     id="drawdown-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
@@ -724,6 +748,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "animateRows": True,
                                         "pagination": True,
                                         "paginationPageSize": 100,
+                                        "suppressExcelExport": True,
                                     },
                                 ),
                             ],
