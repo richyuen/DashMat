@@ -921,6 +921,52 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     col_order = ['Year_Label'] + month_cols + ['Ann']
     pivot_data = pivot_data[col_order]
 
+    # Convert to row data
+    row_data = pivot_data.to_dict("records")
+
+    # Calculate max absolute value for conditional formatting gradient
+    max_abs = 0
+    value_cols = month_cols + ['Ann']
+    for row in row_data:
+        for key in value_cols:
+            val = row.get(key)
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                max_abs = max(max_abs, abs(val))
+
+    # Build styleConditions for green/red gradient (10 bins)
+    style_conditions = []
+    if max_abs > 0:
+        n_bins = 10
+        for i in range(n_bins):
+            lo = max_abs * i / n_bins
+            hi = max_abs * (i + 1) / n_bins
+            alpha = round(0.1 + 0.6 * (i + 1) / n_bins, 2)
+            text_color = "#fff" if alpha > 0.4 else "inherit"
+            # Positive bins
+            if i == n_bins - 1:
+                style_conditions.append({
+                    "condition": f"params.value >= {lo}",
+                    "style": {"backgroundColor": f"rgba(34, 139, 34, {alpha})", "color": text_color, "textAlign": "center"},
+                })
+            else:
+                style_conditions.append({
+                    "condition": f"params.value >= {lo} && params.value < {hi}",
+                    "style": {"backgroundColor": f"rgba(34, 139, 34, {alpha})", "color": text_color, "textAlign": "center"},
+                })
+            # Negative bins
+            if i == n_bins - 1:
+                style_conditions.append({
+                    "condition": f"params.value <= {-lo}",
+                    "style": {"backgroundColor": f"rgba(220, 38, 38, {alpha})", "color": text_color, "textAlign": "center"},
+                })
+            else:
+                style_conditions.append({
+                    "condition": f"params.value <= {-lo} && params.value > {-hi}",
+                    "style": {"backgroundColor": f"rgba(220, 38, 38, {alpha})", "color": text_color, "textAlign": "center"},
+                })
+
+    cell_style = {"styleConditions": style_conditions, "defaultStyle": {"textAlign": "center"}} if style_conditions else {"textAlign": "center"}
+
     # Create column definitions for monthly view
     column_defs = [
         {
@@ -928,26 +974,33 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
             "headerName": "Year",
             "pinned": "left",
             "width": 80,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "center-header",
         }
     ]
 
     # Add month columns
     for month in month_cols:
-        column_defs.append({
+        col_def = {
             "field": month,
             "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
             "width": 90,
-        })
+            "headerClass": "center-header",
+        }
+        if cell_style:
+            col_def["cellStyle"] = cell_style
+        column_defs.append(col_def)
 
     # Add Annual column
-    column_defs.append({
+    ann_def = {
         "field": "Ann",
         "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
         "width": 90,
-    })
-
-    # Convert to row data
-    row_data = pivot_data.to_dict("records")
+        "headerClass": "center-header",
+    }
+    if cell_style:
+        ann_def["cellStyle"] = cell_style
+    column_defs.append(ann_def)
 
     return column_defs, row_data
 

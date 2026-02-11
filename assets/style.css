@@ -9,3 +9,7 @@
     --ag-row-border-color: #373a40;
     --ag-secondary-foreground-color: #909296;
 }
+
+.ag-theme-alpine .center-header .ag-header-cell-label {
+    justify-content: center;
+}

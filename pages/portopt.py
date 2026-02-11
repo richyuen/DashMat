@@ -576,9 +576,10 @@ def build_po_main_layout():
                                                         dmc.Button(
                                                             "Clear Views",
                                                             id="po-bl-clear-views",
-                                                            variant="subtle",
+                                                            variant="outline",
                                                             size="xs",
                                                             color="red",
+                                                            leftSection=DashIconify(icon="tabler:trash"),
                                                         ),
                                                     ],
                                                 ),
@@ -622,6 +623,57 @@ def build_po_main_layout():
                                                     size="sm",
                                                     mt="sm",
                                                     decimalScale=3,
+                                                ),
+                                            ],
+                                        ),
+                                        # Linear Constraints Panel
+                                        html.Div(
+                                            id="po-linear-constraints-panel",
+                                            style={"display": "none"},
+                                            children=[
+                                                dmc.Divider(mb="sm"),
+                                                dmc.Text("Linear Constraints", size="sm", fw=600, mb="xs"),
+                                                dmc.Text(
+                                                    "Constrain asset weights. Examples: 'Asset A <= 0.2', 'Asset A + Asset B >= 0.5'.",
+                                                    size="xs", c="dimmed", mb="xs",
+                                                ),
+                                                dmc.Group(
+                                                    gap="xs",
+                                                    mb="sm",
+                                                    children=[
+                                                        dmc.Button(
+                                                            "Add Constraint",
+                                                            id="po-add-constraint-btn",
+                                                            variant="outline",
+                                                            size="xs",
+                                                            leftSection=DashIconify(icon="tabler:plus"),
+                                                        ),
+                                                        dmc.Button(
+                                                            "Clear Constraints",
+                                                            id="po-clear-constraints-btn",
+                                                            variant="outline",
+                                                            size="xs",
+                                                            color="red",
+                                                            leftSection=DashIconify(icon="tabler:trash"),
+                                                        ),
+                                                    ],
+                                                ),
+                                                dag.AgGrid(
+                                                    enableEnterpriseModules=True,
+                                                    licenseKey=AG_GRID_LICENSE_KEY,
+                                                    id="po-linear-constraints-grid",
+                                                    className='ag-theme-alpine',
+                                                    columnDefs=[
+                                                        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "center-header"},
+                                                        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
+                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+                                                        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
+                                                         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+                                                    ],
+                                                    rowData=[],
+                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                                    style={"height": "200px"},
+                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
                                             ],
                                         ),
@@ -1376,6 +1428,7 @@ layout = dmc.Container(
         dcc.Store(id="po-ex-ante-corr-store", data={}, storage_type="session"),
         dcc.Store(id="po-ex-ante-mode-store", data="ret_cov", storage_type="session"),
         dcc.Store(id="po-bl-views-store", data=[], storage_type="session"),
+        dcc.Store(id="po-linear-constraints-store", data=[], storage_type="session"),
         dcc.Store(id="po-bl-tau-store", data=0.05, storage_type="session"),
         dcc.Store(id="po-objective-store", data="maximize_sharpe", storage_type="session"),
         # Results stores
@@ -1777,11 +1830,14 @@ clientside_callback(
     function(model) {
         var isExAnte = (model === "ex_ante_mv" || model === "black_litterman");
         var isBL = (model === "black_litterman");
+        var styleBlock = {"display": "block"};
+        var styleNone = {"display": "none"};
         return [
-            isExAnte ? {"display": "block"} : {"display": "none"},
-            isExAnte ? {"display": "block"} : {"display": "none"},
-            isExAnte ? {"display": "block"} : {"display": "none"},
-            isBL ? {"display": "block"} : {"display": "none"},
+            isExAnte ? styleBlock : styleNone,  // po-ex-ante-panel
+            isExAnte ? styleBlock : styleNone,  // po-objective-container
+            isExAnte ? styleBlock : styleNone,  // po-ex-ante-mode-container
+            isBL ? styleBlock : styleNone,      // po-bl-views-panel
+            isExAnte ? styleBlock : styleNone,  // po-linear-constraints-panel
         ];
     }
     """,
@@ -1789,6 +1845,7 @@ clientside_callback(
     Output("po-objective-container", "style"),
     Output("po-ex-ante-mode-container", "style"),
     Output("po-bl-views-panel", "style"),
+    Output("po-linear-constraints-panel", "style"),
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
 )
@@ -2302,6 +2359,7 @@ def po_clear_matrix(n_clicks, mode, selected_series):
 # Add BL view row
 @callback(
     Output("po-bl-views-grid", "rowData", allow_duplicate=True),
+    Output("po-bl-views-store", "data", allow_duplicate=True),
     Input("po-bl-add-view", "n_clicks"),
     State("po-bl-views-grid", "rowData"),
     prevent_initial_call=True,
@@ -2310,37 +2368,55 @@ def po_add_bl_view(n_clicks, current_rows):
     if not n_clicks:
         raise PreventUpdate
     current_rows = current_rows or []
-    current_rows.append({
+    new_row = {
         "Type": "absolute",
         "Asset": "",
         "Asset_To": "",
         "Return": 0.0,
         "Confidence": 1.0,
-    })
-    return current_rows
+    }
+    current_rows.append(new_row)
+    
+    # Also update store to persist draft row
+    # Store format: lowercase keys
+    store_data = []
+    for row in current_rows:
+        store_data.append({
+            "type": row.get("Type", "absolute"),
+            "asset": row.get("Asset", ""),
+            "asset_to": row.get("Asset_To", ""),
+            "return": float(row.get("Return", 0.0) or 0.0),
+            "confidence": float(row.get("Confidence", 1.0) or 1.0),
+        })
+        
+    return current_rows, store_data
 
 
 # Clear BL views
 @callback(
     Output("po-bl-views-grid", "rowData", allow_duplicate=True),
+    Output("po-bl-views-store", "data", allow_duplicate=True),
     Input("po-bl-clear-views", "n_clicks"),
     prevent_initial_call=True,
 )
 def po_clear_bl_views(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return []
+    return [], []
 
 
-# Sync BL views grid to store
+# Sync BL views grid to store (on edit)
 @callback(
-    Output("po-bl-views-store", "data"),
-    Input("po-bl-views-grid", "rowData"),
+    Output("po-bl-views-store", "data", allow_duplicate=True),
+    Input("po-bl-views-grid", "cellValueChanged"),
+    State("po-bl-views-grid", "rowData"),
     prevent_initial_call=True,
 )
-def po_sync_bl_views_to_store(row_data):
+def po_sync_bl_views_to_store(cell_change, row_data):
     if not row_data:
         return []
+    
+    # Save ALL rows, including incomplete ones (drafts)
     views = []
     for row in row_data:
         view = {
@@ -2350,9 +2426,134 @@ def po_sync_bl_views_to_store(row_data):
             "return": float(row.get("Return", 0.0) or 0.0),
             "confidence": float(row.get("Confidence", 1.0) or 1.0),
         }
-        if view["asset"]:  # Only include views with an asset specified
-            views.append(view)
+        views.append(view)
     return views
+
+
+# Initialize BL views grid from store (on load or external update)
+@callback(
+    Output("po-bl-views-grid", "rowData", allow_duplicate=True),
+    Input("po-bl-views-store", "data"),
+    State("po-bl-views-grid", "rowData"),
+    prevent_initial_call="initial_duplicate",
+)
+def po_init_bl_views_grid(store_data, current_rows):
+    if store_data is None:
+        raise PreventUpdate
+    
+    # Check if data actually changed to avoid loop with sync-to-store callback
+    # Simple check: store_data is list of dicts with lowercase keys (type, asset, etc.)
+    # Grid expects Title Case keys (Type, Asset, etc.)
+    
+    grid_data = []
+    for item in store_data:
+        grid_data.append({
+            "Type": item.get("type", "absolute"),
+            "Asset": item.get("asset", ""),
+            "Asset_To": item.get("asset_to", ""),
+            "Return": item.get("return", 0.0),
+            "Confidence": item.get("confidence", 1.0),
+        })
+        
+    if current_rows == grid_data:
+        raise PreventUpdate
+        
+    return grid_data
+
+
+# ---------------------------------------------------------------------------
+# Linear Constraints Logic
+# ---------------------------------------------------------------------------
+
+# Populate Linear Constraints Grid Columns
+@callback(
+    Output("po-linear-constraints-grid", "columnDefs"),
+    Input("po-series-select", "data"),
+    prevent_initial_call=True,
+)
+def po_populate_linear_constraints_columns(selected_series):
+    if not selected_series:
+        return []
+    
+    cols = [
+        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "center-header"},
+        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
+         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
+         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+    ]
+    
+    for s in selected_series:
+        cols.append({
+            "field": s,
+            "editable": True,
+            "width": 100,
+            "type": "numericColumn",
+            "valueFormatter": {"function": "d3.format('.4f')(params.value)"},
+            "headerClass": "center-header",
+        })
+        
+    return cols
+
+
+# Add Linear Constraint Row
+@callback(
+    Output("po-linear-constraints-grid", "rowData", allow_duplicate=True),
+    Output("po-linear-constraints-store", "data", allow_duplicate=True),
+    Input("po-add-constraint-btn", "n_clicks"),
+    State("po-linear-constraints-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def po_add_linear_constraint(n_clicks, current_rows):
+    if not n_clicks:
+        raise PreventUpdate
+    current_rows = current_rows or []
+    # Create empty row with default name
+    new_row = {"Constraint": f"C{len(current_rows)+1}"}
+    current_rows.append(new_row)
+    return current_rows, current_rows
+
+
+# Clear Linear Constraints
+@callback(
+    Output("po-linear-constraints-grid", "rowData", allow_duplicate=True),
+    Output("po-linear-constraints-store", "data", allow_duplicate=True),
+    Input("po-clear-constraints-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_clear_linear_constraints(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return [], []
+
+
+# Sync Linear Constraints to Store (on edit)
+@callback(
+    Output("po-linear-constraints-store", "data", allow_duplicate=True),
+    Input("po-linear-constraints-grid", "cellValueChanged"),
+    State("po-linear-constraints-grid", "rowData"),
+    prevent_initial_call=True,
+)
+def po_sync_linear_constraints_to_store(cell_change, row_data):
+    if row_data is None:
+        return []
+    # Just store raw row data. We'll parse it in optimization.
+    return row_data
+
+
+# Init Linear Constraints from Store (Persistence)
+@callback(
+    Output("po-linear-constraints-grid", "rowData", allow_duplicate=True),
+    Input("po-linear-constraints-store", "data"),
+    State("po-linear-constraints-grid", "rowData"),
+    prevent_initial_call="initial_duplicate",
+)
+def po_init_linear_constraints_grid(store_data, current_rows):
+    if store_data is None:
+        raise PreventUpdate
+    if current_rows == store_data:
+        raise PreventUpdate
+    return store_data
 
 # Toggle portfolio selector visibility based on active tab
 clientside_callback(
@@ -3695,6 +3896,7 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-vol-store", "data"),
     State("po-ex-ante-corr-store", "data"),
     State("po-ex-ante-mode-store", "data"),
+    State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -3706,7 +3908,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         opt_model, missing_data, fill_in_sample_value, current_results,
                         pending_series,
                         ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
-                        ex_ante_vol, ex_ante_corr, ex_ante_mode):
+                        ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -4787,6 +4989,26 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
             json.dumps(vol_scaling) if vol_scaling else "{}",
         )
 
+        weights_df = pd.DataFrame(0.0, index=working_df.index, columns=opt_series)
+        for ww in window_weights:
+            start = pd.Timestamp(ww["apply_start"])
+            end = pd.Timestamp(ww["apply_end"])
+            mask = (weights_df.index >= start) & (weights_df.index <= end)
+            for s in opt_series:
+                weights_df.loc[mask, s] = ww["weights"].get(s, 0)
+
+        # Trim to periods where weights are applied (non-zero row sum)
+        has_weights = weights_df.sum(axis=1) > 0
+        weights_df = weights_df[has_weights]
+        working_trimmed = working_df.loc[has_weights, opt_series].fillna(0)
+
+        attribution = weights_df * working_trimmed
+        attribution_monthly = attribution.resample("ME").sum()
+        attribution_monthly = attribution_monthly.dropna(how="all")
+
+        if attribution_monthly.empty:
+            return [], []
+
         column_defs = [
             {"field": "Window Start", "pinned": "left", "width": 120},
             {"field": "Window End", "pinned": "left", "width": 120},
@@ -4994,12 +5216,14 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
     State("theme-store", "data"),
+    State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_frontier_chart(selected_portfolio, results, active_tab,
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
-                             vol_scaler, vol_scaling, series_select, theme):
+                             vol_scaler, vol_scaling, series_select, theme,
+                             linear_constraints):
     if active_tab != "frontier" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -5167,8 +5391,12 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
                 custom_cov = None
 
         frontier_pts, asset_pts = compute_efficient_frontier(
-            est_data, ann, rm=risk_measure,
-            custom_mu=custom_mu, custom_cov=custom_cov,
+            returns_df=est_data,
+            ann_factor=ann,
+            rm=risk_measure,
+            custom_mu=custom_mu,
+            custom_cov=custom_cov,
+            linear_constraints=linear_constraints,
         )
 
         # Compute selected portfolio's risk/return using this window's weights

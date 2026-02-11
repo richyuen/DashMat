@@ -222,6 +222,73 @@ def _validate_weight_constraints(asset_names, lower_bounds, upper_bounds, forced
         )
 
 
+def _parse_linear_constraints(linear_constraints, asset_names):
+    """Parse linear constraints into A and B matrices for Riskfolio.
+    
+    Riskfolio constraint form: A @ w <= B
+    
+    Args:
+        linear_constraints: List of dicts from the UI grid.
+            Each dict has 'Min', 'Max', and asset keys.
+        asset_names: List of asset names (columns of A).
+            
+    Returns:
+        (A, B) tuple of numpy arrays, or (None, None) if no constraints.
+    """
+    if not linear_constraints:
+        return None, None
+        
+    A_list = []
+    B_list = []
+    
+    asset_idx = {name: i for i, name in enumerate(asset_names)}
+    n_assets = len(asset_names)
+    
+    for row in linear_constraints:
+        # Extract coefficients
+        coeffs = np.zeros(n_assets)
+        has_coeffs = False
+        for name, idx in asset_idx.items():
+            val = row.get(name)
+            if val is not None and val != "":
+                try:
+                    coeffs[idx] = float(val)
+                    if coeffs[idx] != 0:
+                        has_coeffs = True
+                except ValueError:
+                    pass
+                    
+        if not has_coeffs:
+            # If no coefficients, check if user meant "Sum(w) >= Min" (i.e. implied all 1s)? 
+            # No, assume explicit coefficients required.
+            continue
+            
+        # Min constraint: Sum(w * c) >= Min  =>  -Sum(w * c) <= -Min
+        min_val = row.get("Min")
+        if min_val is not None and min_val != "":
+            try:
+                min_val = float(min_val)
+                A_list.append(-coeffs)
+                B_list.append(-min_val)
+            except ValueError:
+                pass
+                
+        # Max constraint: Sum(w * c) <= Max
+        max_val = row.get("Max")
+        if max_val is not None and max_val != "":
+            try:
+                max_val = float(max_val)
+                A_list.append(coeffs)
+                B_list.append(max_val)
+            except ValueError:
+                pass
+                
+    if not A_list:
+        return None, None
+        
+    return np.array(A_list), np.array(B_list).reshape(-1, 1)
+
+
 def _extract_pca_factors(returns_df, n_factors=None):
     """Extract PCA-based statistical factors from returns.
 
@@ -260,7 +327,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
                          forced_weights, free_series,
                          ex_ante_returns, ex_ante_cov, objective,
         window_data=None, exp_wt_cov=False, halflife=63,
-        ex_ante_vol=None, ex_ante_corr=None):
+        ex_ante_vol=None, ex_ante_corr=None, linear_constraints=None):
     """Run ex ante mean-variance optimization.
 
     Args:
@@ -371,6 +438,13 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
             upper_arr[i] = upper_bounds.get(name, 1)
     port.lowerlng = lower_arr.reshape(-1, 1)
     port.upperlng = upper_arr.reshape(-1, 1)
+
+    # Apply linear constraints if any
+    if linear_constraints:
+        A, B = _parse_linear_constraints(linear_constraints, asset_names)
+        if A is not None:
+            port.ainequality = A
+            port.binequality = B
 
     # Map objective to riskfolio params
     obj_map = {
@@ -543,6 +617,13 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
     port.lowerlng = lower_arr.reshape(-1, 1)
     port.upperlng = upper_arr.reshape(-1, 1)
 
+    # Apply linear constraints if any
+    if linear_constraints:
+        A, B = _parse_linear_constraints(linear_constraints, asset_names)
+        if A is not None:
+            port.ainequality = A
+            port.binequality = B
+
     # Map objective
     obj_map = {
         "maximize_sharpe": ("Sharpe", "MV"),
@@ -585,7 +666,8 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
                              forced_weights, free_series, exp_wt_cov=False, halflife=63,
                              ex_ante_returns=None, ex_ante_cov=None,
                              ex_ante_vol=None, ex_ante_corr=None,
-                             bl_views=None, bl_tau=0.05, objective="maximize_sharpe"):
+                             bl_views=None, bl_tau=0.05, objective="maximize_sharpe",
+                             linear_constraints=None):
     """Run optimization for a single window.
 
     Args:
@@ -598,6 +680,14 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         free_series: List of free (non-forced) asset names
         exp_wt_cov: Whether to use exponentially weighted covariance
         halflife: Halflife for exponentially weighted covariance
+        ex_ante_returns: Optional dict of ex-ante returns
+        ex_ante_cov: Optional dict of ex-ante covariance
+        ex_ante_vol: Optional dict of ex-ante volatility
+        ex_ante_corr: Optional dict of ex-ante correlation
+        bl_views: List of Black-Litterman views
+        bl_tau: Black-Litterman uncertainty parameter
+        objective: Optimization objective
+        linear_constraints: List of dicts defining linear constraints
 
     Returns:
         Dict of {asset_name: weight}
@@ -631,6 +721,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             objective, window_data,
             exp_wt_cov, halflife,
             ex_ante_vol, ex_ante_corr,
+            linear_constraints,
         )
 
     if model == "black_litterman":
@@ -639,6 +730,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             forced_weights, free_series,
             bl_views or [], bl_tau, objective,
             exp_wt_cov, halflife,
+            linear_constraints,
         )
 
     # Build riskfolio Portfolio
@@ -688,7 +780,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
     if has_nontrivial_bounds:
         A_rows = []
         b_rows = []
-        for i in range(n_assets):
+        for i, name in enumerate(asset_names): # Iterate over asset_names to ensure correct order
             if lower_arr[i] > 0:
                 row = np.zeros(n_assets)
                 row[i] = -1.0
@@ -700,8 +792,24 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
                 A_rows.append(row)
                 b_rows.append(upper_arr[i])
         if A_rows:
-            port.ainequality = pd.DataFrame(np.array(A_rows), columns=asset_names)
-            port.binequality = pd.DataFrame(np.array(b_rows), columns=["b"])
+            # Append to existing ainequality/binequality if they exist
+            if hasattr(port, 'ainequality') and port.ainequality is not None:
+                port.ainequality = pd.concat([port.ainequality, pd.DataFrame(np.array(A_rows), columns=asset_names)])
+                port.binequality = pd.concat([port.binequality, pd.DataFrame(np.array(b_rows), columns=["b"])])
+            else:
+                port.ainequality = pd.DataFrame(np.array(A_rows), columns=asset_names)
+                port.binequality = pd.DataFrame(np.array(b_rows), columns=["b"])
+
+    # Apply additional linear constraints if any
+    if linear_constraints:
+        A_lc, B_lc = _parse_linear_constraints(linear_constraints, asset_names)
+        if A_lc is not None:
+            if hasattr(port, 'ainequality') and port.ainequality is not None:
+                port.ainequality = pd.concat([port.ainequality, A_lc])
+                port.binequality = pd.concat([port.binequality, B_lc])
+            else:
+                port.ainequality = A_lc
+                port.binequality = B_lc
 
     try:
         if model == "risk_parity":
@@ -787,6 +895,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     bl_views = config.get("bl_views", None)
     bl_tau = config.get("bl_tau", 0.05)
     objective = config.get("objective", "maximize_sharpe")
+    linear_constraints = config.get("linear_constraints", None)
 
     # Filter to selected series only
     available_cols = [s for s in selected_series if s in returns_df.columns]
@@ -808,7 +917,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     free_series = [s for s in available_cols if s not in forced_weights]
 
     # Validate constraints globally
-    _validate_weight_constraints(available_cols, lower_bounds, upper_bounds, forced_weights)
+    _validate_weight_constraints(available_cols, lower_bounds, upper_bounds, forced_weights, linear_constraints)
 
     # Check if all (or all but one) are forced - skip optimization
     if len(free_series) <= 1:
@@ -854,18 +963,31 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
                     if c not in ex_ante_df.columns:
                         ex_ante_df[c] = 0.0
 
-        weights = _optimize_single_window(
-            ex_ante_df, model, available_cols, lower_bounds, upper_bounds,
-            forced_weights, free_series, exp_wt_cov, halflife,
-            ex_ante_returns=ex_ante_returns,
-            ex_ante_cov=ex_ante_cov,
-            ex_ante_vol=ex_ante_vol,
-            ex_ante_corr=ex_ante_corr,
-            bl_views=bl_views,
-            bl_tau=bl_tau,
-            objective=objective,
-        )
-
+        params = {
+            "window_data": ex_ante_df,
+            "model": model,
+            "asset_names": available_cols,
+            "lower_bounds": lower_bounds,
+            "upper_bounds": upper_bounds,
+            "forced_weights": forced_weights,
+            "free_series": free_series,
+            "exp_wt_cov": exp_wt_cov,
+            "halflife": halflife,
+        }
+        params.update({
+            "ex_ante_returns": ex_ante_returns,
+            "ex_ante_cov": ex_ante_cov,
+            "ex_ante_vol": ex_ante_vol,
+            "ex_ante_corr": ex_ante_corr,
+            "bl_views": bl_views,
+            "bl_tau": bl_tau,
+            "objective": objective,
+            "linear_constraints": linear_constraints,
+        })
+            
+        # Optimization
+        weights = _optimize_single_window(**params)
+        
         portfolio_returns = (df.fillna(0) * pd.Series(weights)).sum(axis=1)
         window_results = [WindowResult(
             apply_start=df.index[0],
@@ -1015,7 +1137,7 @@ def compute_risk_contributions(weights_dict, returns_df):
 
 
 def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
-                               custom_mu=None, custom_cov=None):
+                               custom_mu=None, custom_cov=None, linear_constraints=None):
     """Compute the efficient frontier for a given risk measure.
 
     Args:
@@ -1025,6 +1147,7 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
         n_points: Number of frontier points
         custom_mu: Optional DataFrame of expected returns (already annualized, shape 1 x n_assets)
         custom_cov: Optional DataFrame of covariance matrix (already annualized)
+        linear_constraints: Optional list of dicts defining linear constraints
 
     Returns:
         Tuple of (frontier_points, asset_points) where:
@@ -1038,6 +1161,13 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
     if use_custom:
         port.mu = custom_mu
         port.cov = custom_cov
+
+    # Apply linear constraints if any
+    if linear_constraints:
+        A, B = _parse_linear_constraints(linear_constraints, returns_df.columns)
+        if A is not None:
+            port.ainequality = A
+            port.binequality = B
 
     frontier = port.efficient_frontier(
         model="Classic", rm=rm, points=n_points, rf=0, hist=not use_custom

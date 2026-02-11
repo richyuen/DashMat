@@ -426,6 +426,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
+                                        "cellStyle": {"textAlign": "center"},
+                                        "headerClass": "center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -516,6 +518,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
+                                        "cellStyle": {"textAlign": "center"},
+                                        "headerClass": "center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -559,6 +563,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     defaultColDef={
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
+                                        "cellStyle": {"textAlign": "center"},
+                                        "headerClass": "center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -611,6 +617,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 "sortable": True,
                                 "resizable": True,
                                 "suppressHeaderMenuButton": True,
+                                "cellStyle": {"textAlign": "center"},
+                                "headerClass": "center-header",
                             },
                             style={"height": "100%", "width": "100%"},
                             dashGridOptions={
@@ -695,6 +703,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
+                                        "cellStyle": {"textAlign": "center"},
+                                        "headerClass": "center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -751,6 +761,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "sortable": True,
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
+                                        "cellStyle": {"textAlign": "center"},
+                                        "headerClass": "center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -3261,22 +3273,68 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                         row[series] = None
                 row_data.append(row)
 
+            # Calculate max absolute value for conditional formatting gradient
+            max_abs = 0
+            for row in row_data:
+                for key, val in row.items():
+                    if key != "Year" and val is not None:
+                        max_abs = max(max_abs, abs(val))
+
+            # Build styleConditions for green/red gradient (10 bins)
+            style_conditions = []
+            if max_abs > 0:
+                n_bins = 10
+                for i in range(n_bins):
+                    lo = max_abs * i / n_bins
+                    hi = max_abs * (i + 1) / n_bins
+                    alpha = round(0.1 + 0.6 * (i + 1) / n_bins, 2)
+                    text_color = "#fff" if alpha > 0.4 else "inherit"
+                    # Positive bins
+                    if i == n_bins - 1:
+                        style_conditions.append({
+                            "condition": f"params.value >= {lo}",
+                            "style": {"backgroundColor": f"rgba(34, 139, 34, {alpha})", "color": text_color, "textAlign": "center"},
+                        })
+                    else:
+                        style_conditions.append({
+                            "condition": f"params.value >= {lo} && params.value < {hi}",
+                            "style": {"backgroundColor": f"rgba(34, 139, 34, {alpha})", "color": text_color, "textAlign": "center"},
+                        })
+                    if i == n_bins - 1:
+                        style_conditions.append({
+                            "condition": f"params.value <= {-lo}",
+                            "style": {"backgroundColor": f"rgba(220, 38, 38, {alpha})", "color": text_color, "textAlign": "center"},
+                        })
+                    else:
+                        style_conditions.append({
+                            "condition": f"params.value <= {-lo} && params.value > {-hi}",
+                            "style": {"backgroundColor": f"rgba(220, 38, 38, {alpha})", "color": text_color, "textAlign": "center"},
+                        })
+
+            cell_style = {"styleConditions": style_conditions, "defaultStyle": {"textAlign": "center"}} if style_conditions else {"textAlign": "center"}
+
             # Create column definitions with conditional formatting
             column_defs = [
                 {
                     "field": "Year",
                     "pinned": "left",
                     "width": 100,
+                    "cellStyle": {"textAlign": "center"},
+                    "headerClass": "center-header",
                 }
             ]
 
             for series in selected_series:
                 if series in calendar_returns:
-                    column_defs.append({
+                    col_def = {
                         "field": series,
                         "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                         "width": 120,
-                    })
+                        "headerClass": "center-header",
+                    }
+                    if cell_style:
+                        col_def["cellStyle"] = cell_style
+                    column_defs.append(col_def)
 
             return column_defs, row_data
 
