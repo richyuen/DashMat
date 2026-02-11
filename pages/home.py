@@ -1,7 +1,8 @@
 """Home portal page for DashMat."""
 
 import dash_mantine_components as dmc
-from dash import register_page
+from dash import register_page, html, callback, Input, Output, State, clientside_callback
+from dash_iconify import DashIconify
 
 register_page(__name__, path="/", name="Home", title="DashMat")
 
@@ -9,6 +10,20 @@ layout = dmc.Container(
     size="lg",
     py="xl",
     children=[
+        # Theme Toggle (Top Right)
+        dmc.Group(
+            justify="flex-end",
+            mb="xl",
+            children=[
+                dmc.ActionIcon(
+                    DashIconify(icon="tabler:sun", width=20),
+                    id="home-theme-toggle",
+                    variant="outline",
+                    size="lg",
+                    color="yellow",
+                ),
+            ],
+        ),
         dmc.Stack(
             align="center",
             gap="xl",
@@ -71,3 +86,28 @@ layout = dmc.Container(
         ),
     ],
 )
+
+# Clientside callback to toggle theme in local storage store
+clientside_callback(
+    """
+    function(n_clicks, current_theme) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        return current_theme === "dark" ? "light" : "dark";
+    }
+    """,
+    Output("theme-store", "data", allow_duplicate=True),
+    Input("home-theme-toggle", "n_clicks"),
+    State("theme-store", "data"),
+    prevent_initial_call=True,
+)
+
+# Server-side callback to update toggle icon and color
+@callback(
+    Output("home-theme-toggle", "children"),
+    Output("home-theme-toggle", "color"),
+    Input("theme-store", "data"),
+)
+def update_toggle_icon(theme):
+    if theme == "dark":
+        return DashIconify(icon="tabler:sun", width=20), "yellow"
+    return DashIconify(icon="tabler:moon", width=20), "blue"
