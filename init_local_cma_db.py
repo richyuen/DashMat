@@ -5,16 +5,78 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column, text
+from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column
 
 from dbengine import engine, DATABASE_URL
 from utils.sample_data import get_sample_file_path
-from utils.core_categories import ensure_core_categories_table
 
 
 VERSIONS = [2025, 2026]
 TYPES = ["hmm", "equilibrium.gp"]
 ITEMS = ["Mean", "SD", "Skewness", "Kurtosis"]
+
+CORE_CATEGORY_MAP: dict[str, dict[str, str]] = {
+    "SPX": {
+        "CoreCat": "S&P 500",
+        "AssetClass": "Equity",
+        "PeerBench": "Large Blend",
+        "AATool": "S&P 500",
+    },
+    "RMID": {
+        "CoreCat": "Russell Midcap",
+        "AssetClass": "Equity",
+        "PeerBench": "Mid-Cap Blend",
+        "AATool": "Russell Mid",
+    },
+    "R2000": {
+        "CoreCat": "Russell 2000",
+        "AssetClass": "Equity",
+        "PeerBench": "Small Blend",
+        "AATool": "Russell 2000",
+    },
+    "EAFE": {
+        "CoreCat": "MSCI EAFE",
+        "AssetClass": "Equity",
+        "PeerBench": "Foreign Large Blend",
+        "AATool": "EAFE",
+    },
+    "EM": {
+        "CoreCat": "MSCI Emerging Markets",
+        "AssetClass": "Equity",
+        "PeerBench": "Diversified Emerging Mkts",
+        "AATool": "EM",
+    },
+    "MSCIUSREIT": {
+        "CoreCat": "MSCI US REIT",
+        "AssetClass": "Equity",
+        "PeerBench": "Real Estate",
+        "AATool": "US REIT",
+    },
+    "BCAgg": {
+        "CoreCat": "Bloomberg US Aggregate",
+        "AssetClass": "Bond",
+        "PeerBench": "Intermediate Core Bond",
+        "AATool": "US Agg",
+    },
+    "BCHY": {
+        "CoreCat": "Bloomberg US High Yield",
+        "AssetClass": "Bond",
+        "PeerBench": "High Yield Bond",
+        "AATool": "US High Yield",
+    },
+    "BCGAgg": {
+        "CoreCat": "Bloomberg Global Aggregate",
+        "AssetClass": "Bond",
+        "PeerBench": "Global Bond",
+        "AATool": "Global Agg",
+    },
+    "BCGC13": {
+        "CoreCat": "Bloomberg US Treasury 1-3 Year",
+        "AssetClass": "Bond",
+        "PeerBench": "Short Government",
+        "AATool": "UST 1-3Y",
+    },
+}
 
 
 def _load_monthly_returns() -> pd.DataFrame:
@@ -32,7 +94,7 @@ def _transform_for_type(df: pd.DataFrame, cma_type: str) -> pd.DataFrame:
     return df * 0.90
 
 
-def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
+def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table]:
     cma_corr = Table(
         "CMACorrelation",
         metadata,
@@ -60,7 +122,46 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
         Column("Item", String(32), primary_key=True),
         Column("Value", Float, nullable=False),
     )
-    return cma_corr, cma_ret, cma_stats
+    core_categories = Table(
+        "CoreCategories",
+        metadata,
+        Column("CoreCatOrder", Integer, primary_key=True),
+        Column("CoreCat", String(128), nullable=False),
+        Column("AssetClass", String(32), nullable=False),
+        Column("FOFBench", String(128), nullable=False),
+        Column("CMABench", String(64), nullable=False),
+        Column("PeerBench", String(128), nullable=False),
+        Column("AATool", String(64), nullable=False),
+    )
+    return cma_corr, cma_ret, cma_stats, core_categories
+
+
+def _default_core_category_meta(bench: str) -> dict[str, str]:
+    is_bond = bench.upper().startswith("BC")
+    return {
+        "CoreCat": bench,
+        "AssetClass": "Bond" if is_bond else "Equity",
+        "PeerBench": "Unspecified",
+        "AATool": bench,
+    }
+
+
+def _core_category_rows(benches: list[str]) -> list[dict]:
+    rows: list[dict] = []
+    for idx, bench in enumerate(sorted(benches), start=1):
+        meta = CORE_CATEGORY_MAP.get(bench, _default_core_category_meta(bench))
+        rows.append(
+            {
+                "CoreCatOrder": idx,
+                "CoreCat": meta["CoreCat"],
+                "AssetClass": meta["AssetClass"],
+                "FOFBench": f"{bench}_TRIndex",
+                "CMABench": bench,
+                "PeerBench": meta["PeerBench"],
+                "AATool": meta["AATool"],
+            }
+        )
+    return rows
 
 
 def _stats_rows(df: pd.DataFrame, version: int, cma_type: str) -> list[dict]:
@@ -124,7 +225,7 @@ def _returns_rows(df: pd.DataFrame, version: int, cma_type: str) -> list[dict]:
 def main() -> None:
     base_df = _load_monthly_returns()
     metadata = MetaData()
-    cma_corr, cma_ret, cma_stats = _build_tables(metadata)
+    cma_corr, cma_ret, cma_stats, core_categories = _build_tables(metadata)
 
     metadata.drop_all(engine, checkfirst=True)
     metadata.create_all(engine)
@@ -142,22 +243,22 @@ def main() -> None:
             ret_rows.extend(_returns_rows(typed_df, version, cma_type))
             stats_rows.extend(_stats_rows(typed_df, version, cma_type))
 
+    core_cat_rows = _core_category_rows(
+        sorted({str(r["Bench"]) for r in ret_rows if r.get("Bench") is not None})
+    )
+
     with engine.begin() as conn:
         conn.execute(cma_corr.insert(), corr_rows)
         conn.execute(cma_ret.insert(), ret_rows)
         conn.execute(cma_stats.insert(), stats_rows)
-
-    ensure_core_categories_table(engine)
+        if core_cat_rows:
+            conn.execute(core_categories.insert(), core_cat_rows)
 
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
     print(f"CMAReturns rows: {len(ret_rows)}")
     print(f"CMAStats rows: {len(stats_rows)}")
-    with engine.connect() as conn:
-        core_cat_count = conn.execute(
-            text("SELECT COUNT(*) FROM CoreCategories")
-        ).scalar_one()
-    print(f"CoreCategories rows: {core_cat_count}")
+    print(f"CoreCategories rows: {len(core_cat_rows)}")
 
 
 if __name__ == "__main__":
