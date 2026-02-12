@@ -477,7 +477,7 @@ def build_po_main_layout():
                                                             {"label": "Covariance", "value": "ret_cov"},
                                                             {"label": "Vol / Correlation", "value": "ret_vol_corr"},
                                                         ],
-                                                        value="ret_cov",
+                                                        value="ret_vol_corr",
                                                         size="xs",
                                                     ),
                                                     style={"height": "36px", "display": "flex", "alignItems": "center"},
@@ -618,6 +618,20 @@ def build_po_main_layout():
                                             gap="xs",
                                             mb="sm",
                                             children=[
+                                                dmc.Button(
+                                                    "Load from DB",
+                                                    id="po-load-db-returns-btn",
+                                                    variant="outline",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:database"),
+                                                ),
+                                                dmc.Button(
+                                                    "Estimate from Data",
+                                                    id="po-estimate-returns-btn",
+                                                    variant="outline",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:calculator"),
+                                                ),
                                                 dcc.Upload(
                                                     id="po-ex-ante-returns-upload",
                                                     children=dmc.Button(
@@ -628,20 +642,6 @@ def build_po_main_layout():
                                                     ),
                                                     multiple=False,
                                                     accept=".csv",
-                                                ),
-                                                dmc.Button(
-                                                    "Estimate from Data",
-                                                    id="po-estimate-returns-btn",
-                                                    variant="outline",
-                                                    size="xs",
-                                                    leftSection=DashIconify(icon="tabler:calculator"),
-                                                ),
-                                                dmc.Button(
-                                                    "Load from DB",
-                                                    id="po-load-db-returns-btn",
-                                                    variant="outline",
-                                                    size="xs",
-                                                    leftSection=DashIconify(icon="tabler:database"),
                                                 ),
                                                 dmc.Button(
                                                     "Clear All",
@@ -693,6 +693,20 @@ def build_po_main_layout():
                                             gap="xs",
                                             mb="sm",
                                             children=[
+                                                dmc.Button(
+                                                    "Load from DB",
+                                                    id="po-load-db-matrix-btn",
+                                                    variant="outline",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:database"),
+                                                ),
+                                                dmc.Button(
+                                                    "Estimate from Data",
+                                                    id="po-estimate-matrix-btn",
+                                                    variant="outline",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:calculator"),
+                                                ),
                                                 dcc.Upload(
                                                     id="po-ex-ante-matrix-upload",
                                                     children=dmc.Button(
@@ -704,20 +718,6 @@ def build_po_main_layout():
                                                     ),
                                                     multiple=False,
                                                     accept=".csv",
-                                                ),
-                                                dmc.Button(
-                                                    "Estimate from Data",
-                                                    id="po-estimate-matrix-btn",
-                                                    variant="outline",
-                                                    size="xs",
-                                                    leftSection=DashIconify(icon="tabler:calculator"),
-                                                ),
-                                                dmc.Button(
-                                                    "Load from DB",
-                                                    id="po-load-db-matrix-btn",
-                                                    variant="outline",
-                                                    size="xs",
-                                                    leftSection=DashIconify(icon="tabler:database"),
                                                 ),
                                                 dmc.Button(
                                                     "Clear All",
@@ -1711,7 +1711,7 @@ layout = dmc.Container(
         dcc.Store(id="po-ex-ante-cov-store", data={}, storage_type="session"),
         dcc.Store(id="po-ex-ante-vol-store", data={}, storage_type="session"),
         dcc.Store(id="po-ex-ante-corr-store", data={}, storage_type="session"),
-        dcc.Store(id="po-ex-ante-mode-store", data="ret_cov", storage_type="session"),
+        dcc.Store(id="po-ex-ante-mode-store", data="ret_vol_corr", storage_type="session"),
         dcc.Store(id="po-bl-views-store", data=[], storage_type="session"),
         dcc.Store(id="po-linear-constraints-store", data=[], storage_type="session"),
         dcc.Store(id="po-bl-tau-store", data=0.05, storage_type="session"),
