@@ -45,3 +45,5 @@ nul
 # Project specific
 *.xlsx
 *.csv
+data/
+*.db
