@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column
+from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column, text
 
 from dbengine import engine, DATABASE_URL
 from utils.sample_data import get_sample_file_path
+from utils.core_categories import ensure_core_categories_table
 
 
 VERSIONS = [2025, 2026]
@@ -146,10 +147,17 @@ def main() -> None:
         conn.execute(cma_ret.insert(), ret_rows)
         conn.execute(cma_stats.insert(), stats_rows)
 
+    ensure_core_categories_table(engine)
+
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
     print(f"CMAReturns rows: {len(ret_rows)}")
     print(f"CMAStats rows: {len(stats_rows)}")
+    with engine.connect() as conn:
+        core_cat_count = conn.execute(
+            text("SELECT COUNT(*) FROM CoreCategories")
+        ).scalar_one()
+    print(f"CoreCategories rows: {core_cat_count}")
 
 
 if __name__ == "__main__":

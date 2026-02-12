@@ -32,6 +32,7 @@ from utils.optimization import run_portfolio_optimization, compute_risk_contribu
 from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
+from utils.core_categories import get_core_category_options, load_cma_returns_for_benches
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
@@ -211,12 +212,27 @@ def build_po_welcome_screen():
             DashIconify(icon="tabler:chart-pie", width=60, color="#adb5bd"),
             dmc.Text("Portfolio Optimization", size="xl", fw=500, c="dimmed", mt="md"),
             dmc.Text("Add series from file to begin", size="sm", c="dimmed"),
-            dmc.Button(
-                "Add series from file",
-                leftSection=DashIconify(icon="tabler:upload"),
-                variant="outline",
+            dmc.Group(
+                gap="sm",
                 mt="lg",
-                id="po-welcome-add-series-btn",
+                children=[
+                    dmc.Button(
+                        "Add from database",
+                        leftSection=DashIconify(icon="tabler:database"),
+                        variant="outline",
+                        size="sm",
+                        w=210,
+                        id="po-welcome-add-db-btn",
+                    ),
+                    dmc.Button(
+                        "Add series from file",
+                        leftSection=DashIconify(icon="tabler:upload"),
+                        variant="outline",
+                        size="sm",
+                        w=210,
+                        id="po-welcome-add-series-btn",
+                    ),
+                ],
             ),
             dmc.Group(
                 gap="md",
@@ -228,6 +244,7 @@ def build_po_welcome_screen():
                         id="po-download-sample-daily-btn",
                         size="sm",
                         variant="light",
+                        w=210,
                     ),
                     dmc.Button(
                         "Sample Monthly File",
@@ -235,6 +252,7 @@ def build_po_welcome_screen():
                         id="po-download-sample-monthly-btn",
                         size="sm",
                         variant="light",
+                        w=210,
                     ),
                 ],
             ),
@@ -1187,6 +1205,7 @@ layout = dmc.Container(
                             children=[
                                 dmc.MenuTarget(dmc.Button("File", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
+                                    dmc.MenuItem("Add from database", id="po-menu-add-from-db"),
                                     dmc.MenuItem("Add series from file", id="po-menu-add-series"),
                                     dmc.MenuDivider(),
                                     dmc.MenuItem("Save Session", id="po-menu-save-session"),
@@ -1380,6 +1399,54 @@ layout = dmc.Container(
                             dmc.Text(id="po-completion-text", children="", size="sm", c="dimmed"),
                             dmc.Button("Close", id="po-close-completion-button", size="sm", variant="light"),
                         ]),
+                    ],
+                ),
+            ],
+        ),
+
+        # Add-from-database modal
+        dmc.Modal(
+            id="po-db-add-modal",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:database"), color="indigo", variant="light", size="sm"),
+                    dmc.Text("Add from database", fw=600, size="sm"),
+                ],
+            ),
+            size="md",
+            centered=True,
+            closeOnClickOutside=True,
+            withCloseButton=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
+            children=[
+                dmc.Alert(
+                    id="po-db-add-error-alert",
+                    title="Cannot add series",
+                    color="red",
+                    hide=True,
+                    mb="sm",
+                ),
+                dmc.MultiSelect(
+                    id="po-db-add-series-select",
+                    label="Core Categories",
+                    data=[],
+                    value=[],
+                    searchable=True,
+                    clearSearchOnChange=False,
+                    placeholder="Select one or more categories",
+                    nothingFoundMessage="No categories found",
+                    w="100%",
+                ),
+                dmc.Group(
+                    mt="md",
+                    justify="flex-end",
+                    children=[
+                        dmc.Button("Cancel", id="po-db-add-cancel-button", variant="outline", color="red"),
+                        dmc.Button("OK", id="po-db-add-ok-button", color="blue", disabled=True),
                     ],
                 ),
             ],
@@ -1947,6 +2014,62 @@ clientside_callback(
     Input("po-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
 )
+
+# Open add-from-database modal and refresh options
+@callback(
+    Output("po-db-add-modal", "opened", allow_duplicate=True),
+    Output("po-db-add-series-select", "data", allow_duplicate=True),
+    Output("po-db-add-series-select", "value", allow_duplicate=True),
+    Input("po-menu-add-from-db", "n_clicks"),
+    Input("po-welcome-add-db-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_open_db_add_modal(menu_clicks, welcome_clicks):
+    if not menu_clicks and not welcome_clicks:
+        raise PreventUpdate
+    options = get_core_category_options(DB_ENGINE)
+    return True, options, []
+
+
+@callback(
+    Output("po-db-add-modal", "opened", allow_duplicate=True),
+    Output("po-db-add-series-select", "value", allow_duplicate=True),
+    Input("po-db-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_close_db_add_modal(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False, []
+
+
+@callback(
+    Output("po-db-add-error-alert", "children"),
+    Output("po-db-add-error-alert", "hide"),
+    Output("po-db-add-ok-button", "disabled"),
+    Input("po-db-add-series-select", "value"),
+    Input("analyticstool-raw-data-store", "data"),
+    Input("po-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+def po_validate_db_add_selection(selected_benches, raw_data, opened):
+    if not opened:
+        raise PreventUpdate
+
+    if not selected_benches:
+        return no_update, True, True
+
+    existing_cols = set()
+    if raw_data:
+        try:
+            existing_cols = set(json_to_df(raw_data).columns)
+        except Exception:
+            existing_cols = set()
+
+    duplicates = [s for s in selected_benches if s in existing_cols]
+    if duplicates:
+        return f"Cannot add duplicate series: {', '.join(duplicates)}", False, True
+    return no_update, True, False
 
 # Trigger upload from menu
 clientside_callback(
@@ -3493,20 +3616,8 @@ def po_toggle_ui_elements(name, selected, welcome_style, results_data):
     prevent_initial_call=True,
 )
 def po_update_periodicity_defaults(periodicity, unit, stored_ws, stored_step, stored_hl):
-    # If all three stores have values, this is the initial fire from page-load
-    # restore setting the periodicity — return stored values instead of defaults.
-    # On subsequent user-initiated periodicity changes the UI values (now matching
-    # stored values) will have been synced back to stores, but the periodicity
-    # itself changed so the defaults are appropriate.
-    trigger = callback_context.triggered_id
-    if trigger == "po-periodicity-select" and stored_ws is not None:
-        ws_default, step_p, step_m, hl_default = _periodicity_defaults(periodicity)
-        step_default = step_m if unit == "months" else step_p
-        # If stored values differ from this periodicity's defaults, user had
-        # customised them — preserve them.
-        if (stored_ws != ws_default or stored_step != step_default
-                or stored_hl != hl_default):
-            return stored_ws, stored_step, stored_hl
+    # Always apply periodicity defaults when periodicity changes:
+    # weekly -> 52, monthly -> 12, daily -> 252.
     ws, step_periods, step_months, hl = _periodicity_defaults(periodicity)
     step = step_months if unit == "months" else step_periods
     return ws, step, hl
@@ -3533,6 +3644,150 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
 # ---------------------------------------------------------------------------
 # File upload
 # ---------------------------------------------------------------------------
+
+@callback(
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
+    Output("po-periodicity-select", "data", allow_duplicate=True),
+    Output("po-periodicity-select", "value", allow_duplicate=True),
+    Output("po-periodicity-select", "disabled", allow_duplicate=True),
+    Output("po-temp-series-select", "data", allow_duplicate=True),
+    Output("po-alert-message", "children", allow_duplicate=True),
+    Output("po-alert-message", "color", allow_duplicate=True),
+    Output("po-alert-message", "hide", allow_duplicate=True),
+    Output("po-periodicity-value-store", "data", allow_duplicate=True),
+    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-long-short-store", "data", allow_duplicate=True),
+    Output("po-temp-series-order-store", "data", allow_duplicate=True),
+    Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("po-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-min-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-max-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-force-max-store", "data", allow_duplicate=True),
+    Output("po-db-add-modal", "opened", allow_duplicate=True),
+    Output("po-db-add-series-select", "value", allow_duplicate=True),
+    Input("po-db-add-ok-button", "n_clicks"),
+    State("po-db-add-series-select", "value"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
+    State("po-series-select", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-series-order-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-min-wt-store", "data"),
+    State("po-max-wt-store", "data"),
+    State("po-force-max-store", "data"),
+    prevent_initial_call=True,
+)
+def po_add_series_from_database(
+    n_clicks,
+    selected_benches,
+    existing_data,
+    existing_periodicity,
+    current_selection,
+    current_bench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
+    current_min_wt,
+    current_max_wt,
+    current_force_max,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    n_no = no_update
+    if not selected_benches:
+        return (
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            "Select at least one series from the database.",
+            "orange",
+            False,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no,
+            True, n_no,
+        )
+
+    try:
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [s for s in selected_benches if s in existing_cols]
+            if duplicates:
+                return (
+                    n_no, n_no, n_no, n_no, n_no, n_no,
+                    f"Cannot add duplicate series: {', '.join(duplicates)}",
+                    "red",
+                    False,
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no, n_no, n_no,
+                    True, n_no,
+                )
+
+        new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches)
+        if new_df.empty:
+            raise ValueError("No rows returned for selected CMABench values.")
+
+        new_periodicity = detect_periodicity(new_df)
+
+        if existing_data is not None:
+            existing_df = json_to_df(existing_data)
+            if existing_periodicity == "monthly" and new_periodicity == "daily":
+                new_df = resample_returns(new_df, "monthly")
+                combined_periodicity = "monthly"
+            elif new_periodicity == "monthly" and existing_periodicity == "daily":
+                existing_df = resample_returns(existing_df, "monthly")
+                combined_periodicity = "monthly"
+            else:
+                combined_periodicity = existing_periodicity
+            merged_df = merge_returns(existing_df, new_df)
+        else:
+            merged_df = new_df
+            combined_periodicity = new_periodicity
+
+        periodicity_options = get_available_periodicities(combined_periodicity)
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+
+        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        updated_selection = (current_selection or []) + new_series
+
+        alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
+
+        return (
+            df_to_json(merged_df),
+            combined_periodicity,
+            periodicity_options,
+            default_periodicity,
+            False,
+            updated_selection,
+            alert_msg,
+            "green",
+            False,
+            default_periodicity,
+            True,
+            current_bench or {},
+            current_ls or {},
+            current_order or [],
+            [],
+            current_vol_scaling or {},
+            current_min_wt or {},
+            current_max_wt or {},
+            current_force_max or {},
+            False,
+            [],
+        )
+    except Exception as e:
+        return (
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            f"Error loading database series: {str(e)}",
+            "red",
+            False,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no,
+            True, n_no,
+        )
+
 
 @callback(
     Output("analyticstool-raw-data-store", "data", allow_duplicate=True),

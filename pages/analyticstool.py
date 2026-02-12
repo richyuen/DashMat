@@ -38,7 +38,8 @@ from utils.statistics import (
     generate_correlogram_cached,
 )
 from utils.charting import apply_chart_theme
-from dbengine import AG_GRID_LICENSE_KEY
+from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE
+from utils.core_categories import get_core_category_options, load_cma_returns_for_benches
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -101,12 +102,27 @@ def build_welcome_screen():
             DashIconify(icon="fluent-mdl2:chart", width=60, color="#adb5bd"),
             dmc.Text("Welcome to the Analytics Tool", size="xl", fw=500, c="dimmed", mt="md"),
             dmc.Text("Add a data series to begin", size="sm", c="dimmed"),
-            dmc.Button(
-                "Add series from file",
-                leftSection=DashIconify(icon="tabler:upload"),
-                variant="outline",
+            dmc.Group(
+                gap="sm",
                 mt="lg",
-                id="welcome-add-series-btn"
+                children=[
+                    dmc.Button(
+                        "Add from database",
+                        leftSection=DashIconify(icon="tabler:database"),
+                        variant="outline",
+                        size="sm",
+                        w=210,
+                        id="welcome-add-db-btn",
+                    ),
+                    dmc.Button(
+                        "Add series from file",
+                        leftSection=DashIconify(icon="tabler:upload"),
+                        variant="outline",
+                        size="sm",
+                        w=210,
+                        id="welcome-add-series-btn",
+                    ),
+                ],
             ),
             dmc.Group(
                 gap="md",
@@ -118,6 +134,7 @@ def build_welcome_screen():
                         id="download-sample-daily-btn",
                         size="sm",
                         variant="light",
+                        w=210,
                     ),
                     dmc.Button(
                         "Sample Monthly File",
@@ -125,6 +142,7 @@ def build_welcome_screen():
                         id="download-sample-monthly-btn",
                         size="sm",
                         variant="light",
+                        w=210,
                     ),
                 ],
             ),
@@ -252,6 +270,62 @@ def at_toggle_save_session(welcome_style):
     if not welcome_style:
         return True
     return welcome_style.get("display") != "none"
+
+
+@callback(
+    Output("db-add-modal", "opened", allow_duplicate=True),
+    Output("db-add-series-select", "data", allow_duplicate=True),
+    Output("db-add-series-select", "value", allow_duplicate=True),
+    Input("menu-add-from-db", "n_clicks"),
+    Input("welcome-add-db-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def open_db_add_modal(menu_clicks, welcome_clicks):
+    if not menu_clicks and not welcome_clicks:
+        raise PreventUpdate
+    options = get_core_category_options(DB_ENGINE)
+    return True, options, []
+
+
+@callback(
+    Output("db-add-modal", "opened", allow_duplicate=True),
+    Output("db-add-series-select", "value", allow_duplicate=True),
+    Input("db-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def close_db_add_modal(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False, []
+
+
+@callback(
+    Output("db-add-error-alert", "children"),
+    Output("db-add-error-alert", "hide"),
+    Output("db-add-ok-button", "disabled"),
+    Input("db-add-series-select", "value"),
+    Input("analyticstool-raw-data-store", "data"),
+    Input("db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+def validate_db_add_selection(selected_benches, raw_data, opened):
+    if not opened:
+        raise PreventUpdate
+
+    if not selected_benches:
+        return no_update, True, True
+
+    existing_cols = set()
+    if raw_data:
+        try:
+            existing_cols = set(json_to_df(raw_data).columns)
+        except Exception:
+            existing_cols = set()
+
+    duplicates = [s for s in selected_benches if s in existing_cols]
+    if duplicates:
+        return f"Cannot add duplicate series: {', '.join(duplicates)}", False, True
+    return no_update, True, False
 
 
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
@@ -820,6 +894,10 @@ layout = dmc.Container(
                                 dmc.MenuDropdown(
                                     children=[
                                         dmc.MenuItem(
+                                            "Add from database",
+                                            id="menu-add-from-db",
+                                        ),
+                                        dmc.MenuItem(
                                             "Add series from file",
                                             id="menu-add-series",
                                         ),
@@ -967,6 +1045,54 @@ layout = dmc.Container(
                     children=[
                         dmc.Button("Cancel", id="modal-cancel-button", variant="outline", color="red"),
                         dmc.Button("OK", id="modal-ok-button", color="blue"),
+                    ],
+                ),
+            ],
+        ),
+
+        # Add-from-database Modal
+        dmc.Modal(
+            id="db-add-modal",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:database"), color="indigo", variant="light", size="sm"),
+                    dmc.Text("Add from database", fw=600, size="sm"),
+                ],
+            ),
+            size="md",
+            centered=True,
+            closeOnClickOutside=True,
+            withCloseButton=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
+            children=[
+                dmc.Alert(
+                    id="db-add-error-alert",
+                    title="Cannot add series",
+                    color="red",
+                    hide=True,
+                    mb="sm",
+                ),
+                dmc.MultiSelect(
+                    id="db-add-series-select",
+                    label="Core Categories",
+                    data=[],
+                    value=[],
+                    searchable=True,
+                    clearSearchOnChange=False,
+                    placeholder="Select one or more categories",
+                    nothingFoundMessage="No categories found",
+                    w="100%",
+                ),
+                dmc.Group(
+                    mt="md",
+                    justify="flex-end",
+                    children=[
+                        dmc.Button("Cancel", id="db-add-cancel-button", variant="outline", color="red"),
+                        dmc.Button("OK", id="db-add-ok-button", color="blue", disabled=True),
                     ],
                 ),
             ],
@@ -1970,6 +2096,156 @@ clientside_callback(
 
 
 
+
+
+@callback(
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
+    Output("periodicity-select", "data", allow_duplicate=True),
+    Output("periodicity-select", "value", allow_duplicate=True),
+    Output("periodicity-select", "disabled", allow_duplicate=True),
+    Output("temp-series-select", "data", allow_duplicate=True),
+    Output("alert-message", "children", allow_duplicate=True),
+    Output("alert-message", "color", allow_duplicate=True),
+    Output("alert-message", "hide", allow_duplicate=True),
+    Output("periodicity-value-store", "data", allow_duplicate=True),
+    Output("series-selection-modal", "opened", allow_duplicate=True),
+    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("temp-long-short-store", "data", allow_duplicate=True),
+    Output("temp-series-order-store", "data", allow_duplicate=True),
+    Output("first-load-store", "data", allow_duplicate=True),
+    Output("temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("db-add-modal", "opened", allow_duplicate=True),
+    Output("db-add-series-select", "value", allow_duplicate=True),
+    Input("db-add-ok-button", "n_clicks"),
+    State("db-add-series-select", "value"),
+    State("analyticstool-raw-data-store", "data"),
+    State("analyticstool-original-periodicity-store", "data"),
+    State("series-select", "data"),
+    State("benchmark-assignments-store", "data"),
+    State("long-short-store", "data"),
+    State("series-order-store", "data"),
+    State("first-load-store", "data"),
+    State("vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+def add_series_from_database(
+    n_clicks,
+    selected_benches,
+    existing_data,
+    existing_periodicity,
+    current_selection,
+    current_bench,
+    current_ls,
+    current_order,
+    first_load,
+    current_vol_scaling,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    n_no = no_update
+    if not selected_benches:
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            "Select at least one series from the database.",
+            "orange",
+            False,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            True, n_no,
+        )
+
+    try:
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [s for s in selected_benches if s in existing_cols]
+            if duplicates:
+                return (
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no,
+                    f"Cannot add duplicate series: {', '.join(duplicates)}",
+                    "red",
+                    False,
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no,
+                    True, n_no,
+                )
+
+        new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches)
+        if new_df.empty:
+            raise ValueError("No rows returned for selected CMABench values.")
+
+        new_periodicity = detect_periodicity(new_df)
+
+        if existing_data is not None:
+            existing_df = json_to_df(existing_data)
+            if existing_periodicity == "monthly" and new_periodicity == "daily":
+                new_df = resample_returns(new_df, "monthly")
+                combined_periodicity = "monthly"
+            elif new_periodicity == "monthly" and existing_periodicity == "daily":
+                existing_df = resample_returns(existing_df, "monthly")
+                combined_periodicity = "monthly"
+            else:
+                combined_periodicity = existing_periodicity
+            merged_df = merge_returns(existing_df, new_df)
+        else:
+            merged_df = new_df
+            combined_periodicity = new_periodicity
+
+        periodicity_options = get_available_periodicities(combined_periodicity)
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+
+        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        updated_selection = (current_selection or []) + new_series
+
+        if not first_load:
+            alert_msg = (
+                f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
+            )
+            alert_color = "green"
+            alert_hide = False
+            new_first_load = True
+        else:
+            alert_msg = n_no
+            alert_color = n_no
+            alert_hide = True
+            new_first_load = True
+
+        return (
+            df_to_json(merged_df),
+            combined_periodicity,
+            periodicity_options,
+            default_periodicity,
+            False,
+            updated_selection,
+            alert_msg,
+            alert_color,
+            alert_hide,
+            default_periodicity,
+            True,
+            current_bench or {},
+            current_ls or {},
+            current_order or [],
+            new_first_load,
+            [],
+            current_vol_scaling or {},
+            False,
+            [],
+        )
+    except Exception as e:
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            f"Error loading database series: {str(e)}",
+            "red",
+            False,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            True, n_no,
+        )
 
 
 @callback(
