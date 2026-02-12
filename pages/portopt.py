@@ -444,6 +444,7 @@ def build_po_main_layout():
                                                 w=210,
                                                 size="sm",
                                                 clearable=False,
+                                                maxDropdownHeight=420,
                                             ),
                                         ]),
                                         html.Div(
@@ -1247,11 +1248,19 @@ layout = dmc.Container(
         # Series selection modal
         dmc.Modal(
             id="po-series-selection-modal",
-            title="Select Series",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:list-check"), color="blue", variant="light", size="sm"),
+                    dmc.Text("Select Series", fw=600, size="sm"),
+                ],
+            ),
             size="auto",
             centered=True,
+            radius="lg",
             transitionProps={"transition": "fade", "duration": 200},
-            className='series-modal-dark',
+            className='series-modal-dark dashmat-modal',
+            overlayProps={"blur": 2, "opacity": 0.45},
             children=[
                 dmc.Alert(
                     id="po-alert-message",
@@ -1287,10 +1296,20 @@ layout = dmc.Container(
         # Sheet Selection Modal (for multi-tab Excel files)
         dmc.Modal(
             id="po-sheet-select-modal",
-            title="Select Sheet",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:table"), color="teal", variant="light", size="sm"),
+                    dmc.Text("Select Sheet", fw=600, size="sm"),
+                ],
+            ),
             size="sm",
             centered=True,
             closeOnClickOutside=False,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
             children=[
                 dmc.Text("This file contains multiple sheets. Select which sheet to import:", size="sm", mb="md"),
                 dmc.Select(
@@ -1319,6 +1338,11 @@ layout = dmc.Container(
             closeOnClickOutside=False,
             withCloseButton=False,
             size="xs",
+            centered=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
             styles={"body": {"padding": "0"}},
             children=[
                 # Running state
@@ -1353,10 +1377,20 @@ layout = dmc.Container(
         # CMA Load Modal
         dmc.Modal(
             id="po-cma-load-modal",
-            title="Load CMA Data from Database",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:database"), color="indigo", variant="light", size="sm"),
+                    dmc.Text("Load CMA Data from Database", fw=600, size="sm"),
+                ],
+            ),
             size="sm",
             centered=True,
             closeOnClickOutside=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
             children=[
                 dmc.Stack(
                     gap="sm",
@@ -1394,8 +1428,19 @@ layout = dmc.Container(
         # Help Modal
         dmc.Modal(
             id="po-help-modal",
-            title="User Guide",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:book"), color="grape", variant="light", size="sm"),
+                    dmc.Text("User Guide", fw=600, size="sm"),
+                ],
+            ),
             size="lg",
+            centered=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
             children=[
                 dmc.Stack(
                     gap="md",

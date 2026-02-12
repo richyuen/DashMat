@@ -13,3 +13,39 @@
 .ag-theme-alpine .center-header .ag-header-cell-label {
     justify-content: center;
 }
+
+.dashmat-modal .mantine-Modal-content {
+    border-radius: 14px;
+    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.dashmat-modal .mantine-Modal-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    background: linear-gradient(120deg, rgba(40, 125, 255, 0.12), rgba(56, 217, 169, 0.10), rgba(204, 93, 232, 0.10));
+}
+
+.dashmat-modal .mantine-Modal-title {
+    font-weight: 650;
+    letter-spacing: 0.1px;
+    color: #1f2a37;
+}
+
+.dashmat-modal .mantine-Modal-body {
+    padding: 16px 18px 18px;
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Modal-content {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Modal-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: linear-gradient(120deg, rgba(37, 99, 235, 0.24), rgba(5, 150, 105, 0.22), rgba(147, 51, 234, 0.2));
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Modal-title {
+    color: #e9ecef;
+}

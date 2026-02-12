@@ -926,9 +926,19 @@ layout = dmc.Container(
         # Series Selection Modal
         dmc.Modal(
             id="series-selection-modal",
-            title="Select Series",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:list-check"), color="blue", variant="light", size="sm"),
+                    dmc.Text("Select Series", fw=600, size="sm"),
+                ],
+            ),
             size="xl",
-            className='series-modal-dark',
+            centered=True,
+            radius="lg",
+            className='series-modal-dark dashmat-modal',
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
             children=[
                 # Alert for messages (with close button)
                 dmc.Alert(
@@ -965,10 +975,20 @@ layout = dmc.Container(
         # Sheet Selection Modal (for multi-tab Excel files)
         dmc.Modal(
             id="sheet-select-modal",
-            title="Select Sheet",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:table"), color="teal", variant="light", size="sm"),
+                    dmc.Text("Select Sheet", fw=600, size="sm"),
+                ],
+            ),
             size="sm",
             centered=True,
             closeOnClickOutside=False,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
             children=[
                 dmc.Text("This file contains multiple sheets. Select which sheet to import:", size="sm", mb="md"),
                 dmc.Select(
@@ -993,8 +1013,19 @@ layout = dmc.Container(
         # Help Modal
         dmc.Modal(
             id="help-modal",
-            title="User Guide",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:book"), color="grape", variant="light", size="sm"),
+                    dmc.Text("User Guide", fw=600, size="sm"),
+                ],
+            ),
             size="lg",
+            centered=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
             children=[
                 dmc.Accordion(
                     variant="separated",
