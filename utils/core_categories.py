@@ -135,7 +135,6 @@ def ensure_core_categories_table(engine: Engine) -> None:
 
 def get_core_category_options(engine: Engine) -> list[dict]:
     """Return dropdown options formatted as `CoreCat [CMABench]`."""
-    ensure_core_categories_table(engine)
     with engine.connect() as conn:
         rows = conn.execute(
             text(
