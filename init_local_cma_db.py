@@ -84,8 +84,11 @@ def _stats_rows(df: pd.DataFrame, version: int, cma_type: str) -> list[dict]:
 def _correlation_rows(df: pd.DataFrame, version: int, cma_type: str) -> list[dict]:
     rows = []
     corr = df.corr()
-    for bench1 in corr.index:
-        for bench2 in corr.columns:
+    benches = list(corr.index)
+    # Store only one triangle (including diagonal). Consumers must treat as symmetric.
+    for i, bench1 in enumerate(benches):
+        for j in range(i, len(benches)):
+            bench2 = benches[j]
             rows.append(
                 {
                     "Version": version,
@@ -151,4 +154,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

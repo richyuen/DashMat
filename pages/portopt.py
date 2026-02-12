@@ -142,6 +142,17 @@ def _get_cma_corr_map(version: int, cma_type: str) -> dict[str, dict[str, float]
     return data
 
 
+def _get_cma_corr_value(corr_map: dict[str, dict[str, float]], bench1: str, bench2: str):
+    """Read correlation treating CMACorrelation as triangular/symmetric storage."""
+    v = corr_map.get(bench1, {}).get(bench2)
+    if v is not None:
+        return v
+    v = corr_map.get(bench2, {}).get(bench1)
+    if v is not None:
+        return v
+    return np.nan
+
+
 def _compute_cma_missing(
     selected_series: list[str] | None,
     target: str | None,
@@ -171,7 +182,7 @@ def _compute_cma_missing(
             for c in series:
                 if "SD" not in stats_map.get(c, {}):
                     continue
-                if corr_map.get(s, {}).get(c) is None:
+                if pd.isna(_get_cma_corr_value(corr_map, s, c)):
                     missing.append(s)
                     break
 
@@ -2494,7 +2505,7 @@ def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, mo
         sd_r = stats_map.get(r, {}).get("SD", np.nan)
         for c in selected_series:
             sd_c = stats_map.get(c, {}).get("SD", np.nan)
-            corr_val = corr_map.get(r, {}).get(c, np.nan)
+            corr_val = _get_cma_corr_value(corr_map, r, c)
             if pd.isna(sd_r) or pd.isna(sd_c) or pd.isna(corr_val):
                 cov_val = np.nan
             else:
