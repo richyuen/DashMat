@@ -9,6 +9,7 @@ from dash_iconify import DashIconify
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from sqlalchemy import text
 from dash import (
     Input, Output, State, callback, dcc, html, no_update,
     register_page, ALL, clientside_callback, callback_context,
@@ -31,7 +32,7 @@ from utils.optimization import run_portfolio_optimization, compute_risk_contribu
 from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
-from dbengine import AG_GRID_LICENSE_KEY
+from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
 
@@ -95,6 +96,95 @@ def _periodicity_defaults(periodicity):
         return 12, 1, 1, 6
     # daily, daily_trading, or any other
     return 252, 21, 1, 63
+
+
+def _get_cma_versions() -> list[int]:
+    """Fetch available CMA versions from DB."""
+    try:
+        with DB_ENGINE.connect() as conn:
+            rows = conn.execute(
+                text("SELECT DISTINCT Version FROM CMAStats ORDER BY Version")
+            ).fetchall()
+        return [int(r[0]) for r in rows]
+    except Exception:
+        return []
+
+
+def _get_cma_stats_map(version: int, cma_type: str) -> dict[str, dict[str, float]]:
+    data: dict[str, dict[str, float]] = {}
+    with DB_ENGINE.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT Bench, Item, Value "
+                "FROM CMAStats "
+                "WHERE Version = :v AND Type = :t"
+            ),
+            {"v": int(version), "t": cma_type},
+        ).fetchall()
+    for bench, item, value in rows:
+        data.setdefault(str(bench), {})[str(item)] = float(value)
+    return data
+
+
+def _get_cma_corr_map(version: int, cma_type: str) -> dict[str, dict[str, float]]:
+    data: dict[str, dict[str, float]] = {}
+    with DB_ENGINE.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT Bench1, Bench2, Value "
+                "FROM CMACorrelation "
+                "WHERE Version = :v AND Type = :t"
+            ),
+            {"v": int(version), "t": cma_type},
+        ).fetchall()
+    for b1, b2, value in rows:
+        data.setdefault(str(b1), {})[str(b2)] = float(value)
+    return data
+
+
+def _compute_cma_missing(
+    selected_series: list[str] | None,
+    target: str | None,
+    mode: str | None,
+    stats_map: dict[str, dict[str, float]],
+    corr_map: dict[str, dict[str, float]],
+) -> list[str]:
+    missing: list[str] = []
+    series = selected_series or []
+    mode = mode or "ret_cov"
+    target = target or "returns"
+
+    for s in series:
+        bench_stats = stats_map.get(s, {})
+        has_mean = "Mean" in bench_stats
+        has_sd = "SD" in bench_stats
+        if target == "returns":
+            if mode == "ret_vol_corr":
+                if not (has_mean and has_sd):
+                    missing.append(s)
+            elif not has_mean:
+                missing.append(s)
+        else:
+            if not has_sd:
+                missing.append(s)
+                continue
+            for c in series:
+                if "SD" not in stats_map.get(c, {}):
+                    continue
+                if corr_map.get(s, {}).get(c) is None:
+                    missing.append(s)
+                    break
+
+    # preserve order, unique
+    return list(dict.fromkeys(missing))
+
+
+def _cma_missing_message(target: str | None, missing: list[str]) -> str:
+    if not missing:
+        return ""
+    if (target or "returns") == "returns":
+        return f"Missing series in DB: {', '.join(missing)}. They will be loaded as 0."
+    return f"Missing series in DB: {', '.join(missing)}. They will be loaded as NaN."
 
 
 # ---------------------------------------------------------------------------
@@ -547,7 +637,14 @@ def build_po_main_layout():
                                                     leftSection=DashIconify(icon="tabler:calculator"),
                                                 ),
                                                 dmc.Button(
-                                                    "Clear Returns",
+                                                    "Load from DB",
+                                                    id="po-load-db-returns-btn",
+                                                    variant="outline",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:database"),
+                                                ),
+                                                dmc.Button(
+                                                    "Clear All",
                                                     id="po-ex-ante-returns-clear",
                                                     variant="outline",
                                                     color="red",
@@ -568,10 +665,12 @@ def build_po_main_layout():
                                                         {"field": "Asset", "editable": False, "width": 140},
                                                         {"field": "Return", "editable": True, "width": 110,
                                                          "type": "numericColumn",
-                                                         "valueFormatter": {"function": "d3.format('.2%')(params.value)"}},
+                                                         "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
+                                                         "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"}},
                                                         {"field": "Volatility", "editable": True, "width": 110,
                                                          "type": "numericColumn",
                                                          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
+                                                         "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
                                                          "hide": True}, # Hidden by default
                                                     ],
                                                     rowData=[],
@@ -614,7 +713,14 @@ def build_po_main_layout():
                                                     leftSection=DashIconify(icon="tabler:calculator"),
                                                 ),
                                                 dmc.Button(
-                                                    "Clear Matrix",
+                                                    "Load from DB",
+                                                    id="po-load-db-matrix-btn",
+                                                    variant="outline",
+                                                    size="xs",
+                                                    leftSection=DashIconify(icon="tabler:database"),
+                                                ),
+                                                dmc.Button(
+                                                    "Clear All",
                                                     id="po-ex-ante-matrix-clear",
                                                     variant="outline",
                                                     color="red",
@@ -635,7 +741,7 @@ def build_po_main_layout():
                                                     columnDefs=[], # Populated dynamically
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100, "suppressHeaderMenuButton": True,
-                                                    "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                                    "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format('.4f')(Number(params.value)) : ''"}, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
                                                     style={"height": "300px"},
                                                     dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
@@ -1244,6 +1350,47 @@ layout = dmc.Container(
             ],
         ),
 
+        # CMA Load Modal
+        dmc.Modal(
+            id="po-cma-load-modal",
+            title="Load CMA Data from Database",
+            size="sm",
+            centered=True,
+            closeOnClickOutside=True,
+            children=[
+                dmc.Stack(
+                    gap="sm",
+                    children=[
+                        dmc.Select(
+                            id="po-cma-version-select",
+                            label="Version",
+                            data=[],
+                            value=None,
+                            clearable=False,
+                        ),
+                        dmc.Select(
+                            id="po-cma-type-select",
+                            label="Type",
+                            data=[
+                                {"value": "hmm", "label": "10-Year"},
+                                {"value": "equilibrium.gp", "label": "Equilibrium"},
+                            ],
+                            value="hmm",
+                            clearable=False,
+                        ),
+                        dmc.Text(id="po-cma-load-missing-text", c="red", size="xs"),
+                        dmc.Group(
+                            justify="flex-end",
+                            children=[
+                                dmc.Button("Cancel", id="po-cma-load-cancel", variant="outline", color="red"),
+                                dmc.Button("Load", id="po-cma-load-confirm", color="blue"),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
+
         # Help Modal
         dmc.Modal(
             id="po-help-modal",
@@ -1569,6 +1716,7 @@ layout = dmc.Container(
         dcc.Store(id="po-linear-constraints-store", data=[], storage_type="session"),
         dcc.Store(id="po-bl-tau-store", data=0.05, storage_type="session"),
         dcc.Store(id="po-objective-store", data="maximize_sharpe", storage_type="session"),
+        dcc.Store(id="po-cma-load-target-store", data=None),
         # Results stores
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
@@ -2056,12 +2204,12 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
         {"field": "Return", "editable": True, "width": 110,
          "type": "numericColumn",
          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
-         "valueParser": {"function": "Number(params.newValue) / 100"},
+         "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
          "headerClass": "center-header"},
         {"field": "Volatility", "editable": True, "width": 110,
          "type": "numericColumn",
          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
-         "valueParser": {"function": "Number(params.newValue) / 100"},
+         "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
          "hide": hide_vol,
          "headerClass": "center-header"},
     ]
@@ -2091,6 +2239,11 @@ def po_sync_returns_grid_to_store(cell_change, row_data, existing_returns, exist
     if not cell_change or not row_data:
         raise PreventUpdate
     
+    def _normalize_percent_input(value):
+        """Accept either whole-percent (5) or decimal (0.05) inputs."""
+        n = float(value)
+        return (n / 100.0) if abs(n) > 1 else n
+
     returns = existing_returns or {}
     vols = existing_vols or {}
     
@@ -2103,12 +2256,12 @@ def po_sync_returns_grid_to_store(cell_change, row_data, existing_returns, exist
         vol = row.get("Volatility", 0.0)
         
         try:
-            returns[asset] = float(ret)
+            returns[asset] = _normalize_percent_input(ret)
         except (ValueError, TypeError):
             returns[asset] = 0.0
             
         try:
-            vols[asset] = float(vol)
+            vols[asset] = _normalize_percent_input(vol)
         except (ValueError, TypeError):
             vols[asset] = 0.0
     
@@ -2151,6 +2304,7 @@ def po_upload_returns_csv(contents, filename):
 @callback(
     Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
     Output("po-ex-ante-returns-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-vol-store", "data", allow_duplicate=True),
     Input("po-ex-ante-returns-clear", "n_clicks"),
     State("po-series-select", "data"),
     prevent_initial_call=True,
@@ -2159,8 +2313,8 @@ def po_clear_returns(n_clicks, selected_series):
     """Reset returns grid to zeros."""
     if not n_clicks:
         raise PreventUpdate
-    rows = [{"Asset": s, "Return": 0.0} for s in (selected_series or [])]
-    return rows, {}
+    rows = [{"Asset": s, "Return": 0.0, "Volatility": 0.0} for s in (selected_series or [])]
+    return rows, {}, {}
 
 
 # Update ex ante mode store
@@ -2170,6 +2324,151 @@ def po_clear_returns(n_clicks, selected_series):
 )
 def po_update_ex_ante_mode_store(value):
     return value or "ret_cov"
+
+
+@callback(
+    Output("po-cma-load-modal", "opened"),
+    Output("po-cma-load-target-store", "data"),
+    Output("po-cma-version-select", "data"),
+    Output("po-cma-version-select", "value"),
+    Output("po-cma-type-select", "value"),
+    Output("po-cma-load-missing-text", "children"),
+    Input("po-load-db-returns-btn", "n_clicks"),
+    Input("po-load-db-matrix-btn", "n_clicks"),
+    State("po-series-select", "data"),
+    State("po-ex-ante-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def po_open_cma_load_modal(n_returns, n_matrix, selected_series, mode):
+    if not n_returns and not n_matrix:
+        raise PreventUpdate
+
+    triggered = callback_context.triggered_id
+    target = "matrix" if triggered == "po-load-db-matrix-btn" else "returns"
+    versions = _get_cma_versions()
+    if not versions:
+        return True, target, [], None, "hmm", "No CMA data found in local database."
+
+    version_options = [{"value": str(v), "label": str(v)} for v in versions]
+    default_version = str(max(versions))
+    default_type = "hmm"
+    stats_map = _get_cma_stats_map(default_version, default_type)
+    corr_map = _get_cma_corr_map(default_version, default_type)
+    missing = _compute_cma_missing(selected_series, target, mode, stats_map, corr_map)
+    missing_msg = _cma_missing_message(target, missing)
+    return True, target, version_options, default_version, default_type, missing_msg
+
+
+@callback(
+    Output("po-cma-load-modal", "opened", allow_duplicate=True),
+    Input("po-cma-load-cancel", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_close_cma_load_modal(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False
+
+
+@callback(
+    Output("po-cma-load-missing-text", "children", allow_duplicate=True),
+    Input("po-cma-version-select", "value"),
+    Input("po-cma-type-select", "value"),
+    Input("po-cma-load-target-store", "data"),
+    State("po-series-select", "data"),
+    State("po-ex-ante-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def po_update_cma_missing_warning(version, cma_type, target, selected_series, mode):
+    if version is None or not cma_type:
+        return "Select a valid Version and Type."
+    try:
+        stats_map = _get_cma_stats_map(int(version), cma_type)
+        corr_map = _get_cma_corr_map(int(version), cma_type)
+        missing = _compute_cma_missing(selected_series, target, mode, stats_map, corr_map)
+        return _cma_missing_message(target, missing)
+    except Exception:
+        return "Unable to query CMA tables. Check database connection/configuration."
+
+
+@callback(
+    Output("po-ex-ante-returns-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-vol-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
+    Output("po-ex-ante-cov-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
+    Output("po-ex-ante-matrix-grid", "rowData", allow_duplicate=True),
+    Output("po-cma-load-modal", "opened", allow_duplicate=True),
+    Input("po-cma-load-confirm", "n_clicks"),
+    State("po-cma-version-select", "value"),
+    State("po-cma-type-select", "value"),
+    State("po-cma-load-target-store", "data"),
+    State("po-series-select", "data"),
+    State("po-ex-ante-mode-store", "data"),
+    prevent_initial_call=True,
+)
+def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, mode):
+    if not n_clicks:
+        raise PreventUpdate
+    if version is None or not cma_type or not selected_series:
+        raise PreventUpdate
+
+    mode = mode or "ret_cov"
+    target = target or "returns"
+
+    try:
+        stats_map = _get_cma_stats_map(int(version), cma_type)
+        corr_map = _get_cma_corr_map(int(version), cma_type)
+    except Exception:
+        raise PreventUpdate
+
+    if target == "returns":
+        returns_dict = {}
+        vols_dict = {}
+        rows = []
+        for s in selected_series:
+            stat = stats_map.get(s, {})
+            mean_val = stat.get("Mean", 0.0)
+            sd_val = stat.get("SD", 0.0)
+            returns_dict[s] = mean_val
+            if mode == "ret_vol_corr":
+                vols_dict[s] = sd_val
+            rows.append({"Asset": s, "Return": mean_val, "Volatility": sd_val})
+        return returns_dict, vols_dict, rows, no_update, no_update, no_update, False
+
+    # target == matrix: compute covariance from SD and correlation
+    cov_matrix = {}
+    corr_matrix = {}
+    cov_rows = []
+    corr_rows = []
+    for r in selected_series:
+        cov_matrix[r] = {}
+        corr_matrix[r] = {}
+        cov_row = {"Asset": r}
+        corr_row = {"Asset": r}
+        sd_r = stats_map.get(r, {}).get("SD", np.nan)
+        for c in selected_series:
+            sd_c = stats_map.get(c, {}).get("SD", np.nan)
+            corr_val = corr_map.get(r, {}).get(c, np.nan)
+            if pd.isna(sd_r) or pd.isna(sd_c) or pd.isna(corr_val):
+                cov_val = np.nan
+            else:
+                cov_val = float(sd_r) * float(sd_c) * float(corr_val)
+            cov_matrix[r][c] = cov_val
+            cov_row[c] = cov_val
+
+            if pd.isna(cov_val) or pd.isna(sd_r) or pd.isna(sd_c) or float(sd_r) == 0 or float(sd_c) == 0:
+                corr_from_cov = np.nan
+            else:
+                corr_from_cov = cov_val / (float(sd_r) * float(sd_c))
+            corr_matrix[r][c] = corr_from_cov
+            corr_row[c] = corr_from_cov
+        cov_rows.append(cov_row)
+        corr_rows.append(corr_row)
+
+    if mode == "ret_vol_corr":
+        return no_update, no_update, no_update, no_update, corr_matrix, corr_rows, False
+    return no_update, no_update, no_update, cov_matrix, no_update, cov_rows, False
 
 
 # Update matrix UI (title, upload button) based on mode
@@ -2215,7 +2514,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
             "editable": True, 
             "width": 110,
             "type": "numericColumn",
-            "valueFormatter": {"function": "d3.format(',.4f')(params.value)"},
+            "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format(',.4f')(Number(params.value)) : ''"},
             "headerClass": "center-header",
         })
 
@@ -2231,7 +2530,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
         for c_name in selected_series:
             val = row_vals.get(c_name)
             if val is None:
-                val = 0.0
+                val = np.nan
             row[c_name] = val
         rows.append(row)
     
@@ -2413,7 +2712,7 @@ def po_sync_matrix_grid(cell_change, row_data, mode, existing_cov, existing_corr
             try:
                 matrix[r_name][k] = float(v)
             except (ValueError, TypeError):
-                matrix[r_name][k] = 0.0
+                matrix[r_name][k] = np.nan
 
     if is_corr:
         return no_update, matrix
