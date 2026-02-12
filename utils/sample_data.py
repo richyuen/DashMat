@@ -1,105 +1,18 @@
-"""Sample data generation for DashMat."""
+"""Sample benchmark data helpers for DashMat."""
 
-from io import BytesIO
-
-import numpy as np
-import pandas as pd
+from pathlib import Path
 
 
-def generate_sample_returns(periodicity: str) -> pd.DataFrame:
-    """
-    Generate sample returns data for download.
+SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent / "sample_data" / "benchmark_returns"
+SAMPLE_DAILY_FILE = "benchmark_daily_returns_2020_2025.xlsx"
+SAMPLE_MONTHLY_FILE = "benchmark_monthly_returns_2020_2025.xlsx"
 
-    Args:
-        periodicity: 'daily' or 'monthly'
 
-    Returns:
-        DataFrame with Date index and 6 return series columns
-    """
-    # Fixed seed for reproducibility
-    rng = np.random.default_rng(42)
-
-    # Define date range
-    full_start = pd.Timestamp("2021-01-01")
-    full_end = pd.Timestamp("2025-12-31")
-
-    # Generate series names based on periodicity
-    prefix = "Daily" if periodicity == "daily" else "Monthly"
-    series_names = [f"{prefix}{i}" for i in range(1, 7)]
-
-    # Create date index based on periodicity
+def get_sample_file_path(periodicity: str) -> Path:
+    """Return absolute path to stored sample file for a periodicity."""
     if periodicity == "daily":
-        # Business days only
-        master_index = pd.date_range(start=full_start, end=full_end, freq="B")
-        periods_per_year = 252
-    else:
-        # Monthly (month end)
-        master_index = pd.date_range(start=full_start, end=full_end, freq="ME")
-        periods_per_year = 12
+        return SAMPLE_DATA_DIR / SAMPLE_DAILY_FILE
+    if periodicity == "monthly":
+        return SAMPLE_DATA_DIR / SAMPLE_MONTHLY_FILE
+    raise ValueError(f"Unsupported periodicity: {periodicity}")
 
-    df = pd.DataFrame(index=master_index)
-    df.index.name = "Date"
-
-    # Random parameters for each series
-    # Annual means between 0% and 8%
-    annual_means = rng.uniform(0.00, 0.08, size=len(series_names))
-    # Annual vols between 6% and 20%
-    annual_vols = rng.uniform(0.06, 0.20, size=len(series_names))
-
-    # Convert to per-period
-    period_means = annual_means / periods_per_year
-    period_vols = annual_vols / np.sqrt(periods_per_year)
-
-    # Random start dates for series 2-6 (between 2021 and 2022)
-    # Random end dates for series 2-6 (between 2024 and 2025)
-    start_range = pd.date_range("2021-01-01", "2022-12-31", freq="D")
-    end_range = pd.date_range("2024-01-01", "2025-12-31", freq="D")
-
-    for i, series_name in enumerate(series_names):
-        if i == 0:
-            # First series has full date range
-            series_start = full_start
-            series_end = full_end
-        else:
-            # Other series have random start/end dates
-            series_start = rng.choice(start_range)
-            series_end = rng.choice(end_range)
-
-        # Create mask for valid dates
-        mask = (df.index >= series_start) & (df.index <= series_end)
-        n_periods = mask.sum()
-
-        if n_periods > 0:
-            # Generate returns with series-specific mean and vol
-            returns = rng.normal(
-                loc=period_means[i], scale=period_vols[i], size=n_periods
-            )
-
-            # Initialize column and set values
-            df[series_name] = np.nan
-            df.loc[mask, series_name] = returns
-
-    # Drop rows where all columns are NaN
-    df.dropna(how="all", inplace=True)
-
-    return df
-
-
-def create_sample_excel(periodicity: str) -> bytes:
-    """
-    Create an Excel file with sample returns data.
-
-    Args:
-        periodicity: 'daily' or 'monthly'
-
-    Returns:
-        Excel file as bytes
-    """
-    df = generate_sample_returns(periodicity)
-
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name="Returns")
-    output.seek(0)
-
-    return output.getvalue()

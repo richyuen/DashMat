@@ -30,6 +30,7 @@ from utils.returns import (
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
 from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
+from utils.sample_data import get_sample_file_path
 from dbengine import AG_GRID_LICENSE_KEY
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
@@ -115,6 +116,26 @@ def build_po_welcome_screen():
                 variant="outline",
                 mt="lg",
                 id="po-welcome-add-series-btn",
+            ),
+            dmc.Group(
+                gap="md",
+                mt="sm",
+                children=[
+                    dmc.Button(
+                        "Sample Daily File",
+                        leftSection=DashIconify(icon="tabler:download"),
+                        id="po-download-sample-daily-btn",
+                        size="sm",
+                        variant="light",
+                    ),
+                    dmc.Button(
+                        "Sample Monthly File",
+                        leftSection=DashIconify(icon="tabler:download"),
+                        id="po-download-sample-monthly-btn",
+                        size="sm",
+                        variant="light",
+                    ),
+                ],
             ),
         ],
     )
@@ -241,7 +262,8 @@ def build_po_main_layout():
                             dmc.AccordionPanel(
                                 children=[
                                     dmc.Text(
-                                        "Constrain asset weights. Examples: 'Asset A <= 0.2', 'Asset A + Asset B >= 0.5'.",
+                                        "Define linear portfolio constraints with asset coefficients and Min/Max bounds. "
+                                        "Each row enforces Min <= sum(coef_i * weight_i) <= Max (example: Equity + Credit between 0.40 and 0.70).",
                                         size="xs", c="dimmed", mb="xs",
                                     ),
                                     dmc.Group(
@@ -357,13 +379,13 @@ def build_po_main_layout():
                                         html.Div(
                                             id="po-ex-ante-mode-container",
                                             children=[
-                                                dmc.Text("Input Mode", size="sm", fw=500, mb=3),
+                                                dmc.Text("Risk Input Mode", size="sm", fw=500, mb=3),
                                                 html.Div(
                                                     dmc.SegmentedControl(
                                                         id="po-ex-ante-mode-select",
                                                         data=[
-                                                            {"label": "Returns / Covariance", "value": "ret_cov"},
-                                                            {"label": "Returns / Vol / Correlation", "value": "ret_vol_corr"},
+                                                            {"label": "Covariance", "value": "ret_cov"},
+                                                            {"label": "Vol / Correlation", "value": "ret_vol_corr"},
                                                         ],
                                                         value="ret_cov",
                                                         size="xs",
@@ -498,7 +520,8 @@ def build_po_main_layout():
                                             size="sm", fw=600, mb="xs"
                                         ),
                                         dmc.Text(
-                                            "Enter values in the table below (e.g. enter 5 for 5%)",
+                                            "Enter percentages as whole numbers (5 = 5%). Upload CSV with columns: Asset, Return "
+                                            "and optionally Volatility (used in Vol / Correlation mode).",
                                             size="xs", c="dimmed", mb="xs",
                                         ),
                                         dmc.Group(
@@ -562,6 +585,11 @@ def build_po_main_layout():
                                         
                                         # Matrix Input (Covariance or Correlation)
                                         dmc.Text("Covariance Matrix", id="po-ex-ante-matrix-title", size="sm", fw=600, mb="xs"),
+                                        dmc.Text(
+                                            "Use a square CSV: first column Asset, remaining columns named by asset. "
+                                            "Strongly recommended: use Estimate from Data or upload a prepared matrix.",
+                                            size="xs", c="dimmed", mb="xs",
+                                        ),
                                         dmc.Group(
                                             gap="xs",
                                             mb="sm",
@@ -623,6 +651,10 @@ def build_po_main_layout():
                                                 dmc.Text("Black-Litterman Views", size="sm", fw=600, mb="xs"),
                                                 dmc.Text(
                                                     "Add absolute or relative views. Relative: 'Asset outperforms Asset_To by Return'.",
+                                                    size="xs", c="dimmed", mb="xs",
+                                                ),
+                                                dmc.Text(
+                                                    "For Type=absolute, leave 'vs Asset (rel)' blank. It is only used for Type=relative.",
                                                     size="xs", c="dimmed", mb="xs",
                                                 ),
                                                 dmc.Group(
@@ -1218,165 +1250,255 @@ layout = dmc.Container(
             title="User Guide",
             size="lg",
             children=[
-                dmc.Accordion(
-                    variant="separated",
+                dmc.Stack(
+                    gap="md",
                     children=[
-                        dmc.AccordionItem(
-                            value="getting-started",
-                            children=[
-                                dmc.AccordionControl("Getting Started"),
-                                dmc.AccordionPanel(dmc.Text(
-                                    "Upload returns data via File > Add series from file (shared with Analytics Tool). "
-                                    "Select series as inputs for portfolio optimization. "
-                                    "Configure optimization parameters and run to generate portfolio weights and returns.",
-                                    size="sm",
-                                )),
-                            ],
+                        dmc.Paper(
+                            withBorder=True,
+                            radius="md",
+                            p="sm",
+                            bg="gray.0",
+                            children=dmc.Group(
+                                justify="space-between",
+                                align="center",
+                                children=[
+                                    dmc.Group(
+                                        gap="xs",
+                                        children=[
+                                            dmc.ThemeIcon(DashIconify(icon="tabler:book"), variant="light", color="blue", size="md"),
+                                            dmc.Stack(
+                                                gap=0,
+                                                children=[
+                                                    dmc.Text("Portfolio Optimization Guide", fw=600, size="sm"),
+                                                    dmc.Text("Use Basic for workflow setup and Advanced for model/constraint details.", size="xs", c="dimmed"),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                    dmc.Group(
+                                        gap="xs",
+                                        children=[
+                                            dmc.Badge("Basic", color="blue", variant="light"),
+                                            dmc.Badge("Advanced", color="grape", variant="light"),
+                                        ],
+                                    ),
+                                ],
+                            ),
                         ),
-                        dmc.AccordionItem(
-                            value="controls",
+                        dmc.Tabs(
+                            value="basic",
+                            variant="outline",
+                            color="blue",
                             children=[
-                                dmc.AccordionControl("Controls"),
-                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                    dmc.Text("Series Selection: Open the modal to select, reorder, and rename series. Assign benchmarks and configure weight constraints per series.", size="sm"),
-                                    dmc.Text("Periodicity: Auto-detected data frequency. Daily data can be converted to Weekly or Monthly.", size="sm"),
-                                    dmc.Text("Vol Scaler: Scale returns to a target annualized volatility (0-100%).", size="sm"),
-                                    dmc.Text("Date Range: Start and end date pickers to filter the data range.", size="sm"),
-                                ])),
-                            ],
-                        ),
-                        dmc.AccordionItem(
-                            value="optimization-controls",
-                            children=[
-                                dmc.AccordionControl("Optimization Controls"),
-                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                    dmc.Text("Portfolio Name: Label for the optimization result.", size="sm"),
-                                    dmc.Text("Model: Choose from Risk Parity, Factor Risk Parity, Hierarchical Risk Parity, Maximize Sharpe Ratio, Minimize CVaR, or Equal Weight.", size="sm"),
-                                    dmc.Text("Exp Wt: Exponentially weight estimates (covariance, mean returns). When enabled, configure the Halflife (number of periods) for more responsive estimates.", size="sm"),
-                                    dmc.Text("Run: Execute the optimization with the current settings.", size="sm"),
-                                    dmc.Text("Window: Expanding (growing window from start), Rolling (fixed-size sliding window), or Full (single optimization over all data).", size="sm"),
-                                    dmc.Text("Fill In-Sample: Apply the first window's weights to pre-window dates for a complete return series.", size="sm"),
-                                    dmc.Text("Window Size: Number of periods used for the estimation window.", size="sm"),
-                                    dmc.Text("Opt Step + Unit: Rebalance frequency. Months snaps to calendar month-end dates. Periods uses a raw period count.", size="sm"),
-                                    dmc.Text("Missing Data: Choose how to handle missing values \u2014 forward-fill or fill with zeros.", size="sm"),
-                                ])),
-                            ],
-                        ),
-                        dmc.AccordionItem(
-                            value="models",
-                            children=[
-                                dmc.AccordionControl("Models"),
-                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                    dmc.Text([
-                                        dmc.Text("Risk Parity", fw=700, span=True),
-                                        " — Allocates weights so that each asset contributes equally to total portfolio "
-                                        "risk (volatility). Assets with lower volatility receive higher weights. Unlike "
-                                        "equal weighting, this accounts for correlations between assets: a highly "
-                                        "correlated pair will receive less combined weight than two uncorrelated assets. "
-                                        "Does not consider expected returns — focused purely on risk diversification.",
-                                    ], size="sm"),
-                                    dmc.Text([
-                                        dmc.Text("Factor Risk Parity", fw=700, span=True),
-                                        " — A variation of Risk Parity that decomposes portfolio risk through a factor "
-                                        "model. PCA (Principal Component Analysis) extracts statistical factors from the "
-                                        "return data, and the optimizer equalizes each asset's contribution to risk as "
-                                        "measured through the factor covariance structure. This tends to look through "
-                                        "surface-level correlations to the underlying drivers of risk, producing "
-                                        "allocations that differ from standard Risk Parity when assets share common "
-                                        "factor exposures (e.g., equity-like assets grouped by sector or style).",
-                                    ], size="sm"),
-                                    dmc.Text([
-                                        dmc.Text("Hierarchical Risk Parity (HRP)", fw=700, span=True),
-                                        " — Uses hierarchical clustering to group assets by correlation similarity, then "
-                                        "allocates risk top-down through the cluster tree. First, assets are organized "
-                                        "into a dendrogram based on their correlation structure. Then, capital is split "
-                                        "between clusters inversely proportional to their variance, and recursively "
-                                        "within each cluster. HRP does not require covariance matrix inversion, making "
-                                        "it more stable than mean-variance approaches with many assets or short "
-                                        "estimation windows.",
-                                    ], size="sm"),
-                                    dmc.Text([
-                                        dmc.Text("Maximize Sharpe Ratio", fw=700, span=True),
-                                        " — Finds the portfolio on the efficient frontier with the highest return per "
-                                        "unit of risk (Sharpe ratio = annualized return / annualized volatility, "
-                                        "assuming zero risk-free rate). This is the tangency portfolio in mean-variance "
-                                        "optimization. It uses both expected returns (estimated from historical mean) "
-                                        "and covariance, so results are sensitive to the estimation window. Tends to "
-                                        "concentrate in assets with the highest historical Sharpe ratios.",
-                                    ], size="sm"),
-                                    dmc.Text([
-                                        dmc.Text("Minimize CVaR", fw=700, span=True),
-                                        " — Minimizes Conditional Value-at-Risk (CVaR), also known as Expected "
-                                        "Shortfall. CVaR measures the average loss in the worst tail of the return "
-                                        "distribution (default: worst 5%). Unlike volatility, which treats upside and "
-                                        "downside equally, CVaR focuses specifically on downside tail risk. This model "
-                                        "is more conservative than minimum variance and better captures the risk of "
-                                        "assets with skewed or fat-tailed return distributions.",
-                                    ], size="sm"),
-                                    dmc.Text([
-                                        dmc.Text("Minimize Variance", fw=700, span=True),
-                                        " — Finds the portfolio with the lowest possible volatility (annualized "
-                                        "standard deviation). This is the left-most point on the efficient frontier. "
-                                        "It uses only the covariance matrix (not expected returns), making it more "
-                                        "stable than Sharpe maximization. Tends to concentrate in the lowest-volatility "
-                                        "assets and those with low correlations to each other.",
-                                    ], size="sm"),
-                                    dmc.Text([
-                                        dmc.Text("Equal Weight", fw=700, span=True),
-                                        " — Assigns equal weight to every selected asset (1/N). No optimization is "
-                                        "performed. Serves as a simple, robust baseline that avoids estimation error "
-                                        "entirely. Often surprisingly competitive with optimized portfolios, especially "
-                                        "when estimation windows are short or assets have similar risk characteristics.",
-                                    ], size="sm"),
-                                ])),
-                            ],
-                        ),
-                        dmc.AccordionItem(
-                            value="weight-constraints",
-                            children=[
-                                dmc.AccordionControl("Weight Constraints"),
-                                dmc.AccordionPanel(dmc.Text(
-                                    "Configure per-series minimum and maximum weight bounds in the Series Selection modal. "
-                                    "Use Force to Max to lock a series at its maximum weight.",
-                                    size="sm",
-                                )),
-                            ],
-                        ),
-                        dmc.AccordionItem(
-                            value="results",
-                            children=[
-                                dmc.AccordionControl("Results"),
-                                dmc.AccordionPanel(dmc.Text(
-                                    "Use the Portfolio dropdown to view results for a specific optimization. "
-                                    "Use the Compare dropdown to overlay multiple portfolios for side-by-side comparison.",
-                                    size="sm",
-                                )),
-                            ],
-                        ),
-                        dmc.AccordionItem(
-                            value="tabs",
-                            children=[
-                                dmc.AccordionControl("Tabs"),
-                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                    dmc.Text("Weights: Portfolio weight allocation over time, displayed as chart or table.", size="sm"),
-                                    dmc.Text("Turnover: Weight changes at each rebalance point.", size="sm"),
-                                    dmc.Text("Statistics: Key financial metrics for the portfolio.", size="sm"),
-                                    dmc.Text("Returns: Portfolio return stream data grid.", size="sm"),
-                                    dmc.Text("Growth of $1: Compound growth chart showing cumulative portfolio performance.", size="sm"),
-                                    dmc.Text("Attribution: Return contribution by asset, displayed as chart or table.", size="sm"),
-                                    dmc.Text("Risk: Per-asset risk contribution across all optimization windows as stacked bar chart.", size="sm"),
-                                    dmc.Text("Frontier: Mean-variance efficient frontier with selectable window and risk measure.", size="sm"),
-                                ])),
-                            ],
-                        ),
-                        dmc.AccordionItem(
-                            value="export",
-                            children=[
-                                dmc.AccordionControl("Export"),
-                                dmc.AccordionPanel(dmc.Text(
-                                    "Download portfolio results as an Excel workbook via File > Download Excel.",
-                                    size="sm",
-                                )),
+                                dmc.TabsList(
+                                    children=[
+                                        dmc.TabsTab([DashIconify(icon="tabler:compass", width=14), "Basic Guide"], value="basic"),
+                                        dmc.TabsTab([DashIconify(icon="tabler:settings-cog", width=14), "Advanced Guide"], value="advanced"),
+                                    ],
+                                ),
+                                dmc.TabsPanel(
+                                    value="basic",
+                                    pt="sm",
+                                    children=dmc.Accordion(
+                                        variant="separated",
+                                        children=[
+                                            dmc.AccordionItem(
+                                                value="basic-quick-start",
+                                                children=[
+                                                    dmc.AccordionControl("Quick Start"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("1) File > Add series from file, then choose the series used as portfolio assets.", size="sm"),
+                                                        dmc.Text("2) Open Select Series and configure include/exclude, order, benchmark, long-short, vol scaling, min/max weight, and force max.", size="sm"),
+                                                        dmc.Text("3) Set Periodicity, Vol Scaler, and Date Range so estimation and backtest use the intended sample.", size="sm"),
+                                                        dmc.Text("4) Choose Model and controls (window, step, missing-data handling, and optional exponential weighting).", size="sm"),
+                                                        dmc.Text("5) Click Run to create a named portfolio. Run additional scenarios using different names.", size="sm"),
+                                                        dmc.Text("6) Review Weights, Turnover, Statistics, Returns, Growth, Attribution, Risk, and Frontier tabs.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="basic-data",
+                                                children=[
+                                                    dmc.AccordionControl("Data Requirements"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Input files should be date-indexed return series with one column per asset.", size="sm"),
+                                                        dmc.Text("Supported uploads: CSV, XLS, XLSX. If a workbook has multiple sheets, pick one sheet before import.", size="sm"),
+                                                        dmc.Text("Values may be decimals or percent-style values; parsing normalizes input.", size="sm"),
+                                                        dmc.Text("Periodicity is auto-detected. Daily data can be resampled to weekly/monthly; monthly is not upsampled.", size="sm"),
+                                                        dmc.Text("Date overlap across selected series affects the usable sample and output availability.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="basic-series-selection",
+                                                children=[
+                                                    dmc.AccordionControl("Series Selection Modal"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Include checkbox controls whether a series participates in optimization.", size="sm"),
+                                                        dmc.Text("Move Up / Move Down sets display order in series lists and output tables.", size="sm"),
+                                                        dmc.Text("Benchmark sets comparison series used by excess-return and long-short behavior.", size="sm"),
+                                                        dmc.Text("L/S (Long-Short) transforms selected series to (series - benchmark).", size="sm"),
+                                                        dmc.Text("Scale Vol toggles per-series use of the global Vol Scaler target.", size="sm"),
+                                                        dmc.Text("Min Wt / Max Wt are per-asset hard bounds used by the optimizer.", size="sm"),
+                                                        dmc.Text("Force Max pins an asset to Max Wt and can make optimization infeasible.", size="sm"),
+                                                        dmc.Text("Delete removes a series from the working dataset and can invalidate prior results.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="basic-controls",
+                                                children=[
+                                                    dmc.AccordionControl("Controls and Preprocessing"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Periodicity converts returns to analysis frequency used in optimization and tabs.", size="sm"),
+                                                        dmc.Text("Vol Scaler applies target annualized volatility scaling. Set 0 to disable.", size="sm"),
+                                                        dmc.Text("Date Range limits sample prior to optimization window logic.", size="sm"),
+                                                        dmc.Text("Common Range uses only dates where all selected series overlap.", size="sm"),
+                                                        dmc.Text("Max Range uses earliest start to latest end across selected series.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="basic-optimization",
+                                                children=[
+                                                    dmc.AccordionControl("Optimization Controls"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Portfolio Name is the key used to store and select results.", size="sm"),
+                                                        dmc.Text("Model chooses risk-based, mean-variance, ex-ante, or Black-Litterman optimization.", size="sm"),
+                                                        dmc.Text("Exp Wt enables exponential weighting for historical parameter estimates.", size="sm"),
+                                                        dmc.Text("Half-Life controls recency emphasis when Exp Wt is on (smaller means faster decay).", size="sm"),
+                                                        dmc.Text("Window options: Expanding, Rolling, or Full.", size="sm"),
+                                                        dmc.Text("Window Size sets lookback periods used for each optimization step.", size="sm"),
+                                                        dmc.Text("Opt Step + Unit sets rebalance frequency; Months aligns to month-end, Periods uses row counts.", size="sm"),
+                                                        dmc.Text("Missing Data: Fill NA forward-fills; Fill 0 treats missing returns as zero.", size="sm"),
+                                                        dmc.Text("Run executes optimization and stores results without deleting prior portfolios.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="basic-tabs",
+                                                children=[
+                                                    dmc.AccordionControl("Reading the Tabs"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Weights: allocation by asset over time, chart or table.", size="sm"),
+                                                        dmc.Text("Turnover: absolute allocation changes per rebalance window.", size="sm"),
+                                                        dmc.Text("Statistics: portfolio-level performance and risk metrics.", size="sm"),
+                                                        dmc.Text("Returns: return time series grid.", size="sm"),
+                                                        dmc.Text("Growth of $1: compounded path from initial value 1.", size="sm"),
+                                                        dmc.Text("Attribution: asset-level return contribution.", size="sm"),
+                                                        dmc.Text("Risk: asset-level risk contribution across windows.", size="sm"),
+                                                        dmc.Text("Frontier: efficient frontier with active-portfolio marker.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                dmc.TabsPanel(
+                                    value="advanced",
+                                    pt="sm",
+                                    children=dmc.Accordion(
+                                        variant="separated",
+                                        children=[
+                                            dmc.AccordionItem(
+                                                value="adv-models",
+                                                children=[
+                                                    dmc.AccordionControl("Model Details"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text([dmc.Text("Risk Parity", fw=700, span=True), " - balances total risk contribution across assets."], size="sm"),
+                                                        dmc.Text([dmc.Text("Factor Risk Parity", fw=700, span=True), " - balances risk through factor structure rather than only pairwise covariance."], size="sm"),
+                                                        dmc.Text([dmc.Text("Hierarchical Risk Parity", fw=700, span=True), " - clusters assets and allocates top-down for stability under noisy covariance estimates."], size="sm"),
+                                                        dmc.Text([dmc.Text("Maximize Sharpe Ratio", fw=700, span=True), " - seeks highest expected return per unit volatility."], size="sm"),
+                                                        dmc.Text([dmc.Text("Minimize Variance", fw=700, span=True), " - seeks lowest portfolio volatility under constraints."], size="sm"),
+                                                        dmc.Text([dmc.Text("Minimize CVaR", fw=700, span=True), " - emphasizes downside tail-risk control."], size="sm"),
+                                                        dmc.Text([dmc.Text("Equal Weight", fw=700, span=True), " - 1/N baseline with no estimation-driven optimizer."], size="sm"),
+                                                        dmc.Text([dmc.Text("Ex Ante Mean-Variance", fw=700, span=True), " - optimizes from user-provided forward-looking assumptions."], size="sm"),
+                                                        dmc.Text([dmc.Text("Black-Litterman", fw=700, span=True), " - blends prior assumptions with user views and confidence."], size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="adv-linear-constraints",
+                                                children=[
+                                                    dmc.AccordionControl("Linear Constraints"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Add Constraint creates a row with Min/Max bounds and one coefficient column per selected asset.", size="sm"),
+                                                        dmc.Text("Each row enforces Min <= sum(coef_i * weight_i) <= Max.", size="sm"),
+                                                        dmc.Text("Example: Equity=1, Credit=1, others=0, Min=0.40, Max=0.70 constrains combined exposure.", size="sm"),
+                                                        dmc.Text("Constraint name is informational; coefficients and Min/Max drive behavior.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="adv-ex-ante",
+                                                children=[
+                                                    dmc.AccordionControl("Ex Ante Inputs"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Available for Ex Ante Mean-Variance and Black-Litterman.", size="sm"),
+                                                        dmc.Text("Objective applies to Ex Ante Mean-Variance (maximize Sharpe, minimize variance, maximize return).", size="sm"),
+                                                        dmc.Text("Input Mode toggles ex-ante inputs between return/covariance and return/volatility/correlation.", size="sm"),
+                                                        dmc.Text("Expected Returns grid accepts per-asset assumptions; volatility is editable in ret_vol_corr mode.", size="sm"),
+                                                        dmc.Text("Matrix grid captures covariance (ret_cov) or correlation (ret_vol_corr).", size="sm"),
+                                                        dmc.Text("Use upload and estimate helpers to seed assumptions; verify magnitudes and symmetry before run.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="adv-black-litterman",
+                                                children=[
+                                                    dmc.AccordionControl("Black-Litterman Views"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Use absolute views (asset expected return) or relative views (asset expected to outperform another).", size="sm"),
+                                                        dmc.Text("Absolute example: Asset=SPY, Return=3 means expected return is 3%.", size="sm"),
+                                                        dmc.Text("Relative example: Asset=QQQ, Asset_To=SPY, Return=2 means QQQ expected to beat SPY by 2%.", size="sm"),
+                                                        dmc.Text("Confidence controls view strength. Tau controls prior uncertainty weighting.", size="sm"),
+                                                        dmc.Text("Add View and Clear Views manage rows quickly before running optimization.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="adv-feasibility",
+                                                children=[
+                                                    dmc.AccordionControl("Constraints and Feasibility"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Per-asset Min/Max bounds are hard optimizer limits.", size="sm"),
+                                                        dmc.Text("Force Max pins assets and reduces feasible region.", size="sm"),
+                                                        dmc.Text("Linear constraints further restrict feasible portfolios.", size="sm"),
+                                                        dmc.Text("Infeasibility is common when mins are too high, maxes too low, or too many constraints are combined.", size="sm"),
+                                                        dmc.Text("To recover feasibility: relax mins/maxes, remove forced weights, and simplify linear constraints.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="adv-frontier",
+                                                children=[
+                                                    dmc.AccordionControl("Frontier Details"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Frontier window selector lets you inspect different estimation windows.", size="sm"),
+                                                        dmc.Text("Risk measure selector controls frontier x-axis risk metric.", size="sm"),
+                                                        dmc.Text("For Ex Ante and Black-Litterman models, frontier uses configured assumptions where available.", size="sm"),
+                                                        dmc.Text("If data or assumptions are insufficient for a selected window, the tab will show a fallback message.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="adv-results",
+                                                children=[
+                                                    dmc.AccordionControl("Results, Session, and Troubleshooting"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Portfolio dropdown selects the active stored result; compare control overlays portfolios where supported.", size="sm"),
+                                                        dmc.Text("Delete icon removes selected result. Use unique names to keep scenario history.", size="sm"),
+                                                        dmc.Text("File > Save Session exports JSON state; Load Session restores it.", size="sm"),
+                                                        dmc.Text("File > Download Excel exports portfolio outputs for external analysis.", size="sm"),
+                                                        dmc.Text("Run disabled: load data and select at least one series.", size="sm"),
+                                                        dmc.Text("Optimization fails: review bounds, force-max flags, and linear constraints first.", size="sm"),
+                                                        dmc.Text("Turnover missing: Full window mode does not generate multiple rebalance events.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ),
                             ],
                         ),
                     ],
@@ -1470,6 +1592,8 @@ layout = dmc.Container(
         ),
         # Excel download
         dcc.Download(id="po-download-excel"),
+        dcc.Download(id="po-download-sample-daily"),
+        dcc.Download(id="po-download-sample-monthly"),
         # Navigation
         dcc.Location(id="po-url-location", refresh=False),
         # One-shot interval to trigger visibility check after session-storage hydration
@@ -1500,6 +1624,30 @@ clientside_callback(
     Input("po-menu-help-guide", "n_clicks"),
     prevent_initial_call=True,
 )
+
+
+@callback(
+    Output("po-download-sample-daily", "data"),
+    Input("po-download-sample-daily-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_download_sample_daily(n_clicks):
+    """Download stored sample daily returns file."""
+    if n_clicks is None:
+        raise PreventUpdate
+    return dcc.send_file(str(get_sample_file_path("daily")))
+
+
+@callback(
+    Output("po-download-sample-monthly", "data"),
+    Input("po-download-sample-monthly-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_download_sample_monthly(n_clicks):
+    """Download stored sample monthly returns file."""
+    if n_clicks is None:
+        raise PreventUpdate
+    return dcc.send_file(str(get_sample_file_path("monthly")))
 
 # Navigate to home on Exit
 clientside_callback(

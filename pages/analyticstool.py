@@ -30,7 +30,7 @@ from utils.returns import (
     resample_returns,
     resample_returns_cached,
 )
-from utils.sample_data import create_sample_excel
+from utils.sample_data import get_sample_file_path
 from utils.statistics import (
     calculate_drawdown,
     calculate_growth_of_dollar,
@@ -4304,12 +4304,11 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
     prevent_initial_call=True,
 )
 def download_sample_daily(n_clicks):
-    """Generate and download sample daily returns file."""
+    """Download stored sample daily returns file."""
     if n_clicks is None:
         raise PreventUpdate
 
-    content = create_sample_excel("daily")
-    return dcc.send_bytes(content, "sample_daily_returns.xlsx")
+    return dcc.send_file(str(get_sample_file_path("daily")))
 
 
 @callback(
@@ -4318,9 +4317,8 @@ def download_sample_daily(n_clicks):
     prevent_initial_call=True,
 )
 def download_sample_monthly(n_clicks):
-    """Generate and download sample monthly returns file."""
+    """Download stored sample monthly returns file."""
     if n_clicks is None:
         raise PreventUpdate
 
-    content = create_sample_excel("monthly")
-    return dcc.send_bytes(content, "sample_monthly_returns.xlsx")
+    return dcc.send_file(str(get_sample_file_path("monthly")))
