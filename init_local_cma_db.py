@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column
+from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column, text
 
-from dbengine import engine, DATABASE_URL
+from dbengine import engine, engine_MRD, DATABASE_URL, MRD_DATABASE_URL
 from utils.sample_data import get_sample_file_path
 
 
@@ -87,6 +87,14 @@ def _load_monthly_returns() -> pd.DataFrame:
     return df
 
 
+def _load_daily_returns() -> pd.DataFrame:
+    path = get_sample_file_path("daily")
+    df = pd.read_excel(path, index_col=0)
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+    return df
+
+
 def _transform_for_type(df: pd.DataFrame, cma_type: str) -> pd.DataFrame:
     if cma_type == "hmm":
         return df.copy()
@@ -134,6 +142,27 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table]:
         Column("AATool", String(64), nullable=False),
     )
     return cma_corr, cma_ret, cma_stats, core_categories
+
+
+def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table]:
+    account = Table(
+        "CORE_DATA.ACCOUNT",
+        metadata,
+        Column("ACCT_ID", Integer, primary_key=True),
+        Column("ACCT_NAME", String(128), nullable=False),
+        Column("ACCT_CD", String(128), nullable=False),
+        Column("ACCT_TYPE_CD", String(32), nullable=False),
+        Column("FACTOR_NAME", String(32), nullable=False),
+    )
+    factor_data = Table(
+        "CORE_DATA.ACCOUNT_FACTOR_DATA",
+        metadata,
+        Column("ACCT_ID", Integer, primary_key=True),
+        Column("REFERENCE_DATE", Date, primary_key=True),
+        Column("FACTOR_VALUE", Float, nullable=False),
+        Column("SOURCE_SYSTEM", String(16), nullable=False),
+    )
+    return account, factor_data
 
 
 def _default_core_category_meta(bench: str) -> dict[str, str]:
@@ -222,13 +251,51 @@ def _returns_rows(df: pd.DataFrame, version: int, cma_type: str) -> list[dict]:
     return rows
 
 
+def _mrd_rows(df: pd.DataFrame) -> tuple[list[dict], list[dict]]:
+    account_rows: list[dict] = []
+    factor_rows: list[dict] = []
+
+    for acct_id, series_name in enumerate(df.columns, start=1):
+        account_rows.append(
+            {
+                "ACCT_ID": acct_id,
+                "ACCT_NAME": str(series_name),
+                "ACCT_CD": f"{series_name}_TRIndex",
+                "ACCT_TYPE_CD": "INDEX",
+                "FACTOR_NAME": "TRIndex",
+            }
+        )
+        series = df[series_name].dropna()
+        if series.empty:
+            continue
+        index_series = (1.0 + series).cumprod()
+        for dt, idx_val in index_series.items():
+            factor_rows.append(
+                {
+                    "ACCT_ID": acct_id,
+                    "REFERENCE_DATE": date(dt.year, dt.month, dt.day),
+                    "FACTOR_VALUE": float(idx_val),
+                    "SOURCE_SYSTEM": "BB",
+                }
+            )
+
+    return account_rows, factor_rows
+
+
 def main() -> None:
     base_df = _load_monthly_returns()
+    daily_df = _load_daily_returns()
     metadata = MetaData()
     cma_corr, cma_ret, cma_stats, core_categories = _build_tables(metadata)
+    mrd_metadata = MetaData()
+    mrd_account, mrd_factor_data = _build_mrd_tables(mrd_metadata)
 
     metadata.drop_all(engine, checkfirst=True)
     metadata.create_all(engine)
+    with engine_MRD.begin() as conn:
+        conn.execute(text('DROP TABLE IF EXISTS [CORE_DATA.FACTOR_DATA]'))
+    mrd_metadata.drop_all(engine_MRD, checkfirst=True)
+    mrd_metadata.create_all(engine_MRD)
 
     corr_rows: list[dict] = []
     ret_rows: list[dict] = []
@@ -246,6 +313,7 @@ def main() -> None:
     core_cat_rows = _core_category_rows(
         sorted({str(r["Bench"]) for r in ret_rows if r.get("Bench") is not None})
     )
+    mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)
 
     with engine.begin() as conn:
         conn.execute(cma_corr.insert(), corr_rows)
@@ -254,11 +322,20 @@ def main() -> None:
         if core_cat_rows:
             conn.execute(core_categories.insert(), core_cat_rows)
 
+    with engine_MRD.begin() as conn:
+        if mrd_account_rows:
+            conn.execute(mrd_account.insert(), mrd_account_rows)
+        if mrd_factor_rows:
+            conn.execute(mrd_factor_data.insert(), mrd_factor_rows)
+
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
     print(f"CMAReturns rows: {len(ret_rows)}")
     print(f"CMAStats rows: {len(stats_rows)}")
     print(f"CoreCategories rows: {len(core_cat_rows)}")
+    print(f"Initialized MRD database at {MRD_DATABASE_URL}")
+    print(f"CORE_DATA.ACCOUNT rows: {len(mrd_account_rows)}")
+    print(f"CORE_DATA.ACCOUNT_FACTOR_DATA rows: {len(mrd_factor_rows)}")
 
 
 if __name__ == "__main__":

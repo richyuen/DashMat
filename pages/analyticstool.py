@@ -38,7 +38,7 @@ from utils.statistics import (
     generate_correlogram_cached,
 )
 from utils.charting import apply_chart_theme
-from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE
+from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 from utils.core_categories import get_core_category_options, load_cma_returns_for_benches
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
@@ -2174,7 +2174,7 @@ def add_series_from_database(
                     True, n_no,
                 )
 
-        new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches)
+        new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches, MRD_ENGINE)
         if new_df.empty:
             raise ValueError("No rows returned for selected CMABench values.")
 

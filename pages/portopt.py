@@ -33,7 +33,7 @@ from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
 from utils.core_categories import get_core_category_options, load_cma_returns_for_benches
-from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE
+from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
 
@@ -3725,7 +3725,7 @@ def po_add_series_from_database(
                     True, n_no,
                 )
 
-        new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches)
+        new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches, MRD_ENGINE)
         if new_df.empty:
             raise ValueError("No rows returned for selected CMABench values.")
 

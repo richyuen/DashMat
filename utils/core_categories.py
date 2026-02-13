@@ -27,57 +27,128 @@ def get_core_category_options(engine: Engine) -> list[dict]:
     ]
 
 
-def load_cma_returns_for_benches(engine: Engine, benches: list[str]) -> pd.DataFrame:
-    """Load CMAReturns for selected benches as Date-indexed DataFrame."""
+def _mrd_account_table(engine: Engine) -> str:
+    if engine.dialect.name == "sqlite":
+        return "[CORE_DATA.ACCOUNT]"
+    return "[CORE_DATA].[ACCOUNT]"
+
+
+def _mrd_factor_table(engine: Engine) -> str:
+    if engine.dialect.name == "sqlite":
+        return "[CORE_DATA.ACCOUNT_FACTOR_DATA]"
+    return "[CORE_DATA].[ACCOUNT_FACTOR_DATA]"
+
+
+def _split_fofbench(fofbench: str) -> tuple[str, str]:
+    if "_" not in fofbench:
+        return fofbench, "TRIndex"
+    acct_name, factor_name = fofbench.rsplit("_", 1)
+    return acct_name, factor_name
+
+
+def load_cma_returns_for_benches(
+    core_engine: Engine,
+    benches: list[str],
+    mrd_engine: Engine,
+) -> pd.DataFrame:
+    """Load selected CMABench daily returns from MRD index levels."""
     selected = [str(b) for b in benches if b]
     if not selected:
         return pd.DataFrame()
 
-    with engine.connect() as conn:
-        version = conn.execute(
-            text("SELECT MAX(Version) FROM CMAReturns")
-        ).scalar_one_or_none()
-        if version is None:
-            return pd.DataFrame()
-
-        type_rows = conn.execute(
-            text(
-                "SELECT DISTINCT Type "
-                "FROM CMAReturns "
-                "WHERE Version = :v"
-            ),
-            {"v": int(version)},
-        ).fetchall()
-        available_types = {str(r[0]) for r in type_rows if r[0] is not None}
-        selected_type = (
-            "hmm"
-            if "hmm" in available_types
-            else (sorted(available_types)[0] if available_types else None)
-        )
-        if selected_type is None:
-            return pd.DataFrame()
-
-    q = text(
-        "SELECT Date, Bench, Value "
-        "FROM CMAReturns "
-        "WHERE Version = :v AND Type = :t AND Bench IN :benches "
-        "ORDER BY Date, Bench"
+    core_query = text(
+        "SELECT CMABench, FOFBench "
+        "FROM CoreCategories "
+        "WHERE CMABench IN :benches "
+        "ORDER BY CoreCatOrder"
     ).bindparams(bindparam("benches", expanding=True))
+    with core_engine.connect() as conn:
+        mapping_rows = conn.execute(
+            core_query, {"benches": selected}
+        ).fetchall()
+    if not mapping_rows:
+        return pd.DataFrame()
 
-    with engine.connect() as conn:
+    cmabench_to_fofbench = {str(r[0]): str(r[1]) for r in mapping_rows if r[0] and r[1]}
+    selected_cmabenches = [b for b in selected if b in cmabench_to_fofbench]
+    if not selected_cmabenches:
+        return pd.DataFrame()
+
+    fofbench_to_cmabench = {v: k for k, v in cmabench_to_fofbench.items()}
+    acct_names = sorted({_split_fofbench(v)[0] for v in fofbench_to_cmabench})
+    factor_names = sorted({_split_fofbench(v)[1] for v in fofbench_to_cmabench})
+    if not acct_names or not factor_names:
+        return pd.DataFrame()
+
+    account_table = _mrd_account_table(mrd_engine)
+    factor_table = _mrd_factor_table(mrd_engine)
+    account_query = text(
+        f"SELECT ACCT_ID, ACCT_NAME, FACTOR_NAME "
+        f"FROM {account_table} "
+        f"WHERE ACCT_NAME IN :acct_names AND FACTOR_NAME IN :factor_names"
+    ).bindparams(
+        bindparam("acct_names", expanding=True),
+        bindparam("factor_names", expanding=True),
+    )
+    with mrd_engine.connect() as conn:
+        account_rows = conn.execute(
+            account_query,
+            {"acct_names": acct_names, "factor_names": factor_names},
+        ).fetchall()
+    if not account_rows:
+        return pd.DataFrame()
+
+    fofbench_to_acct_id: dict[str, int] = {}
+    for acct_id, acct_name, factor_name in account_rows:
+        key = f"{acct_name}_{factor_name}"
+        if key in fofbench_to_cmabench and key not in fofbench_to_acct_id:
+            fofbench_to_acct_id[key] = int(acct_id)
+
+    cmabench_to_acct_id = {
+        cmabench: fofbench_to_acct_id[fofbench]
+        for cmabench, fofbench in cmabench_to_fofbench.items()
+        if fofbench in fofbench_to_acct_id
+    }
+    if not cmabench_to_acct_id:
+        return pd.DataFrame()
+
+    acct_ids = sorted(set(cmabench_to_acct_id.values()))
+    factor_query = text(
+        f"SELECT ACCT_ID, REFERENCE_DATE, FACTOR_VALUE "
+        f"FROM {factor_table} "
+        f"WHERE ACCT_ID IN :acct_ids "
+        f"ORDER BY REFERENCE_DATE, ACCT_ID"
+    ).bindparams(bindparam("acct_ids", expanding=True))
+
+    with mrd_engine.connect() as conn:
         rows = conn.execute(
-            q,
-            {"v": int(version), "t": selected_type, "benches": selected},
+            factor_query,
+            {"acct_ids": acct_ids},
         ).fetchall()
 
     if not rows:
         return pd.DataFrame()
 
-    data = pd.DataFrame(rows, columns=["Date", "Bench", "Value"])
-    data["Date"] = pd.to_datetime(data["Date"])
-    wide = data.pivot(index="Date", columns="Bench", values="Value")
-    cols = [c for c in selected if c in wide.columns]
-    wide = wide.reindex(columns=cols)
-    wide = wide.sort_index()
-    wide.index.name = "Date"
-    return wide
+    data = pd.DataFrame(rows, columns=["ACCT_ID", "REFERENCE_DATE", "FACTOR_VALUE"])
+    data["REFERENCE_DATE"] = pd.to_datetime(data["REFERENCE_DATE"])
+    index_levels = data.pivot(index="REFERENCE_DATE", columns="ACCT_ID", values="FACTOR_VALUE")
+    index_levels = index_levels.sort_index()
+
+    # MRD stores index levels; convert to arithmetic daily returns.
+    daily_returns = index_levels.pct_change(fill_method=None).dropna(how="all")
+
+    acct_id_to_cmabenches: dict[int, list[str]] = {}
+    for cmabench, acct_id in cmabench_to_acct_id.items():
+        acct_id_to_cmabenches.setdefault(acct_id, []).append(cmabench)
+
+    out = pd.DataFrame(index=daily_returns.index)
+    for acct_id, benches_for_id in acct_id_to_cmabenches.items():
+        if acct_id not in daily_returns.columns:
+            continue
+        for cmabench in benches_for_id:
+            out[cmabench] = daily_returns[acct_id]
+
+    ordered_cols = [b for b in selected if b in out.columns]
+    out = out.reindex(columns=ordered_cols)
+    out.index.name = "Date"
+    return out
