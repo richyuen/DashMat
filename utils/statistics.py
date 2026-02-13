@@ -185,6 +185,30 @@ def correlation(returns: pd.Series, benchmark_returns: pd.Series) -> float:
     return returns.corr(benchmark_returns)
 
 
+def beta_to_benchmark(
+    returns: pd.Series,
+    benchmark_returns: Optional[pd.Series],
+) -> float:
+    """Calculate beta relative to a benchmark return stream."""
+    if benchmark_returns is None:
+        return np.nan
+
+    aligned = pd.concat([returns.dropna(), benchmark_returns.dropna()], axis=1).dropna()
+    if len(aligned) < 2:
+        return np.nan
+
+    series_returns = aligned.iloc[:, 0]
+    series_benchmark = aligned.iloc[:, 1]
+    benchmark_var = series_benchmark.var(ddof=1)
+    if benchmark_var == 0 or np.isnan(benchmark_var):
+        return np.nan
+
+    covariance = series_returns.cov(series_benchmark)
+    if np.isnan(covariance):
+        return np.nan
+    return covariance / benchmark_var
+
+
 def information_ratio(returns: pd.Series, benchmark_returns: pd.Series, periods_per_year: float) -> float:
     """Calculate information ratio."""
     excess = returns - benchmark_returns
@@ -257,6 +281,7 @@ def calculate_statistics(
     series_name: str,
     is_long_short: bool = False,
     risk_free_returns: Optional[pd.Series] = None,
+    spx_returns: Optional[pd.Series] = None,
 ) -> dict:
     """Calculate all statistics for a single series (optimized for performance)."""
     periods_per_year = annualization_factor(periodicity)
@@ -307,6 +332,7 @@ def calculate_statistics(
             "Sortino Ratio": sortino_ratio_with_risk_free(
                 ls_returns, periodicity, periods_per_year, risk_free_returns
             ),
+            "Beta to S&P 500": beta_to_benchmark(ls_returns, spx_returns),
             # For L/S, "Excess Return" is typically just the return itself, but if we follow strict "relative to bench" rule:
             # If bench is None, L/S return is absolute. 
             # If we enforce "no relative stats if no bench", then for L/S:
@@ -359,6 +385,9 @@ def calculate_statistics(
                 result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
                     trailing_ls, periodicity, periods_per_year, risk_free_returns
                 )
+                result[f"{label} Beta to S&P 500"] = beta_to_benchmark(
+                    trailing_ls, spx_returns
+                )
                 result[f"{label} Excess Return"] = trailing_ls_ann_ret if has_benchmark else np.nan
                 result[f"{label} Tracking Error"] = annualized_volatility(trailing_ls, periods_per_year) if has_benchmark else np.nan
                 result[f"{label} Information Ratio"] = sharpe_ratio(trailing_ls, periods_per_year) if has_benchmark else np.nan
@@ -368,6 +397,7 @@ def calculate_statistics(
                 result[f"{label} Annualized Volatility"] = np.nan
                 result[f"{label} Sharpe Ratio"] = np.nan
                 result[f"{label} Sortino Ratio"] = np.nan
+                result[f"{label} Beta to S&P 500"] = np.nan
                 result[f"{label} Excess Return"] = np.nan
                 result[f"{label} Tracking Error"] = np.nan
                 result[f"{label} Information Ratio"] = np.nan
@@ -398,6 +428,7 @@ def calculate_statistics(
             "Sortino Ratio": sortino_ratio_with_risk_free(
                 ret, periodicity, periods_per_year, risk_free_returns
             ),
+            "Beta to S&P 500": beta_to_benchmark(ret, spx_returns),
             "Annualized Excess Return": (ann_ret - ann_bench) if has_benchmark and not same_series else np.nan,
             "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
             "Information Ratio": information_ratio(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
@@ -424,6 +455,7 @@ def calculate_statistics(
                     result[f"{label} Annualized Volatility"] = np.nan
                     result[f"{label} Sharpe Ratio"] = np.nan
                     result[f"{label} Sortino Ratio"] = np.nan
+                    result[f"{label} Beta to S&P 500"] = np.nan
                     result[f"{label} Excess Return"] = np.nan
                     result[f"{label} Tracking Error"] = np.nan
                     result[f"{label} Information Ratio"] = np.nan
@@ -447,6 +479,9 @@ def calculate_statistics(
                 result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
                     trailing_ret, periodicity, periods_per_year, risk_free_returns
                 )
+                result[f"{label} Beta to S&P 500"] = beta_to_benchmark(
+                    trailing_ret, spx_returns
+                )
                 result[f"{label} Excess Return"] = (trailing_ann_ret - trailing_ann_bench) if has_benchmark and not same_series else np.nan
                 result[f"{label} Tracking Error"] = tracking_error(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
                 result[f"{label} Information Ratio"] = information_ratio(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
@@ -456,6 +491,7 @@ def calculate_statistics(
                 result[f"{label} Annualized Volatility"] = np.nan
                 result[f"{label} Sharpe Ratio"] = np.nan
                 result[f"{label} Sortino Ratio"] = np.nan
+                result[f"{label} Beta to S&P 500"] = np.nan
                 result[f"{label} Excess Return"] = np.nan
                 result[f"{label} Tracking Error"] = np.nan
                 result[f"{label} Information Ratio"] = np.nan
@@ -475,6 +511,7 @@ def calculate_statistics_cached(
     vol_scaler: float = 0,
     vol_scaling_assignments: str = "",
     risk_free_returns_json: str = "",
+    spx_returns_json: str = "",
 ) -> list:
     """Calculate statistics for all selected series with caching."""
     # Use get_working_returns to get aligned data + benchmarks
@@ -498,6 +535,16 @@ def calculate_statistics_cached(
                 risk_free_series = rf_df[rf_col].dropna()
         except Exception:
             risk_free_series = None
+
+    spx_series: Optional[pd.Series] = None
+    if spx_returns_json:
+        try:
+            spx_df = resample_returns_cached(spx_returns_json, periodicity)
+            if not spx_df.empty:
+                spx_col = spx_df.columns[0]
+                spx_series = spx_df[spx_col].dropna()
+        except Exception:
+            spx_series = None
     
     results = []
     # Ensure selected_series is iterable
@@ -529,6 +576,7 @@ def calculate_statistics_cached(
             series,
             is_long_short,
             risk_free_series,
+            spx_series,
         )
         results.append(stats_dict)
 

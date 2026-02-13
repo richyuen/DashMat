@@ -42,7 +42,7 @@ from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD
 from utils.core_categories import (
     get_common_daily_range,
     get_core_category_options,
-    load_bctbill13_returns,
+    load_cma_returns_for_benches,
     load_cma_returns_for_benches_with_meta,
 )
 
@@ -60,6 +60,7 @@ STATS_CONFIG = [
     ("Annualized Volatility", ".2%"),
     ("Sharpe Ratio", ".2f"),
     ("Sortino Ratio", ".2f"),
+    ("Beta to S&P 500", ".2f"),
     ("Annualized Excess Return", ".2%"),
     ("Annualized Tracking Error", ".2%"),
     ("Information Ratio", ".2f"),
@@ -75,6 +76,7 @@ STATS_CONFIG = [
     ("1Y Annualized Volatility", ".2%"),
     ("1Y Sharpe Ratio", ".2f"),
     ("1Y Sortino Ratio", ".2f"),
+    ("1Y Beta to S&P 500", ".2f"),
     ("1Y Excess Return", ".2%"),
     ("1Y Tracking Error", ".2%"),
     ("1Y Information Ratio", ".2f"),
@@ -83,6 +85,7 @@ STATS_CONFIG = [
     ("3Y Annualized Volatility", ".2%"),
     ("3Y Sharpe Ratio", ".2f"),
     ("3Y Sortino Ratio", ".2f"),
+    ("3Y Beta to S&P 500", ".2f"),
     ("3Y Excess Return", ".2%"),
     ("3Y Tracking Error", ".2%"),
     ("3Y Information Ratio", ".2f"),
@@ -91,19 +94,38 @@ STATS_CONFIG = [
     ("5Y Annualized Volatility", ".2%"),
     ("5Y Sharpe Ratio", ".2f"),
     ("5Y Sortino Ratio", ".2f"),
+    ("5Y Beta to S&P 500", ".2f"),
     ("5Y Excess Return", ".2%"),
     ("5Y Tracking Error", ".2%"),
     ("5Y Information Ratio", ".2f"),
     ("5Y Correlation", ".2f"),
 ]
 
+RISK_FREE_SERIES = "BCTBill13_TRIndex"
+MARKET_BETA_SERIES = "SPX_TRIndex"
+SAVED_SERIES_CONFIG = {
+    RISK_FREE_SERIES: {},
+    MARKET_BETA_SERIES: {"start_date": "1988-01-04"},
+}
+
+def _series_json_from_store(store_data, series_name: str) -> str:
+    if isinstance(store_data, dict):
+        series_data = store_data.get("series_data")
+        if isinstance(series_data, dict):
+            series_payload = series_data.get(series_name)
+            if isinstance(series_payload, dict):
+                payload = series_payload.get("returns_json")
+                if isinstance(payload, str):
+                    return payload
+    return ""
+
 
 def _risk_free_json_from_store(store_data) -> str:
-    if isinstance(store_data, dict):
-        payload = store_data.get("returns_json")
-        if isinstance(payload, str):
-            return payload
-    return ""
+    return _series_json_from_store(store_data, RISK_FREE_SERIES)
+
+
+def _spx_json_from_store(store_data) -> str:
+    return _series_json_from_store(store_data, MARKET_BETA_SERIES)
 
 
 def build_welcome_screen():
@@ -313,12 +335,12 @@ def close_db_add_modal(n_clicks):
 
 
 @callback(
-    Output("bctbill13-cache-store", "data"),
+    Output("analyticstool-saved-series-cache-store", "data"),
     Input("analyticstool-raw-data-store", "data"),
-    State("bctbill13-cache-store", "data"),
+    State("analyticstool-saved-series-cache-store", "data"),
 )
-def refresh_bctbill13_cache(raw_data, cache_data):
-    """Cache BCTBill13 history once per session and refresh if raw data extends beyond it."""
+def refresh_saved_series_cache(raw_data, cache_data):
+    """Cache shared saved benchmark series and refresh if raw data extends beyond them."""
     if not raw_data:
         raise PreventUpdate
 
@@ -331,28 +353,61 @@ def refresh_bctbill13_cache(raw_data, cache_data):
         raise PreventUpdate
 
     raw_end = pd.to_datetime(raw_df.index.max())
-    cached_json = _risk_free_json_from_store(cache_data)
-    cached_max_raw = cache_data.get("max_date") if isinstance(cache_data, dict) else None
-    cached_max = pd.to_datetime(cached_max_raw, errors="coerce") if cached_max_raw else pd.NaT
 
-    if cached_json and pd.notna(cached_max) and raw_end <= cached_max:
+    cache_is_fresh = isinstance(cache_data, dict) and isinstance(cache_data.get("series_data"), dict)
+    if cache_is_fresh:
+        for series_name in SAVED_SERIES_CONFIG:
+            series_payload = cache_data["series_data"].get(series_name)
+            if not isinstance(series_payload, dict):
+                cache_is_fresh = False
+                break
+            payload_json = series_payload.get("returns_json")
+            payload_max_raw = series_payload.get("max_date")
+            payload_max = pd.to_datetime(payload_max_raw, errors="coerce")
+            if not isinstance(payload_json, str) or pd.isna(payload_max) or raw_end > payload_max:
+                cache_is_fresh = False
+                break
+
+    if cache_is_fresh:
         raise PreventUpdate
 
     try:
-        rf_df = load_bctbill13_returns(DB_ENGINE, MRD_ENGINE)
+        saved_df = load_cma_returns_for_benches(
+            DB_ENGINE,
+            list(SAVED_SERIES_CONFIG.keys()),
+            MRD_ENGINE,
+        )
     except Exception:
         raise PreventUpdate
 
-    if rf_df.empty:
+    if saved_df.empty:
         raise PreventUpdate
 
-    rf_df = rf_df.sort_index()
-    rf_max = pd.to_datetime(rf_df.index.max())
-    return {
-        "series": "BCTBill13_TRIndex",
-        "max_date": rf_max.strftime("%Y-%m-%d"),
-        "returns_json": df_to_json(rf_df),
-    }
+    saved_df = saved_df.sort_index()
+    series_data = {}
+    for series_name, config in SAVED_SERIES_CONFIG.items():
+        if series_name not in saved_df.columns:
+            continue
+
+        series_returns = saved_df[series_name].dropna().sort_index()
+        start_date = config.get("start_date")
+        if start_date:
+            series_returns = series_returns.loc[
+                series_returns.index >= pd.Timestamp(start_date)
+            ]
+        if series_returns.empty:
+            continue
+
+        series_max = pd.to_datetime(series_returns.index.max())
+        series_data[series_name] = {
+            "max_date": series_max.strftime("%Y-%m-%d"),
+            "returns_json": df_to_json(series_returns.to_frame(series_name)),
+        }
+
+    if not series_data:
+        raise PreventUpdate
+
+    return {"series_data": series_data}
 
 
 @callback(
@@ -1810,6 +1865,7 @@ clientside_callback(
                 'analyticstool-raw-data-store',
                 'analyticstool-original-periodicity-store',
                 'analyticstool-pending-new-series-store',
+                'analyticstool-saved-series-cache-store',
                 'bctbill13-cache-store',
                 'series-select',
                 'benchmark-assignments-store',
@@ -4000,10 +4056,10 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
     Input("date-range-store", "data"),
     Input("vol-scaler-value-store", "data"),
     Input("vol-scaling-assignments-store", "data"),
-    Input("bctbill13-cache-store", "data"),
+    Input("analyticstool-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, risk_free_store):
+def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, saved_series_store):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], []
@@ -4019,7 +4075,8 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
             json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
-            _risk_free_json_from_store(risk_free_store),
+            _risk_free_json_from_store(saved_series_store),
+            _spx_json_from_store(saved_series_store),
         )
 
         if not stats:
@@ -4751,10 +4808,10 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("monthly-series-store", "data"),
     State("vol-scaler-value-store", "data"),
     State("vol-scaling-assignments-store", "data"),
-    State("bctbill13-cache-store", "data"),
+    State("analyticstool-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, risk_free_store):
+def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, saved_series_store):
     """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, Drawdown, and Correlogram sheets."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -4785,7 +4842,8 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         json.dumps(date_range) if date_range else "null",
         vol_scaler or 0,
         json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
-        _risk_free_json_from_store(risk_free_store),
+        _risk_free_json_from_store(saved_series_store),
+        _spx_json_from_store(saved_series_store),
     )
 
     # Build statistics DataFrame (transposed: statistics as rows, series as columns)

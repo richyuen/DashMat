@@ -52,6 +52,7 @@ STATS_CONFIG = [
     ("Annualized Volatility", ".2%"),
     ("Sharpe Ratio", ".2f"),
     ("Sortino Ratio", ".2f"),
+    ("Beta to S&P 500", ".2f"),
     ("Annualized Excess Return", ".2%"),
     ("Annualized Tracking Error", ".2%"),
     ("Information Ratio", ".2f"),
@@ -67,6 +68,7 @@ STATS_CONFIG = [
     ("1Y Annualized Volatility", ".2%"),
     ("1Y Sharpe Ratio", ".2f"),
     ("1Y Sortino Ratio", ".2f"),
+    ("1Y Beta to S&P 500", ".2f"),
     ("1Y Excess Return", ".2%"),
     ("1Y Tracking Error", ".2%"),
     ("1Y Information Ratio", ".2f"),
@@ -75,6 +77,7 @@ STATS_CONFIG = [
     ("3Y Annualized Volatility", ".2%"),
     ("3Y Sharpe Ratio", ".2f"),
     ("3Y Sortino Ratio", ".2f"),
+    ("3Y Beta to S&P 500", ".2f"),
     ("3Y Excess Return", ".2%"),
     ("3Y Tracking Error", ".2%"),
     ("3Y Information Ratio", ".2f"),
@@ -83,23 +86,39 @@ STATS_CONFIG = [
     ("5Y Annualized Volatility", ".2%"),
     ("5Y Sharpe Ratio", ".2f"),
     ("5Y Sortino Ratio", ".2f"),
+    ("5Y Beta to S&P 500", ".2f"),
     ("5Y Excess Return", ".2%"),
     ("5Y Tracking Error", ".2%"),
     ("5Y Information Ratio", ".2f"),
     ("5Y Correlation", ".2f"),
 ]
 
+RISK_FREE_SERIES = "BCTBill13_TRIndex"
+MARKET_BETA_SERIES = "SPX_TRIndex"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _risk_free_json_from_store(store_data) -> str:
+def _series_json_from_store(store_data, series_name: str) -> str:
     if isinstance(store_data, dict):
-        payload = store_data.get("returns_json")
-        if isinstance(payload, str):
-            return payload
+        series_data = store_data.get("series_data")
+        if isinstance(series_data, dict):
+            series_payload = series_data.get(series_name)
+            if isinstance(series_payload, dict):
+                payload = series_payload.get("returns_json")
+                if isinstance(payload, str):
+                    return payload
     return ""
+
+
+def _risk_free_json_from_store(store_data) -> str:
+    return _series_json_from_store(store_data, RISK_FREE_SERIES)
+
+
+def _spx_json_from_store(store_data) -> str:
+    return _series_json_from_store(store_data, MARKET_BETA_SERIES)
 
 
 def _periodicity_defaults(periodicity):
@@ -1998,6 +2017,7 @@ clientside_callback(
                 'analyticstool-raw-data-store',
                 'analyticstool-original-periodicity-store',
                 'analyticstool-pending-new-series-store',
+                'analyticstool-saved-series-cache-store',
                 'bctbill13-cache-store',
                 'series-select',
                 'benchmark-assignments-store',
@@ -5590,11 +5610,11 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-growth-portfolio-multiselect", "value"),
-    Input("bctbill13-cache-store", "data"),
+    Input("analyticstool-saved-series-cache-store", "data"),
     State("po-periodicity-select", "value"),
     prevent_initial_call=True,
 )
-def po_render_statistics(results, active_tab, selected_portfolios, risk_free_store, periodicity):
+def po_render_statistics(results, active_tab, selected_portfolios, saved_series_store, periodicity):
     if active_tab != "statistics" or not results:
         return [], []
 
@@ -5633,7 +5653,8 @@ def po_render_statistics(results, active_tab, selected_portfolios, risk_free_sto
             "null",
             0,
             "{}",
-            _risk_free_json_from_store(risk_free_store),
+            _risk_free_json_from_store(saved_series_store),
+            _spx_json_from_store(saved_series_store),
         )
 
         if not stats:
@@ -5746,11 +5767,11 @@ def po_render_returns(results, active_tab, selected_portfolios):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("bctbill13-cache-store", "data"),
+    State("analyticstool-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
-                      date_range, vol_scaler, vol_scaling, risk_free_store):
+                      date_range, vol_scaler, vol_scaling, saved_series_store):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -5779,7 +5800,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
                 stats = calculate_statistics_cached(
                     raw_json, "daily", tuple(portfolio_names),
                     "{}", "{}", "null", 0, "{}",
-                    _risk_free_json_from_store(risk_free_store),
+                    _risk_free_json_from_store(saved_series_store),
+                    _spx_json_from_store(saved_series_store),
                 )
                 if stats:
                     stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}
