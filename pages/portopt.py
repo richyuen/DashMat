@@ -1350,7 +1350,8 @@ layout = dmc.Container(
                     dmc.Text("Select Series", fw=600, size="sm"),
                 ],
             ),
-            size="auto",
+            size="94vw",
+            styles={"content": {"maxWidth": "1900px"}},
             centered=True,
             radius="lg",
             transitionProps={"transition": "fade", "duration": 200},
@@ -1365,17 +1366,10 @@ layout = dmc.Container(
                     mb="md",
                     withCloseButton=True,
                 ),
-                dmc.Checkbox(
-                    id="po-select-all-checkbox",
-                    label="Select / Unselect All",
-                    checked=True,
-                    size="sm",
-                    mb="xs",
-                ),
                 html.Div(
                     id="po-series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
-                    style={"maxHeight": "70vh", "overflowY": "auto", "overflowX": "auto"},
+                    style={"maxHeight": "70vh"},
                 ),
                 dmc.Group(
                     mt="md",
@@ -1663,7 +1657,7 @@ layout = dmc.Container(
                                                     dmc.AccordionControl("Series Selection Modal"),
                                                     dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
                                                         dmc.Text("Include checkbox controls whether a series participates in optimization.", size="sm"),
-                                                        dmc.Text("Move Up / Move Down sets display order in series lists and output tables.", size="sm"),
+                                                        dmc.Text("Drag and drop rows to set display order in series lists and output tables.", size="sm"),
                                                         dmc.Text("Benchmark sets comparison series used by excess-return and long-short behavior.", size="sm"),
                                                         dmc.Text("L/S (Long-Short) transforms selected series to (series - benchmark).", size="sm"),
                                                         dmc.Text("Scale Vol toggles per-series use of the global Vol Scaler target.", size="sm"),
@@ -4245,38 +4239,53 @@ def po_open_modal(n_clicks, current_select, current_bench, current_cmabench, cur
     Input("po-temp-series-select", "data"),
     Input("po-temp-series-order-store", "data"),
     Input("po-temp-deleted-series-store", "data"),
-    State("po-temp-benchmark-assignments-store", "data"),
-    State("po-temp-cmabench-assignments-store", "data"),
-    State("po-temp-long-short-store", "data"),
-    State("po-temp-vol-scaling-assignments-store", "data"),
-    State("po-temp-min-wt-store", "data"),
-    State("po-temp-max-wt-store", "data"),
-    State("po-temp-force-max-store", "data"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    Input("po-temp-benchmark-assignments-store", "data"),
+    Input("po-temp-cmabench-assignments-store", "data"),
+    Input("po-temp-long-short-store", "data"),
+    Input("po-temp-vol-scaling-assignments-store", "data"),
+    Input("po-temp-min-wt-store", "data"),
+    Input("po-temp-max-wt-store", "data"),
+    Input("po-temp-force-max-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_update_series_selectors(raw_data, selected_series, series_order, deleted_series,
-                               current_assignments, current_cmabench_assignments, long_short_assignments,
-                               vol_scaling_assignments, min_wt, max_wt, force_max):
+def po_update_series_selectors(
+    raw_data,
+    selected_series,
+    series_order,
+    deleted_series,
+    _cell_change,
+    current_assignments,
+    current_cmabench_assignments,
+    long_short_assignments,
+    vol_scaling_assignments,
+    min_wt,
+    max_wt,
+    force_max,
+):
     if raw_data is None:
-        return [], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
 
     df = json_to_df(raw_data)
-    deleted_set = set(deleted_series or [])
-    all_series = [s for s in list(df.columns) if s not in deleted_set]
+    all_series = list(df.columns)
 
     if not all_series:
-        return [], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
 
     if not series_order:
-        series_order = all_series
+        series_order = list(all_series)
     else:
         for s in all_series:
             if s not in series_order:
                 series_order.append(s)
         series_order = [s for s in series_order if s in all_series]
 
-    selected_series = selected_series or []
+    selected_set = set(selected_series or [])
+    deleted_set = set(deleted_series or [])
+    current_assignments = current_assignments or {}
     current_cmabench_assignments = current_cmabench_assignments or {}
+    long_short_assignments = long_short_assignments or {}
+    vol_scaling_assignments = vol_scaling_assignments or {}
     min_wt = min_wt or {}
     max_wt = max_wt or {}
     force_max = force_max or {}
@@ -4287,141 +4296,148 @@ def po_update_series_selectors(raw_data, selected_series, series_order, deleted_
         else {}
     )
 
-    benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
-    max_len = max(len(s) for s in all_series) if all_series else 10
-    series_width = max(150, max_len * 8 + 20)
-    benchmark_width = int(series_width * 1.3)
-    cmabench_width = 150
-
-    header_row = dmc.Group(
-        mb="xs",
-        gap="xs",
-        wrap="nowrap",
-        children=[
-            dmc.Box(w=20, miw=20),
-            dmc.Box(w=20, miw=20),
-            dmc.Text("Series", size="xs", fw=700, w=series_width, miw=series_width, c="dimmed"),
-            dmc.Text("Benchmark", size="xs", fw=700, w=benchmark_width, miw=benchmark_width, c="dimmed"),
-            dmc.Text("CMABench", size="xs", fw=700, w=cmabench_width, miw=cmabench_width, c="dimmed"),
-            dmc.Text("L/S", size="xs", fw=700, w=50, miw=50, c="dimmed"),
-            dmc.Text("Scale Vol", size="xs", fw=700, w=70, miw=70, c="dimmed"),
-            dmc.Text("Min Wt", size="xs", fw=700, w=80, miw=80, c="dimmed"),
-            dmc.Text("Max Wt", size="xs", fw=700, w=80, miw=80, c="dimmed"),
-            dmc.Text("Force", size="xs", fw=700, w=50, miw=50, c="dimmed"),
-            dmc.Box(w=30, miw=30),
-        ],
-    )
-
-    rows = [header_row]
-    for idx, series in enumerate(series_order):
-        bench_val = (current_assignments or {}).get(series, "None")
-        if bench_val not in [s for s in all_series] and bench_val != "None":
+    benchmark_values = ["None"] + list(all_series)
+    row_data = []
+    for series in series_order:
+        bench_val = current_assignments.get(series, "None")
+        if bench_val not in all_series and bench_val != "None":
             bench_val = "None"
-        is_ls = (long_short_assignments or {}).get(series, False)
-        is_scale_vol = (vol_scaling_assignments or {}).get(series, True)
-        is_selected = series in selected_series
+        is_ls = long_short_assignments.get(series, False)
+        is_scale_vol = vol_scaling_assignments.get(series, True)
         cmabench_val = current_cmabench_assignments.get(series, core_cmabench_defaults.get(series, ""))
         min_wt_val = min_wt.get(series, 0)
         max_wt_val = max_wt.get(series, 100)
         force_max_val = force_max.get(series, False)
-
-        up_disabled = (idx == 0)
-        down_disabled = (idx == len(series_order) - 1)
-
-        rows.append(
-            dmc.Group(
-                mb="xs",
-                gap="xs",
-                wrap="nowrap",
-                children=[
-                    dmc.Stack(
-                        gap=0,
-                        w=20,
-                        miw=20,
-                        children=[
-                            dmc.ActionIcon(
-                                "▲",
-                                id={"type": "po-move-up-button", "series": series},
-                                variant="subtle", color="gray", size="xs",
-                                disabled=up_disabled,
-                                style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
-                            ),
-                            dmc.ActionIcon(
-                                "▼",
-                                id={"type": "po-move-down-button", "series": series},
-                                variant="subtle", color="gray", size="xs",
-                                disabled=down_disabled,
-                                style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
-                            ),
-                        ],
-                    ),
-                    dmc.Checkbox(
-                        id={"type": "po-series-include-checkbox", "series": series},
-                        checked=is_selected,
-                        size="xs",
-                    ),
-                    dmc.Text(series, size="sm", w=series_width, miw=series_width, style={"fontFamily": "monospace"}),
-                    dmc.Select(
-                        id={"type": "po-benchmark-select", "series": series},
-                        data=benchmark_options,
-                        value=bench_val,
-                        size="xs",
-                        w=benchmark_width,
-                        miw=benchmark_width,
-                        placeholder="Benchmark",
-                    ),
-                    dmc.TextInput(
-                        id={"type": "po-cmabench-input", "series": series},
-                        value=cmabench_val,
-                        size="xs",
-                        w=cmabench_width,
-                        miw=cmabench_width,
-                        placeholder="CMABench",
-                    ),
-                    dmc.Switch(
-                        id={"type": "po-long-short-checkbox", "series": series},
-                        checked=is_ls,
-                        size="xs",
-                        w=50,
-                        miw=50,
-                    ),
-                    dmc.Switch(
-                        id={"type": "po-scale-vol-checkbox", "series": series},
-                        checked=is_scale_vol,
-                        size="xs",
-                        w=70,
-                        miw=70,
-                    ),
-                    dmc.NumberInput(
-                        id={"type": "po-min-wt-input", "series": series},
-                        value=min_wt_val,
-                        min=0, max=100, step=1, suffix="%",
-                        size="xs", w=80, miw=80,
-                        disabled=force_max_val,
-                    ),
-                    dmc.NumberInput(
-                        id={"type": "po-max-wt-input", "series": series},
-                        value=max_wt_val,
-                        min=0, max=100, step=1, suffix="%",
-                        size="xs", w=80, miw=80,
-                    ),
-                    dmc.Switch(
-                        id={"type": "po-force-max-switch", "series": series},
-                        checked=force_max_val,
-                        size="xs",
-                        w=50,
-                        miw=50,
-                    ),
-                    dmc.ActionIcon(
-                        DashIconify(icon="tabler:trash-x", color="red", width=20),
-                        id={"type": "po-delete-series-button", "series": series},
-                        variant="subtle", color="red", size="sm",
-                    ),
-                ],
-            )
+        row_data.append(
+            {
+                "Series": series,
+                "Benchmark": bench_val,
+                "CMABench": cmabench_val,
+                "LongShort": bool(is_ls),
+                "ScaleVol": bool(is_scale_vol),
+                "MinWt": min_wt_val,
+                "MaxWt": max_wt_val,
+                "ForceMax": bool(force_max_val),
+                "Delete": series in deleted_set,
+            }
         )
 
-    return rows, series_order
+    selected_rows = [
+        row
+        for row in row_data
+        if row["Series"] in selected_set and not row["Delete"]
+    ]
+
+    grid = dag.AgGrid(
+        id="po-series-selection-grid",
+        className="ag-theme-alpine series-modal-grid",
+        columnDefs=[
+            {
+                "headerName": "Include",
+                "checkboxSelection": True,
+                "headerCheckboxSelection": True,
+                "editable": False,
+                "sortable": False,
+                "filter": False,
+                "resizable": False,
+                "width": 90,
+                "pinned": "left",
+            },
+            {
+                "field": "Series",
+                "editable": False,
+                "rowDrag": True,
+                "minWidth": 170,
+                "cellStyle": {"fontFamily": "monospace"},
+            },
+            {
+                "field": "Benchmark",
+                "editable": True,
+                "cellEditor": "agSelectCellEditor",
+                "cellEditorParams": {"values": benchmark_values},
+                "minWidth": 170,
+            },
+            {
+                "field": "CMABench",
+                "editable": True,
+                "minWidth": 150,
+            },
+            {
+                "field": "LongShort",
+                "headerName": "L/S",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 85,
+                "cellStyle": {"textAlign": "center"},
+            },
+            {
+                "field": "ScaleVol",
+                "headerName": "Scale Vol",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 105,
+                "cellStyle": {"textAlign": "center"},
+            },
+            {
+                "field": "MinWt",
+                "headerName": "Min Wt",
+                "editable": {"function": "!params.data.ForceMax"},
+                "type": "numericColumn",
+                "width": 90,
+                "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 0; return Math.max(0, Math.min(100, n));"},
+                "cellStyle": {"textAlign": "center"},
+            },
+            {
+                "field": "MaxWt",
+                "headerName": "Max Wt",
+                "editable": True,
+                "type": "numericColumn",
+                "width": 90,
+                "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 100; return Math.max(0, Math.min(100, n));"},
+                "cellStyle": {"textAlign": "center"},
+            },
+            {
+                "field": "ForceMax",
+                "headerName": "Force",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 80,
+                "cellStyle": {"textAlign": "center"},
+            },
+            {
+                "field": "Delete",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 90,
+                "cellStyle": {"textAlign": "center"},
+            },
+        ],
+        rowData=row_data,
+        selectedRows=selected_rows,
+        defaultColDef={
+            "resizable": True,
+            "sortable": False,
+            "filter": False,
+            "suppressHeaderMenuButton": True,
+        },
+        style={"height": "60vh", "width": "100%"},
+        dashGridOptions={
+            "rowSelection": "multiple",
+            "rowMultiSelectWithClick": True,
+            "suppressRowClickSelection": True,
+            "rowDragManaged": True,
+            "animateRows": True,
+            "singleClickEdit": True,
+            "stopEditingWhenCellsLoseFocus": True,
+            "suppressExcelExport": True,
+            "suppressCsvExport": True,
+        },
+    )
+    return [grid], series_order
 
 
 # ---------------------------------------------------------------------------
@@ -4430,18 +4446,26 @@ def po_update_series_selectors(raw_data, selected_series, series_order, deleted_
 
 @callback(
     Output("po-temp-benchmark-assignments-store", "data"),
-    Input({"type": "po-benchmark-select", "series": ALL}, "value"),
-    State({"type": "po-benchmark-select", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
     State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_benchmarks(values, ids, raw_data):
-    if raw_data is None or not values or not ids:
+def po_update_benchmarks(cell_change, row_data, raw_data):
+    if raw_data is None or not row_data:
         return {}
+    valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
-    for i, bid in enumerate(ids):
-        if i < len(values) and values[i]:
-            assignments[bid["series"]] = values[i]
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        benchmark = row.get("Benchmark", "None")
+        if not series or series not in valid_series:
+            continue
+        if benchmark not in valid_series and benchmark != "None":
+            benchmark = "None"
+        assignments[series] = benchmark
     return assignments
 
 
@@ -4451,22 +4475,23 @@ def po_update_benchmarks(values, ids, raw_data):
 
 @callback(
     Output("po-temp-cmabench-assignments-store", "data"),
-    Input({"type": "po-cmabench-input", "series": ALL}, "value"),
-    State({"type": "po-cmabench-input", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
     prevent_initial_call=True,
 )
-def po_update_cmabench(values, ids):
-    if values is None or not ids:
+def po_update_cmabench(cell_change, row_data):
+    if not row_data:
         return {}
     assignments = {}
-    for i, cid in enumerate(ids):
-        if i >= len(values):
+    for row in row_data:
+        if not isinstance(row, dict):
             continue
-        val = values[i]
+        series = row.get("Series")
+        val = row.get("CMABench")
         if isinstance(val, str):
             val = val.strip()
-        if val:
-            assignments[cid["series"]] = val
+        if series and val:
+            assignments[series] = val
     return assignments
 
 
@@ -4476,15 +4501,23 @@ def po_update_cmabench(values, ids):
 
 @callback(
     Output("po-temp-long-short-store", "data"),
-    Input({"type": "po-long-short-checkbox", "series": ALL}, "checked"),
-    State({"type": "po-long-short-checkbox", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
     State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_ls(values, ids, raw_data):
-    if raw_data is None or values is None or not ids:
+def po_update_ls(cell_change, row_data, raw_data):
+    if raw_data is None or not row_data:
         return {}
-    return {ids[i]["series"]: (values[i] or False) for i in range(min(len(ids), len(values)))}
+    valid_series = set(json_to_df(raw_data).columns)
+    assignments = {}
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        if series and series in valid_series:
+            assignments[series] = bool(row.get("LongShort", False))
+    return assignments
 
 
 # ---------------------------------------------------------------------------
@@ -4493,15 +4526,23 @@ def po_update_ls(values, ids, raw_data):
 
 @callback(
     Output("po-temp-vol-scaling-assignments-store", "data"),
-    Input({"type": "po-scale-vol-checkbox", "series": ALL}, "checked"),
-    State({"type": "po-scale-vol-checkbox", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
     State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_vol_scaling(values, ids, raw_data):
-    if raw_data is None or values is None or not ids:
+def po_update_vol_scaling(cell_change, row_data, raw_data):
+    if raw_data is None or not row_data:
         return {}
-    return {ids[i]["series"]: values[i] for i in range(min(len(ids), len(values)))}
+    valid_series = set(json_to_df(raw_data).columns)
+    assignments = {}
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        if series and series in valid_series:
+            assignments[series] = bool(row.get("ScaleVol", True))
+    return assignments
 
 
 # ---------------------------------------------------------------------------
@@ -4510,51 +4551,72 @@ def po_update_vol_scaling(values, ids, raw_data):
 
 @callback(
     Output("po-temp-min-wt-store", "data"),
-    Input({"type": "po-min-wt-input", "series": ALL}, "value"),
-    State({"type": "po-min-wt-input", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
     prevent_initial_call=True,
 )
-def po_update_min_wt(values, ids):
-    if not values or not ids:
+def po_update_min_wt(cell_change, row_data):
+    if not row_data:
         return {}
-    return {ids[i]["series"]: (values[i] or 0) for i in range(min(len(ids), len(values)))}
+    assignments = {}
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        if not series:
+            continue
+        if bool(row.get("ForceMax", False)):
+            assignments[series] = 0
+            continue
+        try:
+            val = float(row.get("MinWt", 0) or 0)
+            assignments[series] = max(0.0, min(100.0, val))
+        except (TypeError, ValueError):
+            assignments[series] = 0
+    return assignments
 
 
 @callback(
     Output("po-temp-max-wt-store", "data"),
-    Input({"type": "po-max-wt-input", "series": ALL}, "value"),
-    State({"type": "po-max-wt-input", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
     prevent_initial_call=True,
 )
-def po_update_max_wt(values, ids):
-    if not values or not ids:
+def po_update_max_wt(cell_change, row_data):
+    if not row_data:
         return {}
-    return {ids[i]["series"]: (values[i] or 100) for i in range(min(len(ids), len(values)))}
+    assignments = {}
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        if not series:
+            continue
+        try:
+            val = float(row.get("MaxWt", 100) or 100)
+            assignments[series] = max(0.0, min(100.0, val))
+        except (TypeError, ValueError):
+            assignments[series] = 100
+    return assignments
 
 
 @callback(
     Output("po-temp-force-max-store", "data"),
-    Input({"type": "po-force-max-switch", "series": ALL}, "checked"),
-    State({"type": "po-force-max-switch", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
     prevent_initial_call=True,
 )
-def po_update_force_max(values, ids):
-    if not values or not ids:
+def po_update_force_max(cell_change, row_data):
+    if not row_data:
         return {}
-    return {ids[i]["series"]: (values[i] or False) for i in range(min(len(ids), len(values)))}
-
-
-@callback(
-    Output("po-temp-series-select", "data", allow_duplicate=True),
-    Input("po-select-all-checkbox", "checked"),
-    State("po-temp-series-order-store", "data"),
-    prevent_initial_call=True,
-)
-def po_toggle_select_all(checked, series_order):
-    """Select or unselect all series."""
-    if not series_order:
-        raise PreventUpdate
-    return list(series_order) if checked else []
+    assignments = {}
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        if series:
+            assignments[series] = bool(row.get("ForceMax", False))
+    return assignments
 
 
 # ---------------------------------------------------------------------------
@@ -4564,35 +4626,33 @@ def po_toggle_select_all(checked, series_order):
 @callback(
     Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
     Output("po-temp-series-select", "data", allow_duplicate=True),
-    Input({"type": "po-delete-series-button", "series": ALL}, "n_clicks"),
-    State("po-temp-deleted-series-store", "data"),
-    State({"type": "po-series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "po-series-include-checkbox", "series": ALL}, "id"),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
+    State("po-series-selection-grid", "selectedRows", allow_optional=True),
     prevent_initial_call=True,
 )
-def po_delete_series(n_clicks_list, deleted_series, checkbox_values, checkbox_ids):
-    if not n_clicks_list or all(n is None for n in n_clicks_list):
-        raise PreventUpdate
-    ctx = callback_context
-    if not ctx.triggered:
-        raise PreventUpdate
-    triggered_id = ctx.triggered[0]["prop_id"]
-    try:
-        id_dict = json.loads(triggered_id.rsplit(".", 1)[0])
-        series_to_delete = id_dict.get("series")
-    except (json.JSONDecodeError, KeyError):
-        raise PreventUpdate
-    if not series_to_delete:
+def po_delete_series(cell_change, row_data, selected_rows):
+    change = cell_change
+    if isinstance(change, list):
+        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
+    if not isinstance(change, dict) or change.get("colId") != "Delete":
         raise PreventUpdate
 
-    new_deleted = (deleted_series or []) + [series_to_delete]
-    selected = []
-    if checkbox_values and checkbox_ids:
-        for i, cid in enumerate(checkbox_ids):
-            if i < len(checkbox_values) and checkbox_values[i]:
-                selected.append(cid["series"])
-    selected = [s for s in selected if s != series_to_delete]
-    return new_deleted, selected
+    rows = row_data or []
+    deleted = [
+        row.get("Series")
+        for row in rows
+        if isinstance(row, dict) and row.get("Series") and bool(row.get("Delete"))
+    ]
+    deleted_set = set(deleted)
+    selected = [
+        row.get("Series")
+        for row in (selected_rows or [])
+        if isinstance(row, dict)
+        and row.get("Series")
+        and row.get("Series") not in deleted_set
+    ]
+    return deleted, selected
 
 
 # ---------------------------------------------------------------------------
@@ -4602,51 +4662,35 @@ def po_delete_series(n_clicks_list, deleted_series, checkbox_values, checkbox_id
 @callback(
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-temp-series-select", "data", allow_duplicate=True),
-    Input({"type": "po-move-up-button", "series": ALL}, "n_clicks"),
-    Input({"type": "po-move-down-button", "series": ALL}, "n_clicks"),
+    Input("po-series-selection-grid", "virtualRowData", allow_optional=True),
+    Input("po-series-selection-grid", "selectedRows", allow_optional=True),
     State("po-temp-series-order-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
-    State({"type": "po-series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "po-series-include-checkbox", "series": ALL}, "id"),
+    State("po-temp-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_values, checkbox_ids):
-    if raw_data is None or not current_order:
-        raise PreventUpdate
-    ctx = callback_context
-    if not ctx.triggered:
-        raise PreventUpdate
-    triggered_id = ctx.triggered[0]["prop_id"]
-    if not triggered_id:
-        raise PreventUpdate
-    try:
-        button_data = json.loads(triggered_id.rsplit(".", 1)[0])
-        button_type = button_data["type"]
-        series_name = button_data["series"]
-    except (json.JSONDecodeError, KeyError, ValueError):
+def po_reorder_series(virtual_rows, selected_rows, current_order, current_selected):
+    ordered_series = []
+    if isinstance(virtual_rows, (list, tuple)):
+        ordered_series = [
+            row.get("Series")
+            for row in virtual_rows
+            if isinstance(row, dict) and row.get("Series")
+        ]
+    elif current_order:
+        ordered_series = list(current_order)
+    if not ordered_series:
         raise PreventUpdate
 
-    current_selected = []
-    if checkbox_values and checkbox_ids:
-        checkbox_map = {}
-        for i, cid in enumerate(checkbox_ids):
-            if i < len(checkbox_values):
-                checkbox_map[cid["series"]] = checkbox_values[i]
-        for s in current_order:
-            if checkbox_map.get(s, False):
-                current_selected.append(s)
-
-    if series_name not in current_order:
+    selected_rows_safe = selected_rows if isinstance(selected_rows, (list, tuple)) else []
+    selected_set = {
+        row.get("Series")
+        for row in selected_rows_safe
+        if isinstance(row, dict) and row.get("Series")
+    }
+    selected_series = [s for s in ordered_series if s in selected_set]
+    if ordered_series == (current_order or []) and selected_series == (current_selected or []):
         raise PreventUpdate
-    current_idx = current_order.index(series_name)
-    new_order = current_order.copy()
-    if button_type == "po-move-up-button" and current_idx > 0:
-        new_order[current_idx], new_order[current_idx - 1] = new_order[current_idx - 1], new_order[current_idx]
-    elif button_type == "po-move-down-button" and current_idx < len(new_order) - 1:
-        new_order[current_idx], new_order[current_idx + 1] = new_order[current_idx + 1], new_order[current_idx]
-    else:
-        raise PreventUpdate
-    return new_order, current_selected
+    return ordered_series, selected_series
 
 
 # ---------------------------------------------------------------------------
@@ -4668,8 +4712,7 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     Output("po-force-max-store", "data"),
     Output("po-results-store", "data", allow_duplicate=True),
     Input("po-modal-ok-button", "n_clicks"),
-    State({"type": "po-series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "po-series-include-checkbox", "series": ALL}, "id"),
+    State("po-temp-series-select", "data"),
     State("po-temp-benchmark-assignments-store", "data"),
     State("po-temp-cmabench-assignments-store", "data"),
     State("po-temp-long-short-store", "data"),
@@ -4683,25 +4726,31 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_cmabench, temp_ls,
-                   temp_order, temp_deleted, raw_data, temp_vol_scaling,
-                   temp_min_wt, temp_max_wt, temp_force_max, current_results):
+def po_on_modal_ok(
+    n_clicks,
+    temp_select,
+    temp_bench,
+    temp_cmabench,
+    temp_ls,
+    temp_order,
+    temp_deleted,
+    raw_data,
+    temp_vol_scaling,
+    temp_min_wt,
+    temp_max_wt,
+    temp_force_max,
+    current_results,
+):
     if not n_clicks:
         raise PreventUpdate
 
-    temp_select = []
-    checkbox_map = {}
-    if checkbox_values and checkbox_ids:
-        for i, cid in enumerate(checkbox_ids):
-            if i < len(checkbox_values):
-                checkbox_map[cid["series"]] = checkbox_values[i]
-        order_to_use = temp_order if temp_order else list(checkbox_map.keys())
-        for s in order_to_use:
-            if checkbox_map.get(s, False):
-                temp_select.append(s)
+    temp_select = list(temp_select or [])
+    if temp_order:
+        selected_set = set(temp_select)
+        temp_select = [s for s in temp_order if s in selected_set]
 
     temp_cmabench = temp_cmabench or {}
-    series_for_defaults = temp_order if temp_order else list(checkbox_map.keys())
+    series_for_defaults = temp_order if temp_order else temp_select
     missing_cmabench = [s for s in series_for_defaults if not str(temp_cmabench.get(s, "")).strip()]
     if missing_cmabench:
         defaults = get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)

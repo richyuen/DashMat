@@ -28,11 +28,19 @@ conda activate dashmat
 pip install -r requirements.txt
 ```
 
+## Environment execution rule
+
+- Always run project commands in the `dashmat` Conda environment.
+- In non-interactive or tool-driven shells, prefer `conda run -n dashmat <command>` instead of relying on `conda activate`.
+
 ## Run
 
 ```bash
 python app.py
 python app.py --debug
+# Non-interactive shell alternative:
+conda run -n dashmat python app.py
+conda run -n dashmat python app.py --debug
 ```
 
 ## Tests and checks
@@ -41,6 +49,10 @@ python app.py --debug
 python test_factor_rp.py
 python verify_linear_constraints.py
 python generate_test_data.py
+# Non-interactive shell alternative:
+conda run -n dashmat python test_factor_rp.py
+conda run -n dashmat python verify_linear_constraints.py
+conda run -n dashmat python generate_test_data.py
 ```
 
 If you change optimization logic, run both optimization-related checks.

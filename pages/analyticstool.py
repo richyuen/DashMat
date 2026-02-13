@@ -1118,7 +1118,8 @@ layout = dmc.Container(
                     dmc.Text("Select Series", fw=600, size="sm"),
                 ],
             ),
-            size="xl",
+            size="90vw",
+            styles={"content": {"maxWidth": "1500px"}},
             centered=True,
             radius="lg",
             className='series-modal-dark dashmat-modal',
@@ -1134,17 +1135,10 @@ layout = dmc.Container(
                     mb="md",
                     withCloseButton=True,
                 ),
-                dmc.Checkbox(
-                    id="select-all-checkbox",
-                    label="Select / Unselect All",
-                    checked=True,
-                    size="sm",
-                    mb="xs",
-                ),
                 html.Div(
                     id="series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
-                    style={"maxHeight": "60vh", "overflowY": "auto"},
+                    style={"maxHeight": "60vh"},
                 ),
                 dmc.Group(
                     mt="md",
@@ -1283,7 +1277,7 @@ layout = dmc.Container(
                                 dmc.AccordionControl("Series Selection"),
                                 dmc.AccordionPanel(dmc.Text(
                                     "Click the Series Selection button to open the modal. "
-                                    "Select, reorder (move up/down), and rename series. "
+                                    "Select, reorder (drag and drop), and rename series. "
                                     "Assign a benchmark to any series for relative analysis. "
                                     "Enable Long-Short to treat the series-benchmark difference as an absolute return stream. "
                                     "Enable Vol Scaling per series to scale returns to a target volatility.",
@@ -1988,67 +1982,6 @@ clientside_callback(
 )
 
 
-clientside_callback(
-    """
-    function(series_name) {
-        if (series_name) {
-            // Use a short delay to ensure the input is rendered
-            setTimeout(function() {
-                // The ID is a JSON string, e.g., {"type":"edit-series-input","series":"SPY"}
-                // We construct the selector to find the input element.
-                var selector = `[id*='"series":"${series_name}"'][id*='"type":"edit-series-input"']`;
-                var inputElement = document.querySelector(selector);
-                
-                if (inputElement) {
-                    inputElement.focus();
-                    inputElement.select();
-                }
-            }, 50);
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("dummy-focus-output", "children"),
-    Input("edit-box-focus-trigger", "data"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n_submit_list, input_ids) {
-        if (!n_submit_list || n_submit_list.every(n => !n)) {
-            return window.dash_clientside.no_update;
-        }
-
-        const ctx = window.dash_clientside.callback_context;
-        const triggered = ctx.triggered[0];
-        if (!triggered) {
-            return window.dash_clientside.no_update;
-        }
-
-        const triggered_id_str = triggered.prop_id.split('.')[0]; // e.g., '{"type":"edit-series-input","series":"SPY"}'
-        const triggered_id = JSON.parse(triggered_id_str);
-        const series_name = triggered_id.series;
-
-        if (series_name) {
-            var saveButtonSelector = `[id*='"type":"save-edit-button"'][id*='"series":"${series_name}"']`;
-            var saveButton = document.querySelector(saveButtonSelector);
-
-            if (saveButton) {
-                // Programmatically click the save button
-                saveButton.click();
-            }
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("dummy-focus-output", "children", allow_duplicate=True),  # Reuse dummy output
-    Input({"type": "edit-series-input", "series": ALL}, "n_submit"),
-    prevent_initial_call=True,
-)
-
-
 @callback(
     Output("series-selection-modal", "opened", allow_duplicate=True),
     Output("temp-series-select", "data", allow_duplicate=True),
@@ -2081,8 +2014,7 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
     Output("vol-scaling-assignments-store", "data", allow_duplicate=True),
     Input("modal-ok-button", "n_clicks"),
-    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "series-include-checkbox", "series": ALL}, "id"),
+    State("temp-series-select", "data"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
     State("temp-series-order-store", "data"),
@@ -2091,25 +2023,14 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     State("temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls, temp_order, temp_deleted, raw_data, temp_vol_scaling):
+def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_deleted, raw_data, temp_vol_scaling):
     if not n_clicks:
         raise PreventUpdate
 
-    # Reconstruct selected series from checkbox states
-    temp_select = []
-    if checkbox_values and checkbox_ids:
-        # Map checkbox values to series
-        checkbox_map = {}
-        for i, checkbox_id in enumerate(checkbox_ids):
-            series = checkbox_id["series"]
-            if i < len(checkbox_values):
-                checkbox_map[series] = checkbox_values[i]
-        
-        # Use series order if available to maintain consistency
-        order_to_use = temp_order if temp_order else (list(checkbox_map.keys()))
-        for series in order_to_use:
-             if checkbox_map.get(series, False):
-                 temp_select.append(series)
+    temp_select = list(temp_select or [])
+    if temp_order:
+        selected_set = set(temp_select)
+        temp_select = [series for series in temp_order if series in selected_set]
 
     # Apply deletions to raw data
     updated_raw_data = raw_data
@@ -2151,66 +2072,36 @@ def on_modal_cancel(n_clicks):
 @callback(
     Output("temp-series-order-store", "data", allow_duplicate=True),
     Output("temp-series-select", "data", allow_duplicate=True),
-    Input({"type": "move-up-button", "series": ALL}, "n_clicks"),
-    Input({"type": "move-down-button", "series": ALL}, "n_clicks"),
+    Input("series-selection-grid", "virtualRowData", allow_optional=True),
+    Input("series-selection-grid", "selectedRows", allow_optional=True),
     State("temp-series-order-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
-    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "series-include-checkbox", "series": ALL}, "id"),
+    State("temp-series-select", "data"),
     prevent_initial_call=True,
 )
-def reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_values, checkbox_ids):
-    """Reorder series when up/down buttons are clicked."""
-    if raw_data is None or not current_order:
+def reorder_series(virtual_rows, selected_rows, current_order, current_selected):
+    """Keep temp order and selection aligned with AG Grid state."""
+    ordered_series = []
+    if isinstance(virtual_rows, (list, tuple)):
+        ordered_series = [
+            row.get("Series")
+            for row in virtual_rows
+            if isinstance(row, dict) and row.get("Series")
+        ]
+    elif current_order:
+        ordered_series = list(current_order)
+    if not ordered_series:
         raise PreventUpdate
 
-    ctx = callback_context
-    if not ctx.triggered:
+    selected_rows_safe = selected_rows if isinstance(selected_rows, (list, tuple)) else []
+    selected_set = {
+        row.get("Series")
+        for row in selected_rows_safe
+        if isinstance(row, dict) and row.get("Series")
+    }
+    selected_series = [series for series in ordered_series if series in selected_set]
+    if ordered_series == (current_order or []) and selected_series == (current_selected or []):
         raise PreventUpdate
-
-    # Find which button was clicked
-    triggered_id = ctx.triggered[0]["prop_id"]
-
-    if not triggered_id:
-        raise PreventUpdate
-
-    # Parse the button ID
-    try:
-        button_data = json.loads(triggered_id.rsplit(".", 1)[0])
-        button_type = button_data["type"]
-        series_name = button_data["series"]
-    except (json.JSONDecodeError, KeyError, ValueError):
-        raise PreventUpdate
-
-    # Reconstruct selected series from checkbox states
-    current_selected = []
-    if checkbox_values and checkbox_ids:
-        checkbox_map = {}
-        for i, checkbox_id in enumerate(checkbox_ids):
-            s = checkbox_id["series"]
-            if i < len(checkbox_values):
-                checkbox_map[s] = checkbox_values[i]
-        
-        for s in current_order:
-             if checkbox_map.get(s, False):
-                 current_selected.append(s)
-
-    # Find current index
-    if series_name not in current_order:
-        raise PreventUpdate
-
-    current_idx = current_order.index(series_name)
-    new_order = current_order.copy()
-
-    # Move up or down
-    if button_type == "move-up-button" and current_idx > 0:
-        new_order[current_idx], new_order[current_idx - 1] = new_order[current_idx - 1], new_order[current_idx]
-    elif button_type == "move-down-button" and current_idx < len(new_order) - 1:
-        new_order[current_idx], new_order[current_idx + 1] = new_order[current_idx + 1], new_order[current_idx]
-    else:
-        raise PreventUpdate
-
-    return new_order, current_selected
+    return ordered_series, selected_series
 
 
 
@@ -2923,340 +2814,169 @@ clientside_callback(
     Input("analyticstool-raw-data-store", "data"),
     Input("temp-series-select", "data"),
     Input("temp-series-order-store", "data"),
-    Input("series-edit-mode", "data"),
     Input("temp-deleted-series-store", "data"),
-    State("temp-benchmark-assignments-store", "data"),
-    State("temp-long-short-store", "data"),
-    State("temp-vol-scaling-assignments-store", "data"),
+    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
+    Input("temp-benchmark-assignments-store", "data"),
+    Input("temp-long-short-store", "data"),
+    Input("temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def update_series_selectors(raw_data, selected_series, series_order, edit_mode_series, deleted_series, current_assignments, long_short_assignments, vol_scaling_assignments):
-    """Create series selection rows with checkbox, benchmark dropdown, long-short, reorder buttons, and delete button."""
+def update_series_selectors(
+    raw_data,
+    selected_series,
+    series_order,
+    deleted_series,
+    _cell_change,
+    current_assignments,
+    long_short_assignments,
+    vol_scaling_assignments,
+):
+    """Render Select Series as a single AG Grid with in-grid controls."""
     if raw_data is None:
-        return [], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
 
     df = json_to_df(raw_data)
-    
-    # Filter out deleted series
-    deleted_set = set(deleted_series or [])
-    all_series = [s for s in list(df.columns) if s not in deleted_set]
-
+    all_series = list(df.columns)
     if not all_series:
-        return [], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
 
-    # Initialize or update series order
     if not series_order:
-        series_order = all_series
+        series_order = list(all_series)
     else:
-        # Add any new series to the end
         for series in all_series:
             if series not in series_order:
                 series_order.append(series)
-        # Remove any deleted/filtered series
         series_order = [s for s in series_order if s in all_series]
 
-    default_benchmark = "None"
-    selected_series = selected_series or []
+    deleted_set = set(deleted_series or [])
+    selected_set = set(selected_series or [])
+    current_assignments = current_assignments or {}
+    long_short_assignments = long_short_assignments or {}
+    vol_scaling_assignments = vol_scaling_assignments or {}
 
-    # Create benchmark options with "None" as first option
-    benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
-
-    # Calculate dynamic width based on longest series name
-    # Use approximately 8 pixels per character in monospace font, with minimum of 150px
-    max_series_length = max(len(s) for s in all_series) if all_series else 10
-    series_width = max(150, max_series_length * 8 + 20)  # Add padding
-    benchmark_width = int(series_width * 1.3)  # Make benchmark wider to prevent cutoff
-
-    # Create column headers
-    header_row = dmc.Group(
-        mb="xs",
-        gap="xs",
-        children=[
-            # Spacer for up/down arrows
-            dmc.Box(w=20),
-            # Spacer for checkbox
-            dmc.Box(w=20),
-            # Series label
-            dmc.Text("Series", size="xs", fw=700, w=series_width, c="dimmed"),
-            # Benchmark label
-            dmc.Text("Benchmark", size="xs", fw=700, w=benchmark_width, c="dimmed"),
-            # L/S label
-            dmc.Text("L/S", size="xs", fw=700, w=50, c="dimmed"),
-            # Scale Vol label
-            dmc.Text("Scale Vol", size="xs", fw=700, w=60, c="dimmed"),
-            # Spacer for delete button
-            dmc.Box(w=30),
-        ],
-    )
-
-    # Create a row for each series in the order specified
-    series_rows = [header_row]
-    for idx, series in enumerate(series_order):
-        # Pre-compute ALL conditional values to avoid serialization issues
-        if current_assignments:
-            current_benchmark = current_assignments.get(series, default_benchmark)
-        else:
-            current_benchmark = default_benchmark
-
-        if long_short_assignments:
-            is_long_short = long_short_assignments.get(series, False)
-        else:
-            is_long_short = False
-
-        if vol_scaling_assignments:
-            is_scale_vol = vol_scaling_assignments.get(series, True) # Default True
-        else:
-            is_scale_vol = True
-
-        is_selected = series in selected_series
-
-        # Pre-compute benchmark value
-        if current_benchmark in all_series or current_benchmark == "None":
-            benchmark_value = current_benchmark
-        else:
-            benchmark_value = default_benchmark
-
-        # Pre-compute disabled states for move buttons
-        up_disabled = (idx == 0)
-        down_disabled = (idx == len(series_order) - 1)
-
-        # Pre-compute children for series name display based on edit mode
-        is_editing = (series == edit_mode_series)
-
-        if is_editing:
-            series_name_children = [
-                dmc.TextInput(
-                    value=series,
-                    id={"type": "edit-series-input", "series": series},
-                    size="xs",
-                    style={"flex": 1},
-                ),
-                dmc.ActionIcon(
-                    DashIconify(icon="tabler:check", width=14),
-                    id={"type": "save-edit-button", "series": series},
-                    variant="subtle",
-                    color="green",
-                    size="xs",
-                ),
-                dmc.ActionIcon(
-                    DashIconify(icon="tabler:x", width=14),
-                    id={"type": "cancel-edit-button", "series": series},
-                    variant="subtle",
-                    color="red",
-                    size="xs",
-                ),
-            ]
-        else:
-            series_name_children = [
-                dmc.Text(
-                    series,
-                    size="sm",
-                    style={"fontFamily": "monospace", "flex": 1},
-                ),
-                dmc.ActionIcon(
-                    DashIconify(icon="tabler:pencil", width=14),
-                    id={"type": "edit-series-button", "series": series},
-                    variant="subtle",
-                    color="gray",
-                    size="xs",
-                ),
-            ]
-
-        series_rows.append(
-            dmc.Group(
-                mb="xs",
-                gap="xs",
-                children=[
-                    # Up/Down arrows for reordering
-                    dmc.Stack(
-                        gap=0,
-                        children=[
-                            dmc.ActionIcon(
-                                "▲",
-                                id={"type": "move-up-button", "series": series},
-                                variant="subtle",
-                                color="gray",
-                                size="xs",
-                                disabled=up_disabled,
-                                style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
-                            ),
-                            dmc.ActionIcon(
-                                "▼",
-                                id={"type": "move-down-button", "series": series},
-                                variant="subtle",
-                                color="gray",
-                                size="xs",
-                                disabled=down_disabled,
-                                style={"fontSize": "8px", "height": "12px", "minHeight": "12px"},
-                            ),
-                        ],
-                    ),
-                    # Checkbox to include series in analysis
-                    dmc.Checkbox(
-                        id={"type": "series-include-checkbox", "series": series},
-                        checked=is_selected,
-                        size="xs",
-                    ),
-                    # Series name with edit button OR edit textbox with check/X
-                    dmc.Group(
-                        gap=4,
-                        w=series_width,
-                        wrap="nowrap",
-                        children=series_name_children,
-                    ),
-                    # Benchmark dropdown
-                    dmc.Select(
-                        id={"type": "benchmark-select", "series": series},
-                        data=benchmark_options,
-                        value=benchmark_value,
-                        size="xs",
-                        w=benchmark_width,
-                        placeholder="Benchmark",
-                    ),
-                    # Long-Short switch
-                    dmc.Switch(
-                        id={"type": "long-short-checkbox", "series": series},
-                        checked=is_long_short,
-                        size="xs",
-                        w=50,
-                    ),
-                    # Scale Vol switch
-                    dmc.Switch(
-                        id={"type": "scale-vol-checkbox", "series": series},
-                        checked=is_scale_vol,
-                        size="xs",
-                        w=50,
-                    ),
-                    # Trash button to delete series
-                    dmc.ActionIcon(
-                        DashIconify(icon="tabler:trash-x", color="red", width=20),
-                        id={"type": "delete-series-button", "series": series},
-                        variant="subtle",
-                        color="red",
-                        size="sm",
-                    ),
-                ],
-            )
+    benchmark_values = ["None"] + list(all_series)
+    row_data = []
+    for series in series_order:
+        benchmark_value = current_assignments.get(series, "None")
+        if benchmark_value not in all_series and benchmark_value != "None":
+            benchmark_value = "None"
+        row_data.append(
+            {
+                "Series": series,
+                "Benchmark": benchmark_value,
+                "LongShort": bool(long_short_assignments.get(series, False)),
+                "ScaleVol": bool(vol_scaling_assignments.get(series, True)),
+                "Delete": series in deleted_set,
+            }
         )
 
-    return series_rows, series_order
+    selected_rows = [
+        row
+        for row in row_data
+        if row["Series"] in selected_set and not row["Delete"]
+    ]
 
-
-@callback(
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Input("select-all-checkbox", "checked"),
-    State("temp-series-order-store", "data"),
-    prevent_initial_call=True,
-)
-def toggle_select_all(checked, series_order):
-    """Select or unselect all series."""
-    if not series_order:
-        raise PreventUpdate
-    return list(series_order) if checked else []
-
+    grid = dag.AgGrid(
+        id="series-selection-grid",
+        className="ag-theme-alpine series-modal-grid",
+        columnDefs=[
+            {
+                "headerName": "Include",
+                "checkboxSelection": True,
+                "headerCheckboxSelection": True,
+                "editable": False,
+                "sortable": False,
+                "filter": False,
+                "resizable": False,
+                "width": 90,
+                "pinned": "left",
+            },
+            {
+                "field": "Series",
+                "editable": True,
+                "rowDrag": True,
+                "minWidth": 180,
+                "cellStyle": {"fontFamily": "monospace"},
+            },
+            {
+                "field": "Benchmark",
+                "editable": True,
+                "cellEditor": "agSelectCellEditor",
+                "cellEditorParams": {"values": benchmark_values},
+                "minWidth": 180,
+            },
+            {
+                "field": "LongShort",
+                "headerName": "L/S",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 90,
+                "cellStyle": {"textAlign": "center"},
+            },
+            {
+                "field": "ScaleVol",
+                "headerName": "Scale Vol",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 110,
+                "cellStyle": {"textAlign": "center"},
+            },
+            {
+                "field": "Delete",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 95,
+                "cellStyle": {"textAlign": "center"},
+            },
+        ],
+        rowData=row_data,
+        selectedRows=selected_rows,
+        defaultColDef={
+            "resizable": True,
+            "sortable": False,
+            "filter": False,
+            "suppressHeaderMenuButton": True,
+        },
+        style={"height": "58vh", "width": "100%"},
+        dashGridOptions={
+            "rowSelection": "multiple",
+            "rowMultiSelectWithClick": True,
+            "suppressRowClickSelection": True,
+            "rowDragManaged": True,
+            "animateRows": True,
+            "singleClickEdit": True,
+            "stopEditingWhenCellsLoseFocus": True,
+            "suppressExcelExport": True,
+            "suppressCsvExport": True,
+        },
+    )
+    return [grid], series_order
 
 
 @callback(
     Output("temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Input({"type": "delete-series-button", "series": ALL}, "n_clicks"),
-    State("temp-deleted-series-store", "data"),
-    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "series-include-checkbox", "series": ALL}, "id"),
+    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("series-selection-grid", "rowData", allow_optional=True),
     prevent_initial_call=True,
 )
-def delete_series(n_clicks_list, deleted_series, checkbox_values, checkbox_ids):
-    """Delete a series by adding it to the temporary deleted list."""
-    if not n_clicks_list or all(n is None for n in n_clicks_list):
+def delete_series(cell_change, row_data):
+    """Sync staged deletions from the grid Delete checkbox column."""
+    change = cell_change
+    if isinstance(change, list):
+        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
+    if not isinstance(change, dict) or change.get("colId") != "Delete":
         raise PreventUpdate
 
-    # Find which button was clicked
-    ctx = callback_context
-    if not ctx.triggered:
-        raise PreventUpdate
-
-    triggered_id = ctx.triggered[0]["prop_id"]
-    # Parse the pattern-matching ID to get series name
-    import json
-    try:
-        id_dict = json.loads(triggered_id.rsplit(".", 1)[0])
-        series_to_delete = id_dict.get("series")
-    except (json.JSONDecodeError, KeyError):
-        raise PreventUpdate
-
-    if not series_to_delete:
-        raise PreventUpdate
-
-    # Add to deleted list
-    new_deleted = (deleted_series or []) + [series_to_delete]
-
-    # Reconstruct selected series from checkbox states
-    selected_series = []
-    if checkbox_values and checkbox_ids:
-        for i, checkbox_id in enumerate(checkbox_ids):
-             if i < len(checkbox_values) and checkbox_values[i]:
-                 selected_series.append(checkbox_id["series"])
-
-    # Update selected series to remove deleted one (just for UI consistency)
-    new_selected = [s for s in selected_series if s != series_to_delete]
-
-    return new_deleted, new_selected
-
-
-@callback(
-    Output("series-edit-mode", "data"),
-    Output("edit-box-focus-trigger", "data", allow_duplicate=True),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Input({"type": "edit-series-button", "series": ALL}, "n_clicks"),
-    State({"type": "edit-series-button", "series": ALL}, "id"),
-    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "series-include-checkbox", "series": ALL}, "id"),
-    prevent_initial_call=True,
-)
-def enter_edit_mode(n_clicks_list, button_ids, checkbox_values, checkbox_ids):
-    """Enter edit mode when pencil button is clicked."""
-    if not n_clicks_list or all(n is None for n in n_clicks_list):
-        raise PreventUpdate
-
-    # Find which button was clicked
-    ctx = callback_context
-    if not ctx.triggered:
-        raise PreventUpdate
-
-    triggered_id = ctx.triggered[0]["prop_id"]
-    import json
-    try:
-        id_dict = json.loads(triggered_id.rsplit(".", 1)[0])
-        series_name = id_dict.get("series")
-    except (json.JSONDecodeError, KeyError):
-        raise PreventUpdate
-
-    if not series_name:
-        raise PreventUpdate
-
-    # Reconstruct selected series from checkbox states
-    current_selected = []
-    if checkbox_values and checkbox_ids:
-        for i, checkbox_id in enumerate(checkbox_ids):
-             if i < len(checkbox_values) and checkbox_values[i]:
-                 current_selected.append(checkbox_id["series"])
-
-    return series_name, series_name, current_selected
-
-
-@callback(
-    Output("series-edit-mode", "data", allow_duplicate=True),
-    Output("edit-box-focus-trigger", "data", allow_duplicate=True),
-    Input({"type": "cancel-edit-button", "series": ALL}, "n_clicks"),
-    prevent_initial_call=True,
-)
-def cancel_edit_mode(n_clicks_list):
-    """Exit edit mode when X button is clicked."""
-    if not n_clicks_list or all(n is None for n in n_clicks_list):
-        raise PreventUpdate
-
-    # Exit edit mode
-    return None, None
+    rows = row_data or []
+    deleted = [
+        row.get("Series")
+        for row in rows
+        if isinstance(row, dict) and row.get("Series") and bool(row.get("Delete"))
+    ]
+    return deleted
 
 
 @callback(
@@ -3269,62 +2989,40 @@ def cancel_edit_mode(n_clicks_list):
     Output("series-edit-mode", "data", allow_duplicate=True),
     Output("series-select-value-store", "data", allow_duplicate=True),
     Output("edit-box-focus-trigger", "data", allow_duplicate=True),
-    Input({"type": "save-edit-button", "series": ALL}, "n_clicks"),
-    State({"type": "save-edit-button", "series": ALL}, "id"),
-    State({"type": "edit-series-input", "series": ALL}, "value"),
-    State({"type": "edit-series-input", "series": ALL}, "id"),
+    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
     State("analyticstool-raw-data-store", "data"),
     State("temp-benchmark-assignments-store", "data"),
     State("temp-long-short-store", "data"),
     State("temp-vol-scaling-assignments-store", "data"),
-    State({"type": "series-include-checkbox", "series": ALL}, "checked"),
-    State({"type": "series-include-checkbox", "series": ALL}, "id"),
+    State("temp-series-select", "data"),
     State("temp-series-order-store", "data"),
-    State("series-edit-mode", "data"),
     prevent_initial_call=True,
 )
-def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, benchmark_assignments, long_short_assignments, vol_scaling_assignments, checkbox_values, checkbox_ids, series_order, edit_mode_series):
-    """Save the series rename when check button is clicked."""
-    if not save_clicks_list or all(n is None for n in save_clicks_list):
+def save_edit(
+    cell_change,
+    raw_data,
+    benchmark_assignments,
+    long_short_assignments,
+    vol_scaling_assignments,
+    selected_series,
+    series_order,
+):
+    """Save an in-grid Series rename and cascade key updates across stores."""
+    change = cell_change
+    if isinstance(change, list):
+        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
+    if not isinstance(change, dict) or change.get("colId") != "Series":
         raise PreventUpdate
 
-    # Find which button was clicked
-    ctx = callback_context
-    if not ctx.triggered:
+    old_name = str(change.get("oldValue", "")).strip()
+    new_name = str(change.get("newValue", "")).strip()
+    if not old_name or not new_name or new_name == old_name:
         raise PreventUpdate
-
-    triggered_id = ctx.triggered[0]["prop_id"]
-    import json
-    try:
-        id_dict = json.loads(triggered_id.rsplit(".", 1)[0])
-        old_name = id_dict.get("series")
-    except (json.JSONDecodeError, KeyError):
-        raise PreventUpdate
-
-    if not old_name or not edit_mode_series or old_name != edit_mode_series:
-        raise PreventUpdate
-
-    # Find the new name from the input
-    new_name = None
-    for i, input_id in enumerate(input_ids):
-        if input_id["series"] == old_name and i < len(input_values):
-            new_name = input_values[i]
-            break
-
-    if not new_name:
-        raise PreventUpdate
-
-    new_name = new_name.strip()
-
-    # If name unchanged, just exit edit mode
-    if new_name == old_name or not new_name:
-        return no_update, no_update, no_update, no_update, no_update, no_update, None, no_update, None
 
     # Check if new name already exists
     df = json_to_df(raw_data)
-    if new_name in df.columns:
-        # Don't allow duplicate names, exit edit mode
-        return no_update, no_update, no_update, no_update, no_update, no_update, None, no_update, None
+    if old_name not in df.columns or new_name in df.columns:
+        raise PreventUpdate
 
     # Rename column in DataFrame
     df = df.rename(columns={old_name: new_name})
@@ -3350,17 +3048,12 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
             series_key = new_name if series == old_name else series
             new_vol_scaling_assignments[series_key] = is_scaled
 
-    # Reconstruct selected series from checkbox states
-    current_selected = []
-    if checkbox_values and checkbox_ids:
-        for i, checkbox_id in enumerate(checkbox_ids):
-             if i < len(checkbox_values) and checkbox_values[i]:
-                 current_selected.append(checkbox_id["series"])
-
     # Update series selection (handling the rename)
-    new_series_select = [new_name if s == old_name else s for s in current_selected]
+    selected_series = selected_series or []
+    new_series_select = [new_name if s == old_name else s for s in selected_series]
 
     # Update series order
+    series_order = series_order or list(df.columns)
     new_series_order = [new_name if s == old_name else s for s in series_order]
 
     # Return updated data and exit edit mode
@@ -3369,66 +3062,78 @@ def save_edit(save_clicks_list, save_ids, input_values, input_ids, raw_data, ben
 
 @callback(
     Output("temp-benchmark-assignments-store", "data"),
-    Input({"type": "benchmark-select", "series": ALL}, "value"),
-    State({"type": "benchmark-select", "series": ALL}, "id"),
+    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("series-selection-grid", "rowData", allow_optional=True),
     State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_benchmark_assignments(benchmark_values, benchmark_ids, raw_data):
+def update_benchmark_assignments(cell_change, row_data, raw_data):
     """Store benchmark assignments for all series."""
-    if raw_data is None or not benchmark_values or not benchmark_ids:
+    if raw_data is None or not row_data:
         return {}
 
-    # Map values to series using the pattern-matching IDs
+    valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
-    for i, benchmark_id in enumerate(benchmark_ids):
-        series = benchmark_id["series"]
-        if i < len(benchmark_values) and benchmark_values[i]:
-            assignments[series] = benchmark_values[i]
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        benchmark = row.get("Benchmark", "None")
+        if not series or series not in valid_series:
+            continue
+        if benchmark not in valid_series and benchmark != "None":
+            benchmark = "None"
+        assignments[series] = benchmark
 
     return assignments
 
 
 @callback(
     Output("temp-long-short-store", "data"),
-    Input({"type": "long-short-checkbox", "series": ALL}, "checked"),
-    State({"type": "long-short-checkbox", "series": ALL}, "id"),
+    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("series-selection-grid", "rowData", allow_optional=True),
     State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_long_short_assignments(checkbox_values, checkbox_ids, raw_data):
+def update_long_short_assignments(cell_change, row_data, raw_data):
     """Store long-short checkbox assignments for all series."""
-    if raw_data is None or checkbox_values is None or not checkbox_ids:
+    if raw_data is None or not row_data:
         return {}
 
-    # Map values to series using the pattern-matching IDs
+    valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
-    for i, checkbox_id in enumerate(checkbox_ids):
-        series = checkbox_id["series"]
-        if i < len(checkbox_values):
-            assignments[series] = checkbox_values[i] or False
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        if not series or series not in valid_series:
+            continue
+        assignments[series] = bool(row.get("LongShort", False))
 
     return assignments
 
 
 @callback(
     Output("temp-vol-scaling-assignments-store", "data"),
-    Input({"type": "scale-vol-checkbox", "series": ALL}, "checked"),
-    State({"type": "scale-vol-checkbox", "series": ALL}, "id"),
+    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("series-selection-grid", "rowData", allow_optional=True),
     State("analyticstool-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_vol_scaling_assignments(checkbox_values, checkbox_ids, raw_data):
+def update_vol_scaling_assignments(cell_change, row_data, raw_data):
     """Store vol-scaling checkbox assignments for all series."""
-    if raw_data is None or checkbox_values is None or not checkbox_ids:
+    if raw_data is None or not row_data:
         return {}
 
-    # Map values to series using the pattern-matching IDs
+    valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
-    for i, checkbox_id in enumerate(checkbox_ids):
-        series = checkbox_id["series"]
-        if i < len(checkbox_values):
-            assignments[series] = checkbox_values[i]
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        series = row.get("Series")
+        if not series or series not in valid_series:
+            continue
+        assignments[series] = bool(row.get("ScaleVol", True))
 
     return assignments
 
