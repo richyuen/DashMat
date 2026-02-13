@@ -150,5 +150,18 @@ def load_cma_returns_for_benches(
 
     ordered_cols = [b for b in selected if b in out.columns]
     out = out.reindex(columns=ordered_cols)
+    if not out.empty:
+        # Treat MRD data as daily and fill interior calendar gaps with zero
+        # between each series' first and last valid return.
+        full_index = pd.date_range(out.index.min(), out.index.max(), freq="D")
+        out = out.reindex(full_index)
+        for col in out.columns:
+            first = out[col].first_valid_index()
+            last = out[col].last_valid_index()
+            if first is None or last is None:
+                continue
+            mask = (out.index >= first) & (out.index <= last)
+            out.loc[mask, col] = out.loc[mask, col].fillna(0.0)
+        out = out.dropna(how="all")
     out.index.name = "Date"
     return out

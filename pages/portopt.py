@@ -3729,7 +3729,8 @@ def po_add_series_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for selected CMABench values.")
 
-        new_periodicity = detect_periodicity(new_df)
+        # Database import is treated as daily by design.
+        new_periodicity = "daily"
 
         if existing_data is not None:
             existing_df = json_to_df(existing_data)
