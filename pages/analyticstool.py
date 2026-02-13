@@ -1144,12 +1144,12 @@ layout = dmc.Container(
                 ),
                 dmc.MultiSelect(
                     id="db-add-series-select",
-                    label="Core Categories",
+                    label="Select Series",
                     data=[],
                     value=[],
                     searchable=True,
                     clearSearchOnChange=False,
-                    placeholder="Select one or more categories",
+                    placeholder="Select one or more series",
                     nothingFoundMessage="No categories found",
                     w="100%",
                 ),
@@ -4756,7 +4756,6 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         json.dumps(date_range) if date_range else "null",
         vol_scaler or 0,
         json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
-        _risk_free_json_from_store(risk_free_store),
     )
 
     if returns_df.empty:
@@ -4771,7 +4770,8 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         json.dumps(long_short_assignments) if long_short_assignments else "{}",
         json.dumps(date_range) if date_range else "null",
         vol_scaler or 0,
-        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
+        _risk_free_json_from_store(risk_free_store),
     )
 
     # Build statistics DataFrame (transposed: statistics as rows, series as columns)

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
+import pandas_market_calendars as mcal
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 RISK_FREE_FOFBENCH = "BCTBill13_TRIndex"
-_MAX_DAILY_GAP_DAYS = 4
-_MIN_DAILY_OBS = 2
 
 
 def get_core_category_options(engine: Engine) -> list[dict]:
@@ -20,7 +18,7 @@ def get_core_category_options(engine: Engine) -> list[dict]:
                 "SELECT CoreCat, FOFBench "
                 "FROM CoreCategories "
                 "WHERE FOFBench IS NOT NULL "
-                "ORDER BY CoreCatOrder"
+                "ORDER BY CoreCat, FOFBench"
             )
         ).fetchall()
     return [
@@ -48,35 +46,52 @@ def _split_fofbench(fofbench: str) -> tuple[str, str]:
     return acct_name, factor_name
 
 
+def _next_trading_day_lookup(
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> dict[pd.Timestamp, pd.Timestamp]:
+    nyse = mcal.get_calendar("NYSE")
+    valid_days = nyse.valid_days(
+        start_date=start - pd.Timedelta(days=7),
+        end_date=end + pd.Timedelta(days=7),
+    ).tz_localize(None)
+    valid_days = pd.DatetimeIndex(valid_days).sort_values().unique()
+    lookup: dict[pd.Timestamp, pd.Timestamp] = {}
+    for i in range(len(valid_days) - 1):
+        lookup[pd.Timestamp(valid_days[i])] = pd.Timestamp(valid_days[i + 1])
+    return lookup
+
+
 def _infer_daily_start_from_observation_dates(
     observation_dates: pd.DatetimeIndex,
-    max_gap_days: int = _MAX_DAILY_GAP_DAYS,
-    min_daily_obs: int = _MIN_DAILY_OBS,
 ) -> pd.Timestamp | None:
-    """Infer first observation date where the return stream is daily thereafter."""
+    """Infer first daily return date from level observations.
+
+    Daily is assumed when two consecutive trading-day observations appear.
+    For levels, the first daily return is at the second observation date.
+    """
     obs = pd.DatetimeIndex(observation_dates).sort_values().unique()
     if len(obs) < 2:
         return None
 
-    deltas = (obs[1:] - obs[:-1]).days
-    n_returns = len(obs) - 1
-    required_obs = min(min_daily_obs, n_returns)
-
-    for pos in range(1, len(obs)):
-        returns_remaining = len(obs) - pos
-        if returns_remaining < required_obs:
-            continue
-        if np.all(deltas[pos - 1:] <= max_gap_days):
-            return pd.Timestamp(obs[pos])
+    next_lookup = _next_trading_day_lookup(pd.Timestamp(obs.min()), pd.Timestamp(obs.max()))
+    for i in range(len(obs) - 1):
+        d0 = pd.Timestamp(obs[i])
+        d1 = pd.Timestamp(obs[i + 1])
+        if next_lookup.get(d0) == d1:
+            return d1
     return None
 
 
 def infer_daily_start_from_returns(
     returns: pd.Series,
-    max_gap_days: int = _MAX_DAILY_GAP_DAYS,
-    min_daily_obs: int = _MIN_DAILY_OBS,
 ) -> pd.Timestamp | None:
-    """Infer first return date where return observations are daily thereafter."""
+    """Infer first return date where returns become daily.
+
+    Daily is assumed when two consecutive trading-day return observations appear.
+    If the first date in the pair is month-end, skip that pair to avoid
+    classifying a month-end carry-forward return as daily.
+    """
     valid = returns.dropna()
     if valid.empty:
         return None
@@ -84,19 +99,14 @@ def infer_daily_start_from_returns(
     if len(ret_dates) == 1:
         return pd.Timestamp(ret_dates[0])
 
-    gaps = (ret_dates[1:] - ret_dates[:-1]).days
-    required_obs = min(min_daily_obs, len(ret_dates))
-
-    for i in range(len(ret_dates)):
-        obs_remaining = len(ret_dates) - i
-        if obs_remaining < required_obs:
-            continue
-        if i == 0:
-            if np.all(gaps <= max_gap_days):
-                return pd.Timestamp(ret_dates[0])
-            continue
-        if gaps[i - 1] <= max_gap_days and (i == len(ret_dates) - 1 or np.all(gaps[i:] <= max_gap_days)):
-            return pd.Timestamp(ret_dates[i])
+    next_lookup = _next_trading_day_lookup(pd.Timestamp(ret_dates.min()), pd.Timestamp(ret_dates.max()))
+    for i in range(len(ret_dates) - 1):
+        d0 = pd.Timestamp(ret_dates[i])
+        d1 = pd.Timestamp(ret_dates[i + 1])
+        if next_lookup.get(d0) == d1:
+            if d0.is_month_end:
+                continue
+            return d0
     return None
 
 
