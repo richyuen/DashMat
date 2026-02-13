@@ -5947,14 +5947,38 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
         all_contributions = {s: [] for s in opt_series}
 
         for ww in window_weights:
-            start = pd.Timestamp(ww["apply_start"])
-            end = pd.Timestamp(ww["apply_end"])
-            mask = (working_df.index >= start) & (working_df.index <= end)
-            window_returns = working_df.loc[mask, opt_series].dropna()
+            weights = ww.get("weights", {})
+            if not isinstance(weights, dict):
+                continue
+
+            # Risk contribution is estimated from the same estimation window
+            # used to compute this set of weights.
+            est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"]))
+            est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"]))
+            apply_end = pd.Timestamp(ww["apply_end"])
+
+            active_assets = [
+                s for s in opt_series
+                if abs(float(weights.get(s, 0) or 0)) > 1e-12
+            ]
+            if not active_assets:
+                continue
+
+            mask = (working_df.index >= est_start) & (working_df.index <= est_end)
+            window_returns = working_df.loc[mask, active_assets].dropna(how="all")
             if window_returns.empty:
                 continue
-            rc = compute_risk_contributions(ww["weights"], window_returns)
-            all_dates.append(end)
+
+            valid_assets = [a for a in active_assets if window_returns[a].notna().any()]
+            if not valid_assets:
+                continue
+
+            window_returns = window_returns[valid_assets].fillna(0)
+            rc = compute_risk_contributions(
+                {a: float(weights.get(a, 0) or 0) for a in valid_assets},
+                window_returns,
+            )
+            all_dates.append(apply_end)
             for s in opt_series:
                 all_contributions[s].append(rc.get(s, 0) * 100)
 
@@ -6070,12 +6094,34 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
         for ww in window_weights:
             start = pd.Timestamp(ww["apply_start"])
             end = pd.Timestamp(ww["apply_end"])
-            # Get returns for this window
-            mask = (working_df.index >= start) & (working_df.index <= end)
-            window_returns = working_df.loc[mask, opt_series].dropna()
+            weights = ww.get("weights", {})
+            if not isinstance(weights, dict):
+                continue
+
+            est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"]))
+            est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"]))
+
+            active_assets = [
+                s for s in opt_series
+                if abs(float(weights.get(s, 0) or 0)) > 1e-12
+            ]
+            if not active_assets:
+                continue
+
+            mask = (working_df.index >= est_start) & (working_df.index <= est_end)
+            window_returns = working_df.loc[mask, active_assets].dropna(how="all")
             if window_returns.empty:
                 continue
-            rc = compute_risk_contributions(ww["weights"], window_returns)
+
+            valid_assets = [a for a in active_assets if window_returns[a].notna().any()]
+            if not valid_assets:
+                continue
+
+            window_returns = window_returns[valid_assets].fillna(0)
+            rc = compute_risk_contributions(
+                {a: float(weights.get(a, 0) or 0) for a in valid_assets},
+                window_returns,
+            )
             row = {
                 "Window Start": start.strftime("%Y-%m-%d"),
                 "Window End": end.strftime("%Y-%m-%d"),
