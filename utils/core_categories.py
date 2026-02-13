@@ -67,18 +67,20 @@ def _infer_daily_start_from_observation_dates(
 ) -> pd.Timestamp | None:
     """Infer first daily return date from level observations.
 
-    Daily is assumed when two consecutive trading-day observations appear.
-    For levels, the first daily return is at the second observation date.
+    Daily is assumed when three trading-day observations appear on consecutive
+    trading days (which implies two consecutive daily returns). For levels, the
+    first daily return is at the second observation date.
     """
     obs = pd.DatetimeIndex(observation_dates).sort_values().unique()
-    if len(obs) < 2:
+    if len(obs) < 3:
         return None
 
     next_lookup = _next_trading_day_lookup(pd.Timestamp(obs.min()), pd.Timestamp(obs.max()))
-    for i in range(len(obs) - 1):
+    for i in range(len(obs) - 2):
         d0 = pd.Timestamp(obs[i])
         d1 = pd.Timestamp(obs[i + 1])
-        if next_lookup.get(d0) == d1:
+        d2 = pd.Timestamp(obs[i + 2])
+        if next_lookup.get(d0) == d1 and next_lookup.get(d1) == d2:
             return d1
     return None
 
@@ -88,7 +90,8 @@ def infer_daily_start_from_returns(
 ) -> pd.Timestamp | None:
     """Infer first return date where returns become daily.
 
-    Daily is assumed when two consecutive trading-day return observations appear.
+    Daily is assumed when two consecutive trading-day return observations appear
+    and both returns are non-zero.
     If the first date in the pair is month-end, skip that pair to avoid
     classifying a month-end carry-forward return as daily.
     """
@@ -96,14 +99,18 @@ def infer_daily_start_from_returns(
     if valid.empty:
         return None
     ret_dates = pd.DatetimeIndex(valid.index).sort_values().unique()
-    if len(ret_dates) == 1:
-        return pd.Timestamp(ret_dates[0])
+    if len(ret_dates) < 2:
+        return None
 
     next_lookup = _next_trading_day_lookup(pd.Timestamp(ret_dates.min()), pd.Timestamp(ret_dates.max()))
     for i in range(len(ret_dates) - 1):
         d0 = pd.Timestamp(ret_dates[i])
         d1 = pd.Timestamp(ret_dates[i + 1])
         if next_lookup.get(d0) == d1:
+            v0 = float(valid.loc[d0])
+            v1 = float(valid.loc[d1])
+            if v0 == 0.0 or v1 == 0.0:
+                continue
             if d0.is_month_end:
                 continue
             return d0
