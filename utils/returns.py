@@ -41,6 +41,13 @@ def is_daily(periodicity: str) -> bool:
     return periodicity in ("daily", "daily_trading")
 
 
+def _is_strict_monthly_index(index: pd.DatetimeIndex) -> bool:
+    """True when every observation is month-end (no mixed daily rows)."""
+    if len(index) == 0:
+        return False
+    return bool(pd.DatetimeIndex(index).is_month_end.all())
+
+
 def filter_to_trading_days(df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate returns onto NYSE trading days.
 
@@ -210,10 +217,16 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
     if periodicity == "daily_trading":
         return filter_to_trading_days(df)
 
-    # Check if data is already in the target periodicity
+    # Check if data is already in the target periodicity.
+    # For monthly, guard against mixed-frequency indexes (e.g., monthly history
+    # that transitions to daily), which detect_periodicity may classify as
+    # monthly based on early rows.
     current_periodicity = detect_periodicity(df)
     if current_periodicity == periodicity:
-        return df
+        if periodicity == "monthly" and not _is_strict_monthly_index(df.index):
+            pass
+        else:
+            return df
 
     resample_code = RESAMPLE_CODES.get(periodicity)
     if resample_code is None:

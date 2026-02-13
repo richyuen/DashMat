@@ -636,8 +636,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
+                                        "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                     },
@@ -728,8 +727,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
+                                        "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                         "suppressCsvExport": True,
@@ -913,8 +911,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
+                                        "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                         "suppressCsvExport": True,
@@ -971,8 +968,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
                                         "animateRows": True,
-                                        "pagination": True,
-                                        "paginationPageSize": 100,
+                                        "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                         "suppressCsvExport": True,

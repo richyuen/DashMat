@@ -261,8 +261,18 @@ def load_cma_returns_for_benches_with_meta(
     index_levels = data.pivot(index="REFERENCE_DATE", columns="ACCT_ID", values="FACTOR_VALUE")
     index_levels = index_levels.sort_index()
 
-    # MRD stores index levels; convert to arithmetic daily returns.
-    daily_returns = index_levels.pct_change(fill_method=None).dropna(how="all")
+    # MRD stores index levels; convert to arithmetic returns.
+    # Compute pct_change per series on its own non-null observation dates so
+    # mixed-frequency selections (e.g., monthly-to-daily + daily) do not erase
+    # sparse history due to intervening NaNs from other columns.
+    daily_returns = pd.DataFrame(index=index_levels.index, columns=index_levels.columns, dtype=float)
+    for acct_id in index_levels.columns:
+        levels_series = index_levels[acct_id].dropna()
+        if levels_series.empty:
+            continue
+        series_returns = levels_series.pct_change(fill_method=None)
+        daily_returns[acct_id] = series_returns.reindex(index_levels.index)
+    daily_returns = daily_returns.dropna(how="all")
 
     acct_id_to_fofbenches: dict[int, list[str]] = {}
     for fofbench, acct_id in fofbench_to_acct_id.items():

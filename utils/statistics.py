@@ -9,6 +9,8 @@ from scipy import stats
 import cache_config
 from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns, annualization_factor, is_daily
 
+SPX_DAILY_INCEPTION_DATE = pd.Timestamp("1988-01-04")
+
 
 
 
@@ -209,6 +211,17 @@ def beta_to_benchmark(
     return covariance / benchmark_var
 
 
+def beta_to_spx_if_eligible(
+    returns: pd.Series,
+    spx_returns: Optional[pd.Series],
+    beta_allowed: bool,
+) -> float:
+    """Calculate beta to S&P 500 only when the working stream is eligible."""
+    if not beta_allowed:
+        return np.nan
+    return beta_to_benchmark(returns, spx_returns)
+
+
 def information_ratio(returns: pd.Series, benchmark_returns: pd.Series, periods_per_year: float) -> float:
     """Calculate information ratio."""
     excess = returns - benchmark_returns
@@ -304,6 +317,10 @@ def calculate_statistics(
     
     # Check if benchmark is valid (not "None" placeholder)
     has_benchmark = benchmark_returns.name != "None"
+    beta_allowed = (
+        len(ret) > 0
+        and pd.Timestamp(ret.index.min()) >= SPX_DAILY_INCEPTION_DATE
+    )
 
     # For long-short mode, calculate returns based on the period-by-period difference
     if is_long_short:
@@ -332,7 +349,9 @@ def calculate_statistics(
             "Sortino Ratio": sortino_ratio_with_risk_free(
                 ls_returns, periodicity, periods_per_year, risk_free_returns
             ),
-            "Beta to S&P 500": beta_to_benchmark(ls_returns, spx_returns),
+            "Beta to S&P 500": beta_to_spx_if_eligible(
+                ls_returns, spx_returns, beta_allowed
+            ),
             # For L/S, "Excess Return" is typically just the return itself, but if we follow strict "relative to bench" rule:
             # If bench is None, L/S return is absolute. 
             # If we enforce "no relative stats if no bench", then for L/S:
@@ -385,8 +404,8 @@ def calculate_statistics(
                 result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
                     trailing_ls, periodicity, periods_per_year, risk_free_returns
                 )
-                result[f"{label} Beta to S&P 500"] = beta_to_benchmark(
-                    trailing_ls, spx_returns
+                result[f"{label} Beta to S&P 500"] = beta_to_spx_if_eligible(
+                    trailing_ls, spx_returns, beta_allowed
                 )
                 result[f"{label} Excess Return"] = trailing_ls_ann_ret if has_benchmark else np.nan
                 result[f"{label} Tracking Error"] = annualized_volatility(trailing_ls, periods_per_year) if has_benchmark else np.nan
@@ -428,7 +447,9 @@ def calculate_statistics(
             "Sortino Ratio": sortino_ratio_with_risk_free(
                 ret, periodicity, periods_per_year, risk_free_returns
             ),
-            "Beta to S&P 500": beta_to_benchmark(ret, spx_returns),
+            "Beta to S&P 500": beta_to_spx_if_eligible(
+                ret, spx_returns, beta_allowed
+            ),
             "Annualized Excess Return": (ann_ret - ann_bench) if has_benchmark and not same_series else np.nan,
             "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
             "Information Ratio": information_ratio(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
@@ -479,8 +500,8 @@ def calculate_statistics(
                 result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
                     trailing_ret, periodicity, periods_per_year, risk_free_returns
                 )
-                result[f"{label} Beta to S&P 500"] = beta_to_benchmark(
-                    trailing_ret, spx_returns
+                result[f"{label} Beta to S&P 500"] = beta_to_spx_if_eligible(
+                    trailing_ret, spx_returns, beta_allowed
                 )
                 result[f"{label} Excess Return"] = (trailing_ann_ret - trailing_ann_bench) if has_benchmark and not same_series else np.nan
                 result[f"{label} Tracking Error"] = tracking_error(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
