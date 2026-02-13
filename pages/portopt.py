@@ -1867,6 +1867,7 @@ layout = dmc.Container(
         dcc.Store(id="po-sheet-select-filename-store", data=None),
         # Controls stores
         dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
+        dcc.Store(id="po-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
@@ -2228,6 +2229,28 @@ clientside_callback(
     "function(value) { return value; }",
     Output("po-periodicity-value-store", "data"),
     Input("po-periodicity-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Sync periodicity to Analytics only on raw-data load/update events.
+clientside_callback(
+    """
+    function(rawData, periodicityValue) {
+        const ctx = window.dash_clientside.callback_context;
+        const triggered = (ctx && ctx.triggered) ? ctx.triggered : [];
+        const rawTriggered = triggered.some(
+            t => t && t.prop_id && t.prop_id.indexOf("analyticstool-raw-data-store.") === 0
+        );
+        if (!rawTriggered || !rawData || !periodicityValue) {
+            return window.dash_clientside.no_update;
+        }
+        sessionStorage.setItem("periodicity-value-store", JSON.stringify(periodicityValue));
+        return periodicityValue;
+    }
+    """,
+    Output("po-periodicity-load-sync-dummy", "data"),
+    Input("analyticstool-raw-data-store", "data"),
+    Input("po-periodicity-value-store", "data"),
     prevent_initial_call=True,
 )
 

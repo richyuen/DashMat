@@ -1569,6 +1569,7 @@ layout = dmc.Container(
         dcc.Store(id="benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="long-short-store", data={}, storage_type="session"),
         dcc.Store(id="periodicity-value-store", data="daily_trading", storage_type="session"),
+        dcc.Store(id="at-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="returns-type-value-store", data="total", storage_type="session"),
         dcc.Store(id="series-select-value-store", data=[], storage_type="session"),
         dcc.Store(id="series-order-store", data=[], storage_type="session"),
@@ -2180,6 +2181,29 @@ clientside_callback(
     "function(value) { return value; }",
     Output("periodicity-value-store", "data"),
     Input("periodicity-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+# Sync periodicity to PortOpt only on raw-data load/update events.
+clientside_callback(
+    """
+    function(rawData, periodicityValue) {
+        const ctx = window.dash_clientside.callback_context;
+        const triggered = (ctx && ctx.triggered) ? ctx.triggered : [];
+        const rawTriggered = triggered.some(
+            t => t && t.prop_id && t.prop_id.indexOf("analyticstool-raw-data-store.") === 0
+        );
+        if (!rawTriggered || !rawData || !periodicityValue) {
+            return window.dash_clientside.no_update;
+        }
+        sessionStorage.setItem("po-periodicity-value-store", JSON.stringify(periodicityValue));
+        return periodicityValue;
+    }
+    """,
+    Output("at-periodicity-load-sync-dummy", "data"),
+    Input("analyticstool-raw-data-store", "data"),
+    Input("periodicity-value-store", "data"),
     prevent_initial_call=True,
 )
 
