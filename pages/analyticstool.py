@@ -1255,13 +1255,25 @@ layout = dmc.Container(
                         dmc.AccordionItem(
                             value="returns",
                             children=[
-                                dmc.AccordionControl("Returns"),
-                                dmc.AccordionPanel(dmc.Text(
-                                    "Toggle between Total Returns and Excess Returns. "
-                                    "Excess Returns show the arithmetic difference between a series and its assigned benchmark. "
-                                    "Long-Short treats the series-benchmark difference as an absolute return stream.",
-                                    size="sm",
-                                )),
+                                dmc.AccordionControl("Returns Mode"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "The Returns Type control applies across pages that support return mode switching.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Total Returns: use each selected series directly.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Excess Returns: arithmetic difference (Series - Benchmark) per period.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Long-Short: converts a series into the Series - Benchmark stream and treats it as an absolute return stream.",
+                                        size="sm",
+                                    ),
+                                ])),
                             ],
                         ),
                         dmc.AccordionItem(
@@ -1277,17 +1289,220 @@ layout = dmc.Container(
                             ],
                         ),
                         dmc.AccordionItem(
-                            value="tabs",
+                            value="statistics-page",
                             children=[
-                                dmc.AccordionControl("Tabs"),
+                                dmc.AccordionControl("Statistics Page"),
                                 dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                    dmc.Text("Statistics: 40+ financial metrics per series including return, risk, drawdown, and distribution statistics.", size="sm"),
-                                    dmc.Text("Returns: Raw returns data grid with sortable columns and pagination.", size="sm"),
-                                    dmc.Text("Rolling: Rolling metrics (return, volatility, Sharpe, etc.) over configurable windows (3m to 10y), displayed as chart or table.", size="sm"),
-                                    dmc.Text("Calendar Year: Annual or monthly heatmap of returns with color-coded cells.", size="sm"),
-                                    dmc.Text("Growth of $1: Compound growth chart or table showing cumulative performance.", size="sm"),
-                                    dmc.Text("Drawdown: Peak-to-trough drawdown series displayed as chart or table.", size="sm"),
-                                    dmc.Text("Correlation: Correlation heatmap or scatter correlogram (scatter matrix) between series.", size="sm"),
+                                    dmc.Text(
+                                        "Statistics are calculated on the currently selected periodicity and date range. "
+                                        "If a benchmark is assigned, series and benchmark are aligned to overlapping dates.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Sharpe Ratio uses the session risk-free proxy BCTBill13: "
+                                        "(Annualized Return of series - Annualized Return of BCTBill13) / Annualized Volatility. "
+                                        "If history lengths differ, only overlapping dates are used.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Relative metrics (Excess Return, Tracking Error, Information Ratio, Correlation, Hit Rate vs Benchmark) "
+                                        "are blank when no valid benchmark exists.",
+                                        size="sm",
+                                    ),
+                                    dmc.Divider(label="Base Metrics", labelPosition="center"),
+                                    dmc.Text("Start Date: first date in the aligned sample used for calculations.", size="sm"),
+                                    dmc.Text("End Date: last date in the aligned sample used for calculations.", size="sm"),
+                                    dmc.Text("Number of Periods: count of aligned return observations.", size="sm"),
+                                    dmc.Text("Cumulative Return: (product of (1 + r_t)) - 1.", size="sm"),
+                                    dmc.Text(
+                                        "Annualized Return: for daily/weekly uses calendar-day annualization; "
+                                        "for monthly uses period-based annualization. For <= 1 year, cumulative return is shown.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text("Annualized Volatility: sample std(r_t) * sqrt(periods_per_year).", size="sm"),
+                                    dmc.Text("Sharpe Ratio: (Annualized Return - Annualized Return(BCTBill13)) / Annualized Volatility.", size="sm"),
+                                    dmc.Text(
+                                        "Sortino Ratio: (Annualized Return - Annualized Return(BCTBill13)) / Annualized Downside Deviation, "
+                                        "where downside includes only periods below 0.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text("Annualized Excess Return: Annualized Return(series) - Annualized Return(benchmark).", size="sm"),
+                                    dmc.Text("Annualized Tracking Error: std(series - benchmark) * sqrt(periods_per_year).", size="sm"),
+                                    dmc.Text("Information Ratio: Annualized Excess Return / Annualized Tracking Error.", size="sm"),
+                                    dmc.Text("Correlation: Pearson correlation of series and benchmark returns.", size="sm"),
+                                    dmc.Text("Hit Rate: fraction of periods with return > 0.", size="sm"),
+                                    dmc.Text("Hit Rate (vs Benchmark): fraction of periods where series return > benchmark return.", size="sm"),
+                                    dmc.Text("Best Period Return: maximum single-period return.", size="sm"),
+                                    dmc.Text("Worst Period Return: minimum single-period return.", size="sm"),
+                                    dmc.Text(
+                                        "Maximum Drawdown: minimum of (Wealth / Running Peak - 1), with Wealth = cumulative product of (1 + r_t).",
+                                        size="sm",
+                                    ),
+                                    dmc.Text("Skewness: return distribution skew (requires > 2 observations).", size="sm"),
+                                    dmc.Text("Kurtosis: excess kurtosis of returns (requires > 3 observations).", size="sm"),
+                                    dmc.Divider(label="Trailing Window Metrics", labelPosition="center"),
+                                    dmc.Text(
+                                        "1Y/3Y/5Y metrics use the same formulas above, applied to trailing windows. "
+                                        "If insufficient history exists, values are blank.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "For daily data, trailing windows are calendar-day offsets from the latest date. "
+                                        "Example if latest date is 2026-02-11: "
+                                        "1Y uses 2025-02-12 to 2026-02-11 inclusive; "
+                                        "3Y uses 2023-02-12 to 2026-02-11 inclusive.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="returns-page",
+                            children=[
+                                dmc.AccordionControl("Returns Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Shows the selected series in a time-series table at the selected periodicity.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Values reflect Total or Excess mode, date range filters, long-short settings, and optional vol scaling.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Use Common Range to limit dates to periods where all selected series have data, "
+                                        "or Maximum Range to use full available dates.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="rolling-page",
+                            children=[
+                                dmc.AccordionControl("Rolling Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Calculates rolling metrics for each selected series over 3M, 6M, 1Y, 3Y, 5Y, or 10Y windows.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Rolling Total Return / Excess Return can be shown as cumulative or annualized.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Rolling Volatility / Tracking Error are annualized as std(window) * sqrt(periods_per_year).",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Rolling Sharpe / Sortino / Information Ratio use rolling windows of the selected stream "
+                                        "(series, excess stream, or long-short stream as applicable).",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Rolling Correlation uses Pearson correlation between each series and its benchmark in each window.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "If a relative metric is selected without a valid benchmark, values are blank.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="calendar-page",
+                            children=[
+                                dmc.AccordionControl("Calendar Year Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Annual view: groups returns by year and compounds within each year.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Partial years are removed. For daily data, first year must start by Jan 4 and last year must end by Dec 28. "
+                                        "For monthly data, full-year month coverage is required.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Excess mode subtracts annual benchmark returns for non-long-short series with valid benchmarks.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Monthly view shows one selected series with Jan-Dec columns by year.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="growth-page",
+                            children=[
+                                dmc.AccordionControl("Growth of $1 Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Builds growth index series as cumulative product of (1 + r_t).",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Each series is prepended with a starting value of 1.0 one period before its first return.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Displays an all-series growth chart plus per-series benchmark comparison charts when benchmarks are assigned.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Long-short series are plotted as their long-short return streams.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="drawdown-page",
+                            children=[
+                                dmc.AccordionControl("Drawdown Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Computes drawdown as (Current Wealth / Running Peak) - 1 for each series.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Total mode uses each series cumulative wealth from returns.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Excess mode (non-long-short) with valid benchmark uses geometric relative wealth "
+                                        "(Growth(series) / Growth(benchmark)) before drawdown is computed.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Each drawdown series is prepended with 0.0 one period before the first return.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
+                            value="correlation-page",
+                            children=[
+                                dmc.AccordionControl("Correlation Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Displays cross-series correlation using the currently selected return stream "
+                                        "(Total or Excess), periodicity, date range, and scaling settings.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Heatmap view shows the full correlation matrix with values from -1 to 1.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Scatter Matrix (correlogram) view shows pairwise scatter plots, diagonal histograms, "
+                                        "and upper-triangle correlation labels.",
+                                        size="sm",
+                                    ),
                                 ])),
                             ],
                         ),

@@ -123,6 +123,29 @@ def sharpe_ratio_with_risk_free(
     return (ann_ret - ann_rf) / ann_vol
 
 
+def sortino_ratio_with_risk_free(
+    returns: pd.Series,
+    periodicity: str,
+    periods_per_year: float,
+    risk_free_returns: Optional[pd.Series] = None,
+) -> float:
+    """Calculate Sortino ratio using annualized risk-free return when provided."""
+    working_returns = returns.dropna()
+    if len(working_returns) < 2:
+        return np.nan
+
+    ann_rf = 0.0
+    if risk_free_returns is not None and len(risk_free_returns) > 0:
+        aligned = pd.concat([working_returns, risk_free_returns], axis=1).dropna()
+        if aligned.empty:
+            return np.nan
+        working_returns = aligned.iloc[:, 0]
+        rf_series = aligned.iloc[:, 1]
+        ann_rf = _annualized_return_for_periodicity(rf_series, periodicity, periods_per_year)
+
+    return sortino_ratio(working_returns, periods_per_year, rf=ann_rf)
+
+
 def sortino_ratio(returns: pd.Series, periods_per_year: float, rf: float = 0.0, target_return: float = 0.0) -> float:
     """Calculate Sortino ratio."""
     ann_ret = annualized_return(returns, periods_per_year)
@@ -197,6 +220,36 @@ def maximum_drawdown(returns: pd.Series) -> float:
     return drawdown.min()
 
 
+def _get_trailing_window(
+    returns: pd.Series,
+    periodicity: str,
+    years: int,
+    periods_per_year: float,
+) -> Optional[pd.Series]:
+    """Get trailing window for statistics.
+
+    Daily/daily_trading windows are calendar-day based; other periodicities
+    use period counts.
+    """
+    series = returns.dropna()
+    if series.empty:
+        return None
+
+    if is_daily(periodicity):
+        end_date = series.index.max()
+        start_date = end_date - pd.DateOffset(years=years) + pd.Timedelta(days=1)
+        # Require enough history to fully cover trailing window.
+        if series.index.min() > start_date:
+            return None
+        window = series.loc[(series.index >= start_date) & (series.index <= end_date)]
+        return window if not window.empty else None
+
+    n_periods = int(years * periods_per_year)
+    if len(series) < n_periods:
+        return None
+    return series.iloc[-n_periods:]
+
+
 def calculate_statistics(
     returns: pd.Series,
     benchmark_returns: pd.Series,
@@ -251,7 +304,9 @@ def calculate_statistics(
             "Sharpe Ratio": sharpe_ratio_with_risk_free(
                 ls_returns, periodicity, periods_per_year, risk_free_returns
             ),
-            "Sortino Ratio": sortino_ratio(ls_returns, periods_per_year),
+            "Sortino Ratio": sortino_ratio_with_risk_free(
+                ls_returns, periodicity, periods_per_year, risk_free_returns
+            ),
             # For L/S, "Excess Return" is typically just the return itself, but if we follow strict "relative to bench" rule:
             # If bench is None, L/S return is absolute. 
             # If we enforce "no relative stats if no bench", then for L/S:
@@ -286,9 +341,10 @@ def calculate_statistics(
 
         # Calculate trailing period statistics for long-short
         for years, label in [(1, "1Y"), (3, "3Y"), (5, "5Y")]:
-            n_periods = int(years * periods_per_year)
-            if len(ls_returns) >= n_periods:
-                trailing_ls = ls_returns.iloc[-n_periods:]
+            trailing_ls = _get_trailing_window(
+                ls_returns, periodicity, years, periods_per_year
+            )
+            if trailing_ls is not None:
 
                 if use_calendar_days:
                     trailing_ls_ann_ret = annualized_return_calendar_days(trailing_ls, periodicity)
@@ -300,7 +356,9 @@ def calculate_statistics(
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio_with_risk_free(
                     trailing_ls, periodicity, periods_per_year, risk_free_returns
                 )
-                result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ls, periods_per_year)
+                result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
+                    trailing_ls, periodicity, periods_per_year, risk_free_returns
+                )
                 result[f"{label} Excess Return"] = trailing_ls_ann_ret if has_benchmark else np.nan
                 result[f"{label} Tracking Error"] = annualized_volatility(trailing_ls, periods_per_year) if has_benchmark else np.nan
                 result[f"{label} Information Ratio"] = sharpe_ratio(trailing_ls, periods_per_year) if has_benchmark else np.nan
@@ -337,7 +395,9 @@ def calculate_statistics(
             "Sharpe Ratio": sharpe_ratio_with_risk_free(
                 ret, periodicity, periods_per_year, risk_free_returns
             ),
-            "Sortino Ratio": sortino_ratio(ret, periods_per_year),
+            "Sortino Ratio": sortino_ratio_with_risk_free(
+                ret, periodicity, periods_per_year, risk_free_returns
+            ),
             "Annualized Excess Return": (ann_ret - ann_bench) if has_benchmark and not same_series else np.nan,
             "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
             "Information Ratio": information_ratio(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
@@ -353,10 +413,24 @@ def calculate_statistics(
 
         # Calculate trailing period statistics
         for years, label in [(1, "1Y"), (3, "3Y"), (5, "5Y")]:
-            n_periods = int(years * periods_per_year)
-            if len(ret) >= n_periods:
-                trailing_ret = ret.iloc[-n_periods:]
-                trailing_bench = bench.iloc[-n_periods:]
+            trailing_ret = _get_trailing_window(
+                ret, periodicity, years, periods_per_year
+            )
+            if trailing_ret is not None:
+                trailing_bench = bench.reindex(trailing_ret.index)
+                aligned_trailing = pd.concat([trailing_ret, trailing_bench], axis=1).dropna()
+                if aligned_trailing.empty:
+                    result[f"{label} Annualized Return"] = np.nan
+                    result[f"{label} Annualized Volatility"] = np.nan
+                    result[f"{label} Sharpe Ratio"] = np.nan
+                    result[f"{label} Sortino Ratio"] = np.nan
+                    result[f"{label} Excess Return"] = np.nan
+                    result[f"{label} Tracking Error"] = np.nan
+                    result[f"{label} Information Ratio"] = np.nan
+                    result[f"{label} Correlation"] = np.nan
+                    continue
+                trailing_ret = aligned_trailing.iloc[:, 0]
+                trailing_bench = aligned_trailing.iloc[:, 1]
 
                 if use_calendar_days:
                     trailing_ann_ret = annualized_return_calendar_days(trailing_ret, periodicity)
@@ -370,7 +444,9 @@ def calculate_statistics(
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio_with_risk_free(
                     trailing_ret, periodicity, periods_per_year, risk_free_returns
                 )
-                result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ret, periods_per_year)
+                result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
+                    trailing_ret, periodicity, periods_per_year, risk_free_returns
+                )
                 result[f"{label} Excess Return"] = (trailing_ann_ret - trailing_ann_bench) if has_benchmark and not same_series else np.nan
                 result[f"{label} Tracking Error"] = tracking_error(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
                 result[f"{label} Information Ratio"] = information_ratio(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
