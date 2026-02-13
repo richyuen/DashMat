@@ -1252,7 +1252,9 @@ layout = dmc.Container(
             shadow="xs",
             p="xs",
             mb="md",
+            radius="md",
             withBorder=True,
+            className="dashmat-menu-bar",
             children=[
                 dmc.Group(
                     gap="xs",
@@ -1262,18 +1264,53 @@ layout = dmc.Container(
                             openDelay=100,
                             closeDelay=200,
                             position="bottom-start",
+                            shadow="md",
+                            offset=6,
                             children=[
-                                dmc.MenuTarget(dmc.Button("File", variant="subtle", size="sm")),
-                                dmc.MenuDropdown(children=[
-                                    dmc.MenuItem("Add series from database...", id="po-menu-add-from-db"),
-                                    dmc.MenuItem("Add series from file...", id="po-menu-add-series"),
+                                dmc.MenuTarget(
+                                    dmc.Button(
+                                        "File",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        radius="sm",
+                                    )
+                                ),
+                                dmc.MenuDropdown(className="dashmat-menu-dropdown", children=[
+                                    dmc.MenuItem(
+                                        "Add series from database...",
+                                        id="po-menu-add-from-db",
+                                        leftSection=DashIconify(icon="tabler:database", width=14),
+                                    ),
+                                    dmc.MenuItem(
+                                        "Add series from file...",
+                                        id="po-menu-add-series",
+                                        leftSection=DashIconify(icon="tabler:upload", width=14),
+                                    ),
                                     dmc.MenuDivider(),
-                                    dmc.MenuItem("Save Session", id="po-menu-save-session"),
-                                    dmc.MenuItem("Load Session", id="po-menu-load-session"),
+                                    dmc.MenuItem(
+                                        "Save Session",
+                                        id="po-menu-save-session",
+                                        leftSection=DashIconify(icon="tabler:device-floppy", width=14),
+                                    ),
+                                    dmc.MenuItem(
+                                        "Load Session",
+                                        id="po-menu-load-session",
+                                        leftSection=DashIconify(icon="tabler:folder-open", width=14),
+                                    ),
                                     dmc.MenuDivider(),
-                                    dmc.MenuItem("Download Excel", id="po-menu-download-excel"),
+                                    dmc.MenuItem(
+                                        "Download Excel",
+                                        id="po-menu-download-excel",
+                                        leftSection=DashIconify(icon="tabler:file-spreadsheet", width=14),
+                                    ),
                                     dmc.MenuDivider(),
-                                    dmc.MenuItem("Exit", id="po-menu-exit"),
+                                    dmc.MenuItem(
+                                        "Exit",
+                                        id="po-menu-exit",
+                                        color="red",
+                                        leftSection=DashIconify(icon="tabler:door-exit", width=14),
+                                    ),
                                 ]),
                             ],
                         ),
@@ -1282,11 +1319,29 @@ layout = dmc.Container(
                             openDelay=100,
                             closeDelay=200,
                             position="bottom-start",
+                            shadow="md",
+                            offset=6,
                             children=[
-                                dmc.MenuTarget(dmc.Button("Edit", variant="subtle", size="sm")),
-                                dmc.MenuDropdown(children=[
-                                    dmc.MenuItem("Clear session storage and refresh", id="po-menu-clear-local-storage"),
-                                    dmc.MenuItem("Clear server cache", id="po-menu-clear-server-cache"),
+                                dmc.MenuTarget(
+                                    dmc.Button(
+                                        "Edit",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        radius="sm",
+                                    )
+                                ),
+                                dmc.MenuDropdown(className="dashmat-menu-dropdown", children=[
+                                    dmc.MenuItem(
+                                        "Clear session storage and refresh",
+                                        id="po-menu-clear-local-storage",
+                                        leftSection=DashIconify(icon="tabler:trash", width=14),
+                                    ),
+                                    dmc.MenuItem(
+                                        "Clear server cache",
+                                        id="po-menu-clear-server-cache",
+                                        leftSection=DashIconify(icon="tabler:server-off", width=14),
+                                    ),
                                 ]),
                             ],
                         ),
@@ -1300,22 +1355,16 @@ layout = dmc.Container(
                             leftSection=DashIconify(icon="tabler:chart-line", width=16),
                         ),
                         dmc.Box(style={"flexGrow": 1}),
-                        # Help Menu (right)
-                        dmc.Menu(
-                            trigger="hover",
-                            openDelay=100,
-                            closeDelay=200,
-                            position="bottom-start",
-                            children=[
-                                dmc.MenuTarget(
-                                    dmc.Button("Help", variant="subtle", size="sm"),
-                                ),
-                                dmc.MenuDropdown(
-                                    children=[
-                                        dmc.MenuItem("User Guide", id="po-menu-help-guide"),
-                                    ],
-                                ),
-                            ],
+                        # Help button (opens User Guide)
+                        dmc.Button(
+                            "Help",
+                            id="po-menu-help-guide",
+                            variant="gradient",
+                            gradient={"from": "teal", "to": "cyan", "deg": 90},
+                            size="sm",
+                            radius="xl",
+                            className="dashmat-menu-trigger",
+                            leftSection=DashIconify(icon="tabler:help-circle", width=14),
                         ),
                     ],
                 ),
