@@ -960,11 +960,11 @@ layout = dmc.Container(
                                 dmc.MenuDropdown(
                                     children=[
                                         dmc.MenuItem(
-                                            "Add from database",
+                                            "Add series from database...",
                                             id="menu-add-from-db",
                                         ),
                                         dmc.MenuItem(
-                                            "Add series from file",
+                                            "Add series from file...",
                                             id="menu-add-series",
                                         ),
                                         dmc.MenuDivider(),
@@ -1012,25 +1012,15 @@ layout = dmc.Container(
                                 ),
                             ],
                         ),
-                        # View Menu
-                        dmc.Menu(
-                            trigger="hover",
-                            openDelay=100,
-                            closeDelay=200,
-                            position="bottom-start",
-                            children=[
-                                dmc.MenuTarget(
-                                    dmc.Button("View", variant="subtle", size="sm"),
-                                ),
-                                dmc.MenuDropdown(
-                                    children=[
-                                        dmc.MenuItem(
-                                            "Portfolio Optimization",
-                                            id="menu-view-portfolio",
-                                        ),
-                                    ],
-                                ),
-                            ],
+                        # Page switch button
+                        dmc.Button(
+                            "Switch to Optimization",
+                            id="menu-view-portfolio",
+                            size="sm",
+                            radius="md",
+                            variant="gradient",
+                            gradient={"from": "indigo", "to": "cyan", "deg": 90},
+                            leftSection=DashIconify(icon="grommet-icons:optimize", width=16),
                         ),
                         # Spacer
                         dmc.Box(style={"flexGrow": 1}),

@@ -1254,8 +1254,8 @@ layout = dmc.Container(
                             children=[
                                 dmc.MenuTarget(dmc.Button("File", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
-                                    dmc.MenuItem("Add from database", id="po-menu-add-from-db"),
-                                    dmc.MenuItem("Add series from file", id="po-menu-add-series"),
+                                    dmc.MenuItem("Add series from database...", id="po-menu-add-from-db"),
+                                    dmc.MenuItem("Add series from file...", id="po-menu-add-series"),
                                     dmc.MenuDivider(),
                                     dmc.MenuItem("Save Session", id="po-menu-save-session"),
                                     dmc.MenuItem("Load Session", id="po-menu-load-session"),
@@ -1278,17 +1278,14 @@ layout = dmc.Container(
                                 ]),
                             ],
                         ),
-                        dmc.Menu(
-                            trigger="hover",
-                            openDelay=100,
-                            closeDelay=200,
-                            position="bottom-start",
-                            children=[
-                                dmc.MenuTarget(dmc.Button("View", variant="subtle", size="sm")),
-                                dmc.MenuDropdown(children=[
-                                    dmc.MenuItem("Analytics Tool", id="po-menu-view-analytics"),
-                                ]),
-                            ],
+                        dmc.Button(
+                            "Switch to Analytics",
+                            id="po-menu-view-analytics",
+                            size="sm",
+                            radius="md",
+                            variant="gradient",
+                            gradient={"from": "orange", "to": "red", "deg": 90},
+                            leftSection=DashIconify(icon="tabler:chart-line", width=16),
                         ),
                         dmc.Box(style={"flexGrow": 1}),
                         # Help Menu (right)
