@@ -8,10 +8,10 @@
 
 [data-mantine-color-scheme="light"] .ag-theme-alpine.series-modal-grid,
 [data-mantine-color-scheme="dark"] .ag-theme-alpine.series-modal-grid {
-    --ag-grid-size: 6px;
-    --ag-row-height: 32px;
-    --ag-header-height: 34px;
-    --ag-list-item-height: 30px;
+    --ag-grid-size: 4px;
+    --ag-row-height: 28px;
+    --ag-header-height: 30px;
+    --ag-list-item-height: 26px;
 }
 
 [data-mantine-color-scheme="dark"] .ag-theme-alpine {
@@ -27,6 +27,28 @@
 }
 
 .ag-theme-alpine .center-header .ag-header-cell-label {
+    justify-content: center;
+}
+
+.ag-theme-alpine .left-header .ag-header-cell-label {
+    justify-content: flex-start;
+}
+
+.ag-theme-alpine.series-modal-grid .ag-cell.series-center-cell {
+    text-align: center;
+}
+
+.ag-theme-alpine.series-modal-grid .ag-cell.series-center-cell .ag-cell-wrapper {
+    justify-content: center;
+}
+
+.ag-theme-alpine.series-modal-grid .ag-cell.series-center-cell .ag-row-drag {
+    margin: 0 auto;
+}
+
+.ag-theme-alpine.series-modal-grid .ag-header-cell.center-header .ag-header-cell-comp-wrapper {
+    display: flex;
+    width: 100%;
     justify-content: center;
 }
 

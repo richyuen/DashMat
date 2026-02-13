@@ -40,8 +40,9 @@ from utils.statistics import (
 from utils.charting import apply_chart_theme
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 from utils.core_categories import (
+    clear_dropdown_caches,
     get_common_daily_range,
-    get_core_category_options,
+    get_core_category_options_cached,
     load_cma_returns_for_benches,
     load_cma_returns_for_benches_with_meta,
 )
@@ -318,7 +319,7 @@ def at_toggle_save_session(welcome_style):
 def open_db_add_modal(menu_clicks, welcome_clicks):
     if not menu_clicks and not welcome_clicks:
         raise PreventUpdate
-    options = get_core_category_options(DB_ENGINE)
+    options = get_core_category_options_cached(DB_ENGINE)
     return True, options, []
 
 
@@ -1059,6 +1060,10 @@ layout = dmc.Container(
                                             "Clear session storage and refresh",
                                             id="menu-clear-local-storage",
                                         ),
+                                        dmc.MenuItem(
+                                            "Clear server cache",
+                                            id="menu-clear-server-cache",
+                                        ),
                                     ],
                                 ),
                             ],
@@ -1118,9 +1123,10 @@ layout = dmc.Container(
                     dmc.Text("Select Series", fw=600, size="sm"),
                 ],
             ),
-            size="90vw",
-            styles={"content": {"maxWidth": "1500px"}},
+            size="80vw",
+            styles={"content": {"maxWidth": "1250px"}},
             centered=True,
+            closeOnEscape=False,
             radius="lg",
             className='series-modal-dark dashmat-modal',
             overlayProps={"blur": 2, "opacity": 0.45},
@@ -1138,7 +1144,7 @@ layout = dmc.Container(
                 html.Div(
                     id="series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
-                    style={"maxHeight": "60vh"},
+                    style={"maxHeight": "50vh"},
                 ),
                 dmc.Group(
                     mt="md",
@@ -1638,6 +1644,7 @@ layout = dmc.Container(
         # Save/Load session
         dcc.Store(id="save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="load-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="server-cache-clear-result", data=None, storage_type="memory"),
         html.Div(
             dcc.Upload(
                 id="load-session-upload",
@@ -1916,6 +1923,19 @@ clientside_callback(
 )
 
 
+@callback(
+    Output("server-cache-clear-result", "data"),
+    Input("menu-clear-server-cache", "n_clicks"),
+    prevent_initial_call=True,
+)
+def clear_server_cache(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    cache_config.cache.clear()
+    clear_dropdown_caches()
+    return {"cleared": True, "timestamp": pd.Timestamp.utcnow().isoformat()}
+
+
 # Clientside callback to trigger upload from menu
 clientside_callback(
     """
@@ -2092,13 +2112,17 @@ def reorder_series(virtual_rows, selected_rows, current_order, current_selected)
     if not ordered_series:
         raise PreventUpdate
 
-    selected_rows_safe = selected_rows if isinstance(selected_rows, (list, tuple)) else []
-    selected_set = {
-        row.get("Series")
-        for row in selected_rows_safe
-        if isinstance(row, dict) and row.get("Series")
-    }
-    selected_series = [series for series in ordered_series if series in selected_set]
+    if isinstance(selected_rows, (list, tuple)):
+        selected_set = {
+            row.get("Series")
+            for row in selected_rows
+            if isinstance(row, dict) and row.get("Series")
+        }
+        selected_series = [series for series in ordered_series if series in selected_set]
+    else:
+        selected_fallback = set(current_selected or [])
+        selected_series = [series for series in ordered_series if series in selected_fallback]
+
     if ordered_series == (current_order or []) and selected_series == (current_selected or []):
         raise PreventUpdate
     return ordered_series, selected_series
@@ -2881,29 +2905,50 @@ def update_series_selectors(
         className="ag-theme-alpine series-modal-grid",
         columnDefs=[
             {
-                "headerName": "Include",
+                "headerName": "",
+                "rowDrag": True,
+                "editable": False,
+                "sortable": False,
+                "filter": False,
+                "resizable": False,
+                "width": 36,
+                "pinned": "left",
+                "valueGetter": {"function": "''"},
+                "cellClass": "series-center-cell",
+            },
+            {
+                "headerName": "",
                 "checkboxSelection": True,
                 "headerCheckboxSelection": True,
                 "editable": False,
                 "sortable": False,
                 "filter": False,
                 "resizable": False,
-                "width": 90,
+                "width": 56,
                 "pinned": "left",
+                "cellClass": "series-center-cell",
             },
             {
                 "field": "Series",
                 "editable": True,
-                "rowDrag": True,
-                "minWidth": 180,
-                "cellStyle": {"fontFamily": "monospace"},
+                "minWidth": 150,
+                "cellStyle": {"textAlign": "left", "fontFamily": "monospace"},
+                "headerClass": "left-header",
             },
             {
                 "field": "Benchmark",
                 "editable": True,
-                "cellEditor": "agSelectCellEditor",
-                "cellEditorParams": {"values": benchmark_values},
-                "minWidth": 180,
+                "cellEditor": "agRichSelectCellEditor",
+                "cellEditorPopup": True,
+                "cellEditorParams": {
+                    "values": benchmark_values,
+                    "allowTyping": True,
+                    "filterList": True,
+                    "highlightMatch": True,
+                },
+                "minWidth": 150,
+                "cellStyle": {"textAlign": "left"},
+                "headerClass": "left-header",
             },
             {
                 "field": "LongShort",
@@ -2911,8 +2956,8 @@ def update_series_selectors(
                 "editable": True,
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
-                "width": 90,
-                "cellStyle": {"textAlign": "center"},
+                "width": 72,
+                "cellClass": "series-center-cell",
             },
             {
                 "field": "ScaleVol",
@@ -2920,16 +2965,16 @@ def update_series_selectors(
                 "editable": True,
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
-                "width": 110,
-                "cellStyle": {"textAlign": "center"},
+                "width": 106,
+                "cellClass": "series-center-cell",
             },
             {
                 "field": "Delete",
                 "editable": True,
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
-                "width": 95,
-                "cellStyle": {"textAlign": "center"},
+                "width": 78,
+                "cellClass": "series-center-cell",
             },
         ],
         rowData=row_data,
@@ -2939,12 +2984,17 @@ def update_series_selectors(
             "sortable": False,
             "filter": False,
             "suppressHeaderMenuButton": True,
+            "suppressMovable": True,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "center-header",
         },
-        style={"height": "58vh", "width": "100%"},
+        style={"height": "46vh", "width": "100%"},
         dashGridOptions={
             "rowSelection": "multiple",
-            "rowMultiSelectWithClick": True,
+            "rowMultiSelectWithClick": False,
             "suppressRowClickSelection": True,
+            "suppressRowDeselection": True,
+            "suppressMovableColumns": True,
             "rowDragManaged": True,
             "animateRows": True,
             "singleClickEdit": True,
@@ -2952,6 +3002,8 @@ def update_series_selectors(
             "suppressExcelExport": True,
             "suppressCsvExport": True,
         },
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
     )
     return [grid], series_order
 

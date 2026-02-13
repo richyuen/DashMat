@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cache_config
 import pandas as pd
 import pandas_market_calendars as mcal
 from sqlalchemy import bindparam, text
@@ -25,6 +26,64 @@ def get_core_category_options(engine: Engine) -> list[dict]:
         {"value": str(fofbench), "label": f"{str(corecat)} [{str(fofbench)}]"}
         for corecat, fofbench in rows
     ]
+
+
+@cache_config.cache.memoize(timeout=0)
+def get_core_category_options_cached(engine: Engine) -> list[dict]:
+    """Cached CoreCategories dropdown options."""
+    return get_core_category_options(engine)
+
+
+def get_unique_cmabench_values(engine: Engine) -> list[str]:
+    """Return sorted unique non-empty CMABench values."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT DISTINCT CMABench "
+                "FROM CoreCategories "
+                "WHERE CMABench IS NOT NULL "
+                "AND LTRIM(RTRIM(CMABench)) <> '' "
+                "ORDER BY CMABench"
+            )
+        ).fetchall()
+    return [str(r[0]).strip() for r in rows if r[0] and str(r[0]).strip()]
+
+
+@cache_config.cache.memoize(timeout=0)
+def get_unique_cmabench_values_cached(engine: Engine) -> list[str]:
+    """Cached sorted unique non-empty CMABench values."""
+    return get_unique_cmabench_values(engine)
+
+
+def get_cma_versions(engine: Engine) -> list[int]:
+    """Return available CMA versions."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT DISTINCT Version FROM CMAStats ORDER BY Version")
+        ).fetchall()
+    return [int(r[0]) for r in rows]
+
+
+@cache_config.cache.memoize(timeout=0)
+def get_cma_versions_cached(engine: Engine) -> list[int]:
+    """Cached CMA versions for dropdowns."""
+    return get_cma_versions(engine)
+
+
+def clear_dropdown_caches() -> None:
+    """Clear any process-local dropdown caches (if present)."""
+    clearables = (
+        get_core_category_options,
+        get_core_category_options_cached,
+        get_unique_cmabench_values,
+        get_unique_cmabench_values_cached,
+        get_cma_versions,
+        get_cma_versions_cached,
+    )
+    for fn in clearables:
+        cache_clear = getattr(fn, "cache_clear", None)
+        if callable(cache_clear):
+            cache_clear()
 
 
 def _mrd_account_table(engine: Engine) -> str:

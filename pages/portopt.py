@@ -16,6 +16,7 @@ from dash import (
 )
 from dash.exceptions import PreventUpdate
 
+import cache_config
 from utils.parsing import detect_periodicity, get_sheet_names, parse_uploaded_file
 from utils.returns import (
     calculate_excess_returns,
@@ -33,9 +34,12 @@ from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
 from utils.core_categories import (
+    clear_dropdown_caches,
+    get_cma_versions_cached,
     get_common_daily_range,
     get_cmabench_map_for_fofbench,
-    get_core_category_options,
+    get_core_category_options_cached,
+    get_unique_cmabench_values_cached,
     load_cma_returns_for_benches_with_meta,
 )
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
@@ -129,18 +133,6 @@ def _periodicity_defaults(periodicity):
         return 12, 1, 1, 6
     # daily, daily_trading, or any other
     return 252, 21, 1, 63
-
-
-def _get_cma_versions() -> list[int]:
-    """Fetch available CMA versions from DB."""
-    try:
-        with DB_ENGINE.connect() as conn:
-            rows = conn.execute(
-                text("SELECT DISTINCT Version FROM CMAStats ORDER BY Version")
-            ).fetchall()
-        return [int(r[0]) for r in rows]
-    except Exception:
-        return []
 
 
 def _get_cma_stats_map(version: int, cma_type: str) -> dict[str, dict[str, float]]:
@@ -1294,6 +1286,7 @@ layout = dmc.Container(
                                 dmc.MenuTarget(dmc.Button("Edit", variant="subtle", size="sm")),
                                 dmc.MenuDropdown(children=[
                                     dmc.MenuItem("Clear session storage and refresh", id="po-menu-clear-local-storage"),
+                                    dmc.MenuItem("Clear server cache", id="po-menu-clear-server-cache"),
                                 ]),
                             ],
                         ),
@@ -1350,9 +1343,10 @@ layout = dmc.Container(
                     dmc.Text("Select Series", fw=600, size="sm"),
                 ],
             ),
-            size="94vw",
-            styles={"content": {"maxWidth": "1900px"}},
+            size="84vw",
+            styles={"content": {"maxWidth": "1450px"}},
             centered=True,
+            closeOnEscape=False,
             radius="lg",
             transitionProps={"transition": "fade", "duration": 200},
             className='series-modal-dark dashmat-modal',
@@ -1369,7 +1363,7 @@ layout = dmc.Container(
                 html.Div(
                     id="po-series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
-                    style={"maxHeight": "70vh"},
+                    style={"maxHeight": "50vh"},
                 ),
                 dmc.Group(
                     mt="md",
@@ -1908,6 +1902,7 @@ layout = dmc.Container(
         # Save/Load session
         dcc.Store(id="po-save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="po-load-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="po-server-cache-clear-result", data=None, storage_type="memory"),
         html.Div(
             dcc.Upload(
                 id="po-load-session-upload",
@@ -2074,6 +2069,20 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+
+@callback(
+    Output("po-server-cache-clear-result", "data"),
+    Input("po-menu-clear-server-cache", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_clear_server_cache(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    cache_config.cache.clear()
+    clear_dropdown_caches()
+    return {"cleared": True, "timestamp": pd.Timestamp.utcnow().isoformat()}
+
+
 # Open add-from-database modal and refresh options
 @callback(
     Output("po-db-add-modal", "opened", allow_duplicate=True),
@@ -2086,7 +2095,7 @@ clientside_callback(
 def po_open_db_add_modal(menu_clicks, welcome_clicks):
     if not menu_clicks and not welcome_clicks:
         raise PreventUpdate
-    options = get_core_category_options(DB_ENGINE)
+    options = get_core_category_options_cached(DB_ENGINE)
     return True, options, []
 
 
@@ -2606,7 +2615,7 @@ def po_open_cma_load_modal(n_returns, n_matrix, selected_series, cmabench_assign
 
     triggered = callback_context.triggered_id
     target = "matrix" if triggered == "po-load-db-matrix-btn" else "returns"
-    versions = _get_cma_versions()
+    versions = get_cma_versions_cached(DB_ENGINE)
     if not versions:
         return True, target, [], None, "hmm", "No CMA data found in local database."
 
@@ -4297,6 +4306,7 @@ def po_update_series_selectors(
     )
 
     benchmark_values = ["None"] + list(all_series)
+    cmabench_values = get_unique_cmabench_values_cached(DB_ENGINE)
     row_data = []
     for series in series_order:
         bench_val = current_assignments.get(series, "None")
@@ -4333,34 +4343,73 @@ def po_update_series_selectors(
         className="ag-theme-alpine series-modal-grid",
         columnDefs=[
             {
-                "headerName": "Include",
+                "headerName": "",
+                "rowDrag": True,
+                "editable": False,
+                "sortable": False,
+                "filter": False,
+                "resizable": False,
+                "width": 36,
+                "pinned": "left",
+                "valueGetter": {"function": "''"},
+                "cellClass": "series-center-cell",
+            },
+            {
+                "headerName": "",
                 "checkboxSelection": True,
                 "headerCheckboxSelection": True,
                 "editable": False,
                 "sortable": False,
                 "filter": False,
                 "resizable": False,
-                "width": 90,
+                "width": 56,
                 "pinned": "left",
+                "cellClass": "series-center-cell",
             },
             {
                 "field": "Series",
-                "editable": False,
-                "rowDrag": True,
-                "minWidth": 170,
-                "cellStyle": {"fontFamily": "monospace"},
+                "editable": True,
+                "minWidth": 150,
+                "cellStyle": {"textAlign": "left", "fontFamily": "monospace"},
+                "headerClass": "left-header",
             },
             {
                 "field": "Benchmark",
                 "editable": True,
-                "cellEditor": "agSelectCellEditor",
-                "cellEditorParams": {"values": benchmark_values},
-                "minWidth": 170,
+                "cellEditor": "agRichSelectCellEditor",
+                "cellEditorPopup": True,
+                "cellEditorParams": {
+                    "values": benchmark_values,
+                    "allowTyping": True,
+                    "filterList": True,
+                    "highlightMatch": True,
+                },
+                "minWidth": 150,
+                "cellStyle": {"textAlign": "left"},
+                "headerClass": "left-header",
             },
             {
                 "field": "CMABench",
                 "editable": True,
-                "minWidth": 150,
+                "cellEditor": "agRichSelectCellEditor",
+                "cellEditorPopup": True,
+                "cellEditorParams": {
+                    "values": [""] + sorted(
+                        set(cmabench_values).union(
+                            {
+                                str(v).strip()
+                                for v in current_cmabench_assignments.values()
+                                if isinstance(v, str) and v.strip()
+                            }
+                        )
+                    ),
+                    "allowTyping": True,
+                    "filterList": True,
+                    "highlightMatch": True,
+                },
+                "minWidth": 130,
+                "cellStyle": {"textAlign": "left"},
+                "headerClass": "left-header",
             },
             {
                 "field": "LongShort",
@@ -4368,8 +4417,8 @@ def po_update_series_selectors(
                 "editable": True,
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
-                "width": 85,
-                "cellStyle": {"textAlign": "center"},
+                "width": 72,
+                "cellClass": "series-center-cell",
             },
             {
                 "field": "ScaleVol",
@@ -4377,26 +4426,26 @@ def po_update_series_selectors(
                 "editable": True,
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
-                "width": 105,
-                "cellStyle": {"textAlign": "center"},
+                "width": 112,
+                "cellClass": "series-center-cell",
             },
             {
                 "field": "MinWt",
                 "headerName": "Min Wt",
                 "editable": {"function": "!params.data.ForceMax"},
-                "type": "numericColumn",
-                "width": 90,
+                "width": 98,
                 "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 0; return Math.max(0, Math.min(100, n));"},
-                "cellStyle": {"textAlign": "center"},
+                "cellClass": "series-center-cell",
+                "headerClass": "center-header",
             },
             {
                 "field": "MaxWt",
                 "headerName": "Max Wt",
                 "editable": True,
-                "type": "numericColumn",
-                "width": 90,
+                "width": 98,
                 "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 100; return Math.max(0, Math.min(100, n));"},
-                "cellStyle": {"textAlign": "center"},
+                "cellClass": "series-center-cell",
+                "headerClass": "center-header",
             },
             {
                 "field": "ForceMax",
@@ -4404,16 +4453,16 @@ def po_update_series_selectors(
                 "editable": True,
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
-                "width": 80,
-                "cellStyle": {"textAlign": "center"},
+                "width": 70,
+                "cellClass": "series-center-cell",
             },
             {
                 "field": "Delete",
                 "editable": True,
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
-                "width": 90,
-                "cellStyle": {"textAlign": "center"},
+                "width": 74,
+                "cellClass": "series-center-cell",
             },
         ],
         rowData=row_data,
@@ -4423,12 +4472,17 @@ def po_update_series_selectors(
             "sortable": False,
             "filter": False,
             "suppressHeaderMenuButton": True,
+            "suppressMovable": True,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "center-header",
         },
-        style={"height": "60vh", "width": "100%"},
+        style={"height": "46vh", "width": "100%"},
         dashGridOptions={
             "rowSelection": "multiple",
-            "rowMultiSelectWithClick": True,
+            "rowMultiSelectWithClick": False,
             "suppressRowClickSelection": True,
+            "suppressRowDeselection": True,
+            "suppressMovableColumns": True,
             "rowDragManaged": True,
             "animateRows": True,
             "singleClickEdit": True,
@@ -4436,8 +4490,18 @@ def po_update_series_selectors(
             "suppressExcelExport": True,
             "suppressCsvExport": True,
         },
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
     )
     return [grid], series_order
+
+
+def _po_latest_series_grid_change(cell_change):
+    """Normalize AG Grid cellValueChanged payload to the latest dict event."""
+    change = cell_change
+    if isinstance(change, list):
+        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
+    return change if isinstance(change, dict) else None
 
 
 # ---------------------------------------------------------------------------
@@ -4452,6 +4516,11 @@ def po_update_series_selectors(
     prevent_initial_call=True,
 )
 def po_update_benchmarks(cell_change, row_data, raw_data):
+    change = _po_latest_series_grid_change(cell_change)
+    if not change:
+        raise PreventUpdate
+    if change.get("colId") == "Series":
+        raise PreventUpdate
     if raw_data is None or not row_data:
         return {}
     valid_series = set(json_to_df(raw_data).columns)
@@ -4480,6 +4549,11 @@ def po_update_benchmarks(cell_change, row_data, raw_data):
     prevent_initial_call=True,
 )
 def po_update_cmabench(cell_change, row_data):
+    change = _po_latest_series_grid_change(cell_change)
+    if not change:
+        raise PreventUpdate
+    if change.get("colId") == "Series":
+        raise PreventUpdate
     if not row_data:
         return {}
     assignments = {}
@@ -4507,6 +4581,11 @@ def po_update_cmabench(cell_change, row_data):
     prevent_initial_call=True,
 )
 def po_update_ls(cell_change, row_data, raw_data):
+    change = _po_latest_series_grid_change(cell_change)
+    if not change:
+        raise PreventUpdate
+    if change.get("colId") == "Series":
+        raise PreventUpdate
     if raw_data is None or not row_data:
         return {}
     valid_series = set(json_to_df(raw_data).columns)
@@ -4532,6 +4611,11 @@ def po_update_ls(cell_change, row_data, raw_data):
     prevent_initial_call=True,
 )
 def po_update_vol_scaling(cell_change, row_data, raw_data):
+    change = _po_latest_series_grid_change(cell_change)
+    if not change:
+        raise PreventUpdate
+    if change.get("colId") == "Series":
+        raise PreventUpdate
     if raw_data is None or not row_data:
         return {}
     valid_series = set(json_to_df(raw_data).columns)
@@ -4556,6 +4640,11 @@ def po_update_vol_scaling(cell_change, row_data, raw_data):
     prevent_initial_call=True,
 )
 def po_update_min_wt(cell_change, row_data):
+    change = _po_latest_series_grid_change(cell_change)
+    if not change:
+        raise PreventUpdate
+    if change.get("colId") == "Series":
+        raise PreventUpdate
     if not row_data:
         return {}
     assignments = {}
@@ -4583,6 +4672,11 @@ def po_update_min_wt(cell_change, row_data):
     prevent_initial_call=True,
 )
 def po_update_max_wt(cell_change, row_data):
+    change = _po_latest_series_grid_change(cell_change)
+    if not change:
+        raise PreventUpdate
+    if change.get("colId") == "Series":
+        raise PreventUpdate
     if not row_data:
         return {}
     assignments = {}
@@ -4607,6 +4701,11 @@ def po_update_max_wt(cell_change, row_data):
     prevent_initial_call=True,
 )
 def po_update_force_max(cell_change, row_data):
+    change = _po_latest_series_grid_change(cell_change)
+    if not change:
+        raise PreventUpdate
+    if change.get("colId") == "Series":
+        raise PreventUpdate
     if not row_data:
         return {}
     assignments = {}
@@ -4625,16 +4724,12 @@ def po_update_force_max(cell_change, row_data):
 
 @callback(
     Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("po-temp-series-select", "data", allow_duplicate=True),
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("po-series-selection-grid", "rowData", allow_optional=True),
-    State("po-series-selection-grid", "selectedRows", allow_optional=True),
     prevent_initial_call=True,
 )
-def po_delete_series(cell_change, row_data, selected_rows):
-    change = cell_change
-    if isinstance(change, list):
-        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
+def po_delete_series(cell_change, row_data):
+    change = _po_latest_series_grid_change(cell_change)
     if not isinstance(change, dict) or change.get("colId") != "Delete":
         raise PreventUpdate
 
@@ -4644,15 +4739,102 @@ def po_delete_series(cell_change, row_data, selected_rows):
         for row in rows
         if isinstance(row, dict) and row.get("Series") and bool(row.get("Delete"))
     ]
-    deleted_set = set(deleted)
-    selected = [
-        row.get("Series")
-        for row in (selected_rows or [])
-        if isinstance(row, dict)
-        and row.get("Series")
-        and row.get("Series") not in deleted_set
-    ]
-    return deleted, selected
+    return deleted
+
+
+# ---------------------------------------------------------------------------
+# Modal: save in-grid Series rename
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-long-short-store", "data", allow_duplicate=True),
+    Output("po-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-min-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-max-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-force-max-store", "data", allow_duplicate=True),
+    Output("po-temp-series-select", "data", allow_duplicate=True),
+    Output("po-temp-series-order-store", "data", allow_duplicate=True),
+    Output("po-series-select-value-store", "data", allow_duplicate=True),
+    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("analyticstool-raw-data-store", "data"),
+    State("po-temp-benchmark-assignments-store", "data"),
+    State("po-temp-cmabench-assignments-store", "data"),
+    State("po-temp-long-short-store", "data"),
+    State("po-temp-vol-scaling-assignments-store", "data"),
+    State("po-temp-min-wt-store", "data"),
+    State("po-temp-max-wt-store", "data"),
+    State("po-temp-force-max-store", "data"),
+    State("po-temp-series-select", "data"),
+    State("po-temp-series-order-store", "data"),
+    prevent_initial_call=True,
+)
+def po_save_edit(
+    cell_change,
+    raw_data,
+    benchmark_assignments,
+    cmabench_assignments,
+    long_short_assignments,
+    vol_scaling_assignments,
+    min_wt,
+    max_wt,
+    force_max,
+    selected_series,
+    series_order,
+):
+    change = _po_latest_series_grid_change(cell_change)
+    if not isinstance(change, dict) or change.get("colId") != "Series":
+        raise PreventUpdate
+
+    old_name = str(change.get("oldValue", "")).strip()
+    new_name = str(change.get("newValue", "")).strip()
+    if not old_name or not new_name or new_name == old_name:
+        raise PreventUpdate
+
+    df = json_to_df(raw_data)
+    if old_name not in df.columns or new_name in df.columns:
+        raise PreventUpdate
+    df = df.rename(columns={old_name: new_name})
+    new_raw_data = df_to_json(df)
+
+    def _rename_keys(mapping, rename_values=False):
+        mapping = mapping or {}
+        updated = {}
+        for key, value in mapping.items():
+            updated_key = new_name if key == old_name else key
+            updated_value = new_name if rename_values and value == old_name else value
+            updated[updated_key] = updated_value
+        return updated
+
+    new_benchmark_assignments = _rename_keys(benchmark_assignments, rename_values=True)
+    new_cmabench_assignments = _rename_keys(cmabench_assignments)
+    new_long_short_assignments = _rename_keys(long_short_assignments)
+    new_vol_scaling_assignments = _rename_keys(vol_scaling_assignments)
+    new_min_wt = _rename_keys(min_wt)
+    new_max_wt = _rename_keys(max_wt)
+    new_force_max = _rename_keys(force_max)
+
+    selected_series = list(selected_series or [])
+    new_series_select = [new_name if s == old_name else s for s in selected_series]
+
+    series_order = list(series_order or list(df.columns))
+    new_series_order = [new_name if s == old_name else s for s in series_order]
+
+    return (
+        new_raw_data,
+        new_benchmark_assignments,
+        new_cmabench_assignments,
+        new_long_short_assignments,
+        new_vol_scaling_assignments,
+        new_min_wt,
+        new_max_wt,
+        new_force_max,
+        new_series_select,
+        new_series_order,
+        new_series_select,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -4681,13 +4863,17 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     if not ordered_series:
         raise PreventUpdate
 
-    selected_rows_safe = selected_rows if isinstance(selected_rows, (list, tuple)) else []
-    selected_set = {
-        row.get("Series")
-        for row in selected_rows_safe
-        if isinstance(row, dict) and row.get("Series")
-    }
-    selected_series = [s for s in ordered_series if s in selected_set]
+    if isinstance(selected_rows, (list, tuple)):
+        selected_set = {
+            row.get("Series")
+            for row in selected_rows
+            if isinstance(row, dict) and row.get("Series")
+        }
+        selected_series = [s for s in ordered_series if s in selected_set]
+    else:
+        selected_fallback = set(current_selected or [])
+        selected_series = [s for s in ordered_series if s in selected_fallback]
+
     if ordered_series == (current_order or []) and selected_series == (current_selected or []):
         raise PreventUpdate
     return ordered_series, selected_series
