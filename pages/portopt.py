@@ -32,7 +32,11 @@ from utils.optimization import run_portfolio_optimization, compute_risk_contribu
 from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
-from utils.core_categories import get_core_category_options, load_cma_returns_for_benches
+from utils.core_categories import (
+    get_cmabench_map_for_fofbench,
+    get_core_category_options,
+    load_cma_returns_for_benches,
+)
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
@@ -197,6 +201,32 @@ def _cma_missing_message(target: str | None, missing: list[str]) -> str:
     if (target or "returns") == "returns":
         return f"Missing series in DB: {', '.join(missing)}. They will be loaded as 0."
     return f"Missing series in DB: {', '.join(missing)}. They will be loaded as NaN."
+
+
+def _resolve_cma_bench(series_name: str, cmabench_assignments: dict | None) -> str:
+    if not cmabench_assignments:
+        return series_name
+    bench = cmabench_assignments.get(series_name)
+    if isinstance(bench, str):
+        bench = bench.strip()
+    return bench if bench else series_name
+
+
+def _selected_cma_benches(selected_series: list[str] | None, cmabench_assignments: dict | None) -> list[str]:
+    return [_resolve_cma_bench(s, cmabench_assignments) for s in (selected_series or [])]
+
+
+def _effective_cmabench_assignments(selected_series: list[str] | None, cmabench_assignments: dict | None) -> dict[str, str]:
+    series = selected_series or []
+    effective = {}
+    if cmabench_assignments:
+        for s, v in cmabench_assignments.items():
+            if isinstance(v, str) and v.strip():
+                effective[s] = v.strip()
+    missing = [s for s in series if not effective.get(s)]
+    if missing:
+        effective.update(get_cmabench_map_for_fofbench(DB_ENGINE, missing))
+    return effective
 
 
 # ---------------------------------------------------------------------------
@@ -1795,6 +1825,7 @@ layout = dmc.Container(
         dcc.Store(id="po-series-select", data=[], storage_type="session"),
         dcc.Store(id="po-series-order-store", data=[], storage_type="session"),
         dcc.Store(id="po-benchmark-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="po-cmabench-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="po-long-short-store", data={}, storage_type="session"),
         dcc.Store(id="po-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="po-min-wt-store", data={}, storage_type="session"),
@@ -1805,6 +1836,7 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-series-order-store", data=[]),
         dcc.Store(id="po-temp-deleted-series-store", data=[]),
         dcc.Store(id="po-temp-benchmark-assignments-store", data={}),
+        dcc.Store(id="po-temp-cmabench-assignments-store", data={}),
         dcc.Store(id="po-temp-long-short-store", data={}),
         dcc.Store(id="po-temp-vol-scaling-assignments-store", data={}),
         dcc.Store(id="po-temp-min-wt-store", data={}),
@@ -1976,6 +2008,7 @@ clientside_callback(
                 'po-series-select',
                 'po-series-order-store',
                 'po-benchmark-assignments-store',
+                'po-cmabench-assignments-store',
                 'po-long-short-store',
                 'po-vol-scaling-assignments-store',
                 'po-min-wt-store',
@@ -2515,10 +2548,11 @@ def po_update_ex_ante_mode_store(value):
     Input("po-load-db-returns-btn", "n_clicks"),
     Input("po-load-db-matrix-btn", "n_clicks"),
     State("po-series-select", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_cma_load_modal(n_returns, n_matrix, selected_series, mode):
+def po_open_cma_load_modal(n_returns, n_matrix, selected_series, cmabench_assignments, mode):
     if not n_returns and not n_matrix:
         raise PreventUpdate
 
@@ -2533,7 +2567,9 @@ def po_open_cma_load_modal(n_returns, n_matrix, selected_series, mode):
     default_type = "hmm"
     stats_map = _get_cma_stats_map(default_version, default_type)
     corr_map = _get_cma_corr_map(default_version, default_type)
-    missing = _compute_cma_missing(selected_series, target, mode, stats_map, corr_map)
+    effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments)
+    selected_cma = _selected_cma_benches(selected_series, effective_cmabench)
+    missing = _compute_cma_missing(selected_cma, target, mode, stats_map, corr_map)
     missing_msg = _cma_missing_message(target, missing)
     return True, target, version_options, default_version, default_type, missing_msg
 
@@ -2555,16 +2591,19 @@ def po_close_cma_load_modal(n_clicks):
     Input("po-cma-type-select", "value"),
     Input("po-cma-load-target-store", "data"),
     State("po-series-select", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_cma_missing_warning(version, cma_type, target, selected_series, mode):
+def po_update_cma_missing_warning(version, cma_type, target, selected_series, cmabench_assignments, mode):
     if version is None or not cma_type:
         return "Select a valid Version and Type."
     try:
         stats_map = _get_cma_stats_map(int(version), cma_type)
         corr_map = _get_cma_corr_map(int(version), cma_type)
-        missing = _compute_cma_missing(selected_series, target, mode, stats_map, corr_map)
+        effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments)
+        selected_cma = _selected_cma_benches(selected_series, effective_cmabench)
+        missing = _compute_cma_missing(selected_cma, target, mode, stats_map, corr_map)
         return _cma_missing_message(target, missing)
     except Exception:
         return "Unable to query CMA tables. Check database connection/configuration."
@@ -2583,10 +2622,11 @@ def po_update_cma_missing_warning(version, cma_type, target, selected_series, mo
     State("po-cma-type-select", "value"),
     State("po-cma-load-target-store", "data"),
     State("po-series-select", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     prevent_initial_call=True,
 )
-def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, mode):
+def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, cmabench_assignments, mode):
     if not n_clicks:
         raise PreventUpdate
     if version is None or not cma_type or not selected_series:
@@ -2601,12 +2641,15 @@ def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, mo
     except Exception:
         raise PreventUpdate
 
+    effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments)
+    cma_lookup = {s: _resolve_cma_bench(s, effective_cmabench) for s in selected_series}
+
     if target == "returns":
         returns_dict = {}
         vols_dict = {}
         rows = []
         for s in selected_series:
-            stat = stats_map.get(s, {})
+            stat = stats_map.get(cma_lookup[s], {})
             mean_val = stat.get("Mean", 0.0)
             sd_val = stat.get("SD", 0.0)
             returns_dict[s] = mean_val
@@ -2625,10 +2668,12 @@ def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, mo
         corr_matrix[r] = {}
         cov_row = {"Asset": r}
         corr_row = {"Asset": r}
-        sd_r = stats_map.get(r, {}).get("SD", np.nan)
+        cma_r = cma_lookup[r]
+        sd_r = stats_map.get(cma_r, {}).get("SD", np.nan)
         for c in selected_series:
-            sd_c = stats_map.get(c, {}).get("SD", np.nan)
-            corr_val = _get_cma_corr_value(corr_map, r, c)
+            cma_c = cma_lookup[c]
+            sd_c = stats_map.get(cma_c, {}).get("SD", np.nan)
+            corr_val = _get_cma_corr_value(corr_map, cma_r, cma_c)
             if pd.isna(sd_r) or pd.isna(sd_c) or pd.isna(corr_val):
                 cov_val = np.nan
             else:
@@ -3658,6 +3703,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
@@ -3673,6 +3719,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     State("analyticstool-original-periodicity-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-series-order-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
@@ -3688,6 +3735,7 @@ def po_add_series_from_database(
     existing_periodicity,
     current_selection,
     current_bench,
+    current_cmabench,
     current_ls,
     current_order,
     current_vol_scaling,
@@ -3706,7 +3754,7 @@ def po_add_series_from_database(
             "orange",
             False,
             n_no, n_no, n_no, n_no, n_no,
-            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             True, n_no,
         )
 
@@ -3721,13 +3769,13 @@ def po_add_series_from_database(
                     "red",
                     False,
                     n_no, n_no, n_no, n_no, n_no,
-                    n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no, n_no, n_no, n_no,
                     True, n_no,
                 )
 
         new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches, MRD_ENGINE)
         if new_df.empty:
-            raise ValueError("No rows returned for selected CMABench values.")
+            raise ValueError("No rows returned for selected FOFBench values.")
 
         # Database import is treated as daily by design.
         new_periodicity = "daily"
@@ -3768,6 +3816,7 @@ def po_add_series_from_database(
             default_periodicity,
             True,
             current_bench or {},
+            current_cmabench or {},
             current_ls or {},
             current_order or [],
             [],
@@ -3785,7 +3834,7 @@ def po_add_series_from_database(
             "red",
             False,
             n_no, n_no, n_no, n_no, n_no,
-            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             True, n_no,
         )
 
@@ -3803,6 +3852,7 @@ def po_add_series_from_database(
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
@@ -3825,6 +3875,7 @@ def po_add_series_from_database(
     State("analyticstool-original-periodicity-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-series-order-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
@@ -3834,7 +3885,7 @@ def po_add_series_from_database(
     prevent_initial_call=True,
 )
 def po_handle_upload(contents, filename, existing_data, existing_periodicity,
-                     current_selection, current_bench, current_ls, current_order,
+                     current_selection, current_bench, current_cmabench, current_ls, current_order,
                      current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
     if contents is None:
         raise PreventUpdate
@@ -3853,7 +3904,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
                 n_no, n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, True,  # hide alert
                 n_no, n_no, n_no, n_no, n_no,
-                n_no, n_no, n_no, n_no, n_no,
+                n_no, n_no, n_no, n_no, n_no, n_no,
                 True, dropdown_data, sheet_names[0], contents, filename,  # open sheet modal
                 False, True,  # hide blocker
             )
@@ -3895,6 +3946,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             default_periodicity,
             True,  # open modal
             current_bench or {},
+            current_cmabench or {},
             current_ls or {},
             current_order or [],
             [],
@@ -3909,7 +3961,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
         return (
             n_no, n_no, n_no, n_no, n_no, n_no,
             f"Error loading file: {str(e)}", "red", False,
-            n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
             *sheet_no,
             False, True,  # hide blocker
         )
@@ -3931,6 +3983,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
@@ -3953,6 +4006,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     State("analyticstool-original-periodicity-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-series-order-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
@@ -3963,7 +4017,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
 )
 def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filename,
                           existing_data, existing_periodicity, current_selection,
-                          current_bench, current_ls, current_order,
+                          current_bench, current_cmabench, current_ls, current_order,
                           current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
     """Parse the selected sheet and complete the import."""
     if not n_clicks or not stashed_contents:
@@ -4009,6 +4063,7 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
             default_periodicity,
             True,  # open series-selection modal
             current_bench or {},
+            current_cmabench or {},
             current_ls or {},
             current_order or [],
             [],
@@ -4023,7 +4078,7 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
         return (
             n_no, n_no, n_no, n_no, n_no, n_no,
             f"Error loading file: {str(e)}", "red", False,
-            n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
             False, None, None, None,  # close sheet modal, clear stash, reset upload
             False, True,  # hide blocker
         )
@@ -4078,6 +4133,7 @@ clientside_callback(
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
     Output("po-temp-series-select", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
@@ -4088,6 +4144,7 @@ clientside_callback(
     Input("po-open-modal-button", "n_clicks"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-series-order-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
@@ -4096,11 +4153,11 @@ clientside_callback(
     State("po-force-max-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_modal(n_clicks, current_select, current_bench, current_ls, current_order,
+def po_open_modal(n_clicks, current_select, current_bench, current_cmabench, current_ls, current_order,
                   current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
     if not n_clicks:
         raise PreventUpdate
-    return (True, current_select, current_bench, current_ls, current_order, [],
+    return (True, current_select, current_bench, current_cmabench, current_ls, current_order, [],
             current_vol_scaling, current_min_wt, current_max_wt, current_force_max)
 
 
@@ -4116,6 +4173,7 @@ def po_open_modal(n_clicks, current_select, current_bench, current_ls, current_o
     Input("po-temp-series-order-store", "data"),
     Input("po-temp-deleted-series-store", "data"),
     State("po-temp-benchmark-assignments-store", "data"),
+    State("po-temp-cmabench-assignments-store", "data"),
     State("po-temp-long-short-store", "data"),
     State("po-temp-vol-scaling-assignments-store", "data"),
     State("po-temp-min-wt-store", "data"),
@@ -4124,7 +4182,7 @@ def po_open_modal(n_clicks, current_select, current_bench, current_ls, current_o
     prevent_initial_call="initial_duplicate",
 )
 def po_update_series_selectors(raw_data, selected_series, series_order, deleted_series,
-                               current_assignments, long_short_assignments,
+                               current_assignments, current_cmabench_assignments, long_short_assignments,
                                vol_scaling_assignments, min_wt, max_wt, force_max):
     if raw_data is None:
         return [], []
@@ -4145,14 +4203,22 @@ def po_update_series_selectors(raw_data, selected_series, series_order, deleted_
         series_order = [s for s in series_order if s in all_series]
 
     selected_series = selected_series or []
+    current_cmabench_assignments = current_cmabench_assignments or {}
     min_wt = min_wt or {}
     max_wt = max_wt or {}
     force_max = force_max or {}
+    missing_cmabench = [s for s in all_series if not str(current_cmabench_assignments.get(s, "")).strip()]
+    core_cmabench_defaults = (
+        get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)
+        if missing_cmabench
+        else {}
+    )
 
     benchmark_options = [{"value": "None", "label": "None"}] + [{"value": s, "label": s} for s in all_series]
     max_len = max(len(s) for s in all_series) if all_series else 10
     series_width = max(150, max_len * 8 + 20)
     benchmark_width = int(series_width * 1.3)
+    cmabench_width = 150
 
     header_row = dmc.Group(
         mb="xs",
@@ -4163,6 +4229,7 @@ def po_update_series_selectors(raw_data, selected_series, series_order, deleted_
             dmc.Box(w=20, miw=20),
             dmc.Text("Series", size="xs", fw=700, w=series_width, miw=series_width, c="dimmed"),
             dmc.Text("Benchmark", size="xs", fw=700, w=benchmark_width, miw=benchmark_width, c="dimmed"),
+            dmc.Text("CMABench", size="xs", fw=700, w=cmabench_width, miw=cmabench_width, c="dimmed"),
             dmc.Text("L/S", size="xs", fw=700, w=50, miw=50, c="dimmed"),
             dmc.Text("Scale Vol", size="xs", fw=700, w=70, miw=70, c="dimmed"),
             dmc.Text("Min Wt", size="xs", fw=700, w=80, miw=80, c="dimmed"),
@@ -4180,6 +4247,7 @@ def po_update_series_selectors(raw_data, selected_series, series_order, deleted_
         is_ls = (long_short_assignments or {}).get(series, False)
         is_scale_vol = (vol_scaling_assignments or {}).get(series, True)
         is_selected = series in selected_series
+        cmabench_val = current_cmabench_assignments.get(series, core_cmabench_defaults.get(series, ""))
         min_wt_val = min_wt.get(series, 0)
         max_wt_val = max_wt.get(series, 100)
         force_max_val = force_max.get(series, False)
@@ -4228,6 +4296,14 @@ def po_update_series_selectors(raw_data, selected_series, series_order, deleted_
                         w=benchmark_width,
                         miw=benchmark_width,
                         placeholder="Benchmark",
+                    ),
+                    dmc.TextInput(
+                        id={"type": "po-cmabench-input", "series": series},
+                        value=cmabench_val,
+                        size="xs",
+                        w=cmabench_width,
+                        miw=cmabench_width,
+                        placeholder="CMABench",
                     ),
                     dmc.Switch(
                         id={"type": "po-long-short-checkbox", "series": series},
@@ -4293,6 +4369,31 @@ def po_update_benchmarks(values, ids, raw_data):
     for i, bid in enumerate(ids):
         if i < len(values) and values[i]:
             assignments[bid["series"]] = values[i]
+    return assignments
+
+
+# ---------------------------------------------------------------------------
+# Modal: collect CMABench assignments
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-temp-cmabench-assignments-store", "data"),
+    Input({"type": "po-cmabench-input", "series": ALL}, "value"),
+    State({"type": "po-cmabench-input", "series": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def po_update_cmabench(values, ids):
+    if values is None or not ids:
+        return {}
+    assignments = {}
+    for i, cid in enumerate(ids):
+        if i >= len(values):
+            continue
+        val = values[i]
+        if isinstance(val, str):
+            val = val.strip()
+        if val:
+            assignments[cid["series"]] = val
     return assignments
 
 
@@ -4482,6 +4583,7 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
 @callback(
     Output("po-series-select", "data", allow_duplicate=True),
     Output("po-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-long-short-store", "data", allow_duplicate=True),
     Output("po-series-order-store", "data", allow_duplicate=True),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
@@ -4496,6 +4598,7 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     State({"type": "po-series-include-checkbox", "series": ALL}, "checked"),
     State({"type": "po-series-include-checkbox", "series": ALL}, "id"),
     State("po-temp-benchmark-assignments-store", "data"),
+    State("po-temp-cmabench-assignments-store", "data"),
     State("po-temp-long-short-store", "data"),
     State("po-temp-series-order-store", "data"),
     State("po-temp-deleted-series-store", "data"),
@@ -4507,15 +4610,15 @@ def po_reorder_series(up_clicks, down_clicks, current_order, raw_data, checkbox_
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls,
+def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_cmabench, temp_ls,
                    temp_order, temp_deleted, raw_data, temp_vol_scaling,
                    temp_min_wt, temp_max_wt, temp_force_max, current_results):
     if not n_clicks:
         raise PreventUpdate
 
     temp_select = []
+    checkbox_map = {}
     if checkbox_values and checkbox_ids:
-        checkbox_map = {}
         for i, cid in enumerate(checkbox_ids):
             if i < len(checkbox_values):
                 checkbox_map[cid["series"]] = checkbox_values[i]
@@ -4523,6 +4626,16 @@ def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls,
         for s in order_to_use:
             if checkbox_map.get(s, False):
                 temp_select.append(s)
+
+    temp_cmabench = temp_cmabench or {}
+    series_for_defaults = temp_order if temp_order else list(checkbox_map.keys())
+    missing_cmabench = [s for s in series_for_defaults if not str(temp_cmabench.get(s, "")).strip()]
+    if missing_cmabench:
+        defaults = get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)
+        for s in missing_cmabench:
+            mapped = defaults.get(s)
+            if mapped:
+                temp_cmabench[s] = mapped
 
     updated_raw_data = raw_data
     updated_results = no_update
@@ -4536,6 +4649,8 @@ def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls,
                 temp_bench = {k: v for k, v in temp_bench.items() if k not in to_drop}
             if temp_ls:
                 temp_ls = {k: v for k, v in temp_ls.items() if k not in to_drop}
+            if temp_cmabench:
+                temp_cmabench = {k: v for k, v in temp_cmabench.items() if k not in to_drop}
             if temp_order:
                 temp_order = [s for s in temp_order if s not in to_drop]
             if temp_vol_scaling:
@@ -4554,7 +4669,7 @@ def po_on_modal_ok(n_clicks, checkbox_values, checkbox_ids, temp_bench, temp_ls,
                     updated_results = {k: v for k, v in current_results.items()
                                        if k not in deleted_portfolios}
 
-    return (temp_select, temp_bench, temp_ls, temp_order, False, temp_select,
+    return (temp_select, temp_bench, temp_cmabench, temp_ls, temp_order, False, temp_select,
             updated_raw_data, temp_vol_scaling, temp_min_wt, temp_max_wt, temp_force_max,
             updated_results)
 

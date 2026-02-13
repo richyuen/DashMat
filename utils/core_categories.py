@@ -8,22 +8,19 @@ from sqlalchemy.engine import Engine
 
 
 def get_core_category_options(engine: Engine) -> list[dict]:
-    """Return dropdown options formatted as `CoreCat [CMABench]`."""
+    """Return dropdown options formatted as `CoreCat [FOFBench]`."""
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT CoreCat, CMABench FROM ("
-                "  SELECT CoreCat, CMABench, "
-                "         ROW_NUMBER() OVER(PARTITION BY CMABench ORDER BY CoreCatOrder) AS rn "
-                "  FROM CoreCategories "
-                "  WHERE AATool IS NOT NULL AND CMABench IS NOT NULL AND FOFBench LIKE '%_TRIndex'"
-                ") t WHERE rn = 1 "
-                "ORDER BY CoreCat"
+                "SELECT CoreCat, FOFBench "
+                "FROM CoreCategories "
+                "WHERE FOFBench IS NOT NULL "
+                "ORDER BY CoreCatOrder"
             )
         ).fetchall()
     return [
-        {"value": str(cmabench), "label": f"{str(corecat)} [{str(cmabench)}]"}
-        for corecat, cmabench in rows
+        {"value": str(fofbench), "label": f"{str(corecat)} [{str(fofbench)}]"}
+        for corecat, fofbench in rows
     ]
 
 
@@ -46,20 +43,35 @@ def _split_fofbench(fofbench: str) -> tuple[str, str]:
     return acct_name, factor_name
 
 
+def get_cmabench_map_for_fofbench(engine: Engine, fofbenches: list[str]) -> dict[str, str]:
+    """Return mapping from FOFBench to CMABench for provided FOFBench values."""
+    selected = [str(v) for v in fofbenches if v]
+    if not selected:
+        return {}
+    q = text(
+        "SELECT FOFBench, CMABench "
+        "FROM CoreCategories "
+        "WHERE FOFBench IN :fofbenches AND CMABench IS NOT NULL"
+    ).bindparams(bindparam("fofbenches", expanding=True))
+    with engine.connect() as conn:
+        rows = conn.execute(q, {"fofbenches": selected}).fetchall()
+    return {str(r[0]): str(r[1]) for r in rows if r[0] and r[1]}
+
+
 def load_cma_returns_for_benches(
     core_engine: Engine,
     benches: list[str],
     mrd_engine: Engine,
 ) -> pd.DataFrame:
-    """Load selected CMABench daily returns from MRD index levels."""
+    """Load selected FOFBench daily returns from MRD index levels."""
     selected = [str(b) for b in benches if b]
     if not selected:
         return pd.DataFrame()
 
     core_query = text(
-        "SELECT CMABench, FOFBench "
+        "SELECT FOFBench "
         "FROM CoreCategories "
-        "WHERE CMABench IN :benches "
+        "WHERE FOFBench IN :benches "
         "ORDER BY CoreCatOrder"
     ).bindparams(bindparam("benches", expanding=True))
     with core_engine.connect() as conn:
@@ -69,14 +81,14 @@ def load_cma_returns_for_benches(
     if not mapping_rows:
         return pd.DataFrame()
 
-    cmabench_to_fofbench = {str(r[0]): str(r[1]) for r in mapping_rows if r[0] and r[1]}
-    selected_cmabenches = [b for b in selected if b in cmabench_to_fofbench]
-    if not selected_cmabenches:
+    selected_fofbenches = [str(r[0]) for r in mapping_rows if r[0] is not None]
+    selected_fofbench_set = set(selected_fofbenches)
+    selected_fofbenches = [b for b in selected if b in selected_fofbench_set]
+    if not selected_fofbenches:
         return pd.DataFrame()
 
-    fofbench_to_cmabench = {v: k for k, v in cmabench_to_fofbench.items()}
-    acct_names = sorted({_split_fofbench(v)[0] for v in fofbench_to_cmabench})
-    factor_names = sorted({_split_fofbench(v)[1] for v in fofbench_to_cmabench})
+    acct_names = sorted({_split_fofbench(v)[0] for v in selected_fofbenches})
+    factor_names = sorted({_split_fofbench(v)[1] for v in selected_fofbenches})
     if not acct_names or not factor_names:
         return pd.DataFrame()
 
@@ -101,18 +113,18 @@ def load_cma_returns_for_benches(
     fofbench_to_acct_id: dict[str, int] = {}
     for acct_id, acct_name, factor_name in account_rows:
         key = f"{acct_name}_{factor_name}"
-        if key in fofbench_to_cmabench and key not in fofbench_to_acct_id:
+        if key in selected_fofbench_set and key not in fofbench_to_acct_id:
             fofbench_to_acct_id[key] = int(acct_id)
 
-    cmabench_to_acct_id = {
-        cmabench: fofbench_to_acct_id[fofbench]
-        for cmabench, fofbench in cmabench_to_fofbench.items()
+    fofbench_to_acct_id = {
+        fofbench: fofbench_to_acct_id[fofbench]
+        for fofbench in selected_fofbenches
         if fofbench in fofbench_to_acct_id
     }
-    if not cmabench_to_acct_id:
+    if not fofbench_to_acct_id:
         return pd.DataFrame()
 
-    acct_ids = sorted(set(cmabench_to_acct_id.values()))
+    acct_ids = sorted(set(fofbench_to_acct_id.values()))
     factor_query = text(
         f"SELECT ACCT_ID, REFERENCE_DATE, FACTOR_VALUE "
         f"FROM {factor_table} "
@@ -137,16 +149,16 @@ def load_cma_returns_for_benches(
     # MRD stores index levels; convert to arithmetic daily returns.
     daily_returns = index_levels.pct_change(fill_method=None).dropna(how="all")
 
-    acct_id_to_cmabenches: dict[int, list[str]] = {}
-    for cmabench, acct_id in cmabench_to_acct_id.items():
-        acct_id_to_cmabenches.setdefault(acct_id, []).append(cmabench)
+    acct_id_to_fofbenches: dict[int, list[str]] = {}
+    for fofbench, acct_id in fofbench_to_acct_id.items():
+        acct_id_to_fofbenches.setdefault(acct_id, []).append(fofbench)
 
     out = pd.DataFrame(index=daily_returns.index)
-    for acct_id, benches_for_id in acct_id_to_cmabenches.items():
+    for acct_id, benches_for_id in acct_id_to_fofbenches.items():
         if acct_id not in daily_returns.columns:
             continue
-        for cmabench in benches_for_id:
-            out[cmabench] = daily_returns[acct_id]
+        for fofbench in benches_for_id:
+            out[fofbench] = daily_returns[acct_id]
 
     ordered_cols = [b for b in selected if b in out.columns]
     out = out.reindex(columns=ordered_cols)

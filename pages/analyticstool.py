@@ -2176,7 +2176,7 @@ def add_series_from_database(
 
         new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches, MRD_ENGINE)
         if new_df.empty:
-            raise ValueError("No rows returned for selected CMABench values.")
+            raise ValueError("No rows returned for selected FOFBench values.")
 
         # Database import is treated as daily by design.
         new_periodicity = "daily"
