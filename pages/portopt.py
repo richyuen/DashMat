@@ -1575,7 +1575,7 @@ layout = dmc.Container(
                             p="sm",
                             bg="var(--mantine-color-body)",
                             children=dmc.Group(
-                                justify="space-between",
+                                justify="flex-start",
                                 align="center",
                                 children=[
                                     dmc.Group(
@@ -1589,13 +1589,6 @@ layout = dmc.Container(
                                                     dmc.Text("Use Basic for workflow setup and Advanced for model/constraint details.", size="xs", c="dimmed"),
                                                 ],
                                             ),
-                                        ],
-                                    ),
-                                    dmc.Group(
-                                        gap="xs",
-                                        children=[
-                                            dmc.Badge("Basic", color="blue", variant="light"),
-                                            dmc.Badge("Advanced", color="grape", variant="light"),
                                         ],
                                     ),
                                 ],
