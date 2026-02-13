@@ -14,6 +14,8 @@ from utils.sample_data import get_sample_file_path
 VERSIONS = [2025, 2026]
 TYPES = ["hmm", "equilibrium.gp"]
 ITEMS = ["Mean", "SD", "Skewness", "Kurtosis"]
+RISK_FREE_BENCH = "BCTBill13"
+FRED_DGS3MO_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS3MO"
 
 CORE_CATEGORY_MAP: dict[str, dict[str, str]] = {
     "SPX": {
@@ -76,6 +78,12 @@ CORE_CATEGORY_MAP: dict[str, dict[str, str]] = {
         "PeerBench": "Short Government",
         "AATool": "UST 1-3Y",
     },
+    "BCTBill13": {
+        "CoreCat": "Bloomberg US T-Bill 1-3 Month",
+        "AssetClass": "Bond",
+        "PeerBench": "Short Government",
+        "AATool": "US T-Bill 1-3M",
+    },
 }
 
 
@@ -93,6 +101,46 @@ def _load_daily_returns() -> pd.DataFrame:
     df.index = pd.to_datetime(df.index)
     df = df.sort_index()
     return df
+
+
+def _build_bctbill13_proxy_returns(daily_df: pd.DataFrame) -> pd.Series:
+    """Build a daily 3M T-Bill proxy return series for the sample history.
+
+    Primary source:
+    - FRED DGS3MO yield converted to daily return using ACT/360.
+
+    Offline fallback:
+    - Smoothed and clipped BCGC13 sample returns.
+    """
+    if daily_df.empty:
+        return pd.Series(dtype=float)
+
+    target_index = pd.DatetimeIndex(daily_df.index).sort_values()
+    start = target_index.min()
+    end = target_index.max()
+
+    try:
+        fred = pd.read_csv(FRED_DGS3MO_CSV_URL)
+        fred["DATE"] = pd.to_datetime(fred["DATE"], errors="coerce")
+        fred["DGS3MO"] = pd.to_numeric(fred["DGS3MO"], errors="coerce")
+        fred = fred.dropna(subset=["DATE", "DGS3MO"]).set_index("DATE").sort_index()
+        fred = fred.loc[(fred.index >= start - pd.Timedelta(days=10)) & (fred.index <= end + pd.Timedelta(days=10))]
+
+        if not fred.empty:
+            daily_ret = (fred["DGS3MO"] / 100.0) / 360.0
+            daily_ret = daily_ret.reindex(target_index).ffill().bfill()
+            if not daily_ret.isna().all():
+                return daily_ret.fillna(0.0)
+    except Exception:
+        pass
+
+    if "BCGC13" in daily_df.columns:
+        fallback = daily_df["BCGC13"].copy()
+        fallback = fallback.rolling(21, min_periods=1).mean()
+        fallback = fallback.clip(lower=-0.001, upper=0.001)
+        return fallback.reindex(target_index).fillna(0.0)
+
+    return pd.Series(0.0, index=target_index)
 
 
 def _transform_for_type(df: pd.DataFrame, cma_type: str) -> pd.DataFrame:
@@ -285,6 +333,9 @@ def _mrd_rows(df: pd.DataFrame) -> tuple[list[dict], list[dict]]:
 def main() -> None:
     base_df = _load_monthly_returns()
     daily_df = _load_daily_returns()
+    if RISK_FREE_BENCH not in daily_df.columns:
+        daily_df[RISK_FREE_BENCH] = _build_bctbill13_proxy_returns(daily_df)
+    daily_df = daily_df.sort_index()
     metadata = MetaData()
     cma_corr, cma_ret, cma_stats, core_categories = _build_tables(metadata)
     mrd_metadata = MetaData()
@@ -310,9 +361,10 @@ def main() -> None:
             ret_rows.extend(_returns_rows(typed_df, version, cma_type))
             stats_rows.extend(_stats_rows(typed_df, version, cma_type))
 
-    core_cat_rows = _core_category_rows(
-        sorted({str(r["Bench"]) for r in ret_rows if r.get("Bench") is not None})
-    )
+    core_cat_benches = sorted({str(r["Bench"]) for r in ret_rows if r.get("Bench") is not None})
+    if RISK_FREE_BENCH not in core_cat_benches:
+        core_cat_benches = sorted(core_cat_benches + [RISK_FREE_BENCH])
+    core_cat_rows = _core_category_rows(core_cat_benches)
     mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)
 
     with engine.begin() as conn:

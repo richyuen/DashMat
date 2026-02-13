@@ -6,6 +6,8 @@ import pandas as pd
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
+RISK_FREE_FOFBENCH = "BCTBill13_TRIndex"
+
 
 def get_core_category_options(engine: Engine) -> list[dict]:
     """Return dropdown options formatted as `CoreCat [FOFBench]`."""
@@ -177,3 +179,8 @@ def load_cma_returns_for_benches(
         out = out.dropna(how="all")
     out.index.name = "Date"
     return out
+
+
+def load_bctbill13_returns(core_engine: Engine, mrd_engine: Engine) -> pd.DataFrame:
+    """Load BCTBill13 daily returns using the same MRD-backed import path."""
+    return load_cma_returns_for_benches(core_engine, [RISK_FREE_FOFBENCH], mrd_engine)

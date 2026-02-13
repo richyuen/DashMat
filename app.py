@@ -22,6 +22,7 @@ app.layout = dmc.MantineProvider(
         dcc.Store(id="analyticstool-raw-data-store", data=None, storage_type="session"),
         dcc.Store(id="analyticstool-original-periodicity-store", data="daily", storage_type="session"),
         dcc.Store(id="analyticstool-pending-new-series-store", data=[], storage_type="session"),
+        dcc.Store(id="bctbill13-cache-store", data=None, storage_type="session"),
         dcc.Store(id="theme-store", data="light", storage_type="local"),
         page_container,
     ]

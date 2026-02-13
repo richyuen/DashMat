@@ -1,6 +1,7 @@
 """Statistics calculations for returns analysis."""
 
 import json
+from typing import Optional
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -83,6 +84,45 @@ def sharpe_ratio(returns: pd.Series, periods_per_year: float, rf: float = 0.0) -
     return (ann_ret - rf) / ann_vol
 
 
+def _annualized_return_for_periodicity(
+    returns: pd.Series, periodicity: str, periods_per_year: float
+) -> float:
+    if is_daily(periodicity) or periodicity.startswith("weekly_"):
+        return annualized_return_calendar_days(returns, periodicity)
+    return annualized_return(returns, periods_per_year)
+
+
+def sharpe_ratio_with_risk_free(
+    returns: pd.Series,
+    periodicity: str,
+    periods_per_year: float,
+    risk_free_returns: Optional[pd.Series] = None,
+) -> float:
+    """Calculate Sharpe ratio using an annualized risk-free proxy when provided.
+
+    If risk-free returns are provided, computation uses the date intersection
+    between the series and risk-free history.
+    """
+    working_returns = returns.dropna()
+    if working_returns.empty:
+        return np.nan
+
+    ann_rf = 0.0
+    if risk_free_returns is not None and len(risk_free_returns) > 0:
+        aligned = pd.concat([working_returns, risk_free_returns], axis=1).dropna()
+        if aligned.empty:
+            return np.nan
+        working_returns = aligned.iloc[:, 0]
+        rf_series = aligned.iloc[:, 1]
+        ann_rf = _annualized_return_for_periodicity(rf_series, periodicity, periods_per_year)
+
+    ann_ret = _annualized_return_for_periodicity(working_returns, periodicity, periods_per_year)
+    ann_vol = annualized_volatility(working_returns, periods_per_year)
+    if ann_vol == 0 or np.isnan(ann_vol):
+        return np.nan
+    return (ann_ret - ann_rf) / ann_vol
+
+
 def sortino_ratio(returns: pd.Series, periods_per_year: float, rf: float = 0.0, target_return: float = 0.0) -> float:
     """Calculate Sortino ratio."""
     ann_ret = annualized_return(returns, periods_per_year)
@@ -163,6 +203,7 @@ def calculate_statistics(
     periodicity: str,
     series_name: str,
     is_long_short: bool = False,
+    risk_free_returns: Optional[pd.Series] = None,
 ) -> dict:
     """Calculate all statistics for a single series (optimized for performance)."""
     periods_per_year = annualization_factor(periodicity)
@@ -207,7 +248,9 @@ def calculate_statistics(
             "Cumulative Return": cumulative_return(ls_returns),
             "Annualized Return": ls_ann_ret,
             "Annualized Volatility": annualized_volatility(ls_returns, periods_per_year),
-            "Sharpe Ratio": sharpe_ratio(ls_returns, periods_per_year),
+            "Sharpe Ratio": sharpe_ratio_with_risk_free(
+                ls_returns, periodicity, periods_per_year, risk_free_returns
+            ),
             "Sortino Ratio": sortino_ratio(ls_returns, periods_per_year),
             # For L/S, "Excess Return" is typically just the return itself, but if we follow strict "relative to bench" rule:
             # If bench is None, L/S return is absolute. 
@@ -254,7 +297,9 @@ def calculate_statistics(
 
                 result[f"{label} Annualized Return"] = trailing_ls_ann_ret
                 result[f"{label} Annualized Volatility"] = annualized_volatility(trailing_ls, periods_per_year)
-                result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ls, periods_per_year)
+                result[f"{label} Sharpe Ratio"] = sharpe_ratio_with_risk_free(
+                    trailing_ls, periodicity, periods_per_year, risk_free_returns
+                )
                 result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ls, periods_per_year)
                 result[f"{label} Excess Return"] = trailing_ls_ann_ret if has_benchmark else np.nan
                 result[f"{label} Tracking Error"] = annualized_volatility(trailing_ls, periods_per_year) if has_benchmark else np.nan
@@ -289,7 +334,9 @@ def calculate_statistics(
             "Cumulative Return": cumulative_return(ret),
             "Annualized Return": ann_ret,
             "Annualized Volatility": annualized_volatility(ret, periods_per_year),
-            "Sharpe Ratio": sharpe_ratio(ret, periods_per_year),
+            "Sharpe Ratio": sharpe_ratio_with_risk_free(
+                ret, periodicity, periods_per_year, risk_free_returns
+            ),
             "Sortino Ratio": sortino_ratio(ret, periods_per_year),
             "Annualized Excess Return": (ann_ret - ann_bench) if has_benchmark and not same_series else np.nan,
             "Annualized Tracking Error": tracking_error(ret, bench, periods_per_year) if has_benchmark and not same_series else np.nan,
@@ -320,7 +367,9 @@ def calculate_statistics(
 
                 result[f"{label} Annualized Return"] = trailing_ann_ret
                 result[f"{label} Annualized Volatility"] = annualized_volatility(trailing_ret, periods_per_year)
-                result[f"{label} Sharpe Ratio"] = sharpe_ratio(trailing_ret, periods_per_year)
+                result[f"{label} Sharpe Ratio"] = sharpe_ratio_with_risk_free(
+                    trailing_ret, periodicity, periods_per_year, risk_free_returns
+                )
                 result[f"{label} Sortino Ratio"] = sortino_ratio(trailing_ret, periods_per_year)
                 result[f"{label} Excess Return"] = (trailing_ann_ret - trailing_ann_bench) if has_benchmark and not same_series else np.nan
                 result[f"{label} Tracking Error"] = tracking_error(trailing_ret, trailing_bench, periods_per_year) if has_benchmark and not same_series else np.nan
@@ -348,7 +397,8 @@ def calculate_statistics_cached(
     long_short_assignments: str,
     date_range_str: str,
     vol_scaler: float = 0,
-    vol_scaling_assignments: str = ""
+    vol_scaling_assignments: str = "",
+    risk_free_returns_json: str = "",
 ) -> list:
     """Calculate statistics for all selected series with caching."""
     # Use get_working_returns to get aligned data + benchmarks
@@ -363,6 +413,15 @@ def calculate_statistics_cached(
 
     benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
     long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+    risk_free_series: Optional[pd.Series] = None
+    if risk_free_returns_json:
+        try:
+            rf_df = resample_returns_cached(risk_free_returns_json, periodicity)
+            if not rf_df.empty:
+                rf_col = rf_df.columns[0]
+                risk_free_series = rf_df[rf_col].dropna()
+        except Exception:
+            risk_free_series = None
     
     results = []
     # Ensure selected_series is iterable
@@ -393,6 +452,7 @@ def calculate_statistics_cached(
             periodicity,
             series,
             is_long_short,
+            risk_free_series,
         )
         results.append(stats_dict)
 

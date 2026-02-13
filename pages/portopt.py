@@ -93,6 +93,14 @@ STATS_CONFIG = [
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _risk_free_json_from_store(store_data) -> str:
+    if isinstance(store_data, dict):
+        payload = store_data.get("returns_json")
+        if isinstance(payload, str):
+            return payload
+    return ""
+
+
 def _periodicity_defaults(periodicity):
     """Return (window_size, opt_step_periods, opt_step_months, halflife) defaults."""
     if periodicity and periodicity.startswith("weekly"):
@@ -1987,6 +1995,7 @@ clientside_callback(
                 'analyticstool-raw-data-store',
                 'analyticstool-original-periodicity-store',
                 'analyticstool-pending-new-series-store',
+                'bctbill13-cache-store',
                 'series-select',
                 'benchmark-assignments-store',
                 'long-short-store',
@@ -5518,10 +5527,11 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-growth-portfolio-multiselect", "value"),
+    Input("bctbill13-cache-store", "data"),
     State("po-periodicity-select", "value"),
     prevent_initial_call=True,
 )
-def po_render_statistics(results, active_tab, selected_portfolios, periodicity):
+def po_render_statistics(results, active_tab, selected_portfolios, risk_free_store, periodicity):
     if active_tab != "statistics" or not results:
         return [], []
 
@@ -5560,6 +5570,7 @@ def po_render_statistics(results, active_tab, selected_portfolios, periodicity):
             "null",
             0,
             "{}",
+            _risk_free_json_from_store(risk_free_store),
         )
 
         if not stats:
@@ -5672,10 +5683,11 @@ def po_render_returns(results, active_tab, selected_portfolios):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("bctbill13-cache-store", "data"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
-                      date_range, vol_scaler, vol_scaling):
+                      date_range, vol_scaler, vol_scaling, risk_free_store):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -5704,6 +5716,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
                 stats = calculate_statistics_cached(
                     raw_json, "daily", tuple(portfolio_names),
                     "{}", "{}", "null", 0, "{}",
+                    _risk_free_json_from_store(risk_free_store),
                 )
                 if stats:
                     stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}

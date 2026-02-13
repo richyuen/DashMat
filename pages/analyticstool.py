@@ -39,7 +39,11 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
-from utils.core_categories import get_core_category_options, load_cma_returns_for_benches
+from utils.core_categories import (
+    get_core_category_options,
+    load_bctbill13_returns,
+    load_cma_returns_for_benches,
+)
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -91,6 +95,14 @@ STATS_CONFIG = [
     ("5Y Information Ratio", ".2f"),
     ("5Y Correlation", ".2f"),
 ]
+
+
+def _risk_free_json_from_store(store_data) -> str:
+    if isinstance(store_data, dict):
+        payload = store_data.get("returns_json")
+        if isinstance(payload, str):
+            return payload
+    return ""
 
 
 def build_welcome_screen():
@@ -297,6 +309,49 @@ def close_db_add_modal(n_clicks):
     if not n_clicks:
         raise PreventUpdate
     return False, []
+
+
+@callback(
+    Output("bctbill13-cache-store", "data"),
+    Input("analyticstool-raw-data-store", "data"),
+    State("bctbill13-cache-store", "data"),
+)
+def refresh_bctbill13_cache(raw_data, cache_data):
+    """Cache BCTBill13 history once per session and refresh if raw data extends beyond it."""
+    if not raw_data:
+        raise PreventUpdate
+
+    try:
+        raw_df = json_to_df(raw_data)
+    except Exception:
+        raise PreventUpdate
+
+    if raw_df.empty:
+        raise PreventUpdate
+
+    raw_end = pd.to_datetime(raw_df.index.max())
+    cached_json = _risk_free_json_from_store(cache_data)
+    cached_max_raw = cache_data.get("max_date") if isinstance(cache_data, dict) else None
+    cached_max = pd.to_datetime(cached_max_raw, errors="coerce") if cached_max_raw else pd.NaT
+
+    if cached_json and pd.notna(cached_max) and raw_end <= cached_max:
+        raise PreventUpdate
+
+    try:
+        rf_df = load_bctbill13_returns(DB_ENGINE, MRD_ENGINE)
+    except Exception:
+        raise PreventUpdate
+
+    if rf_df.empty:
+        raise PreventUpdate
+
+    rf_df = rf_df.sort_index()
+    rf_max = pd.to_datetime(rf_df.index.max())
+    return {
+        "series": "BCTBill13_TRIndex",
+        "max_date": rf_max.strftime("%Y-%m-%d"),
+        "returns_json": df_to_json(rf_df),
+    }
 
 
 @callback(
@@ -1537,6 +1592,7 @@ clientside_callback(
                 'analyticstool-raw-data-store',
                 'analyticstool-original-periodicity-store',
                 'analyticstool-pending-new-series-store',
+                'bctbill13-cache-store',
                 'series-select',
                 'benchmark-assignments-store',
                 'long-short-store',
@@ -3671,9 +3727,10 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
     Input("date-range-store", "data"),
     Input("vol-scaler-value-store", "data"),
     Input("vol-scaling-assignments-store", "data"),
+    Input("bctbill13-cache-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, risk_free_store):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if raw_data is None or not selected_series:
         return [], []
@@ -3688,7 +3745,8 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             json.dumps(long_short_assignments) if long_short_assignments else "{}",
             json.dumps(date_range) if date_range else "null",
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
+            _risk_free_json_from_store(risk_free_store),
         )
 
         if not stats:
@@ -4420,9 +4478,10 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("monthly-series-store", "data"),
     State("vol-scaler-value-store", "data"),
     State("vol-scaling-assignments-store", "data"),
+    State("bctbill13-cache-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments):
+def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, risk_free_store):
     """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, Drawdown, and Correlogram sheets."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -4437,7 +4496,8 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
         json.dumps(long_short_assignments) if long_short_assignments else "{}",
         json.dumps(date_range) if date_range else "null",
         vol_scaler or 0,
-        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
+        _risk_free_json_from_store(risk_free_store),
     )
 
     if returns_df.empty:
