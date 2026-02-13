@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column, text
 
@@ -15,6 +16,8 @@ VERSIONS = [2025, 2026]
 TYPES = ["hmm", "equilibrium.gp"]
 ITEMS = ["Mean", "SD", "Skewness", "Kurtosis"]
 RISK_FREE_BENCH = "BCTBill13"
+MTH_TO_DLY_BENCH = "MthToDly"
+MTH_TO_DLY_DAILY_START = pd.Timestamp("2022-01-03")
 FRED_DGS3MO_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS3MO"
 
 CORE_CATEGORY_MAP: dict[str, dict[str, str]] = {
@@ -84,6 +87,12 @@ CORE_CATEGORY_MAP: dict[str, dict[str, str]] = {
         "PeerBench": "Short Government",
         "AATool": "US T-Bill 1-3M",
     },
+    "MthToDly": {
+        "CoreCat": "MthToDly Test Series",
+        "AssetClass": "Equity",
+        "PeerBench": "Unspecified",
+        "AATool": "MthToDly",
+    },
 }
 
 
@@ -141,6 +150,47 @@ def _build_bctbill13_proxy_returns(daily_df: pd.DataFrame) -> pd.Series:
         return fallback.reindex(target_index).fillna(0.0)
 
     return pd.Series(0.0, index=target_index)
+
+
+def _build_mth_to_dly_returns(daily_df: pd.DataFrame) -> pd.Series:
+    """Create a synthetic series that is monthly in early history, then daily."""
+    if daily_df.empty:
+        return pd.Series(dtype=float, name=MTH_TO_DLY_BENCH)
+
+    available_daily = pd.DatetimeIndex(daily_df.index).sort_values()
+    daily_candidates = available_daily[available_daily >= MTH_TO_DLY_DAILY_START]
+    if len(daily_candidates) > 0:
+        daily_start = pd.Timestamp(daily_candidates[0])
+    else:
+        # Fallback if dataset does not reach 2022.
+        daily_start = pd.Timestamp(available_daily.min())
+
+    # Monthly segment starts in 2015 and ends before daily observations begin.
+    monthly_start = pd.Timestamp("2015-01-31")
+    monthly_end = (daily_start - pd.offsets.MonthEnd(1)).normalize()
+    monthly_idx = pd.date_range(monthly_start, monthly_end, freq="ME")
+    if len(monthly_idx) > 0:
+        x = np.arange(len(monthly_idx), dtype=float)
+        monthly_returns = pd.Series(
+            0.002 + 0.0007 * np.sin(0.35 * x),
+            index=monthly_idx,
+        )
+    else:
+        monthly_returns = pd.Series(dtype=float)
+
+    # Daily segment uses sample daily data behavior as a realistic continuation.
+    base_col = "SPX" if "SPX" in daily_df.columns else (daily_df.columns[0] if len(daily_df.columns) > 0 else None)
+    if base_col is None:
+        daily_part = pd.Series(dtype=float)
+    else:
+        daily_part = (daily_df[base_col] * 0.6).dropna()
+        daily_part = daily_part.loc[daily_part.index >= daily_start]
+
+    combined = pd.concat([monthly_returns, daily_part])
+    combined = combined[~combined.index.duplicated(keep="last")]
+    combined = combined.sort_index()
+    combined.name = MTH_TO_DLY_BENCH
+    return combined
 
 
 def _transform_for_type(df: pd.DataFrame, cma_type: str) -> pd.DataFrame:
@@ -335,6 +385,9 @@ def main() -> None:
     daily_df = _load_daily_returns()
     if RISK_FREE_BENCH not in daily_df.columns:
         daily_df[RISK_FREE_BENCH] = _build_bctbill13_proxy_returns(daily_df)
+    mth_to_dly = _build_mth_to_dly_returns(daily_df)
+    if not mth_to_dly.empty:
+        daily_df = daily_df.join(mth_to_dly, how="outer")
     daily_df = daily_df.sort_index()
     metadata = MetaData()
     cma_corr, cma_ret, cma_stats, core_categories = _build_tables(metadata)
@@ -364,6 +417,8 @@ def main() -> None:
     core_cat_benches = sorted({str(r["Bench"]) for r in ret_rows if r.get("Bench") is not None})
     if RISK_FREE_BENCH not in core_cat_benches:
         core_cat_benches = sorted(core_cat_benches + [RISK_FREE_BENCH])
+    if MTH_TO_DLY_BENCH not in core_cat_benches:
+        core_cat_benches = sorted(core_cat_benches + [MTH_TO_DLY_BENCH])
     core_cat_rows = _core_category_rows(core_cat_benches)
     mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)
 

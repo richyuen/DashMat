@@ -40,9 +40,10 @@ from utils.statistics import (
 from utils.charting import apply_chart_theme
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 from utils.core_categories import (
+    get_common_daily_range,
     get_core_category_options,
     load_bctbill13_returns,
-    load_cma_returns_for_benches,
+    load_cma_returns_for_benches_with_meta,
 )
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
@@ -498,6 +499,16 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                 dmc.Button(
                                                     "Common Range",
                                                     id="common-range-button",
+                                                    size="xs",
+                                                    variant="outline",
+                                                    disabled=True,
+                                                    w=120,
+                                                ),
+                                            ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
+                                            html.Div([
+                                                dmc.Button(
+                                                    "Common Daily",
+                                                    id="common-daily-button",
                                                     size="xs",
                                                     variant="outline",
                                                     disabled=True,
@@ -1371,7 +1382,8 @@ layout = dmc.Container(
                                     ),
                                     dmc.Text(
                                         "Use Common Range to limit dates to periods where all selected series have data, "
-                                        "or Maximum Range to use full available dates.",
+                                        "Common Daily to jump to the overlap where all selected series are in daily phase "
+                                        "and switch periodicity to Daily (Trading), or Maximum Range to use full available dates.",
                                         size="sm",
                                     ),
                                 ])),
@@ -2445,12 +2457,26 @@ def add_series_from_database(
                     True, n_no,
                 )
 
-        new_df = load_cma_returns_for_benches(DB_ENGINE, selected_benches, MRD_ENGINE)
+        new_df, db_meta = load_cma_returns_for_benches_with_meta(
+            DB_ENGINE, selected_benches, MRD_ENGINE
+        )
         if new_df.empty:
             raise ValueError("No rows returned for selected FOFBench values.")
 
         # Database import is treated as daily by design.
         new_periodicity = "daily"
+        all_start_daily = True
+        daily_transition_notes: list[str] = []
+        for series_name in new_df.columns:
+            meta = db_meta.get(series_name, {}) if isinstance(db_meta, dict) else {}
+            starts_daily = bool(meta.get("starts_daily", True))
+            if not starts_daily:
+                all_start_daily = False
+                daily_start_date = meta.get("daily_start_date")
+                if daily_start_date:
+                    daily_transition_notes.append(f"{series_name}: {daily_start_date}")
+                else:
+                    daily_transition_notes.append(f"{series_name}: no daily phase detected")
 
         if existing_data is not None:
             existing_df = json_to_df(existing_data)
@@ -2468,23 +2494,22 @@ def add_series_from_database(
             combined_periodicity = new_periodicity
 
         periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+        if combined_periodicity == "daily":
+            default_periodicity = "daily_trading" if all_start_daily else "monthly"
+        else:
+            default_periodicity = combined_periodicity
 
         new_series = [col for col in new_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
 
-        if not first_load:
-            alert_msg = (
-                f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
-            )
-            alert_color = "green"
-            alert_hide = False
-            new_first_load = True
-        else:
-            alert_msg = n_no
-            alert_color = n_no
-            alert_hide = True
-            new_first_load = True
+        alert_msg = (
+            f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
+        )
+        if daily_transition_notes:
+            alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(daily_transition_notes)}"
+        alert_color = "orange" if daily_transition_notes else "green"
+        alert_hide = False
+        new_first_load = True
 
         return (
             df_to_json(merged_df),
@@ -3347,6 +3372,7 @@ def update_vol_scaling_assignments(checkbox_values, checkbox_ids, raw_data):
     Output("end-date-picker", "value"),
     Output("date-picker-wrapper", "style"),
     Output("common-range-button", "disabled"),
+    Output("common-daily-button", "disabled"),
     Output("maximum-range-button", "disabled"),
     Output("date-range-store", "data", allow_duplicate=True),
     Input("analyticstool-raw-data-store", "data"),
@@ -3361,7 +3387,7 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
     if raw_data is None or not selected_series:
-        return None, None, disabled_style, True, True, None
+        return None, None, disabled_style, True, True, True, None
 
     try:
         df = resample_returns_cached(raw_data, periodicity or "daily")
@@ -3369,7 +3395,11 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
         # Filter to selected series
         available_series = [s for s in selected_series if s in df.columns]
         if not available_series:
-            return None, None, disabled_style, True, True, None
+            return None, None, disabled_style, True, True, True, None
+
+        daily_df = resample_returns_cached(raw_data, "daily_trading")
+        daily_available = [s for s in selected_series if s in daily_df.columns]
+        has_common_daily = bool(get_common_daily_range(daily_df, daily_available)) if daily_available else False
 
         # Get maximum range (earliest start, latest end)
         data_start = df.index.min().strftime("%Y-%m-%d")
@@ -3380,26 +3410,29 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
             s = stored_range["start"]
             e = stored_range["end"]
             if s >= data_start and e <= data_end:
-                return s, e, enabled_style, False, False, {"start": s, "end": e}
+                return s, e, enabled_style, False, not has_common_daily, False, {"start": s, "end": e}
 
-        return data_start, data_end, enabled_style, False, False, {"start": data_start, "end": data_end}
+        return data_start, data_end, enabled_style, False, not has_common_daily, False, {"start": data_start, "end": data_end}
 
     except Exception:
-        return None, None, disabled_style, True, True, None
+        return None, None, disabled_style, True, True, True, None
 
 
 @callback(
     Output("start-date-picker", "value", allow_duplicate=True),
     Output("end-date-picker", "value", allow_duplicate=True),
     Output("date-range-store", "data"),
+    Output("periodicity-select", "value", allow_duplicate=True),
+    Output("periodicity-value-store", "data", allow_duplicate=True),
     Input("common-range-button", "n_clicks"),
+    Input("common-daily-button", "n_clicks"),
     Input("maximum-range-button", "n_clicks"),
     State("analyticstool-raw-data-store", "data"),
     State("periodicity-select", "value"),
     State("series-select", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_buttons(common_clicks, max_clicks, raw_data, periodicity, selected_series):
+def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, periodicity, selected_series):
     """Update date range based on button clicks."""
     if raw_data is None or not selected_series:
         raise PreventUpdate
@@ -3425,13 +3458,24 @@ def update_date_range_buttons(common_clicks, max_clicks, raw_data, periodicity, 
                 raise PreventUpdate
             start_date = subset_df.index.min().strftime("%Y-%m-%d")
             end_date = subset_df.index.max().strftime("%Y-%m-%d")
+            periodicity_value = no_update
+        elif button_id == "common-daily-button":
+            daily_df = resample_returns_cached(raw_data, "daily_trading")
+            daily_available = [s for s in selected_series if s in daily_df.columns]
+            common_daily = get_common_daily_range(daily_df, daily_available)
+            if not common_daily:
+                raise PreventUpdate
+            start_date = common_daily[0].strftime("%Y-%m-%d")
+            end_date = common_daily[1].strftime("%Y-%m-%d")
+            periodicity_value = "daily_trading"
         else:  # maximum-range-button
             # Maximum range: earliest start to latest end across all selected series
             start_date = df.index.min().strftime("%Y-%m-%d")
             end_date = df.index.max().strftime("%Y-%m-%d")
+            periodicity_value = no_update
 
         date_range = {"start": start_date, "end": end_date}
-        return start_date, end_date, date_range
+        return start_date, end_date, date_range, periodicity_value, periodicity_value
 
     except Exception:
         raise PreventUpdate
