@@ -242,6 +242,667 @@ def _periodicity_defaults(periodicity):
     return 252, 21, 1, 63
 
 
+def _coerce_float(value):
+    """Convert value to finite float; return None when invalid."""
+    try:
+        fval = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(fval):
+        return None
+    return fval
+
+
+def _annualization_for_periodicity(periodicity) -> int:
+    """Return annualization factor with safe fallback."""
+    try:
+        ann = int(annualization_factor(periodicity or "daily"))
+        if ann > 0:
+            return ann
+    except Exception:
+        pass
+    p = periodicity or "daily"
+    if str(p).startswith("weekly"):
+        return 52
+    if p == "monthly":
+        return 12
+    return 252
+
+
+def _validate_ex_ante_expected_inputs(
+    selected_series,
+    ex_ante_mode,
+    ex_ante_returns,
+    ex_ante_cov,
+    ex_ante_vol,
+    ex_ante_corr,
+):
+    """Validate completeness of expected-return/covariance-style inputs."""
+    assets = [str(s) for s in (selected_series or [])]
+    if not assets:
+        return "Select at least one series."
+
+    mode = ex_ante_mode or "ret_cov"
+    returns_map = ex_ante_returns or {}
+    cov_map = ex_ante_cov or {}
+    vol_map = ex_ante_vol or {}
+    corr_map = ex_ante_corr or {}
+
+    missing_returns = [a for a in assets if _coerce_float(returns_map.get(a)) is None]
+    if missing_returns:
+        return f"Missing expected return for: {', '.join(missing_returns)}."
+
+    if mode == "ret_vol_corr":
+        missing_vols = [a for a in assets if _coerce_float(vol_map.get(a)) is None]
+        if missing_vols:
+            return f"Missing expected volatility for: {', '.join(missing_vols)}."
+
+        for r in assets:
+            row = corr_map.get(r, {}) if isinstance(corr_map, dict) else {}
+            if not isinstance(row, dict):
+                return f"Correlation row for '{r}' is invalid."
+            for c in assets:
+                corr_val = _coerce_float(row.get(c))
+                if corr_val is None:
+                    return f"Missing correlation value for ({r}, {c})."
+                if corr_val < -1 or corr_val > 1:
+                    return f"Correlation ({r}, {c}) must be between -1 and 1."
+        return None
+
+    for r in assets:
+        row = cov_map.get(r, {}) if isinstance(cov_map, dict) else {}
+        if not isinstance(row, dict):
+            return f"Covariance row for '{r}' is invalid."
+        for c in assets:
+            cov_val = _coerce_float(row.get(c))
+            if cov_val is None:
+                return f"Missing covariance value for ({r}, {c})."
+    return None
+
+
+def _validate_black_litterman_inputs(selected_series, bl_views, bl_tau):
+    """Validate Black-Litterman-specific inputs."""
+    tau = _coerce_float(bl_tau)
+    if tau is None or tau <= 0:
+        return "BL tau must be greater than 0."
+
+    assets = {str(s) for s in (selected_series or [])}
+    for i, view in enumerate(bl_views or [], start=1):
+        if not isinstance(view, dict):
+            return f"BL view #{i} is invalid."
+        v_type = str(view.get("type", "absolute")).strip().lower()
+        if v_type not in {"absolute", "relative"}:
+            return f"BL view #{i} type must be absolute or relative."
+
+        v_return = _coerce_float(view.get("return"))
+        if v_return is None:
+            return f"BL view #{i} return is invalid."
+        confidence = _coerce_float(view.get("confidence", 1.0))
+        if confidence is None or confidence <= 0:
+            return f"BL view #{i} confidence must be greater than 0."
+
+        asset = str(view.get("asset", "")).strip()
+        if v_type == "absolute":
+            if not asset or asset not in assets:
+                return f"BL view #{i} asset must be one of the selected series."
+            continue
+
+        asset_to = str(view.get("asset_to", "")).strip()
+        if not asset or not asset_to:
+            return f"BL view #{i} relative pair is incomplete."
+        if asset not in assets or asset_to not in assets:
+            return f"BL view #{i} relative assets must be selected series."
+        if asset == asset_to:
+            return f"BL view #{i} relative assets must be different."
+
+    return None
+
+
+def _validate_linear_constraints_inputs(linear_constraints, selected_series):
+    """Validate linear constraints from UI before optimization."""
+    assets = [str(s) for s in (selected_series or [])]
+    for idx, row in enumerate(linear_constraints or [], start=1):
+        if not isinstance(row, dict):
+            return f"Linear constraint row #{idx} is invalid."
+
+        coeff_count = 0
+        for asset in assets:
+            val = row.get(asset)
+            if val in (None, ""):
+                continue
+            fval = _coerce_float(val)
+            if fval is None:
+                return f"Linear constraint row #{idx} has invalid coefficient for {asset}."
+            if abs(fval) > 1e-12:
+                coeff_count += 1
+
+        min_raw = row.get("Min")
+        max_raw = row.get("Max")
+        min_val = None if min_raw in (None, "") else _coerce_float(min_raw)
+        max_val = None if max_raw in (None, "") else _coerce_float(max_raw)
+        if min_raw not in (None, "") and min_val is None:
+            return f"Linear constraint row #{idx} has invalid Min value."
+        if max_raw not in (None, "") and max_val is None:
+            return f"Linear constraint row #{idx} has invalid Max value."
+        if min_val is not None and max_val is not None and min_val > max_val:
+            return f"Linear constraint row #{idx} has Min greater than Max."
+        if coeff_count == 0 and (min_val is not None or max_val is not None):
+            return f"Linear constraint row #{idx} needs at least one non-zero coefficient."
+
+    return None
+
+
+def _validate_optimization_inputs(
+    portfolio_name,
+    selected_series,
+    opt_model,
+    opt_window,
+    window_size,
+    opt_step,
+    opt_step_unit,
+    exp_wt_cov,
+    halflife,
+    min_wt,
+    max_wt,
+    force_max,
+    linear_constraints,
+    ex_ante_mode,
+    ex_ante_returns,
+    ex_ante_cov,
+    ex_ante_vol,
+    ex_ante_corr,
+    bl_views,
+    bl_tau,
+):
+    """Return first validation error message, or None when valid."""
+    if not portfolio_name or not str(portfolio_name).strip():
+        return "Enter a portfolio name."
+    if not selected_series:
+        return "Select at least one series."
+    if len(selected_series) < 2:
+        return "Select at least two series."
+
+    valid_models = {
+        "risk_parity",
+        "factor_risk_parity",
+        "equal_weight",
+        "hrp",
+        "maximize_sharpe",
+        "minimize_cvar",
+        "minimize_variance",
+        "ex_ante_mv",
+        "black_litterman",
+    }
+    if opt_model not in valid_models:
+        return "Select a valid optimization model."
+
+    if opt_model not in {"ex_ante_mv", "black_litterman"}:
+        if opt_window not in {"full", "rolling", "expanding"}:
+            return "Select a valid optimization window."
+        if opt_window != "full":
+            ws = _coerce_float(window_size)
+            if ws is None or ws < 2 or int(ws) != ws:
+                return "Window size must be an integer >= 2."
+            step = _coerce_float(opt_step)
+            if step is None or step < 1 or int(step) != step:
+                return "Optimization step must be an integer >= 1."
+            if opt_step_unit not in {"periods", "months"}:
+                return "Optimization step unit must be periods or months."
+
+    if exp_wt_cov:
+        hl = _coerce_float(halflife)
+        if hl is None or hl <= 0:
+            return "Halflife must be greater than 0 when exponential weighting is enabled."
+
+    min_map = min_wt or {}
+    max_map = max_wt or {}
+    force_map = force_max or {}
+    for asset in selected_series:
+        mn = _coerce_float(min_map.get(asset, 0))
+        mx = _coerce_float(max_map.get(asset, 100))
+        if mn is None or mx is None:
+            return f"Invalid min/max bound for {asset}."
+        if mn < 0 or mx > 100:
+            return f"Bounds for {asset} must stay within 0-100%."
+        if mn > mx:
+            return f"Min bound cannot exceed max bound for {asset}."
+        if force_map.get(asset, False) and mx <= 0:
+            return f"Force Max requires a positive max bound for {asset}."
+
+    lc_error = _validate_linear_constraints_inputs(linear_constraints, selected_series)
+    if lc_error:
+        return lc_error
+
+    if opt_model == "ex_ante_mv":
+        ex_error = _validate_ex_ante_expected_inputs(
+            selected_series,
+            ex_ante_mode,
+            ex_ante_returns,
+            ex_ante_cov,
+            ex_ante_vol,
+            ex_ante_corr,
+        )
+        if ex_error:
+            return ex_error
+
+    if opt_model == "black_litterman":
+        bl_error = _validate_black_litterman_inputs(selected_series, bl_views, bl_tau)
+        if bl_error:
+            return bl_error
+
+    return None
+
+
+def _resolve_frontier_window(window_weights, window_idx):
+    """Resolve selected frontier window index safely."""
+    if not window_weights:
+        raise ValueError("No optimization windows available.")
+    if window_idx is None:
+        idx = len(window_weights) - 1
+    else:
+        try:
+            idx = int(window_idx)
+        except (TypeError, ValueError):
+            idx = len(window_weights) - 1
+    idx = max(0, min(idx, len(window_weights) - 1))
+    return idx, window_weights[idx]
+
+
+def _prepare_frontier_estimation_data(working_df, opt_series, window_weight, missing_data_method):
+    """Build frontier estimation frame using the selected optimization window."""
+    est_start = pd.Timestamp(window_weight.get("est_start", window_weight["apply_start"]))
+    est_end = pd.Timestamp(window_weight.get("est_end", window_weight["apply_end"]))
+    mask = (working_df.index >= est_start) & (working_df.index <= est_end)
+    est_data = working_df.loc[mask, list(opt_series)].copy()
+
+    if missing_data_method == "fill_0":
+        est_data = est_data.fillna(0)
+    else:
+        valid_cols = [c for c in opt_series if c in est_data.columns and not est_data[c].isna().any()]
+        if valid_cols:
+            est_data = est_data[valid_cols]
+        else:
+            est_data = est_data.fillna(0)
+
+    return est_data, est_start, est_end
+
+
+def _build_ex_ante_mu_cov(config, asset_cols, ann):
+    """Build per-period mu/cov for ex-ante optimization/frontier use."""
+    mode = config.get("ex_ante_mode", "ret_cov")
+    ex_ante_returns = config.get("ex_ante_returns", {}) or {}
+    ex_ante_cov = config.get("ex_ante_cov", {}) or {}
+    ex_ante_vol = config.get("ex_ante_vol", {}) or {}
+    ex_ante_corr = config.get("ex_ante_corr", {}) or {}
+
+    validation_error = _validate_ex_ante_expected_inputs(
+        asset_cols,
+        mode,
+        ex_ante_returns,
+        ex_ante_cov,
+        ex_ante_vol,
+        ex_ante_corr,
+    )
+    if validation_error:
+        return None, None, validation_error
+
+    mu_annual = np.array([float(ex_ante_returns[a]) for a in asset_cols], dtype=float)
+    custom_mu = pd.DataFrame([mu_annual / ann], columns=asset_cols)
+
+    if mode == "ret_vol_corr":
+        vol_vec = np.array([float(ex_ante_vol[a]) for a in asset_cols], dtype=float)
+        corr = np.zeros((len(asset_cols), len(asset_cols)), dtype=float)
+        for i, r in enumerate(asset_cols):
+            row = ex_ante_corr.get(r, {})
+            for j, c in enumerate(asset_cols):
+                corr[i, j] = float(row[c])
+        cov_ann = np.outer(vol_vec, vol_vec) * corr
+    else:
+        cov_ann = np.zeros((len(asset_cols), len(asset_cols)), dtype=float)
+        for i, r in enumerate(asset_cols):
+            row = ex_ante_cov.get(r, {})
+            for j, c in enumerate(asset_cols):
+                cov_ann[i, j] = float(row[c])
+
+    cov_ann = (cov_ann + cov_ann.T) / 2.0
+    custom_cov = pd.DataFrame(cov_ann / ann, index=asset_cols, columns=asset_cols)
+    return custom_mu, custom_cov, None
+
+
+def _build_black_litterman_mu_cov(est_data, config, asset_cols):
+    """Build per-period posterior mu/cov from BL inputs."""
+    import riskfolio as rp
+
+    if est_data.empty:
+        return None, None, "No data available for Black-Litterman expected estimates."
+
+    port = rp.Portfolio(returns=est_data.copy())
+    port.assets_stats(method_mu="hist", method_cov="hist")
+
+    if config.get("exp_wt_cov", False):
+        hl = int(config.get("halflife", 63) or 63)
+        ewm_cov = est_data.ewm(halflife=hl).cov().iloc[-len(asset_cols):]
+        if isinstance(ewm_cov.index, pd.MultiIndex):
+            ewm_cov.index = ewm_cov.index.get_level_values(-1)
+        ewm_cov = ewm_cov.reindex(index=asset_cols, columns=asset_cols)
+        port.cov = ewm_cov
+
+    bl_views = config.get("bl_views", []) or []
+    n_assets = len(asset_cols)
+    if bl_views:
+        p_rows = []
+        q_rows = []
+        asset_idx = {name: i for i, name in enumerate(asset_cols)}
+        for view in bl_views:
+            v_type = str(view.get("type", "absolute")).strip().lower()
+            q_val = _coerce_float(view.get("return"))
+            if q_val is None:
+                continue
+            coeffs = np.zeros(n_assets, dtype=float)
+            if v_type == "relative":
+                asset = str(view.get("asset", "")).strip()
+                asset_to = str(view.get("asset_to", "")).strip()
+                if asset in asset_idx:
+                    coeffs[asset_idx[asset]] = 1.0
+                if asset_to in asset_idx:
+                    coeffs[asset_idx[asset_to]] -= 1.0
+            else:
+                asset = str(view.get("asset", "")).strip()
+                if asset in asset_idx:
+                    coeffs[asset_idx[asset]] = 1.0
+            if np.count_nonzero(coeffs) == 0:
+                continue
+            p_rows.append(coeffs)
+            q_rows.append([q_val])
+        if p_rows:
+            P = pd.DataFrame(np.array(p_rows), columns=asset_cols)
+            Q = pd.DataFrame(np.array(q_rows), columns=["views"])
+        else:
+            P = pd.DataFrame(np.zeros((1, n_assets)), columns=asset_cols)
+            Q = pd.DataFrame(np.zeros((1, 1)), columns=["views"])
+    else:
+        P = pd.DataFrame(np.zeros((1, n_assets)), columns=asset_cols)
+        Q = pd.DataFrame(np.zeros((1, 1)), columns=["views"])
+
+    try:
+        port.blacklitterman_stats(P=P, Q=Q, delta=None, rf=0, eq=True)
+        mu = getattr(port, "mu_bl", None)
+        cov = getattr(port, "cov_bl", None)
+    except Exception:
+        mu = None
+        cov = None
+
+    if mu is None:
+        mu = getattr(port, "mu", None)
+    if cov is None:
+        cov = getattr(port, "cov", None)
+    if mu is None or cov is None:
+        return None, None, "Unable to compute Black-Litterman expected return/covariance."
+
+    if isinstance(mu, pd.Series):
+        mu = mu.to_frame().T
+    elif not isinstance(mu, pd.DataFrame):
+        mu_arr = np.asarray(mu, dtype=float).reshape(1, -1)
+        mu = pd.DataFrame(mu_arr, columns=asset_cols)
+    if mu.shape[0] != 1 and mu.shape[1] == 1:
+        mu = mu.T
+    mu = mu.reindex(columns=asset_cols)
+
+    if not isinstance(cov, pd.DataFrame):
+        cov = pd.DataFrame(np.asarray(cov, dtype=float), index=asset_cols, columns=asset_cols)
+    cov = cov.reindex(index=asset_cols, columns=asset_cols)
+    cov = (cov + cov.T) / 2.0
+
+    if mu.isna().any().any() or cov.isna().any().any():
+        return None, None, "Black-Litterman expected return/covariance has missing values."
+
+    return mu.astype(float), cov.astype(float), None
+
+
+def _normalize_weight_vector(weight_map, asset_cols):
+    """Return normalized weight dict/vector aligned to asset columns."""
+    w_arr = np.array([float((weight_map or {}).get(c, 0.0) or 0.0) for c in asset_cols], dtype=float)
+    w_sum = float(w_arr.sum())
+    if abs(w_sum) > 1e-12:
+        w_arr = w_arr / w_sum
+    return {c: float(w_arr[i]) for i, c in enumerate(asset_cols)}, w_arr
+
+
+def _build_frontier_snapshot(
+    selected_portfolio,
+    portfolio_data,
+    raw_data,
+    periodicity,
+    bench,
+    ls,
+    vol_scaler,
+    vol_scaling,
+    window_idx,
+    rm,
+    linear_constraints,
+):
+    """Compute frontier snapshot for chart/table/export with optional custom moments."""
+    window_weights = portfolio_data.get("window_weights", []) or []
+    config = portfolio_data.get("config", {}) or {}
+    opt_series = config.get("selected_series", []) or []
+    if not window_weights or not opt_series or not raw_data:
+        raise ValueError("No frontier data available.")
+
+    frontier_bundle = _build_po_working_bundle(
+        raw_data,
+        periodicity,
+        bench,
+        ls,
+        None,  # Frontier uses estimation windows directly, not date-range filter.
+        vol_scaler,
+        vol_scaling,
+    )
+    working_df = _po_get_working_returns(frontier_bundle, opt_series)
+    if working_df.empty:
+        raise ValueError("No working returns available for frontier.")
+
+    idx, ww = _resolve_frontier_window(window_weights, window_idx)
+    est_data, est_start, est_end = _prepare_frontier_estimation_data(
+        working_df,
+        opt_series,
+        ww,
+        config.get("missing_data", "fill_na"),
+    )
+    if est_data.empty or len(est_data) < 3:
+        raise ValueError("Insufficient data for efficient frontier in this window.")
+
+    actual_cols = list(est_data.columns)
+    ann = _annualization_for_periodicity(periodicity)
+    model = config.get("model", "")
+
+    risk_measure = rm or "MV"
+    if model in {"ex_ante_mv", "black_litterman"} and risk_measure == "CVaR":
+        risk_measure = "MV"
+
+    custom_mu = None
+    custom_cov = None
+    if model == "ex_ante_mv":
+        custom_mu, custom_cov, error_msg = _build_ex_ante_mu_cov(config, actual_cols, ann)
+        if error_msg:
+            raise ValueError(error_msg)
+    elif model == "black_litterman":
+        custom_mu, custom_cov, error_msg = _build_black_litterman_mu_cov(est_data, config, actual_cols)
+        if error_msg:
+            raise ValueError(error_msg)
+
+    frontier_pts, asset_pts, frontier_portfolios = compute_efficient_frontier(
+        returns_df=est_data,
+        ann_factor=ann,
+        rm=risk_measure,
+        custom_mu=custom_mu,
+        custom_cov=custom_cov,
+        linear_constraints=linear_constraints,
+        return_weights=True,
+    )
+    if not frontier_pts:
+        raise ValueError("Unable to compute efficient frontier points.")
+
+    portfolio_weights, w_arr = _normalize_weight_vector(ww.get("weights", {}), actual_cols)
+    if custom_mu is not None and custom_cov is not None:
+        mu_vec = custom_mu.values.flatten()
+        cov_mat = custom_cov.values
+    else:
+        mu_vec = est_data.mean().values
+        cov_mat = est_data.cov().values
+
+    port_ret = float((w_arr @ mu_vec) * ann)
+    if risk_measure == "CVaR":
+        port_returns = est_data.values @ w_arr
+        sorted_r = np.sort(port_returns)
+        cutoff = max(1, int(np.ceil(len(sorted_r) * 0.05)))
+        port_risk = float(-sorted_r[:cutoff].mean() * np.sqrt(ann))
+    else:
+        port_risk = float(np.sqrt(w_arr @ cov_mat @ w_arr) * np.sqrt(ann))
+
+    assets_clean = [
+        {
+            "name": str(item["name"]),
+            "return": float(item["return"]),
+            "risk": float(item["risk"]),
+        }
+        for item in asset_pts
+    ]
+    frontier_points_clean = [
+        {"return": float(item["return"]), "risk": float(item["risk"])}
+        for item in frontier_pts
+    ]
+    frontier_portfolios_clean = []
+    for fp in frontier_portfolios:
+        frontier_portfolios_clean.append(
+            {
+                "point_index": int(fp["point_index"]),
+                "return": float(fp["return"]),
+                "risk": float(fp["risk"]),
+                "weights": {k: float(v) for k, v in (fp.get("weights", {}) or {}).items()},
+            }
+        )
+
+    snapshot = {
+        "model": model,
+        "risk_measure": risk_measure,
+        "window_index": int(idx),
+        "window_est_start": est_start.strftime("%Y-%m-%d"),
+        "window_est_end": est_end.strftime("%Y-%m-%d"),
+        "asset_order": actual_cols,
+        "portfolio": {
+            "name": str(selected_portfolio),
+            "return": port_ret,
+            "risk": port_risk,
+            "weights": portfolio_weights,
+        },
+        "assets": assets_clean,
+        "frontier_points": frontier_points_clean,
+        "frontier_portfolios": frontier_portfolios_clean,
+    }
+    return snapshot
+
+
+def _build_frontier_table_rows(snapshot):
+    """Build row records for frontier table/export."""
+    if not snapshot:
+        return []
+
+    asset_order = snapshot.get("asset_order", []) or []
+    rows = []
+
+    portfolio = snapshot.get("portfolio", {}) or {}
+    prow = {
+        "Type": "Optimized Portfolio",
+        "Name": portfolio.get("name", ""),
+        "Return": portfolio.get("return"),
+        "Risk": portfolio.get("risk"),
+    }
+    for asset in asset_order:
+        prow[f"Wt_{asset}"] = (portfolio.get("weights", {}) or {}).get(asset, 0.0)
+    rows.append(prow)
+
+    for asset_point in snapshot.get("assets", []) or []:
+        name = asset_point.get("name", "")
+        row = {
+            "Type": "Asset",
+            "Name": name,
+            "Return": asset_point.get("return"),
+            "Risk": asset_point.get("risk"),
+        }
+        for asset in asset_order:
+            row[f"Wt_{asset}"] = 1.0 if asset == name else 0.0
+        rows.append(row)
+
+    for fp in snapshot.get("frontier_portfolios", []) or []:
+        row = {
+            "Type": "Frontier Point",
+            "Name": f"Frontier {int(fp.get('point_index', 0)) + 1}",
+            "Return": fp.get("return"),
+            "Risk": fp.get("risk"),
+        }
+        for asset in asset_order:
+            row[f"Wt_{asset}"] = (fp.get("weights", {}) or {}).get(asset, 0.0)
+        rows.append(row)
+
+    return rows
+
+
+def _build_frontier_column_defs(snapshot):
+    """Build AG Grid column definitions for frontier table."""
+    if not snapshot:
+        return []
+    asset_order = snapshot.get("asset_order", []) or []
+    cols = [
+        {"field": "Type", "pinned": "left", "width": 160},
+        {"field": "Name", "pinned": "left", "width": 170},
+        {
+            "field": "Return",
+            "headerName": "Annual Return",
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+            "width": 130,
+        },
+        {
+            "field": "Risk",
+            "headerName": "Annual Risk",
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+            "width": 130,
+        },
+    ]
+    for asset in asset_order:
+        cols.append(
+            {
+                "field": f"Wt_{asset}",
+                "headerName": f"Wt {asset}",
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "width": 120,
+            }
+        )
+    return cols
+
+
+def _cache_frontier_snapshot(portfolio_entry, snapshot):
+    """Insert a computed snapshot into result-level frontier cache."""
+    if not isinstance(portfolio_entry, dict) or not snapshot:
+        return
+    cache = portfolio_entry.get("frontier_cache") or {}
+    idx_key = str(snapshot.get("window_index", 0))
+    rm_key = str(snapshot.get("risk_measure", "MV"))
+    by_window = cache.get(idx_key) or {}
+    by_window[rm_key] = snapshot
+    cache[idx_key] = by_window
+    portfolio_entry["frontier_cache"] = cache
+
+
+def _get_cached_frontier_snapshot(portfolio_entry, window_idx, rm):
+    """Read cached snapshot if present."""
+    if not isinstance(portfolio_entry, dict):
+        return None
+    cache = portfolio_entry.get("frontier_cache") or {}
+    idx_key = str(window_idx)
+    rm_key = str(rm)
+    return (cache.get(idx_key) or {}).get(rm_key)
+
+
 def _get_cma_stats_map(version: int, cma_type: str) -> dict[str, dict[str, float]]:
     data: dict[str, dict[str, float]] = {}
     with DB_ENGINE.connect() as conn:
@@ -1031,13 +1692,25 @@ def build_po_main_layout():
                                     ],
                                 ),
                                 # Row 3: Run button
-                                dmc.Button(
-                                    "Run",
-                                    id="po-run-button",
-                                    color="blue",
-                                    size="sm",
-                                    leftSection=DashIconify(icon="tabler:player-play"),
-                                    disabled=True,
+                                dmc.Tooltip(
+                                    id="po-run-button-tooltip",
+                                    label="Load data and complete required inputs.",
+                                    withArrow=True,
+                                    position="top-start",
+                                    disabled=False,
+                                    children=html.Div(
+                                        style={"display": "inline-block"},
+                                        children=[
+                                            dmc.Button(
+                                                "Run",
+                                                id="po-run-button",
+                                                color="blue",
+                                                size="sm",
+                                                leftSection=DashIconify(icon="tabler:player-play"),
+                                                disabled=True,
+                                            ),
+                                        ],
+                                    ),
                                 ),
                             ]),
                         ],
@@ -1285,10 +1958,43 @@ def build_po_main_layout():
                                     size="sm",
                                     clearable=False,
                                 ),
+                                dmc.SegmentedControl(
+                                    id="po-frontier-chart-switch",
+                                    data=[
+                                        {"value": "table", "label": "Table"},
+                                        {"value": "chart", "label": "Chart"},
+                                    ],
+                                    value="chart",
+                                    size="sm",
+                                    style={"marginTop": "24px"},
+                                ),
                             ]),
-                            dcc.Loading(
-                                type="default",
-                                children=[html.Div(id="po-frontier-chart-content")],
+                            html.Div(
+                                id="po-frontier-chart-container",
+                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
+                                children=[
+                                    dcc.Loading(
+                                        type="default",
+                                        children=[html.Div(id="po-frontier-chart-content")],
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                id="po-frontier-grid-container",
+                                style={"display": "none"},
+                                children=[
+                                    dag.AgGrid(
+                                        enableEnterpriseModules=True,
+                                        licenseKey=AG_GRID_LICENSE_KEY,
+                                        id="po-frontier-grid",
+                                        className='ag-theme-alpine',
+                                        columnDefs=[],
+                                        rowData=[],
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        style={"height": "100%", "width": "100%"},
+                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+                                    ),
+                                ],
                             ),
                         ],
                     ),
@@ -2055,6 +2761,7 @@ layout = dmc.Container(
         dcc.Store(id="po-attribution-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-risk-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-turnover-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="po-frontier-chart-switch-store", data="chart", storage_type="session"),
         # Save/Load session
         dcc.Store(id="po-save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="po-load-session-dummy", data=None, storage_type="memory"),
@@ -3628,6 +4335,33 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+# Clientside callback for frontier chart switch storage
+clientside_callback(
+    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
+    Output("po-frontier-chart-switch-store", "data"),
+    Input("po-frontier-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+# Clientside callback for frontier view toggle
+clientside_callback(
+    """
+    function(view_type) {
+        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
+        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
+        if (view_type === "chart") {
+            return [{display: "none"}, flex_scroll_style];
+        } else {
+            return [flex_style, {display: "none"}];
+        }
+    }
+    """,
+    Output("po-frontier-grid-container", "style"),
+    Output("po-frontier-chart-container", "style"),
+    Input("po-frontier-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
 # Save session: download all sessionStorage as JSON
 clientside_callback(
     """
@@ -3831,19 +4565,82 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 @callback(
-     Output("po-run-button", "disabled"),
+    Output("po-run-button", "disabled"),
+    Output("po-run-button-tooltip", "label"),
+    Output("po-run-button-tooltip", "disabled"),
     Output("po-menu-save-session", "disabled"),
     Output("po-menu-download-excel", "disabled"),
     Input("po-portfolio-name-input", "value"),
     Input("po-series-select", "data"),
+    Input("po-opt-model-select", "value"),
+    Input("po-opt-window-select", "value"),
+    Input("po-window-size-input", "value"),
+    Input("po-opt-step-input", "value"),
+    Input("po-opt-step-unit-select", "value"),
+    Input("po-exp-wt-cov-switch", "checked"),
+    Input("po-halflife-input", "value"),
+    Input("po-min-wt-store", "data"),
+    Input("po-max-wt-store", "data"),
+    Input("po-force-max-store", "data"),
+    Input("po-linear-constraints-store", "data"),
+    Input("po-ex-ante-mode-store", "data"),
+    Input("po-ex-ante-returns-store", "data"),
+    Input("po-ex-ante-cov-store", "data"),
+    Input("po-ex-ante-vol-store", "data"),
+    Input("po-ex-ante-corr-store", "data"),
+    Input("po-bl-views-store", "data"),
+    Input("po-bl-tau-input", "value"),
     Input("po-welcome-screen", "style"),
     Input("po-results-store", "data"),
 )
-def po_toggle_ui_elements(name, selected, welcome_style, results_data):
-    # Run Button
-    run_disabled = True
-    if name and name.strip() and selected and len(selected) >= 2:
-        run_disabled = False
+def po_toggle_ui_elements(
+    name,
+    selected,
+    opt_model,
+    opt_window,
+    window_size,
+    opt_step,
+    opt_step_unit,
+    exp_wt_cov,
+    halflife,
+    min_wt,
+    max_wt,
+    force_max,
+    linear_constraints,
+    ex_ante_mode,
+    ex_ante_returns,
+    ex_ante_cov,
+    ex_ante_vol,
+    ex_ante_corr,
+    bl_views,
+    bl_tau,
+    welcome_style,
+    results_data,
+):
+    validation_error = _validate_optimization_inputs(
+        portfolio_name=name,
+        selected_series=selected,
+        opt_model=opt_model,
+        opt_window=opt_window,
+        window_size=window_size,
+        opt_step=opt_step,
+        opt_step_unit=opt_step_unit,
+        exp_wt_cov=exp_wt_cov,
+        halflife=halflife,
+        min_wt=min_wt,
+        max_wt=max_wt,
+        force_max=force_max,
+        linear_constraints=linear_constraints,
+        ex_ante_mode=ex_ante_mode,
+        ex_ante_returns=ex_ante_returns,
+        ex_ante_cov=ex_ante_cov,
+        ex_ante_vol=ex_ante_vol,
+        ex_ante_corr=ex_ante_corr,
+        bl_views=bl_views,
+        bl_tau=bl_tau,
+    )
+    run_disabled = validation_error is not None
+    tooltip_label = validation_error or "Run optimization."
 
     # Save Session Button
     save_disabled = True
@@ -3855,7 +4652,7 @@ def po_toggle_ui_elements(name, selected, welcome_style, results_data):
     if results_data and len(results_data) > 0:
         download_disabled = False
 
-    return run_disabled, save_disabled, download_disabled
+    return run_disabled, tooltip_label, False, save_disabled, download_disabled
 
 
 # ---------------------------------------------------------------------------
@@ -5364,6 +6161,36 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
     )
     timing_ctx.__enter__()
     try:
+        validation_error = _validate_optimization_inputs(
+            portfolio_name=portfolio_name,
+            selected_series=selected_series,
+            opt_model=opt_model,
+            opt_window=opt_window,
+            window_size=window_size,
+            opt_step=opt_step,
+            opt_step_unit=opt_step_unit_value,
+            exp_wt_cov=exp_wt_cov,
+            halflife=halflife,
+            min_wt=min_wt,
+            max_wt=max_wt,
+            force_max=force_max,
+            linear_constraints=linear_constraints,
+            ex_ante_mode=ex_ante_mode,
+            ex_ante_returns=ex_ante_returns,
+            ex_ante_cov=ex_ante_cov,
+            ex_ante_vol=ex_ante_vol,
+            ex_ante_corr=ex_ante_corr,
+            bl_views=bl_views,
+            bl_tau=bl_tau,
+        )
+        if validation_error:
+            return (
+                no_update,
+                no_update,
+                {"status": "error", "name": portfolio_name, "message": validation_error},
+                no_update,
+            )
+
         # Compute working returns
         working_bundle = _build_po_working_bundle(
             raw_data,
@@ -5385,17 +6212,85 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         # Filter to only selected series (exclude benchmark columns)
         opt_cols = [s for s in selected_series if s in working_df.columns]
+        if len(opt_cols) < 2:
+            return (
+                no_update,
+                no_update,
+                {
+                    "status": "error",
+                    "name": portfolio_name,
+                    "message": "Selected series are not available in working returns.",
+                },
+                no_update,
+            )
         opt_df = working_df[opt_cols]
+        if opt_df.empty or len(opt_df) < 2:
+            return (
+                no_update,
+                no_update,
+                {"status": "error", "name": portfolio_name, "message": "Insufficient data after preprocessing."},
+                no_update,
+            )
+
+        model_value = opt_model or "risk_parity"
+        window_value = opt_window or "full"
+        if model_value not in {"ex_ante_mv", "black_litterman"} and window_value in {"rolling", "expanding"}:
+            ws = int(_coerce_float(window_size) or 0)
+            if ws > len(opt_df):
+                return (
+                    no_update,
+                    no_update,
+                    {
+                        "status": "error",
+                        "name": portfolio_name,
+                        "message": (
+                            f"Window size ({ws}) exceeds available rows ({len(opt_df)}) "
+                            "after filtering."
+                        ),
+                    },
+                    no_update,
+                )
+
+        # Re-validate against the exact optimized columns.
+        validation_error = _validate_optimization_inputs(
+            portfolio_name=portfolio_name,
+            selected_series=opt_cols,
+            opt_model=model_value,
+            opt_window=window_value,
+            window_size=window_size,
+            opt_step=opt_step,
+            opt_step_unit=opt_step_unit_value,
+            exp_wt_cov=exp_wt_cov,
+            halflife=halflife,
+            min_wt=min_wt,
+            max_wt=max_wt,
+            force_max=force_max,
+            linear_constraints=linear_constraints,
+            ex_ante_mode=ex_ante_mode,
+            ex_ante_returns=ex_ante_returns,
+            ex_ante_cov=ex_ante_cov,
+            ex_ante_vol=ex_ante_vol,
+            ex_ante_corr=ex_ante_corr,
+            bl_views=bl_views,
+            bl_tau=bl_tau,
+        )
+        if validation_error:
+            return (
+                no_update,
+                no_update,
+                {"status": "error", "name": portfolio_name, "message": validation_error},
+                no_update,
+            )
 
         # Build config
         config = {
-            "model": opt_model or "risk_parity",
-            "window_type": opt_window or "full",
-            "window_size": int(window_size or 252),
-            "opt_step": int(opt_step or 252),
+            "model": model_value,
+            "window_type": window_value,
+            "window_size": int(_coerce_float(window_size) or 252),
+            "opt_step": int(_coerce_float(opt_step) or 252),
             "opt_step_unit": opt_step_unit_value or "months",
             "exp_wt_cov": bool(exp_wt_cov),
-            "halflife": int(halflife or 63),
+            "halflife": int(_coerce_float(halflife) or 63),
             "missing_data": missing_data or "fill_na",
             "fill_in_sample": fill_in_sample_value == "on",
             "selected_series": opt_cols,
@@ -5405,36 +6300,59 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
         }
 
         # Add ex ante params if applicable
-        if opt_model in ("ex_ante_mv", "black_litterman"):
+        if model_value in ("ex_ante_mv", "black_litterman"):
             mode = ex_ante_mode or "ret_cov"
             config["ex_ante_returns"] = ex_ante_returns or {}
             config["ex_ante_vol"] = ex_ante_vol or {}
             config["ex_ante_corr"] = ex_ante_corr or {}
             config["ex_ante_mode"] = mode
             config["objective"] = objective or "maximize_sharpe"
-            
+
             # If in Vol/Corr mode, ensure we don't pass stale covariance data,
             # so the backend calculates it from Vol + Corr.
             if mode == "ret_vol_corr":
                 config["ex_ante_cov"] = {}
             else:
                 config["ex_ante_cov"] = ex_ante_cov or {}
-        if opt_model == "black_litterman":
+        if model_value == "black_litterman":
             # Scale views returns (e.g. 5 -> 0.05) if they come from the UI as percentages
             views_list = bl_views or []
             scaled_views = []
             for v in views_list:
                 v_copy = v.copy()
-                # Check if it's likely a percentage (e.g. > 1 or user intent). 
-                # Since we changed the UI to store 5 for 5%, we ALWAYS divide by 100 here.
-                v_copy["return"] = float(v.get("return", 0.0)) / 100.0
+                ret_val = _coerce_float(v_copy.get("return", 0.0))
+                if ret_val is None:
+                    ret_val = 0.0
+                # Accept both decimal and whole-percent entry patterns.
+                v_copy["return"] = ret_val / 100.0 if abs(ret_val) > 1 else ret_val
                 scaled_views.append(v_copy)
             config["bl_views"] = scaled_views
             config["bl_tau"] = float(bl_tau or 0.05)
 
+            # BL pre-flight: ensure posterior moments can be computed for all optimized assets.
+            if config.get("missing_data", "fill_na") == "fill_0":
+                bl_data = opt_df.fillna(0)
+            else:
+                valid_cols = [c for c in opt_cols if not opt_df[c].isna().any()]
+                if valid_cols:
+                    bl_data = opt_df[valid_cols].copy()
+                    for c in opt_cols:
+                        if c not in bl_data.columns:
+                            bl_data[c] = 0.0
+                    bl_data = bl_data[opt_cols]
+                else:
+                    bl_data = opt_df.fillna(0)
+            _, _, bl_error = _build_black_litterman_mu_cov(bl_data[opt_cols], config, opt_cols)
+            if bl_error:
+                return (
+                    no_update,
+                    no_update,
+                    {"status": "error", "name": portfolio_name, "message": bl_error},
+                    no_update,
+                )
+
         # Add linear constraints to config
         config["linear_constraints"] = linear_constraints or []
-
 
         # Run optimization
         window_results, portfolio_returns = run_portfolio_optimization(opt_df, config)
@@ -5467,11 +6385,28 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 "weights": wr.weights,
             })
 
-        current_results[final_name] = {
+        result_entry = {
             "window_weights": window_data,
             "returns_json": portfolio_returns.to_json(date_format="iso"),
             "config": config,
         }
+        if model_value in {"ex_ante_mv", "black_litterman"}:
+            frontier_snapshot = _build_frontier_snapshot(
+                selected_portfolio=final_name,
+                portfolio_data=result_entry,
+                raw_data=raw_data,
+                periodicity=periodicity,
+                bench=benchmark_assignments,
+                ls=long_short_assignments,
+                vol_scaler=vol_scaler,
+                vol_scaling=vol_scaling_assignments,
+                window_idx=0,
+                rm="MV",
+                linear_constraints=linear_constraints,
+            )
+            _cache_frontier_snapshot(result_entry, frontier_snapshot)
+
+        current_results[final_name] = result_entry
 
         # Add to pending list so Analytics Tool auto-selects this series
         updated_pending = list(pending_series or []) + [final_name]
@@ -6181,7 +7116,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
         )
         working_df_cache: dict[tuple, pd.DataFrame] = {}
 
-        # Build combined returns DataFrame
+        # Build combined returns DataFrame (shared by multiple tabs/sheets)
         with timed_block("portopt.download_excel.build_returns"):
             all_returns = {}
             for pname, pdata in results.items():
@@ -6198,93 +7133,256 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
         combined_df.index.name = "Date"
         portfolio_names = list(all_returns.keys())
 
+        # ------------------------------------------------------------------
+        # Weights tab
+        # ------------------------------------------------------------------
+        weight_rows = []
+        weight_cols = []
+        for pname, pdata in results.items():
+            for ww in pdata.get("window_weights", []) or []:
+                row = {
+                    "Portfolio": pname,
+                    "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
+                    "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
+                }
+                for asset, weight in (ww.get("weights", {}) or {}).items():
+                    col = f"Wt_{asset}"
+                    row[col] = float(weight)
+                    if col not in weight_cols:
+                        weight_cols.append(col)
+                weight_rows.append(row)
+        if weight_rows:
+            weights_df = pd.DataFrame(weight_rows)
+            weights_df = weights_df[["Portfolio", "Apply Start", "Apply End", *weight_cols]]
+        else:
+            weights_df = pd.DataFrame(columns=["Portfolio", "Apply Start", "Apply End"])
+
+        # ------------------------------------------------------------------
+        # Turnover tab
+        # ------------------------------------------------------------------
+        turnover_rows = []
+        turnover_delta_cols = []
+        for pname, pdata in results.items():
+            window_weights = pdata.get("window_weights", []) or []
+            if len(window_weights) < 2:
+                continue
+            all_assets = []
+            for ww in window_weights:
+                for asset in (ww.get("weights", {}) or {}).keys():
+                    if asset not in all_assets:
+                        all_assets.append(asset)
+            for i in range(1, len(window_weights)):
+                prev_w = window_weights[i - 1].get("weights", {}) or {}
+                curr_w = window_weights[i].get("weights", {}) or {}
+                turnover = sum(abs(curr_w.get(a, 0) - prev_w.get(a, 0)) for a in all_assets) / 2
+                row = {
+                    "Portfolio": pname,
+                    "Rebalance Date": pd.Timestamp(window_weights[i]["apply_start"]).strftime("%Y-%m-%d"),
+                    "Turnover": float(turnover),
+                }
+                for asset in all_assets:
+                    col = f"Delta_{asset}"
+                    row[col] = float(curr_w.get(asset, 0) - prev_w.get(asset, 0))
+                    if col not in turnover_delta_cols:
+                        turnover_delta_cols.append(col)
+                turnover_rows.append(row)
+        if turnover_rows:
+            turnover_df = pd.DataFrame(turnover_rows)
+            turnover_df = turnover_df[["Portfolio", "Rebalance Date", "Turnover", *turnover_delta_cols]]
+        else:
+            turnover_df = pd.DataFrame(columns=["Portfolio", "Rebalance Date", "Turnover"])
+
+        # ------------------------------------------------------------------
+        # Statistics tab
+        # ------------------------------------------------------------------
+        stats_df = pd.DataFrame(columns=["Statistic"])
+        try:
+            with timed_block("portopt.download_excel.statistics"):
+                raw_json = df_to_json(combined_df)
+                stats = calculate_statistics_cached(
+                    raw_json,
+                    periodicity or "daily",
+                    tuple(portfolio_names),
+                    "{}",
+                    "{}",
+                    "null",
+                    0,
+                    "{}",
+                    _risk_free_json_from_store(saved_series_store),
+                    _spx_json_from_store(saved_series_store),
+                )
+                if stats:
+                    stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}
+                    for series_stats in stats:
+                        sname = series_stats["Series"]
+                        stats_data[sname] = [series_stats.get(sn) for sn, _ in STATS_CONFIG]
+                    stats_df = pd.DataFrame(stats_data)
+        except Exception:
+            pass
+
+        # ------------------------------------------------------------------
+        # Returns tab
+        # ------------------------------------------------------------------
+        returns_df = combined_df.reset_index()
+        returns_date_col = returns_df.columns[0]
+        returns_df = returns_df.rename(columns={returns_date_col: "Date"})
+        returns_df["Date"] = returns_df["Date"].dt.strftime("%Y-%m-%d")
+
+        # ------------------------------------------------------------------
+        # Growth tab
+        # ------------------------------------------------------------------
+        growth_data = {pname: (1 + all_returns[pname]).cumprod() for pname in portfolio_names}
+        growth_df = pd.DataFrame(growth_data).sort_index().reset_index()
+        growth_date_col = growth_df.columns[0]
+        growth_df = growth_df.rename(columns={growth_date_col: "Date"})
+        growth_df["Date"] = growth_df["Date"].dt.strftime("%Y-%m-%d")
+
+        # ------------------------------------------------------------------
+        # Attribution tab
+        # ------------------------------------------------------------------
+        attribution_frames = []
+        with timed_block("portopt.download_excel.attribution", portfolio_count=len(results)):
+            for pname, pdata in results.items():
+                config = pdata.get("config", {}) or {}
+                opt_series = config.get("selected_series", []) or []
+                window_weights = pdata.get("window_weights", []) or []
+                if not window_weights or not opt_series or not raw_data:
+                    continue
+
+                series_key = tuple(opt_series)
+                working_df = working_df_cache.get(series_key)
+                if working_df is None:
+                    working_df = _po_get_working_returns(working_bundle, series_key)
+                    working_df_cache[series_key] = working_df
+                if working_df.empty:
+                    continue
+
+                attribution_monthly = _compute_monthly_attribution(
+                    working_df,
+                    opt_series,
+                    window_weights,
+                )
+                if attribution_monthly.empty:
+                    continue
+
+                avail_cols = [c for c in opt_series if c in attribution_monthly.columns]
+                attribution_monthly = attribution_monthly.copy()
+                attribution_monthly["Total"] = (
+                    attribution_monthly[avail_cols].sum(axis=1) if avail_cols else 0.0
+                )
+
+                frame = attribution_monthly.reset_index()
+                date_col = frame.columns[0]
+                frame = frame.rename(columns={date_col: "Date"})
+                frame["Date"] = pd.to_datetime(frame["Date"]).dt.strftime("%Y-%m-%d")
+                frame.insert(0, "Portfolio", pname)
+                attribution_frames.append(frame)
+        if attribution_frames:
+            attribution_df = pd.concat(attribution_frames, axis=0, ignore_index=True)
+        else:
+            attribution_df = pd.DataFrame(columns=["Portfolio", "Date"])
+
+        # ------------------------------------------------------------------
+        # Risk tab
+        # ------------------------------------------------------------------
+        risk_rows = []
+        risk_asset_cols = []
+        for pname, pdata in results.items():
+            config = pdata.get("config", {}) or {}
+            opt_series = config.get("selected_series", []) or []
+            window_weights = pdata.get("window_weights", []) or []
+            if not window_weights or not opt_series or not raw_data:
+                continue
+
+            series_key = tuple(opt_series)
+            working_df = working_df_cache.get(series_key)
+            if working_df is None:
+                working_df = _po_get_working_returns(working_bundle, series_key)
+                working_df_cache[series_key] = working_df
+            if working_df.empty:
+                continue
+
+            for rr in _compute_window_risk_contributions(working_df, opt_series, window_weights):
+                row = {
+                    "Portfolio": pname,
+                    "Window Start": rr["apply_start"].strftime("%Y-%m-%d"),
+                    "Window End": rr["apply_end"].strftime("%Y-%m-%d"),
+                }
+                for asset, value in (rr.get("risk_contributions", {}) or {}).items():
+                    row[asset] = float(value)
+                    if asset not in risk_asset_cols:
+                        risk_asset_cols.append(asset)
+                risk_rows.append(row)
+        if risk_rows:
+            risk_df = pd.DataFrame(risk_rows)
+            risk_df = risk_df[["Portfolio", "Window Start", "Window End", *risk_asset_cols]]
+        else:
+            risk_df = pd.DataFrame(columns=["Portfolio", "Window Start", "Window End"])
+
+        # ------------------------------------------------------------------
+        # Frontier tab (most recent window for each portfolio)
+        # ------------------------------------------------------------------
+        frontier_rows = []
+        frontier_weight_cols = []
+        with timed_block("portopt.download_excel.frontier", portfolio_count=len(results)):
+            for pname, pdata in results.items():
+                config = pdata.get("config", {}) or {}
+                window_weights = pdata.get("window_weights", []) or []
+                opt_series = config.get("selected_series", []) or []
+                if not window_weights or not opt_series or not raw_data:
+                    continue
+
+                try:
+                    latest_idx, _ = _resolve_frontier_window(window_weights, None)
+                    model = config.get("model", "")
+                    risk_measure = "MV"
+                    snapshot = None
+                    if model in {"ex_ante_mv", "black_litterman"}:
+                        snapshot = _get_cached_frontier_snapshot(pdata, latest_idx, risk_measure)
+                    if snapshot is None:
+                        snapshot = _build_frontier_snapshot(
+                            selected_portfolio=pname,
+                            portfolio_data=pdata,
+                            raw_data=raw_data,
+                            periodicity=periodicity,
+                            bench=bench,
+                            ls=ls,
+                            vol_scaler=vol_scaler,
+                            vol_scaling=vol_scaling,
+                            window_idx=latest_idx,
+                            rm=risk_measure,
+                            linear_constraints=config.get("linear_constraints", []),
+                        )
+
+                    window_label = f"{snapshot.get('window_est_start')} - {snapshot.get('window_est_end')}"
+                    for row in _build_frontier_table_rows(snapshot):
+                        out_row = {"Portfolio": pname, "Window": window_label, **row}
+                        frontier_rows.append(out_row)
+                        for k in out_row:
+                            if k.startswith("Wt_") and k not in frontier_weight_cols:
+                                frontier_weight_cols.append(k)
+                except Exception:
+                    continue
+        frontier_base_cols = ["Portfolio", "Window", "Type", "Name", "Return", "Risk"]
+        if frontier_rows:
+            frontier_df = pd.DataFrame(frontier_rows)
+            ordered_cols = [c for c in frontier_base_cols if c in frontier_df.columns] + frontier_weight_cols
+            frontier_df = frontier_df[ordered_cols]
+        else:
+            frontier_df = pd.DataFrame(columns=frontier_base_cols)
+
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            # Sheet 1: Statistics
-            try:
-                with timed_block("portopt.download_excel.statistics"):
-                    raw_json = df_to_json(combined_df)
-                    stats = calculate_statistics_cached(
-                        raw_json, "daily", tuple(portfolio_names),
-                        "{}", "{}", "null", 0, "{}",
-                        _risk_free_json_from_store(saved_series_store),
-                        _spx_json_from_store(saved_series_store),
-                    )
-                    if stats:
-                        stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}
-                        for series_stats in stats:
-                            sname = series_stats["Series"]
-                            stats_data[sname] = [series_stats.get(sn) for sn, _ in STATS_CONFIG]
-                        pd.DataFrame(stats_data).to_excel(writer, sheet_name="Statistics", index=False)
-            except Exception:
-                pass
-
-            # Sheet 2: Returns
-            try:
-                combined_df.to_excel(writer, sheet_name="Returns")
-            except Exception:
-                pass
-
-            # Sheet 3+: Weights (one sheet per portfolio)
-            for pname, pdata in results.items():
-                try:
-                    window_weights = pdata.get("window_weights", [])
-                    if not window_weights:
-                        continue
-                    asset_names = list(window_weights[0]["weights"].keys())
-                    rows = []
-                    for ww in window_weights:
-                        row = {
-                            "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
-                            "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
-                        }
-                        for a in asset_names:
-                            row[a] = ww["weights"].get(a, 0)
-                        rows.append(row)
-                    sheet_name = f"Weights-{pname}"[:31]  # Excel sheet name limit
-                    pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
-                except Exception:
-                    pass
-
-            # Sheet: Growth of $1
-            try:
-                growth_data = {}
-                for pname in portfolio_names:
-                    if pname in all_returns:
-                        growth_data[pname] = (1 + all_returns[pname]).cumprod()
-                if growth_data:
-                    pd.DataFrame(growth_data).to_excel(writer, sheet_name="Growth of $1")
-            except Exception:
-                pass
-
-            # Sheet: Attribution (one per portfolio)
-            with timed_block("portopt.download_excel.attribution_loop", portfolio_count=len(results)):
-                for pname, pdata in results.items():
-                    try:
-                        config = pdata.get("config", {})
-                        opt_series = config.get("selected_series", [])
-                        window_weights = pdata.get("window_weights", [])
-                        if not window_weights or not opt_series or not raw_data:
-                            continue
-
-                        series_key = tuple(opt_series)
-                        working_df = working_df_cache.get(series_key)
-                        if working_df is None:
-                            working_df = _po_get_working_returns(working_bundle, series_key)
-                            working_df_cache[series_key] = working_df
-                        if working_df.empty:
-                            continue
-
-                        attribution_monthly = _compute_monthly_attribution(
-                            working_df,
-                            opt_series,
-                            window_weights,
-                        )
-                        if not attribution_monthly.empty:
-                            sheet_name = f"Attrib-{pname}"[:31]
-                            attribution_monthly.to_excel(writer, sheet_name=sheet_name)
-                    except Exception:
-                        pass
+            # Keep exact tab order: Weights, Turnover, Statistics, Returns,
+            # Growth, Attribution, Risk, Frontier.
+            weights_df.to_excel(writer, sheet_name="Weights", index=False)
+            turnover_df.to_excel(writer, sheet_name="Turnover", index=False)
+            stats_df.to_excel(writer, sheet_name="Statistics", index=False)
+            returns_df.to_excel(writer, sheet_name="Returns", index=False)
+            growth_df.to_excel(writer, sheet_name="Growth of $1", index=False)
+            attribution_df.to_excel(writer, sheet_name="Attribution", index=False)
+            risk_df.to_excel(writer, sheet_name="Risk", index=False)
+            frontier_df.to_excel(writer, sheet_name="Frontier", index=False)
 
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), "portfolio_optimization.xlsx")
@@ -6587,6 +7685,29 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
 # ---------------------------------------------------------------------------
 
 @callback(
+    Output("po-frontier-rm-select", "data"),
+    Output("po-frontier-rm-select", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    State("po-frontier-rm-select", "value"),
+    prevent_initial_call=True,
+)
+def po_update_frontier_risk_measure_options(selected_portfolio, results, current_rm):
+    all_options = [
+        {"value": "MV", "label": "Volatility"},
+        {"value": "CVaR", "label": "CVaR"},
+    ]
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return all_options, (current_rm if current_rm in {"MV", "CVaR"} else "MV")
+
+    model = (results.get(selected_portfolio, {}).get("config", {}) or {}).get("model", "")
+    if model in {"ex_ante_mv", "black_litterman"}:
+        return [{"value": "MV", "label": "Volatility"}], "MV"
+
+    return all_options, (current_rm if current_rm in {"MV", "CVaR"} else "MV")
+
+
+@callback(
     Output("po-frontier-window-select", "data"),
     Output("po-frontier-window-select", "value"),
     Output("po-frontier-window-select", "disabled"),
@@ -6627,6 +7748,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
+    Input("po-frontier-chart-switch", "value"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
     State("analyticstool-raw-data-store", "data"),
@@ -6641,12 +7763,12 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_frontier_chart(selected_portfolio, results, active_tab,
+def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value,
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, series_select, theme,
                              linear_constraints):
-    if active_tab != "frontier" or not selected_portfolio or not results:
+    if active_tab != "frontier" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -6667,192 +7789,38 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
     )
     timing_ctx.__enter__()
     try:
-        frontier_working_bundle = _build_po_working_bundle(
-            raw_data,
-            periodicity,
-            bench,
-            ls,
-            None,  # No date range filter - use estimation window dates instead
-            vol_scaler,
-            vol_scaling,
-        )
-        working_df = _po_get_working_returns(frontier_working_bundle, opt_series)
-
-
-        # Select the window's estimation data (not the apply period)
-        idx = int(window_idx) if window_idx is not None else len(window_weights) - 1
-        idx = min(idx, len(window_weights) - 1)
-        ww = window_weights[idx]
-
-        # Use estimation window to compute frontier (same window used for optimization)
-        est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"])) # Fallback for old data
-        est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"]))
-        mask = (working_df.index >= est_start) & (working_df.index <= est_end)
-        est_data = working_df.loc[mask, opt_series]
-
-        # Handle missing data according to optimization config
-        missing_data_method = config.get("missing_data", "fill_na")
-        if missing_data_method == "fill_0":
-            est_data = est_data.fillna(0)
-        else:
-            # fill_na: drop any column with NaN in this window
-            valid_cols = [c for c in opt_series if not est_data[c].isna().any()]
-            if valid_cols:
-                est_data = est_data[valid_cols]
-            else:
-                # Fallback to fill_0 if no complete series
-                est_data = est_data.fillna(0)
-
-        if est_data.empty or len(est_data) < 3:
-            return dmc.Text("Insufficient data for efficient frontier in this window.", c="dimmed")
-
-        # Determine annualization factor
-        p = periodicity or "daily"
-        if p.startswith("weekly"):
-            ann = 52
-        elif p == "monthly":
-            ann = 12
-        else:
-            ann = 252
-
-        risk_measure = rm or "MV"
-        actual_cols = list(est_data.columns)
-
-        # ---- Build custom mu / cov for ex ante or Black-Litterman ----
-        import riskfolio as rp
         model = config.get("model", "")
-        custom_mu = None
-        custom_cov = None
+        resolved_idx, _ = _resolve_frontier_window(window_weights, window_idx)
+        risk_measure = rm or "MV"
+        if model in {"ex_ante_mv", "black_litterman"} and risk_measure == "CVaR":
+            risk_measure = "MV"
 
-        if model == "ex_ante_mv":
-            # Build mu from config ex_ante_returns (annualized decimals)
-            ex_ante_returns = config.get("ex_ante_returns", {})
-            mu_values = [ex_ante_returns.get(c, 0.0) for c in actual_cols]
-            # mu needs to be per-period for riskfolio (it will multiply by ann internally)
-            # BUT compute_efficient_frontier multiplies by ann_factor itself,
-            # so pass mu already de-annualized (per-period) and let the function re-annualize
-            custom_mu = pd.DataFrame([[ v / ann for v in mu_values]], columns=actual_cols)
+        snapshot = None
+        if model in {"ex_ante_mv", "black_litterman"}:
+            snapshot = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
 
-            # Build cov from config
-            ex_ante_cov = config.get("ex_ante_cov", None)
-            ex_ante_vol = config.get("ex_ante_vol", None)
-            ex_ante_corr = config.get("ex_ante_corr", None)
+        if snapshot is None:
+            snapshot = _build_frontier_snapshot(
+                selected_portfolio=selected_portfolio,
+                portfolio_data=portfolio_data,
+                raw_data=raw_data,
+                periodicity=periodicity,
+                bench=bench,
+                ls=ls,
+                vol_scaler=vol_scaler,
+                vol_scaling=vol_scaling,
+                window_idx=resolved_idx,
+                rm=risk_measure,
+                linear_constraints=linear_constraints,
+            )
 
-            if ex_ante_cov:
-                cov_values = np.zeros((len(actual_cols), len(actual_cols)))
-                for i, rn in enumerate(actual_cols):
-                    row_vals = ex_ante_cov.get(rn, {})
-                    for j, cn in enumerate(actual_cols):
-                        cov_values[i, j] = row_vals.get(cn, 0.0)
-                # De-annualize covariance to per-period (riskfolio will re-annualize)
-                custom_cov = pd.DataFrame(cov_values / ann, index=actual_cols, columns=actual_cols)
-            elif ex_ante_vol and ex_ante_corr:
-                vol_vec = np.array([ex_ante_vol.get(c, 0.0) for c in actual_cols])
-                corr_mat = np.eye(len(actual_cols))
-                for i, rn in enumerate(actual_cols):
-                    row_vals = ex_ante_corr.get(rn, {})
-                    for j, cn in enumerate(actual_cols):
-                        corr_mat[i, j] = row_vals.get(cn, 0.0 if i != j else 1.0)
-                D = np.diag(vol_vec)
-                cov_ann = D @ corr_mat @ D
-                custom_cov = pd.DataFrame(cov_ann / ann, index=actual_cols, columns=actual_cols)
-            else:
-                # No custom cov provided — estimate from data but keep custom mu
-                custom_cov = None
-                custom_mu = None  # Fall back to fully historical
+        frontier_pts = snapshot.get("frontier_points", []) or []
+        asset_pts = snapshot.get("assets", []) or []
+        portfolio_marker = snapshot.get("portfolio", {}) or {}
+        risk_measure = snapshot.get("risk_measure", risk_measure)
 
-        elif model == "black_litterman":
-            # Compute BL posterior mu/cov using riskfolio
-            bl_views = config.get("bl_views", [])
-            bl_tau = config.get("bl_tau", 0.05)
-            n_assets = len(actual_cols)
-
-            port = rp.Portfolio(returns=est_data.copy())
-            port.assets_stats(method_mu="hist", method_cov="hist")
-
-            # Exponentially weighted cov if configured
-            exp_wt_cov = config.get("exp_wt_cov", False)
-            halflife = config.get("halflife", 63)
-            if exp_wt_cov:
-                port.cov = est_data.ewm(halflife=halflife).cov().iloc[-n_assets:]
-
-            # Build P and Q matrices from views
-            n_views = len(bl_views)
-            if n_views == 0:
-                P = np.zeros((1, n_assets))
-                Q = np.zeros((1, 1))
-            else:
-                P = np.zeros((n_views, n_assets))
-                Q = np.zeros((n_views, 1))
-                asset_idx = {name: i for i, name in enumerate(actual_cols)}
-                for v_idx, view in enumerate(bl_views):
-                    view_type = view.get("type", "absolute")
-                    Q[v_idx, 0] = view.get("return", 0.0)
-                    if view_type == "absolute":
-                        asset_name = view.get("asset", "")
-                        if asset_name in asset_idx:
-                            P[v_idx, asset_idx[asset_name]] = 1.0
-                    elif view_type == "relative":
-                        asset_from = view.get("asset", "")
-                        asset_to = view.get("asset_to", "")
-                        if asset_from in asset_idx:
-                            P[v_idx, asset_idx[asset_from]] = 1.0
-                        if asset_to in asset_idx:
-                            P[v_idx, asset_idx[asset_to]] = -1.0
-
-            P_df = pd.DataFrame(P, columns=actual_cols)
-            Q_df = pd.DataFrame(Q, columns=["views"])
-
-            try:
-                port.blacklitterman_stats(P=P_df, Q=Q_df, delta=None, rf=0, eq=True)
-                # Use BL posterior mu and cov
-                if hasattr(port, "mu_bl") and port.mu_bl is not None:
-                    custom_mu = port.mu_bl
-                else:
-                    custom_mu = port.mu
-                if hasattr(port, "cov_bl") and port.cov_bl is not None:
-                    custom_cov = port.cov_bl
-                else:
-                    custom_cov = port.cov
-            except Exception:
-                # Fallback — use historical for frontier
-                custom_mu = None
-                custom_cov = None
-
-        frontier_pts, asset_pts = compute_efficient_frontier(
-            returns_df=est_data,
-            ann_factor=ann,
-            rm=risk_measure,
-            custom_mu=custom_mu,
-            custom_cov=custom_cov,
-            linear_constraints=linear_constraints,
-        )
-
-        # Compute selected portfolio's risk/return using this window's weights
-        # Align weights with the actual columns in est_data (some may have been filtered out)
-        w_arr = np.array([ww["weights"].get(c, 0) for c in actual_cols])
-
-        # Renormalize weights if some series were excluded
-        w_sum = w_arr.sum()
-        if w_sum > 0:
-            w_arr = w_arr / w_sum
-
-        # Use the same mu/cov that drove the frontier for the portfolio dot
-        if custom_mu is not None and custom_cov is not None:
-            mu_vec = custom_mu.values.flatten()
-            cov_mat = custom_cov.values
-        else:
-            mu_vec = est_data.mean().values
-            cov_mat = est_data.cov().values
-        port_ret = (w_arr @ mu_vec) * ann
-
-        if risk_measure == "CVaR":
-            port_returns = est_data.values @ w_arr
-            sorted_r = np.sort(port_returns)
-            cutoff = max(1, int(np.ceil(len(sorted_r) * 0.05)))
-            port_risk = -sorted_r[:cutoff].mean() * np.sqrt(ann)
-        else:
-            port_risk = np.sqrt(w_arr @ cov_mat @ w_arr) * np.sqrt(ann)
+        if not frontier_pts:
+            return dmc.Text("No frontier points available for the selected window.", c="dimmed")
 
         fig = go.Figure()
 
@@ -6867,8 +7835,8 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
 
         # Selected portfolio marker
         fig.add_trace(go.Scatter(
-            x=[port_risk * 100],
-            y=[port_ret * 100],
+            x=[portfolio_marker.get("risk", 0) * 100],
+            y=[portfolio_marker.get("return", 0) * 100],
             mode="markers+text",
             name=selected_portfolio,
             marker={"size": 14, "color": "red", "symbol": "star"},
@@ -6915,5 +7883,87 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
         return dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed")
     finally:
         timing_ctx.__exit__(None, None, None)
+
+
+@callback(
+    Output("po-frontier-grid", "columnDefs"),
+    Output("po-frontier-grid", "rowData"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-frontier-chart-switch", "value"),
+    Input("po-frontier-window-select", "value"),
+    Input("po-frontier-rm-select", "value"),
+    State("analyticstool-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-linear-constraints-store", "data"),
+    prevent_initial_call=True,
+)
+def po_render_frontier_table(
+    selected_portfolio,
+    results,
+    active_tab,
+    switch_value,
+    window_idx,
+    rm,
+    raw_data,
+    periodicity,
+    bench,
+    ls,
+    vol_scaler,
+    vol_scaling,
+    linear_constraints,
+):
+    if active_tab != "frontier" or switch_value != "table" or not selected_portfolio or not results:
+        return [], []
+    if selected_portfolio not in results:
+        return [], []
+
+    portfolio_data = results[selected_portfolio]
+    window_weights = portfolio_data.get("window_weights", []) or []
+    config = portfolio_data.get("config", {}) or {}
+    opt_series = config.get("selected_series", []) or []
+    if not window_weights or not opt_series or not raw_data:
+        return [], []
+
+    with timed_block(
+        "portopt.render_frontier_table",
+        portfolio=selected_portfolio,
+        series_count=len(opt_series),
+        risk_measure=rm,
+    ):
+        model = config.get("model", "")
+        resolved_idx, _ = _resolve_frontier_window(window_weights, window_idx)
+        risk_measure = rm or "MV"
+        if model in {"ex_ante_mv", "black_litterman"} and risk_measure == "CVaR":
+            risk_measure = "MV"
+
+        snapshot = None
+        if model in {"ex_ante_mv", "black_litterman"}:
+            snapshot = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
+
+        if snapshot is None:
+            try:
+                snapshot = _build_frontier_snapshot(
+                    selected_portfolio=selected_portfolio,
+                    portfolio_data=portfolio_data,
+                    raw_data=raw_data,
+                    periodicity=periodicity,
+                    bench=bench,
+                    ls=ls,
+                    vol_scaler=vol_scaler,
+                    vol_scaling=vol_scaling,
+                    window_idx=resolved_idx,
+                    rm=risk_measure,
+                    linear_constraints=linear_constraints,
+                )
+            except Exception:
+                return [], []
+
+        return _build_frontier_column_defs(snapshot), _build_frontier_table_rows(snapshot)
 
 

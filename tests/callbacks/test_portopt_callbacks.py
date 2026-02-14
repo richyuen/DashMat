@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from io import BytesIO
 from io import StringIO
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -214,7 +216,7 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
     with pytest.raises(PreventUpdate):
         # Guard path first: no click should PreventUpdate.
         portopt.po_run_optimization(
-            0, "raw", "daily", "daily", ["Asset_A"], {}, {}, None, 0, {},
+            0, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, None, 0, {},
             {}, {}, {}, False, 63, "MyPortfolio", "full", 252, 21, "periods",
             "risk_parity", "fill_na", "off", {}, [],
             {}, {}, [], 0.05, "maximize_sharpe",
@@ -223,7 +225,7 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
 
     # Now force callback path and verify returned error payload.
     result = portopt.po_run_optimization(
-        1, "raw", "daily", "daily", ["Asset_A"], {}, {}, None, 0, {},
+        1, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, None, 0, {},
         {}, {}, {}, False, 63, "MyPortfolio", "full", 252, 21, "periods",
         "risk_parity", "fill_na", "off", {}, [],
         {}, {}, [], 0.05, "maximize_sharpe",
@@ -232,3 +234,299 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
     status = result[2]
     assert status["status"] == "error"
     assert "No data available" in status["message"]
+
+
+def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
+    _, portopt = page_modules
+
+    run_disabled, tooltip, tooltip_disabled, save_disabled, download_disabled = (
+        portopt.po_toggle_ui_elements(
+            "MyPortfolio",
+            [],
+            "risk_parity",
+            "rolling",
+            252,
+            1,
+            "months",
+            False,
+            63,
+            {},
+            {},
+            {},
+            [],
+            "ret_cov",
+            {},
+            {},
+            {},
+            {},
+            [],
+            0.05,
+            {"display": "none"},
+            {},
+        )
+    )
+
+    assert run_disabled is True
+    assert "Select at least one series" in tooltip
+    assert tooltip_disabled is False
+    assert save_disabled is False
+    assert download_disabled is True
+
+
+def test_po_toggle_ui_elements_ex_ante_requires_complete_expected_inputs(page_modules):
+    _, portopt = page_modules
+
+    run_disabled, tooltip, *_rest = portopt.po_toggle_ui_elements(
+        "MyPortfolio",
+        ["Asset_A", "Asset_B"],
+        "ex_ante_mv",
+        "full",
+        252,
+        1,
+        "months",
+        False,
+        63,
+        {},
+        {},
+        {},
+        [],
+        "ret_cov",
+        {"Asset_A": 0.08},
+        {"Asset_A": {"Asset_A": 0.04, "Asset_B": 0.01}},
+        {},
+        {},
+        [],
+        0.05,
+        {"display": "none"},
+        {},
+    )
+
+    assert run_disabled is True
+    assert "Missing expected return" in tooltip
+
+
+def test_po_update_frontier_risk_measure_options_restricts_ex_ante(page_modules):
+    _, portopt = page_modules
+    results = {"P1": {"config": {"model": "ex_ante_mv"}}}
+
+    options, value = portopt.po_update_frontier_risk_measure_options("P1", results, "CVaR")
+    assert options == [{"value": "MV", "label": "Volatility"}]
+    assert value == "MV"
+
+
+def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypatch, page_modules):
+    _, portopt = page_modules
+    snapshot = {
+        "asset_order": ["Asset_A", "Asset_B"],
+        "risk_measure": "MV",
+        "portfolio": {"name": "P1", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.6, "Asset_B": 0.4}},
+        "assets": [
+            {"name": "Asset_A", "return": 0.12, "risk": 0.25},
+            {"name": "Asset_B", "return": 0.08, "risk": 0.18},
+        ],
+        "frontier_portfolios": [
+            {"point_index": 0, "return": 0.09, "risk": 0.19, "weights": {"Asset_A": 0.5, "Asset_B": 0.5}},
+        ],
+    }
+    monkeypatch.setattr(portopt, "_build_frontier_snapshot", lambda **_kwargs: snapshot)
+    monkeypatch.setattr(portopt, "_get_cached_frontier_snapshot", lambda *_args, **_kwargs: None)
+
+    results = {
+        "P1": {
+            "config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]},
+            "window_weights": _sample_window_weights(),
+        }
+    }
+
+    column_defs, row_data = portopt.po_render_frontier_table(
+        "P1",
+        results,
+        "frontier",
+        "table",
+        "1",
+        "MV",
+        "raw-json",
+        "daily",
+        {},
+        {},
+        0,
+        {},
+        [],
+    )
+
+    assert any(col["field"] == "Wt_Asset_A" for col in column_defs)
+    assert any(row["Type"] == "Optimized Portfolio" for row in row_data)
+    assert any(row["Type"] == "Frontier Point" for row in row_data)
+
+
+def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
+    df.index = pd.to_datetime(df.index)
+
+    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: df.copy())
+    monkeypatch.setattr(
+        portopt,
+        "run_portfolio_optimization",
+        lambda *_args, **_kwargs: (
+            [
+                SimpleNamespace(
+                    apply_start=df.index[0],
+                    apply_end=df.index[-1],
+                    est_start=df.index[0],
+                    est_end=df.index[-1],
+                    weights={"Asset_A": 0.5, "Asset_B": 0.5},
+                )
+            ],
+            pd.Series(0.001, index=df.index),
+        ),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "_build_frontier_snapshot",
+        lambda **_kwargs: {
+            "window_index": 0,
+            "risk_measure": "MV",
+            "asset_order": ["Asset_A", "Asset_B"],
+            "portfolio": {"name": "MyPort", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.5, "Asset_B": 0.5}},
+            "assets": [],
+            "frontier_points": [],
+            "frontier_portfolios": [],
+            "window_est_start": "2024-01-01",
+            "window_est_end": "2024-01-31",
+        },
+    )
+
+    ex_cov = {
+        "Asset_A": {"Asset_A": 0.04, "Asset_B": 0.01},
+        "Asset_B": {"Asset_A": 0.01, "Asset_B": 0.09},
+    }
+
+    results_out, _new_raw, status, _pending = portopt.po_run_optimization(
+        1,
+        raw_json,
+        "daily",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        {},
+        {},
+        False,
+        63,
+        "MyPort",
+        "full",
+        252,
+        1,
+        "months",
+        "ex_ante_mv",
+        "fill_na",
+        "off",
+        {},
+        [],
+        {"Asset_A": 0.08, "Asset_B": 0.06},
+        ex_cov,
+        [],
+        0.05,
+        "maximize_sharpe",
+        {},
+        {},
+        "ret_cov",
+        [],
+    )
+
+    assert status["status"] == "complete"
+    assert "frontier_cache" in results_out["MyPort"]
+    assert "MV" in results_out["MyPort"]["frontier_cache"]["0"]
+
+
+def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    ret_series = pd.Series([0.01, -0.005, 0.002, 0.003, -0.001, 0.004], index=idx)
+    ret_series.index = pd.to_datetime(ret_series.index)
+    ret_df = pd.DataFrame({"Asset_A": 0.01, "Asset_B": 0.02}, index=idx)
+    ret_df.index.name = "Date"
+
+    results = {
+        "P1": {
+            "returns_json": ret_series.to_json(date_format="iso"),
+            "window_weights": _sample_window_weights(),
+            "config": {"selected_series": ["Asset_A", "Asset_B"], "model": "risk_parity"},
+        }
+    }
+
+    monkeypatch.setattr(
+        portopt,
+        "calculate_statistics_cached",
+        lambda *_args, **_kwargs: [{"Series": "P1", "Cumulative Return": 0.1}],
+    )
+    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: ret_df.copy())
+    monkeypatch.setattr(
+        portopt,
+        "_compute_monthly_attribution",
+        lambda *_args, **_kwargs: pd.DataFrame({"Asset_A": [0.01], "Asset_B": [0.02]}, index=[pd.Timestamp("2024-01-31")]),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "_compute_window_risk_contributions",
+        lambda *_args, **_kwargs: [
+            {
+                "apply_start": pd.Timestamp("2024-01-01"),
+                "apply_end": pd.Timestamp("2024-01-31"),
+                "risk_contributions": {"Asset_A": 0.6, "Asset_B": 0.4},
+            }
+        ],
+    )
+    monkeypatch.setattr(portopt, "_get_cached_frontier_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        portopt,
+        "_build_frontier_snapshot",
+        lambda **_kwargs: {
+            "window_index": 0,
+            "risk_measure": "MV",
+            "asset_order": ["Asset_A", "Asset_B"],
+            "portfolio": {"name": "P1", "return": 0.09, "risk": 0.16, "weights": {"Asset_A": 0.55, "Asset_B": 0.45}},
+            "assets": [{"name": "Asset_A", "return": 0.1, "risk": 0.2}],
+            "frontier_points": [{"return": 0.08, "risk": 0.15}],
+            "frontier_portfolios": [{"point_index": 0, "return": 0.08, "risk": 0.15, "weights": {"Asset_A": 0.5, "Asset_B": 0.5}}],
+            "window_est_start": "2024-01-01",
+            "window_est_end": "2024-01-31",
+        },
+    )
+    monkeypatch.setattr(portopt.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
+
+    payload = portopt.po_download_excel(
+        1,
+        results,
+        df_to_json(ret_df),
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+        None,
+    )
+
+    workbook = BytesIO(payload["content"])
+    xl = pd.ExcelFile(workbook)
+    assert xl.sheet_names == [
+        "Weights",
+        "Turnover",
+        "Statistics",
+        "Returns",
+        "Growth of $1",
+        "Attribution",
+        "Risk",
+        "Frontier",
+    ]
+
+    frontier_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Frontier")
+    assert "Wt_Asset_A" in frontier_df.columns
+    assert "Frontier Point" in set(frontier_df["Type"])

@@ -1169,8 +1169,16 @@ def compute_risk_contributions(weights_dict, returns_df):
     return dict(zip(cols, rc))
 
 
-def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
-                               custom_mu=None, custom_cov=None, linear_constraints=None):
+def compute_efficient_frontier(
+    returns_df,
+    ann_factor,
+    rm="MV",
+    n_points=50,
+    custom_mu=None,
+    custom_cov=None,
+    linear_constraints=None,
+    return_weights=False,
+):
     """Compute the efficient frontier for a given risk measure.
 
     Args:
@@ -1188,6 +1196,10 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
         Tuple of (frontier_points, asset_points) where:
         - frontier_points: list of {"return": float, "risk": float}
         - asset_points: list of {"name": str, "return": float, "risk": float}
+        If return_weights=True, returns
+        (frontier_points, asset_points, frontier_portfolios) where:
+        - frontier_portfolios: list of
+          {"point_index": int, "return": float, "risk": float, "weights": {asset: weight}}
     """
     port = rp.Portfolio(returns=returns_df)
     port.assets_stats(method_mu="hist", method_cov="hist")
@@ -1223,11 +1235,23 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
         return np.sqrt(w @ cov @ w) * np.sqrt(ann_factor)
 
     results = []
-    for col in frontier.columns:
+    frontier_portfolios = []
+    for idx, col in enumerate(frontier.columns):
         w = frontier[col].values
         ret = (w @ mu) * ann_factor
         risk = _compute_risk(w)
         results.append({"return": ret, "risk": risk})
+        if return_weights:
+            frontier_portfolios.append(
+                {
+                    "point_index": idx,
+                    "return": ret,
+                    "risk": risk,
+                    "weights": {
+                        str(name): float(w[i]) for i, name in enumerate(returns_df.columns)
+                    },
+                }
+            )
 
     assets = []
     for i, name in enumerate(returns_df.columns):
@@ -1240,4 +1264,6 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
             "risk": _compute_risk(w_single),
         })
 
+    if return_weights:
+        return results, assets, frontier_portfolios
     return results, assets
