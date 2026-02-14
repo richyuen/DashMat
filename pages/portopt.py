@@ -3079,6 +3079,7 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+
 # Clear session storage and refresh page
 clientside_callback(
     """

@@ -66,6 +66,7 @@ layout = dmc.Container(
                                                 size="lg",
                                                 variant="filled",
                                             ),
+                                            id="home-analytics-link",
                                             href="/analyticstool",
                                         ),
                                         dmc.Anchor(
@@ -74,6 +75,7 @@ layout = dmc.Container(
                                                 size="lg",
                                                 variant="outline",
                                             ),
+                                            id="home-portopt-link",
                                             href="/portopt",
                                         ),
                                     ],
@@ -111,3 +113,17 @@ def update_toggle_icon(theme):
     if theme == "dark":
         return DashIconify(icon="tabler:sun", width=20), "yellow"
     return DashIconify(icon="tabler:moon", width=20), "blue"
+
+
+@callback(
+    Output("home-analytics-link", "href"),
+    Output("home-portopt-link", "href"),
+    Input("userinfo", "data"),
+)
+def update_home_nav_links(userinfo):
+    if (userinfo or {}).get("role") == "Test":
+        return (
+            "/restricted?target=Analytics%20Tool",
+            "/restricted?target=Portfolio%20Optimization",
+        )
+    return "/analyticstool", "/portopt"
