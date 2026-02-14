@@ -5004,6 +5004,16 @@ def po_on_modal_ok(
             updated_raw_data = df_to_json(df)
             if temp_bench:
                 temp_bench = {k: v for k, v in temp_bench.items() if k not in to_drop}
+                remaining_cols = set(df.columns)
+                cleaned_bench = {}
+                for series, bench in temp_bench.items():
+                    if series not in remaining_cols:
+                        continue
+                    bench_value = bench if isinstance(bench, str) else "None"
+                    if bench_value != "None" and bench_value not in remaining_cols:
+                        bench_value = "None"
+                    cleaned_bench[series] = bench_value
+                temp_bench = cleaned_bench
             if temp_ls:
                 temp_ls = {k: v for k, v in temp_ls.items() if k not in to_drop}
             if temp_cmabench:
