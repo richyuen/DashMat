@@ -2145,6 +2145,13 @@ def reorder_series(virtual_rows, selected_rows, current_order, current_selected)
     if not ordered_series:
         raise PreventUpdate
 
+    triggered_props = []
+    try:
+        if callback_context and callback_context.triggered:
+            triggered_props = [t.get("prop_id", "") for t in callback_context.triggered]
+    except Exception:
+        triggered_props = []
+
     if isinstance(selected_rows, (list, tuple)):
         selected_set = {
             row.get("Series")
@@ -2152,6 +2159,14 @@ def reorder_series(virtual_rows, selected_rows, current_order, current_selected)
             if isinstance(row, dict) and row.get("Series")
         }
         selected_series = [series for series in ordered_series if series in selected_set]
+        # Guard against transient empty selectedRows payloads during grid hydration.
+        selected_rows_triggered = any(
+            prop.startswith("series-selection-grid.selectedRows")
+            for prop in triggered_props
+        )
+        if not selected_series and (current_selected or []) and not selected_rows_triggered:
+            selected_fallback = set(current_selected or [])
+            selected_series = [series for series in ordered_series if series in selected_fallback]
     else:
         selected_fallback = set(current_selected or [])
         selected_series = [series for series in ordered_series if series in selected_fallback]
@@ -2936,6 +2951,7 @@ def update_series_selectors(
     grid = dag.AgGrid(
         id="series-selection-grid",
         className="ag-theme-alpine series-modal-grid",
+        getRowId="params.data.Series",
         columnDefs=[
             {
                 "headerName": "",
