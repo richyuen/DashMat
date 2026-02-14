@@ -1178,8 +1178,10 @@ def compute_efficient_frontier(returns_df, ann_factor, rm="MV", n_points=50,
         ann_factor: Annualization factor (252 for daily, 52 for weekly, 12 for monthly)
         rm: Risk measure - "MV" for volatility, "CVaR" for Conditional Value-at-Risk
         n_points: Number of frontier points
-        custom_mu: Optional DataFrame of expected returns (already annualized, shape 1 x n_assets)
-        custom_cov: Optional DataFrame of covariance matrix (already annualized)
+        custom_mu: Optional DataFrame of per-period expected returns, shape 1 x n_assets.
+            Note: outputs are annualized in this function using ann_factor.
+        custom_cov: Optional per-period covariance matrix.
+            Note: risk outputs are annualized using ann_factor.
         linear_constraints: Optional list of dicts defining linear constraints
 
     Returns:

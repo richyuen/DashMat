@@ -1,7 +1,7 @@
 """Analytics tool page - Market Returns Time Series Dashboard."""
 
+from dataclasses import dataclass
 from io import BytesIO, StringIO
-import hashlib
 import json
 
 import dash_ag_grid as dag
@@ -38,6 +38,15 @@ from utils.statistics import (
     generate_correlogram_cached,
 )
 from utils.charting import apply_chart_theme
+from utils.perf_timing import timed_block
+from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
+from utils.shared_metrics import (
+    MARKET_BETA_SERIES,
+    RISK_FREE_SERIES,
+    STATS_CONFIG,
+    risk_free_json_from_store as _risk_free_json_from_store,
+    spx_json_from_store as _spx_json_from_store,
+)
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 from utils.core_categories import (
     clear_dropdown_caches,
@@ -51,82 +60,53 @@ register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Ana
 
 # Performance optimization constants
 
-# Statistics row order and formatting
-STATS_CONFIG = [
-    ("Start Date", None),
-    ("End Date", None),
-    ("Number of Periods", None),
-    ("Cumulative Return", ".2%"),
-    ("Annualized Return", ".2%"),
-    ("Annualized Volatility", ".2%"),
-    ("Sharpe Ratio", ".2f"),
-    ("Sortino Ratio", ".2f"),
-    ("Beta to S&P 500", ".2f"),
-    ("Annualized Excess Return", ".2%"),
-    ("Annualized Tracking Error", ".2%"),
-    ("Information Ratio", ".2f"),
-    ("Correlation", ".2f"),
-    ("Hit Rate", ".2%"),
-    ("Hit Rate (vs Benchmark)", ".2%"),
-    ("Best Period Return", ".2%"),
-    ("Worst Period Return", ".2%"),
-    ("Maximum Drawdown", ".2%"),
-    ("Skewness", ".2f"),
-    ("Kurtosis", ".2f"),
-    ("1Y Annualized Return", ".2%"),
-    ("1Y Annualized Volatility", ".2%"),
-    ("1Y Sharpe Ratio", ".2f"),
-    ("1Y Sortino Ratio", ".2f"),
-    ("1Y Beta to S&P 500", ".2f"),
-    ("1Y Excess Return", ".2%"),
-    ("1Y Tracking Error", ".2%"),
-    ("1Y Information Ratio", ".2f"),
-    ("1Y Correlation", ".2f"),
-    ("3Y Annualized Return", ".2%"),
-    ("3Y Annualized Volatility", ".2%"),
-    ("3Y Sharpe Ratio", ".2f"),
-    ("3Y Sortino Ratio", ".2f"),
-    ("3Y Beta to S&P 500", ".2f"),
-    ("3Y Excess Return", ".2%"),
-    ("3Y Tracking Error", ".2%"),
-    ("3Y Information Ratio", ".2f"),
-    ("3Y Correlation", ".2f"),
-    ("5Y Annualized Return", ".2%"),
-    ("5Y Annualized Volatility", ".2%"),
-    ("5Y Sharpe Ratio", ".2f"),
-    ("5Y Sortino Ratio", ".2f"),
-    ("5Y Beta to S&P 500", ".2f"),
-    ("5Y Excess Return", ".2%"),
-    ("5Y Tracking Error", ".2%"),
-    ("5Y Information Ratio", ".2f"),
-    ("5Y Correlation", ".2f"),
-]
-
-RISK_FREE_SERIES = "BCTBill13_TRIndex"
-MARKET_BETA_SERIES = "SPX_TRIndex"
 SAVED_SERIES_CONFIG = {
     RISK_FREE_SERIES: {},
     MARKET_BETA_SERIES: {"start_date": "1988-01-04"},
 }
 
-def _series_json_from_store(store_data, series_name: str) -> str:
-    if isinstance(store_data, dict):
-        series_data = store_data.get("series_data")
-        if isinstance(series_data, dict):
-            series_payload = series_data.get(series_name)
-            if isinstance(series_payload, dict):
-                payload = series_payload.get("returns_json")
-                if isinstance(payload, str):
-                    return payload
-    return ""
+
+def _mapping_payload(value) -> str:
+    return mapping_payload_for_cache(value)
 
 
-def _risk_free_json_from_store(store_data) -> str:
-    return _series_json_from_store(store_data, RISK_FREE_SERIES)
+def _date_range_payload(value) -> str:
+    return date_range_payload_for_cache(value)
 
 
-def _spx_json_from_store(store_data) -> str:
-    return _series_json_from_store(store_data, MARKET_BETA_SERIES)
+@dataclass(frozen=True)
+class _AnalyticsComputeBundle:
+    raw_data: str
+    periodicity: str
+    selected_series: tuple
+    benchmark_payload: str
+    long_short_payload: str
+    date_range_payload: str
+    vol_scaler: float
+    vol_scaling_payload: str
+
+
+def _build_analytics_compute_bundle(
+    raw_data,
+    periodicity,
+    selected_series,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+) -> _AnalyticsComputeBundle:
+    """Build canonicalized compute inputs once per callback."""
+    return _AnalyticsComputeBundle(
+        raw_data=raw_data,
+        periodicity=periodicity or "daily",
+        selected_series=tuple(selected_series or ()),
+        benchmark_payload=_mapping_payload(benchmark_assignments),
+        long_short_payload=_mapping_payload(long_short_assignments),
+        date_range_payload=_date_range_payload(date_range),
+        vol_scaler=vol_scaler or 0,
+        vol_scaling_payload=_mapping_payload(vol_scaling_assignments),
+    )
 
 
 def build_welcome_screen():
@@ -3392,12 +3372,12 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
             raw_data,
             periodicity or "daily",
             tuple(selected_series),  # Convert to tuple for cache key
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",  # Convert to string for cache key
+            _mapping_payload(benchmark_assignments),  # Convert to string for cache key
             returns_type,
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",  # Convert to string for cache key
-            json.dumps(date_range) if date_range else "null",  # Convert to string for cache key
+            _mapping_payload(long_short_assignments),  # Convert to string for cache key
+            _date_range_payload(date_range),  # Convert to string for cache key
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         if display_df.empty:
@@ -3465,14 +3445,14 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
             periodicity,
             tuple(selected_series),
             "total",
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             rolling_window,
             rolling_return_type,
             rolling_metric or "total_return",
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         if rolling_df.empty:
@@ -3557,14 +3537,14 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
             periodicity,
             tuple(selected_series),
             "total",
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             rolling_window,
             rolling_return_type,
             rolling_metric or "total_return",
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         if rolling_df.empty:
@@ -3735,12 +3715,12 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 original_periodicity,
                 selected_periodicity,
                 returns_type,
-                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-                json.dumps(long_short_assignments) if long_short_assignments else "{}",
+                _mapping_payload(benchmark_assignments),
+                _mapping_payload(long_short_assignments),
                 selected_series,
-                json.dumps(date_range) if date_range else "null",
+                _date_range_payload(date_range),
                 vol_scaler or 0,
-                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+                _mapping_payload(vol_scaling_assignments)
             )
 
         else:
@@ -3751,11 +3731,11 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 selected_periodicity,
                 selected_series,
                 returns_type,
-                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-                json.dumps(long_short_assignments) if long_short_assignments else "{}",
-                json.dumps(date_range) if date_range else "null",
+                _mapping_payload(benchmark_assignments),
+                _mapping_payload(long_short_assignments),
+                _date_range_payload(date_range),
                 vol_scaler or 0,
-                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+                _mapping_payload(vol_scaling_assignments)
             )
 
             if calendar_returns.empty:
@@ -3872,11 +3852,11 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
             raw_data,
             periodicity or "daily",
             tuple(selected_series),
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
+            _mapping_payload(vol_scaling_assignments),
             _risk_free_json_from_store(saved_series_store),
             _spx_json_from_store(saved_series_store),
         )
@@ -4015,11 +3995,11 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             periodicity or "daily",
             tuple(selected_series),
             returns_type,
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         if result is None:
@@ -4207,8 +4187,8 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         # Use get_working_returns to get aligned data + benchmarks
         df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}", json.dumps(long_short_assignments) if long_short_assignments else "{}", json.dumps(date_range) if date_range else "null",
-            vol_scaler or 0, json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(benchmark_assignments), _mapping_payload(long_short_assignments), _date_range_payload(date_range),
+            vol_scaler or 0, _mapping_payload(vol_scaling_assignments)
         )
 
         if df.empty:
@@ -4240,11 +4220,11 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
             raw_data,
             periodicity,
             tuple(selected_series),
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         # Create main growth figure
@@ -4395,11 +4375,11 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
             raw_data,
             periodicity,
             tuple(selected_series),
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         if growth_df.empty:
@@ -4467,11 +4447,11 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
             periodicity,
             tuple(selected_series),
             returns_type,
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         if drawdown_df.empty:
@@ -4552,11 +4532,11 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
             periodicity,
             tuple(selected_series),
             returns_type,
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
             vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+            _mapping_payload(vol_scaling_assignments)
         )
 
         if drawdown_df.empty:
@@ -4618,184 +4598,207 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
 
-    # Use cached functions to get data
-    returns_df = calculate_excess_returns(
-        raw_data,
-        selected_periodicity or "daily",
-        tuple(selected_series),
-        json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-        returns_type,
-        json.dumps(long_short_assignments) if long_short_assignments else "{}",
-        json.dumps(date_range) if date_range else "null",
-        vol_scaler or 0,
-        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
-    )
+    with timed_block(
+        "analyticstool.download_excel.total",
+        series_count=len(selected_series or ()),
+        returns_type=returns_type,
+    ):
+        bundle = _build_analytics_compute_bundle(
+            raw_data,
+            selected_periodicity,
+            selected_series,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+        )
 
-    if returns_df.empty:
-        raise PreventUpdate
-
-    # Get cached statistics
-    stats = calculate_statistics_cached(
-        raw_data,
-        selected_periodicity or "daily",
-        tuple(selected_series),
-        json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-        json.dumps(long_short_assignments) if long_short_assignments else "{}",
-        json.dumps(date_range) if date_range else "null",
-        vol_scaler or 0,
-        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
-        _risk_free_json_from_store(saved_series_store),
-        _spx_json_from_store(saved_series_store),
-    )
-
-    # Build statistics DataFrame (transposed: statistics as rows, series as columns)
-    stats_data = {"Statistic": [stat_name for stat_name, _ in STATS_CONFIG]}
-    for series_stats in stats:
-        series_name = series_stats["Series"]
-        stats_data[series_name] = [series_stats.get(stat_name) for stat_name, _ in STATS_CONFIG]
-    stats_df = pd.DataFrame(stats_data)
-
-    # Prepare correlogram data (correlation matrix)
-    corr_df = returns_df.corr()
-    corr_df.index.name = "Series"
-
-    # Create Excel file in memory with multiple sheets
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        # Sheet 1: Statistics (moved to first position)
-        stats_df.to_excel(writer, sheet_name="Statistics", index=False)
-
-        # Sheet 2: Returns
-        returns_df.to_excel(writer, sheet_name="Returns")
-
-        # Sheet 3: Rolling (use current settings)
-        try:
-            # Use stored rolling options, default to 1y annualized if not set
-            window = rolling_window if rolling_window else "1y"
-            return_type = rolling_return_type if rolling_return_type else "annualized"
-
-            rolling_df = calculate_rolling_returns(
-                raw_data,
-                selected_periodicity,
-                tuple(selected_series),
+        # Use cached functions to get data
+        with timed_block("analyticstool.download_excel.returns"):
+            returns_df = calculate_excess_returns(
+                bundle.raw_data,
+                bundle.periodicity,
+                bundle.selected_series,
+                bundle.benchmark_payload,
                 returns_type,
-                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-                json.dumps(long_short_assignments) if long_short_assignments else "{}",
-                json.dumps(date_range) if date_range else "null",
-                window,
-                return_type,
-                "total_return", # Default metric for excel
-                vol_scaler or 0,
-                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
             )
-            if not rolling_df.empty:
-                # Create sheet name based on window and type
-                window_label_map = {
-                    "3m": "3M",
-                    "6m": "6M",
-                    "1y": "1Y",
-                    "3y": "3Y",
-                    "5y": "5Y",
-                    "10y": "10Y",
-                }
-                window_label = window_label_map.get(window, "1Y")
-                type_label = "Ann" if return_type == "annualized" else "Cum"
-                sheet_name = f"Rolling ({window_label} {type_label})"
-                rolling_df.to_excel(writer, sheet_name=sheet_name)
-        except Exception:
-            pass  # Skip if rolling calculation fails
 
-        # Sheet 4: Calendar Year Returns
-        if original_periodicity in ["daily", "monthly"]:
-            try:
-                # Check if monthly view is selected
-                if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
-                    # Get monthly view data
-                    column_defs, row_data = create_monthly_view(
-                        raw_data,
-                        monthly_series,
-                        original_periodicity,
-                        selected_periodicity,
-                        returns_type,
-                        benchmark_assignments,
-                        long_short_assignments,
-                        selected_series,
-                        date_range,
-                        vol_scaler or 0,
-                        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
-                    )
+        if returns_df.empty:
+            raise PreventUpdate
 
-                    if row_data:
-                        # Convert row data to DataFrame
-                        calendar_df = pd.DataFrame(row_data)
-                        calendar_df = calendar_df.set_index('Year_Label')
-                        calendar_df.index.name = 'Year'
-                        calendar_df.to_excel(writer, sheet_name="Calendar Year")
-                else:
-                    # Use standard calendar year returns (all series, one row per year)
-                    calendar_df = calculate_calendar_year_returns(
-                        raw_data,
-                        original_periodicity,
-                        selected_periodicity,
-                        selected_series,
-                        returns_type,
-                        benchmark_assignments,
-                        long_short_assignments,
-                        date_range,
-                        vol_scaler or 0,
-                        json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
-                    )
-                    if not calendar_df.empty:
-                        calendar_df.to_excel(writer, sheet_name="Calendar Year")
-            except Exception:
-                pass  # Skip if calendar calculation fails
-
-        # Sheet 5: Growth of $1
-        try:
-            growth_df = calculate_growth_of_dollar(
-                raw_data,
-                selected_periodicity,
-                tuple(selected_series),
-                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-                json.dumps(long_short_assignments) if long_short_assignments else "{}",
-                json.dumps(date_range) if date_range else "null",
-                vol_scaler or 0,
-                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
+        # Get cached statistics
+        with timed_block("analyticstool.download_excel.statistics"):
+            stats = calculate_statistics_cached(
+                bundle.raw_data,
+                bundle.periodicity,
+                bundle.selected_series,
+                bundle.benchmark_payload,
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
+                _risk_free_json_from_store(saved_series_store),
+                _spx_json_from_store(saved_series_store),
             )
-            if not growth_df.empty:
-                growth_df.to_excel(writer, sheet_name="Growth of $1")
-        except Exception:
-            pass  # Skip if growth calculation fails
 
-        # Sheet 6: Drawdown
-        try:
-            drawdown_df = calculate_drawdown(
-                raw_data,
-                selected_periodicity,
-                tuple(selected_series),
-                returns_type,
-                json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-                json.dumps(long_short_assignments) if long_short_assignments else "{}",
-                json.dumps(date_range) if date_range else "null",
-                vol_scaler or 0,
-                json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}"
-            )
-            if not drawdown_df.empty:
-                drawdown_df.to_excel(writer, sheet_name="Drawdown")
-        except Exception:
-            pass  # Skip if drawdown calculation fails
+        # Build statistics DataFrame (transposed: statistics as rows, series as columns)
+        stats_data = {"Statistic": [stat_name for stat_name, _ in STATS_CONFIG]}
+        for series_stats in stats:
+            series_name = series_stats["Series"]
+            stats_data[series_name] = [series_stats.get(stat_name) for stat_name, _ in STATS_CONFIG]
+        stats_df = pd.DataFrame(stats_data)
 
-        # Sheet 7: Correlogram
-        corr_df.to_excel(writer, sheet_name="Correlogram")
+        # Prepare correlogram data (correlation matrix)
+        corr_df = returns_df.corr()
+        corr_df.index.name = "Series"
 
-    output.seek(0)
+        # Create Excel file in memory with multiple sheets
+        output = BytesIO()
+        with timed_block("analyticstool.download_excel.workbook"):
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                # Sheet 1: Statistics (moved to first position)
+                stats_df.to_excel(writer, sheet_name="Statistics", index=False)
 
-    # Generate filename
-    periodicity_suffix = selected_periodicity.replace("_", "-") if selected_periodicity else "returns"
-    returns_suffix = "excess" if returns_type == "excess" else "total"
-    filename = f"dashmat_{periodicity_suffix}_{returns_suffix}.xlsx"
+                # Sheet 2: Returns
+                returns_df.to_excel(writer, sheet_name="Returns")
 
-    return dcc.send_bytes(output.getvalue(), filename)
+                # Sheet 3: Rolling (use current settings)
+                try:
+                    with timed_block("analyticstool.download_excel.rolling"):
+                        # Use stored rolling options, default to 1y annualized if not set
+                        window = rolling_window if rolling_window else "1y"
+                        return_type = rolling_return_type if rolling_return_type else "annualized"
+
+                        rolling_df = calculate_rolling_returns(
+                            bundle.raw_data,
+                            bundle.periodicity,
+                            bundle.selected_series,
+                            returns_type,
+                            bundle.benchmark_payload,
+                            bundle.long_short_payload,
+                            bundle.date_range_payload,
+                            window,
+                            return_type,
+                            "total_return", # Default metric for excel
+                            bundle.vol_scaler,
+                            bundle.vol_scaling_payload,
+                        )
+                        if not rolling_df.empty:
+                            # Create sheet name based on window and type
+                            window_label_map = {
+                                "3m": "3M",
+                                "6m": "6M",
+                                "1y": "1Y",
+                                "3y": "3Y",
+                                "5y": "5Y",
+                                "10y": "10Y",
+                            }
+                            window_label = window_label_map.get(window, "1Y")
+                            type_label = "Ann" if return_type == "annualized" else "Cum"
+                            sheet_name = f"Rolling ({window_label} {type_label})"
+                            rolling_df.to_excel(writer, sheet_name=sheet_name)
+                except Exception:
+                    pass  # Skip if rolling calculation fails
+
+                # Sheet 4: Calendar Year Returns
+                if original_periodicity in ["daily", "monthly"]:
+                    try:
+                        with timed_block("analyticstool.download_excel.calendar"):
+                            # Check if monthly view is selected
+                            if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
+                                # Get monthly view data
+                                _, row_data = create_monthly_view(
+                                    bundle.raw_data,
+                                    monthly_series,
+                                    original_periodicity,
+                                    bundle.periodicity,
+                                    returns_type,
+                                    bundle.benchmark_payload,
+                                    bundle.long_short_payload,
+                                    bundle.selected_series,
+                                    bundle.date_range_payload,
+                                    bundle.vol_scaler,
+                                    bundle.vol_scaling_payload,
+                                )
+
+                                if row_data:
+                                    # Convert row data to DataFrame
+                                    calendar_df = pd.DataFrame(row_data)
+                                    calendar_df = calendar_df.set_index('Year_Label')
+                                    calendar_df.index.name = 'Year'
+                                    calendar_df.to_excel(writer, sheet_name="Calendar Year")
+                            else:
+                                # Use standard calendar year returns (all series, one row per year)
+                                calendar_df = calculate_calendar_year_returns(
+                                    bundle.raw_data,
+                                    original_periodicity,
+                                    bundle.periodicity,
+                                    bundle.selected_series,
+                                    returns_type,
+                                    bundle.benchmark_payload,
+                                    bundle.long_short_payload,
+                                    bundle.date_range_payload,
+                                    bundle.vol_scaler,
+                                    bundle.vol_scaling_payload,
+                                )
+                                if not calendar_df.empty:
+                                    calendar_df.to_excel(writer, sheet_name="Calendar Year")
+                    except Exception:
+                        pass  # Skip if calendar calculation fails
+
+                # Sheet 5: Growth of $1
+                try:
+                    with timed_block("analyticstool.download_excel.growth"):
+                        growth_df = calculate_growth_of_dollar(
+                            bundle.raw_data,
+                            bundle.periodicity,
+                            bundle.selected_series,
+                            bundle.benchmark_payload,
+                            bundle.long_short_payload,
+                            bundle.date_range_payload,
+                            bundle.vol_scaler,
+                            bundle.vol_scaling_payload,
+                        )
+                        if not growth_df.empty:
+                            growth_df.to_excel(writer, sheet_name="Growth of $1")
+                except Exception:
+                    pass  # Skip if growth calculation fails
+
+                # Sheet 6: Drawdown
+                try:
+                    with timed_block("analyticstool.download_excel.drawdown"):
+                        drawdown_df = calculate_drawdown(
+                            bundle.raw_data,
+                            bundle.periodicity,
+                            bundle.selected_series,
+                            returns_type,
+                            bundle.benchmark_payload,
+                            bundle.long_short_payload,
+                            bundle.date_range_payload,
+                            bundle.vol_scaler,
+                            bundle.vol_scaling_payload,
+                        )
+                        if not drawdown_df.empty:
+                            drawdown_df.to_excel(writer, sheet_name="Drawdown")
+                except Exception:
+                    pass  # Skip if drawdown calculation fails
+
+                # Sheet 7: Correlogram
+                corr_df.to_excel(writer, sheet_name="Correlogram")
+
+        output.seek(0)
+
+        # Generate filename
+        periodicity_suffix = selected_periodicity.replace("_", "-") if selected_periodicity else "returns"
+        returns_suffix = "excess" if returns_type == "excess" else "total"
+        filename = f"dashmat_{periodicity_suffix}_{returns_suffix}.xlsx"
+
+        return dcc.send_bytes(output.getvalue(), filename)
 
 
 # Sample file download callbacks
@@ -4823,3 +4826,4 @@ def download_sample_monthly(n_clicks):
         raise PreventUpdate
 
     return dcc.send_file(str(get_sample_file_path("monthly")))
+

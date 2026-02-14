@@ -1,7 +1,6 @@
 """Returns calculation utilities for compounding and resampling."""
 
-import hashlib
-import json
+import logging
 from io import StringIO
 import numpy as np
 import pandas as pd
@@ -9,7 +8,15 @@ import pandas_market_calendars as mcal
 
 from utils.parsing import detect_periodicity
 from utils.constants import WINDOW_MAP_DAYS, WINDOW_DAYS_MAP, WINDOW_YEARS_MAP
+from utils.serialization import (
+    date_range_payload_for_cache,
+    mapping_payload_for_cache,
+    normalize_date_range_payload,
+    parse_mapping_payload,
+)
 import cache_config
+
+logger = logging.getLogger(__name__)
 
 
 # Mapping of periodicity options to pandas resample codes
@@ -333,11 +340,11 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
         json_str: Raw data JSON string
         periodicity: Selected periodicity
         selected_series: Tuple of selected series names
-        benchmark_assignments: String representation of benchmark dict
-        long_short_assignments: String representation of L/S dict
-        date_range_str: String representation of date range dict
+        benchmark_assignments: Mapping payload (dict or canonical JSON string)
+        long_short_assignments: Mapping payload (dict or canonical JSON string)
+        date_range_str: Date-range payload (dict or canonical JSON string)
         vol_scaler: Target volatility in percent (e.g. 10 for 10%). 0 means disabled.
-        vol_scaling_assignments: String representation of dict mapping series to boolean (enable/disable scaling).
+        vol_scaling_assignments: Mapping payload for per-series scaling switches.
         
     Returns:
         DataFrame with calculated returns for selected series AND unselected benchmarks.
@@ -346,10 +353,10 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
     df = resample_returns_cached(json_str, periodicity)
     
     # 2. Parse configurations
-    bench_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
-    ls_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
-    date_range = json.loads(date_range_str) if isinstance(date_range_str, str) and date_range_str != "None" else (date_range_str if isinstance(date_range_str, list) else None)
-    vol_scaling_dict = json.loads(vol_scaling_assignments) if isinstance(vol_scaling_assignments, str) else (vol_scaling_assignments if isinstance(vol_scaling_assignments, dict) else {})
+    bench_dict = parse_mapping_payload(benchmark_assignments)
+    ls_dict = parse_mapping_payload(long_short_assignments)
+    date_range = normalize_date_range_payload(date_range_str)
+    vol_scaling_dict = parse_mapping_payload(vol_scaling_assignments)
     
     # 3. Global Date Range Filter
     if date_range:
@@ -454,8 +461,8 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
     # for non-L/S series. L/S series are already diffs.
     if returns_type == "excess":
         # We use display_df which now includes benchmarks
-        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
-        ls_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+        benchmark_dict = parse_mapping_payload(benchmark_assignments)
+        ls_dict = parse_mapping_payload(long_short_assignments)
         
         # Iterate over SELECTED series only
         for series in selected_series:
@@ -485,23 +492,26 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
 def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized", rolling_metric="total_return", vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate rolling returns for Excel export - matches the Rolling grid logic."""
     try:
-        from utils.statistics import annualization_factor, sharpe_ratio, sortino_ratio
+        from utils.statistics import sharpe_ratio, sortino_ratio
 
         # Get working returns (forces alignment and filtering)
         # working_df contains Series (aligned) OR (Series - Bench) if L/S
         # NOW also contains unselected benchmarks
         working_df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range),
-            vol_scaler, str(vol_scaling_assignments)
+            mapping_payload_for_cache(benchmark_assignments),
+            mapping_payload_for_cache(long_short_assignments),
+            date_range_payload_for_cache(date_range),
+            vol_scaler,
+            mapping_payload_for_cache(vol_scaling_assignments),
         )
         
         if working_df.empty:
             return pd.DataFrame()
 
         # Parse assignments
-        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
-        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+        benchmark_dict = parse_mapping_payload(benchmark_assignments)
+        long_short_dict = parse_mapping_payload(long_short_assignments)
 
         # Calculate periods per year and window size
         periods_per_year = annualization_factor(periodicity or "daily")
@@ -669,7 +679,8 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
 
         return rolling_df
 
-    except Exception as e:
+    except Exception:
+        logger.exception("Rolling returns calculation failed.")
         return pd.DataFrame()
 
 
@@ -683,15 +694,18 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
         # Use get_working_returns for data prep
         working_df = get_working_returns(
             raw_data, selected_periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range),
-            vol_scaler, str(vol_scaling_assignments)
+            mapping_payload_for_cache(benchmark_assignments),
+            mapping_payload_for_cache(long_short_assignments),
+            date_range_payload_for_cache(date_range),
+            vol_scaler,
+            mapping_payload_for_cache(vol_scaling_assignments),
         )
 
         if working_df.empty:
             return pd.DataFrame()
 
-        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
-        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+        benchmark_dict = parse_mapping_payload(benchmark_assignments)
+        long_short_dict = parse_mapping_payload(long_short_assignments)
 
         calendar_returns = {}
 
@@ -791,6 +805,7 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
         return result
 
     except Exception:
+        logger.exception("Calendar-year return calculation failed.")
         return pd.DataFrame()
 
 
@@ -801,8 +816,11 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
     # Use get_working_returns for data prep
     working_df = get_working_returns(
         raw_data, selected_periodicity or "daily", (series_name,),
-        str(benchmark_assignments), str(long_short_assignments), str(date_range),
-        vol_scaler, str(vol_scaling_assignments)
+        mapping_payload_for_cache(benchmark_assignments),
+        mapping_payload_for_cache(long_short_assignments),
+        date_range_payload_for_cache(date_range),
+        vol_scaler,
+        mapping_payload_for_cache(vol_scaling_assignments),
     )
     
     if series_name not in working_df.columns:
@@ -814,8 +832,8 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         return [], []
         
     # Check configurations
-    benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
-    long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+    benchmark_dict = parse_mapping_payload(benchmark_assignments)
+    long_short_dict = parse_mapping_payload(long_short_assignments)
     is_ls = long_short_dict.get(series_name, False)
     
     # If Excess requested (and not L/S), we need benchmark data
@@ -847,6 +865,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
                     'returns': resampled['returns']
                 }).reset_index(drop=True)
             except Exception:
+                logger.exception("Monthly aggregation failed for series '%s'.", series_name)
                 return pd.DataFrame()
 
         elif selected_periodicity == "monthly":

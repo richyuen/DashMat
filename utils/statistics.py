@@ -1,6 +1,6 @@
 """Statistics calculations for returns analysis."""
 
-import json
+import logging
 from typing import Optional
 import numpy as np
 import pandas as pd
@@ -8,9 +8,15 @@ from scipy import stats
 
 import cache_config
 from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns, annualization_factor, is_daily
+from utils.serialization import (
+    date_range_payload_for_cache,
+    mapping_payload_for_cache,
+    parse_mapping_payload,
+)
 
 SPX_DAILY_INCEPTION_DATE = pd.Timestamp("1988-01-04")
 
+logger = logging.getLogger(__name__)
 
 
 
@@ -545,8 +551,8 @@ def calculate_statistics_cached(
     if df.empty:
         return []
 
-    benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
-    long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+    benchmark_dict = parse_mapping_payload(benchmark_assignments)
+    long_short_dict = parse_mapping_payload(long_short_assignments)
     risk_free_series: Optional[pd.Series] = None
     if risk_free_returns_json:
         try:
@@ -555,6 +561,7 @@ def calculate_statistics_cached(
                 rf_col = rf_df.columns[0]
                 risk_free_series = rf_df[rf_col].dropna()
         except Exception:
+            logger.exception("Risk-free benchmark payload could not be resampled.")
             risk_free_series = None
 
     spx_series: Optional[pd.Series] = None
@@ -565,6 +572,7 @@ def calculate_statistics_cached(
                 spx_col = spx_df.columns[0]
                 spx_series = spx_df[spx_col].dropna()
         except Exception:
+            logger.exception("S&P benchmark payload could not be resampled.")
             spx_series = None
     
     results = []
@@ -613,8 +621,11 @@ def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark
         # Use get_working_returns
         working_df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range),
-            vol_scaler, str(vol_scaling_assignments)
+            mapping_payload_for_cache(benchmark_assignments),
+            mapping_payload_for_cache(long_short_assignments),
+            date_range_payload_for_cache(date_range),
+            vol_scaler,
+            mapping_payload_for_cache(vol_scaling_assignments),
         )
 
         if working_df.empty:
@@ -671,6 +682,7 @@ def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark
         return growth_df
 
     except Exception:
+        logger.exception("Growth-of-dollar calculation failed.")
         return pd.DataFrame()
 
 
@@ -683,15 +695,18 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
         # Use get_working_returns
         working_df = get_working_returns(
             raw_data, periodicity or "daily", tuple(selected_series),
-            str(benchmark_assignments), str(long_short_assignments), str(date_range),
-            vol_scaler, str(vol_scaling_assignments)
+            mapping_payload_for_cache(benchmark_assignments),
+            mapping_payload_for_cache(long_short_assignments),
+            date_range_payload_for_cache(date_range),
+            vol_scaler,
+            mapping_payload_for_cache(vol_scaling_assignments),
         )
 
         if working_df.empty:
             return pd.DataFrame()
 
-        benchmark_dict = json.loads(benchmark_assignments) if isinstance(benchmark_assignments, str) else (benchmark_assignments if isinstance(benchmark_assignments, dict) else {})
-        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
+        benchmark_dict = parse_mapping_payload(benchmark_assignments)
+        long_short_dict = parse_mapping_payload(long_short_assignments)
 
         # Determine the period offset based on periodicity
         periodicity_str = periodicity or "daily"
@@ -780,6 +795,7 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
         return drawdown_df
 
     except Exception:
+        logger.exception("Drawdown calculation failed.")
         return pd.DataFrame()
 
 

@@ -4,11 +4,38 @@ This module is separate from app.py to avoid circular import issues
 when pages are loaded during app initialization.
 """
 
+import os
 from functools import wraps
 from flask_caching import Cache
 
+from utils.serialization import canonical_json_dumps
+
 # Cache instance (will be initialized in app.py)
 _cache = None
+
+
+def _build_cache_config() -> dict:
+    """Build Flask-Caching configuration from environment variables."""
+    cache_type = os.getenv("DASHMAT_CACHE_TYPE", "SimpleCache")
+    default_timeout = int(os.getenv("DASHMAT_CACHE_DEFAULT_TIMEOUT", "300"))
+    threshold = int(os.getenv("DASHMAT_CACHE_THRESHOLD", "500"))
+
+    config = {
+        "CACHE_TYPE": cache_type,
+        "CACHE_DEFAULT_TIMEOUT": default_timeout,
+    }
+
+    if cache_type == "SimpleCache":
+        config["CACHE_THRESHOLD"] = threshold
+    elif cache_type == "FileSystemCache":
+        config["CACHE_DIR"] = os.getenv("DASHMAT_CACHE_DIR", ".cache/dashmat")
+        config["CACHE_THRESHOLD"] = threshold
+    elif cache_type == "RedisCache":
+        config["CACHE_REDIS_URL"] = os.getenv(
+            "DASHMAT_CACHE_REDIS_URL", "redis://localhost:6379/0"
+        )
+
+    return config
 
 
 def init_cache(server):
@@ -21,11 +48,7 @@ def init_cache(server):
         Initialized Cache instance
     """
     global _cache
-    _cache = Cache(server, config={
-        'CACHE_TYPE': 'SimpleCache',
-        'CACHE_DEFAULT_TIMEOUT': 300,  # 5 minutes
-        'CACHE_THRESHOLD': 500,  # Maximum number of cached items (5x increase for better hit rate)
-    })
+    _cache = Cache(server, config=_build_cache_config())
     return _cache
 
 
@@ -53,10 +76,12 @@ def memoize(timeout=300):
 
             # Generate cache key from arguments
             from hashlib import md5
-            key_parts = [cache_key_prefix]
-            key_parts.extend(str(arg) for arg in args)
-            key_parts.extend(f"{k}={v}" for k, v in sorted(kwargs.items()))
-            cache_key = md5("".join(key_parts).encode()).hexdigest()
+            cache_payload = {
+                "f": cache_key_prefix,
+                "args": args,
+                "kwargs": kwargs,
+            }
+            cache_key = md5(canonical_json_dumps(cache_payload).encode("utf-8")).hexdigest()
 
             # Try to get from cache
             result = _cache.get(cache_key)

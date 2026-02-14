@@ -1,5 +1,6 @@
 """Portfolio Optimization page for DashMat."""
 
+from dataclasses import dataclass
 from io import BytesIO, StringIO
 import json
 
@@ -30,6 +31,13 @@ from utils.returns import (
     annualization_factor,
 )
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
+from utils.perf_timing import timed_block
+from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
+from utils.shared_metrics import (
+    STATS_CONFIG,
+    risk_free_json_from_store as _risk_free_json_from_store,
+    spx_json_from_store as _spx_json_from_store,
+)
 from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
@@ -46,83 +54,182 @@ from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
 
-# Statistics row order and formatting
-STATS_CONFIG = [
-    ("Start Date", None),
-    ("End Date", None),
-    ("Number of Periods", None),
-    ("Cumulative Return", ".2%"),
-    ("Annualized Return", ".2%"),
-    ("Annualized Volatility", ".2%"),
-    ("Sharpe Ratio", ".2f"),
-    ("Sortino Ratio", ".2f"),
-    ("Beta to S&P 500", ".2f"),
-    ("Annualized Excess Return", ".2%"),
-    ("Annualized Tracking Error", ".2%"),
-    ("Information Ratio", ".2f"),
-    ("Correlation", ".2f"),
-    ("Hit Rate", ".2%"),
-    ("Hit Rate (vs Benchmark)", ".2%"),
-    ("Best Period Return", ".2%"),
-    ("Worst Period Return", ".2%"),
-    ("Maximum Drawdown", ".2%"),
-    ("Skewness", ".2f"),
-    ("Kurtosis", ".2f"),
-    ("1Y Annualized Return", ".2%"),
-    ("1Y Annualized Volatility", ".2%"),
-    ("1Y Sharpe Ratio", ".2f"),
-    ("1Y Sortino Ratio", ".2f"),
-    ("1Y Beta to S&P 500", ".2f"),
-    ("1Y Excess Return", ".2%"),
-    ("1Y Tracking Error", ".2%"),
-    ("1Y Information Ratio", ".2f"),
-    ("1Y Correlation", ".2f"),
-    ("3Y Annualized Return", ".2%"),
-    ("3Y Annualized Volatility", ".2%"),
-    ("3Y Sharpe Ratio", ".2f"),
-    ("3Y Sortino Ratio", ".2f"),
-    ("3Y Beta to S&P 500", ".2f"),
-    ("3Y Excess Return", ".2%"),
-    ("3Y Tracking Error", ".2%"),
-    ("3Y Information Ratio", ".2f"),
-    ("3Y Correlation", ".2f"),
-    ("5Y Annualized Return", ".2%"),
-    ("5Y Annualized Volatility", ".2%"),
-    ("5Y Sharpe Ratio", ".2f"),
-    ("5Y Sortino Ratio", ".2f"),
-    ("5Y Beta to S&P 500", ".2f"),
-    ("5Y Excess Return", ".2%"),
-    ("5Y Tracking Error", ".2%"),
-    ("5Y Information Ratio", ".2f"),
-    ("5Y Correlation", ".2f"),
-]
-
-RISK_FREE_SERIES = "BCTBill13_TRIndex"
-MARKET_BETA_SERIES = "SPX_TRIndex"
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _series_json_from_store(store_data, series_name: str) -> str:
-    if isinstance(store_data, dict):
-        series_data = store_data.get("series_data")
-        if isinstance(series_data, dict):
-            series_payload = series_data.get(series_name)
-            if isinstance(series_payload, dict):
-                payload = series_payload.get("returns_json")
-                if isinstance(payload, str):
-                    return payload
-    return ""
+def _mapping_payload(value) -> str:
+    return mapping_payload_for_cache(value)
 
 
-def _risk_free_json_from_store(store_data) -> str:
-    return _series_json_from_store(store_data, RISK_FREE_SERIES)
+def _date_range_payload(value) -> str:
+    return date_range_payload_for_cache(value)
 
 
-def _spx_json_from_store(store_data) -> str:
-    return _series_json_from_store(store_data, MARKET_BETA_SERIES)
+@dataclass(frozen=True)
+class _PoWorkingReturnsBundle:
+    raw_data: str
+    periodicity: str
+    benchmark_payload: str
+    long_short_payload: str
+    date_range_payload: str
+    vol_scaler: float
+    vol_scaling_payload: str
+
+
+def _build_po_working_bundle(
+    raw_data,
+    periodicity,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+) -> _PoWorkingReturnsBundle:
+    """Build canonicalized working-return inputs once per callback."""
+    return _PoWorkingReturnsBundle(
+        raw_data=raw_data,
+        periodicity=periodicity or "daily",
+        benchmark_payload=_mapping_payload(benchmark_assignments),
+        long_short_payload=_mapping_payload(long_short_assignments),
+        date_range_payload=_date_range_payload(date_range),
+        vol_scaler=vol_scaler or 0,
+        vol_scaling_payload=_mapping_payload(vol_scaling_assignments),
+    )
+
+
+def _po_get_working_returns(bundle: _PoWorkingReturnsBundle, selected_series) -> pd.DataFrame:
+    series_tuple = tuple(selected_series or ())
+    if not series_tuple or not bundle.raw_data:
+        return pd.DataFrame()
+    return get_working_returns(
+        bundle.raw_data,
+        bundle.periodicity,
+        series_tuple,
+        bundle.benchmark_payload,
+        bundle.long_short_payload,
+        bundle.date_range_payload,
+        bundle.vol_scaler,
+        bundle.vol_scaling_payload,
+    )
+
+
+def _build_apply_weight_matrix(
+    index: pd.DatetimeIndex,
+    series_tuple: tuple[str, ...],
+    window_weights,
+) -> np.ndarray:
+    """Build a dense per-period weight matrix using fast index slicing."""
+    n_rows = len(index)
+    n_cols = len(series_tuple)
+    weight_values = np.zeros((n_rows, n_cols), dtype=float)
+    if n_rows == 0 or n_cols == 0:
+        return weight_values
+
+    for ww in window_weights or ():
+        weights = ww.get("weights", {})
+        if not isinstance(weights, dict):
+            continue
+
+        start = pd.Timestamp(ww["apply_start"])
+        end = pd.Timestamp(ww["apply_end"])
+        start_idx = int(index.searchsorted(start, side="left"))
+        end_idx = int(index.searchsorted(end, side="right"))
+        if start_idx >= end_idx:
+            continue
+
+        row_weights = np.fromiter(
+            (float(weights.get(name, 0.0) or 0.0) for name in series_tuple),
+            dtype=float,
+            count=n_cols,
+        )
+        weight_values[start_idx:end_idx, :] = row_weights
+
+    return weight_values
+
+
+def _compute_monthly_attribution(
+    working_df: pd.DataFrame,
+    selected_series,
+    window_weights,
+) -> pd.DataFrame:
+    """Compute monthly attribution from per-window weights and component returns."""
+    series_tuple = tuple(selected_series or ())
+    if working_df.empty or not series_tuple or not window_weights:
+        return pd.DataFrame()
+
+    working_subset = working_df.loc[:, list(series_tuple)].fillna(0.0)
+    weight_values = _build_apply_weight_matrix(working_subset.index, series_tuple, window_weights)
+    has_weights = weight_values.sum(axis=1) > 0
+    if not np.any(has_weights):
+        return pd.DataFrame()
+
+    attribution_values = weight_values[has_weights] * working_subset.to_numpy(copy=False)[has_weights]
+    attribution_df = pd.DataFrame(
+        attribution_values,
+        index=working_subset.index[has_weights],
+        columns=list(series_tuple),
+    )
+    return attribution_df.resample("ME").sum().dropna(how="all")
+
+
+def _compute_window_risk_contributions(
+    working_df: pd.DataFrame,
+    selected_series,
+    window_weights,
+):
+    """Compute risk-contribution rows for each optimization window."""
+    series_tuple = tuple(selected_series or ())
+    if working_df.empty or not series_tuple or not window_weights:
+        return []
+
+    working_subset = working_df.loc[:, list(series_tuple)]
+    index = working_subset.index
+    rows = []
+    for ww in window_weights:
+        weights = ww.get("weights", {})
+        if not isinstance(weights, dict):
+            continue
+
+        apply_start = pd.Timestamp(ww["apply_start"])
+        apply_end = pd.Timestamp(ww["apply_end"])
+        est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"]))
+        est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"]))
+
+        active_assets = [
+            name for name in series_tuple
+            if abs(float(weights.get(name, 0) or 0)) > 1e-12
+        ]
+        if not active_assets:
+            continue
+
+        start_idx = int(index.searchsorted(est_start, side="left"))
+        end_idx = int(index.searchsorted(est_end, side="right"))
+        if start_idx >= end_idx:
+            continue
+
+        window_returns = working_subset.iloc[start_idx:end_idx][active_assets].dropna(how="all")
+        if window_returns.empty:
+            continue
+
+        valid_assets = [name for name in active_assets if window_returns[name].notna().any()]
+        if not valid_assets:
+            continue
+
+        window_returns = window_returns[valid_assets].fillna(0)
+        rc = compute_risk_contributions(
+            {name: float(weights.get(name, 0) or 0) for name in valid_assets},
+            window_returns,
+        )
+        rows.append(
+            {
+                "apply_start": apply_start,
+                "apply_end": apply_end,
+                "risk_contributions": rc,
+            }
+        )
+
+    return rows
 
 
 def _periodicity_defaults(periodicity):
@@ -5249,18 +5356,25 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
+    timing_ctx = timed_block(
+        "portopt.run_optimization",
+        series_count=len(selected_series or ()),
+        model=opt_model,
+        window_type=opt_window,
+    )
+    timing_ctx.__enter__()
     try:
         # Compute working returns
-        working_df = get_working_returns(
+        working_bundle = _build_po_working_bundle(
             raw_data,
-            periodicity or "daily",
-            tuple(selected_series),
-            json.dumps(benchmark_assignments) if benchmark_assignments else "{}",
-            json.dumps(long_short_assignments) if long_short_assignments else "{}",
-            json.dumps(date_range) if date_range else "null",
-            vol_scaler or 0,
-            json.dumps(vol_scaling_assignments) if vol_scaling_assignments else "{}",
+            periodicity,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
         )
+        working_df = _po_get_working_returns(working_bundle, selected_series)
 
         if working_df.empty:
             return (
@@ -5381,6 +5495,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             {"status": "error", "name": portfolio_name, "message": f"Optimization failed: {str(e)}"},
             no_update,
         )
+    finally:
+        timing_ctx.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -5695,39 +5811,19 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No attribution data available.", c="dimmed")
 
+    timing_ctx = timed_block(
+        "portopt.render_attribution_chart",
+        portfolio=selected_portfolio,
+        series_count=len(opt_series),
+    )
+    timing_ctx.__enter__()
     try:
         # Get the working returns for the component series
-        working_df = get_working_returns(
-            raw_data,
-            periodicity or "daily",
-            tuple(opt_series),
-            json.dumps(bench) if bench else "{}",
-            json.dumps(ls) if ls else "{}",
-            json.dumps(date_range) if date_range else "null",
-            vol_scaler or 0,
-            json.dumps(vol_scaling) if vol_scaling else "{}",
+        working_bundle = _build_po_working_bundle(
+            raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
         )
-
-        # Build per-period weights DataFrame
-        weights_df = pd.DataFrame(0.0, index=working_df.index, columns=opt_series)
-        for ww in window_weights:
-            start = pd.Timestamp(ww["apply_start"])
-            end = pd.Timestamp(ww["apply_end"])
-            mask = (weights_df.index >= start) & (weights_df.index <= end)
-            for s in opt_series:
-                weights_df.loc[mask, s] = ww["weights"].get(s, 0)
-
-        # Trim to periods where weights are applied (non-zero row sum)
-        has_weights = weights_df.sum(axis=1) > 0
-        weights_df = weights_df[has_weights]
-        working_trimmed = working_df.loc[has_weights, opt_series].fillna(0)
-
-        # Compute attribution = weight * return
-        attribution = weights_df * working_trimmed
-
-        # Resample to monthly for readability
-        attribution_monthly = attribution.resample("ME").sum()
-        attribution_monthly = attribution_monthly.dropna(how="all")
+        working_df = _po_get_working_returns(working_bundle, opt_series)
+        attribution_monthly = _compute_monthly_attribution(working_df, opt_series, window_weights)
 
         if attribution_monthly.empty:
             return dmc.Text("No attribution data available.", c="dimmed")
@@ -5756,6 +5852,8 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
 
     except Exception:
         return dmc.Text("Error computing attribution.", c="dimmed")
+    finally:
+        timing_ctx.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -5846,65 +5944,48 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
         return [], []
 
     try:
-        working_df = get_working_returns(
-            raw_data,
-            periodicity or "daily",
-            tuple(opt_series),
-            json.dumps(bench) if bench else "{}",
-            json.dumps(ls) if ls else "{}",
-            json.dumps(date_range) if date_range else "null",
-            vol_scaler or 0,
-            json.dumps(vol_scaling) if vol_scaling else "{}",
-        )
+        with timed_block(
+            "portopt.render_attribution_table",
+            portfolio=selected_portfolio,
+            series_count=len(opt_series),
+        ):
+            working_bundle = _build_po_working_bundle(
+                raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
+            )
+            working_df = _po_get_working_returns(working_bundle, opt_series)
+            attribution_monthly = _compute_monthly_attribution(working_df, opt_series, window_weights)
 
-        weights_df = pd.DataFrame(0.0, index=working_df.index, columns=opt_series)
-        for ww in window_weights:
-            start = pd.Timestamp(ww["apply_start"])
-            end = pd.Timestamp(ww["apply_end"])
-            mask = (weights_df.index >= start) & (weights_df.index <= end)
+            if attribution_monthly.empty:
+                return [], []
+
+            column_defs = [
+                {
+                    "field": "Date",
+                    "pinned": "left",
+                    "width": 120,
+                },
+            ]
             for s in opt_series:
-                weights_df.loc[mask, s] = ww["weights"].get(s, 0)
+                if s in attribution_monthly.columns:
+                    column_defs.append({
+                        "field": s,
+                        "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                        "width": 100,
+                    })
 
-        # Trim to periods where weights are applied (non-zero row sum)
-        has_weights = weights_df.sum(axis=1) > 0
-        weights_df = weights_df[has_weights]
-        working_trimmed = working_df.loc[has_weights, opt_series].fillna(0)
+            # Add Total column
+            attribution_monthly["Total"] = attribution_monthly[opt_series].sum(axis=1)
+            column_defs.append({
+                "field": "Total",
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "width": 100,
+            })
 
-        attribution = weights_df * working_trimmed
-        attribution_monthly = attribution.resample("ME").sum()
-        attribution_monthly = attribution_monthly.dropna(how="all")
+            df_reset = attribution_monthly.reset_index()
+            df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
+            row_data = df_reset.to_dict("records")
 
-        if attribution_monthly.empty:
-            return [], []
-
-        column_defs = [
-            {
-                "field": "Date",
-                "pinned": "left",
-                "width": 120,
-            },
-        ]
-        for s in opt_series:
-            if s in attribution_monthly.columns:
-                column_defs.append({
-                    "field": s,
-                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
-                    "width": 100,
-                })
-
-        # Add Total column
-        attribution_monthly["Total"] = attribution_monthly[opt_series].sum(axis=1)
-        column_defs.append({
-            "field": "Total",
-            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
-            "width": 100,
-        })
-
-        df_reset = attribution_monthly.reset_index()
-        df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
-        row_data = df_reset.to_dict("records")
-
-        return column_defs, row_data
+            return column_defs, row_data
 
     except Exception:
         return [], []
@@ -5931,71 +6012,72 @@ def po_render_statistics(results, active_tab, selected_portfolios, saved_series_
     show = selected_portfolios or list(results.keys())
 
     try:
-        # Build a combined returns DataFrame from selected portfolio results
-        all_returns = {}
-        for pname in show:
-            pdata = results.get(pname)
-            if not pdata:
-                continue
-            returns_json = pdata.get("returns_json")
-            if returns_json:
-                s = pd.read_json(StringIO(returns_json), typ="series")
-                s.index = pd.to_datetime(s.index)
-                all_returns[pname] = s
+        with timed_block("portopt.render_statistics", portfolio_count=len(show)):
+            # Build a combined returns DataFrame from selected portfolio results
+            all_returns = {}
+            for pname in show:
+                pdata = results.get(pname)
+                if not pdata:
+                    continue
+                returns_json = pdata.get("returns_json")
+                if returns_json:
+                    s = pd.read_json(StringIO(returns_json), typ="series")
+                    s.index = pd.to_datetime(s.index)
+                    all_returns[pname] = s
 
-        if not all_returns:
-            return [], []
+            if not all_returns:
+                return [], []
 
-        combined_df = pd.DataFrame(all_returns)
-        combined_df = combined_df.sort_index()
-        combined_df.index.name = "Date"
+            combined_df = pd.DataFrame(all_returns)
+            combined_df = combined_df.sort_index()
+            combined_df.index.name = "Date"
 
-        # Convert to raw-data JSON format for calculate_statistics_cached
-        raw_json = df_to_json(combined_df)
-        portfolio_names = list(all_returns.keys())
+            # Convert to raw-data JSON format for calculate_statistics_cached
+            raw_json = df_to_json(combined_df)
+            portfolio_names = list(all_returns.keys())
 
-        stats = calculate_statistics_cached(
-            raw_json,
-            periodicity or "daily",
-            tuple(portfolio_names),
-            "{}",
-            "{}",
-            "null",
-            0,
-            "{}",
-            _risk_free_json_from_store(saved_series_store),
-            _spx_json_from_store(saved_series_store),
-        )
+            stats = calculate_statistics_cached(
+                raw_json,
+                periodicity or "daily",
+                tuple(portfolio_names),
+                "{}",
+                "{}",
+                "null",
+                0,
+                "{}",
+                _risk_free_json_from_store(saved_series_store),
+                _spx_json_from_store(saved_series_store),
+            )
 
-        if not stats:
-            return [], []
+            if not stats:
+                return [], []
 
-        column_defs = [
-            {"field": "Statistic", "pinned": "left", "width": 200},
-        ]
-        for series_stats in stats:
-            series_name = series_stats["Series"]
-            column_defs.append({
-                "field": series_name,
-                "width": 120,
-                "valueFormatter": {
-                    "function": "(!params.data._format || params.value == null) ? params.value : d3.format(params.data._format)(params.value)"
-                },
-            })
-
-        row_data = []
-        for stat_name, fmt in STATS_CONFIG:
-            row = {"Statistic": stat_name, "_format": fmt}
+            column_defs = [
+                {"field": "Statistic", "pinned": "left", "width": 200},
+            ]
             for series_stats in stats:
                 series_name = series_stats["Series"]
-                value = series_stats.get(stat_name)
-                if value is None or (isinstance(value, float) and pd.isna(value)):
-                    row[series_name] = None
-                else:
-                    row[series_name] = value
-            row_data.append(row)
+                column_defs.append({
+                    "field": series_name,
+                    "width": 120,
+                    "valueFormatter": {
+                        "function": "(!params.data._format || params.value == null) ? params.value : d3.format(params.data._format)(params.value)"
+                    },
+                })
 
-        return column_defs, row_data
+            row_data = []
+            for stat_name, fmt in STATS_CONFIG:
+                row = {"Statistic": stat_name, "_format": fmt}
+                for series_stats in stats:
+                    series_name = series_stats["Series"]
+                    value = series_stats.get(stat_name)
+                    if value is None or (isinstance(value, float) and pd.isna(value)):
+                        row[series_name] = None
+                    else:
+                        row[series_name] = value
+                row_data.append(row)
+
+            return column_defs, row_data
 
     except Exception:
         return [], []
@@ -6085,15 +6167,29 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
     if n_clicks is None or not results:
         raise PreventUpdate
 
+    timing_ctx = timed_block("portopt.download_excel.total", portfolio_count=len(results))
+    timing_ctx.__enter__()
     try:
+        working_bundle = _build_po_working_bundle(
+            raw_data,
+            periodicity,
+            bench,
+            ls,
+            date_range,
+            vol_scaler,
+            vol_scaling,
+        )
+        working_df_cache: dict[tuple, pd.DataFrame] = {}
+
         # Build combined returns DataFrame
-        all_returns = {}
-        for pname, pdata in results.items():
-            returns_json = pdata.get("returns_json")
-            if returns_json:
-                s = pd.read_json(StringIO(returns_json), typ="series")
-                s.index = pd.to_datetime(s.index)
-                all_returns[pname] = s
+        with timed_block("portopt.download_excel.build_returns"):
+            all_returns = {}
+            for pname, pdata in results.items():
+                returns_json = pdata.get("returns_json")
+                if returns_json:
+                    s = pd.read_json(StringIO(returns_json), typ="series")
+                    s.index = pd.to_datetime(s.index)
+                    all_returns[pname] = s
 
         if not all_returns:
             raise PreventUpdate
@@ -6106,19 +6202,20 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             # Sheet 1: Statistics
             try:
-                raw_json = df_to_json(combined_df)
-                stats = calculate_statistics_cached(
-                    raw_json, "daily", tuple(portfolio_names),
-                    "{}", "{}", "null", 0, "{}",
-                    _risk_free_json_from_store(saved_series_store),
-                    _spx_json_from_store(saved_series_store),
-                )
-                if stats:
-                    stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}
-                    for series_stats in stats:
-                        sname = series_stats["Series"]
-                        stats_data[sname] = [series_stats.get(sn) for sn, _ in STATS_CONFIG]
-                    pd.DataFrame(stats_data).to_excel(writer, sheet_name="Statistics", index=False)
+                with timed_block("portopt.download_excel.statistics"):
+                    raw_json = df_to_json(combined_df)
+                    stats = calculate_statistics_cached(
+                        raw_json, "daily", tuple(portfolio_names),
+                        "{}", "{}", "null", 0, "{}",
+                        _risk_free_json_from_store(saved_series_store),
+                        _spx_json_from_store(saved_series_store),
+                    )
+                    if stats:
+                        stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}
+                        for series_stats in stats:
+                            sname = series_stats["Series"]
+                            stats_data[sname] = [series_stats.get(sn) for sn, _ in STATS_CONFIG]
+                        pd.DataFrame(stats_data).to_excel(writer, sheet_name="Statistics", index=False)
             except Exception:
                 pass
 
@@ -6161,46 +6258,41 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
                 pass
 
             # Sheet: Attribution (one per portfolio)
-            for pname, pdata in results.items():
-                try:
-                    config = pdata.get("config", {})
-                    opt_series = config.get("selected_series", [])
-                    window_weights = pdata.get("window_weights", [])
-                    if not window_weights or not opt_series or not raw_data:
-                        continue
+            with timed_block("portopt.download_excel.attribution_loop", portfolio_count=len(results)):
+                for pname, pdata in results.items():
+                    try:
+                        config = pdata.get("config", {})
+                        opt_series = config.get("selected_series", [])
+                        window_weights = pdata.get("window_weights", [])
+                        if not window_weights or not opt_series or not raw_data:
+                            continue
 
-                    working_df = get_working_returns(
-                        raw_data,
-                        periodicity or "daily",
-                        tuple(opt_series),
-                        json.dumps(bench) if bench else "{}",
-                        json.dumps(ls) if ls else "{}",
-                        json.dumps(date_range) if date_range else "null",
-                        vol_scaler or 0,
-                        json.dumps(vol_scaling) if vol_scaling else "{}",
-                    )
+                        series_key = tuple(opt_series)
+                        working_df = working_df_cache.get(series_key)
+                        if working_df is None:
+                            working_df = _po_get_working_returns(working_bundle, series_key)
+                            working_df_cache[series_key] = working_df
+                        if working_df.empty:
+                            continue
 
-                    weights_df = pd.DataFrame(0.0, index=working_df.index, columns=opt_series)
-                    for ww in window_weights:
-                        start = pd.Timestamp(ww["apply_start"])
-                        end = pd.Timestamp(ww["apply_end"])
-                        mask = (weights_df.index >= start) & (weights_df.index <= end)
-                        for s_name in opt_series:
-                            weights_df.loc[mask, s_name] = ww["weights"].get(s_name, 0)
-
-                    attribution = weights_df * working_df[opt_series].fillna(0)
-                    attribution_monthly = attribution.resample("ME").sum().dropna(how="all")
-                    if not attribution_monthly.empty:
-                        sheet_name = f"Attrib-{pname}"[:31]
-                        attribution_monthly.to_excel(writer, sheet_name=sheet_name)
-                except Exception:
-                    pass
+                        attribution_monthly = _compute_monthly_attribution(
+                            working_df,
+                            opt_series,
+                            window_weights,
+                        )
+                        if not attribution_monthly.empty:
+                            sheet_name = f"Attrib-{pname}"[:31]
+                            attribution_monthly.to_excel(writer, sheet_name=sheet_name)
+                    except Exception:
+                        pass
 
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), "portfolio_optimization.xlsx")
 
     except Exception:
         raise PreventUpdate
+    finally:
+        timing_ctx.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -6240,60 +6332,28 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No risk data available.", c="dimmed")
 
+    timing_ctx = timed_block(
+        "portopt.render_risk_chart",
+        portfolio=selected_portfolio,
+        series_count=len(opt_series),
+    )
+    timing_ctx.__enter__()
     try:
-        working_df = get_working_returns(
-            raw_data,
-            periodicity or "daily",
-            tuple(opt_series),
-            json.dumps(bench) if bench else "{}",
-            json.dumps(ls) if ls else "{}",
-            json.dumps(date_range) if date_range else "null",
-            vol_scaler or 0,
-            json.dumps(vol_scaling) if vol_scaling else "{}",
+        working_bundle = _build_po_working_bundle(
+            raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
         )
+        working_df = _po_get_working_returns(working_bundle, opt_series)
 
-        # Compute risk contributions for each window (stacked bar like attribution)
-        all_dates = []
+        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights)
+        if not risk_rows:
+            return dmc.Text("No risk data available.", c="dimmed")
+
+        all_dates = [row["apply_end"] for row in risk_rows]
         all_contributions = {s: [] for s in opt_series}
-
-        for ww in window_weights:
-            weights = ww.get("weights", {})
-            if not isinstance(weights, dict):
-                continue
-
-            # Risk contribution is estimated from the same estimation window
-            # used to compute this set of weights.
-            est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"]))
-            est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"]))
-            apply_end = pd.Timestamp(ww["apply_end"])
-
-            active_assets = [
-                s for s in opt_series
-                if abs(float(weights.get(s, 0) or 0)) > 1e-12
-            ]
-            if not active_assets:
-                continue
-
-            mask = (working_df.index >= est_start) & (working_df.index <= est_end)
-            window_returns = working_df.loc[mask, active_assets].dropna(how="all")
-            if window_returns.empty:
-                continue
-
-            valid_assets = [a for a in active_assets if window_returns[a].notna().any()]
-            if not valid_assets:
-                continue
-
-            window_returns = window_returns[valid_assets].fillna(0)
-            rc = compute_risk_contributions(
-                {a: float(weights.get(a, 0) or 0) for a in valid_assets},
-                window_returns,
-            )
-            all_dates.append(apply_end)
+        for row in risk_rows:
+            rc = row["risk_contributions"]
             for s in opt_series:
                 all_contributions[s].append(rc.get(s, 0) * 100)
-
-        if not all_dates:
-            return dmc.Text("No risk data available.", c="dimmed")
 
         fig = go.Figure()
         for s in opt_series:
@@ -6318,6 +6378,8 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
 
     except Exception:
         return dmc.Text("Error computing risk contributions.", c="dimmed")
+    finally:
+        timing_ctx.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -6357,36 +6419,19 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
     if not window_weights or not opt_series or not raw_data:
         return [], []
 
+    timing_ctx = timed_block(
+        "portopt.render_risk_table",
+        portfolio=selected_portfolio,
+        series_count=len(opt_series),
+    )
+    timing_ctx.__enter__()
     try:
-        working_df = get_working_returns(
-            raw_data,
-            periodicity or "daily",
-            tuple(opt_series),
-            json.dumps(bench) if bench else "{}",
-            json.dumps(ls) if ls else "{}",
-            json.dumps(date_range) if date_range else "null",
-            vol_scaler or 0,
-            json.dumps(vol_scaling) if vol_scaling else "{}",
+        working_bundle = _build_po_working_bundle(
+            raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
         )
-
-        weights_df = pd.DataFrame(0.0, index=working_df.index, columns=opt_series)
-        for ww in window_weights:
-            start = pd.Timestamp(ww["apply_start"])
-            end = pd.Timestamp(ww["apply_end"])
-            mask = (weights_df.index >= start) & (weights_df.index <= end)
-            for s in opt_series:
-                weights_df.loc[mask, s] = ww["weights"].get(s, 0)
-
-        # Trim to periods where weights are applied (non-zero row sum)
-        has_weights = weights_df.sum(axis=1) > 0
-        weights_df = weights_df[has_weights]
-        working_trimmed = working_df.loc[has_weights, opt_series].fillna(0)
-
-        attribution = weights_df * working_trimmed
-        attribution_monthly = attribution.resample("ME").sum()
-        attribution_monthly = attribution_monthly.dropna(how="all")
-
-        if attribution_monthly.empty:
+        working_df = _po_get_working_returns(working_bundle, opt_series)
+        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights)
+        if not risk_rows:
             return [], []
 
         column_defs = [
@@ -6401,37 +6446,10 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
             })
 
         row_data = []
-        for ww in window_weights:
-            start = pd.Timestamp(ww["apply_start"])
-            end = pd.Timestamp(ww["apply_end"])
-            weights = ww.get("weights", {})
-            if not isinstance(weights, dict):
-                continue
-
-            est_start = pd.Timestamp(ww.get("est_start", ww["apply_start"]))
-            est_end = pd.Timestamp(ww.get("est_end", ww["apply_end"]))
-
-            active_assets = [
-                s for s in opt_series
-                if abs(float(weights.get(s, 0) or 0)) > 1e-12
-            ]
-            if not active_assets:
-                continue
-
-            mask = (working_df.index >= est_start) & (working_df.index <= est_end)
-            window_returns = working_df.loc[mask, active_assets].dropna(how="all")
-            if window_returns.empty:
-                continue
-
-            valid_assets = [a for a in active_assets if window_returns[a].notna().any()]
-            if not valid_assets:
-                continue
-
-            window_returns = window_returns[valid_assets].fillna(0)
-            rc = compute_risk_contributions(
-                {a: float(weights.get(a, 0) or 0) for a in valid_assets},
-                window_returns,
-            )
+        for row in risk_rows:
+            start = row["apply_start"]
+            end = row["apply_end"]
+            rc = row["risk_contributions"]
             row = {
                 "Window Start": start.strftime("%Y-%m-%d"),
                 "Window End": end.strftime("%Y-%m-%d"),
@@ -6444,6 +6462,8 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
 
     except Exception:
         return [], []
+    finally:
+        timing_ctx.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -6639,17 +6659,24 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No frontier data available.", c="dimmed")
 
+    timing_ctx = timed_block(
+        "portopt.render_frontier_chart",
+        portfolio=selected_portfolio,
+        series_count=len(opt_series),
+        risk_measure=rm,
+    )
+    timing_ctx.__enter__()
     try:
-        working_df = get_working_returns(
+        frontier_working_bundle = _build_po_working_bundle(
             raw_data,
-            periodicity or "daily",
-            tuple(opt_series),
-            json.dumps(bench) if bench else "{}",
-            json.dumps(ls) if ls else "{}",
-            "null",  # No date range filter - use estimation window dates instead
-            vol_scaler or 0,
-            json.dumps(vol_scaling) if vol_scaling else "{}",
+            periodicity,
+            bench,
+            ls,
+            None,  # No date range filter - use estimation window dates instead
+            vol_scaler,
+            vol_scaling,
         )
+        working_df = _po_get_working_returns(frontier_working_bundle, opt_series)
 
 
         # Select the window's estimation data (not the apply period)
@@ -6885,7 +6912,8 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab,
         return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
     except Exception as e:
-        import traceback
-
         return dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed")
+    finally:
+        timing_ctx.__exit__(None, None, None)
+
 
