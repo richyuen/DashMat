@@ -140,3 +140,29 @@
 [data-mantine-color-scheme="dark"] .dashmat-menu-dropdown .mantine-Menu-item {
     color: #e9ecef;
 }
+
+/* Rounded accordion treatment (controls + help guides) */
+.page-container .mantine-Accordion-item,
+.dashmat-modal .mantine-Accordion-item {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: rgba(255, 255, 255, 0.92);
+    margin-bottom: 8px;
+}
+
+.page-container .mantine-Accordion-item:last-of-type,
+.dashmat-modal .mantine-Accordion-item:last-of-type {
+    margin-bottom: 0;
+}
+
+.page-container .mantine-Accordion-control,
+.dashmat-modal .mantine-Accordion-control {
+    border-radius: 12px;
+}
+
+[data-mantine-color-scheme="dark"] .page-container .mantine-Accordion-item,
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Accordion-item {
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: rgba(30, 33, 39, 0.92);
+}
