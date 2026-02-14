@@ -449,6 +449,97 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
     assert "MV" in results_out["MyPort"]["frontier_cache"]["0"]
 
 
+def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    raw_idx = pd.to_datetime(["1976-06-30", "1976-07-30", "1976-08-30", "1976-09-30"])
+    raw_df = pd.DataFrame(
+        {
+            "Asset_A": [0.01, 0.02, 0.03, 0.04],
+            "Asset_B": [0.02, 0.01, -0.01, 0.00],
+        },
+        index=raw_idx,
+    )
+    raw_df.index.name = "Date"
+    raw_json = df_to_json(raw_df)
+
+    working_df = raw_df.copy()
+    working_df.index = pd.to_datetime(["1976-06-30", "1976-07-31", "1976-08-31", "1976-09-30"])
+    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: working_df.copy())
+
+    monkeypatch.setattr(
+        portopt,
+        "run_portfolio_optimization",
+        lambda *_args, **_kwargs: (
+            [
+                SimpleNamespace(
+                    apply_start=pd.Timestamp("1976-06-30"),
+                    apply_end=pd.Timestamp("1976-09-30"),
+                    est_start=pd.Timestamp("1976-06-30"),
+                    est_end=pd.Timestamp("1976-09-30"),
+                    weights={"Asset_A": 0.5, "Asset_B": 0.5},
+                )
+            ],
+            pd.Series(
+                [0.005, 0.006, 0.007, 0.008],
+                index=pd.to_datetime(["1976-06-30", "1976-07-31", "1976-08-31", "1976-09-30"]),
+            ),
+            {},
+        ),
+    )
+
+    results_out, new_raw, status, _pending = portopt.po_run_optimization(
+        1,
+        raw_json,
+        "monthly",
+        "monthly",
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        {},
+        {},
+        False,
+        63,
+        "MyPort",
+        "full",
+        12,
+        1,
+        "months",
+        "risk_parity",
+        "fill_na",
+        "off",
+        {},
+        [],
+        {},
+        {},
+        [],
+        0.05,
+        "maximize_sharpe",
+        {},
+        {},
+        "ret_cov",
+        [],
+        None,
+    )
+
+    assert status["status"] == "complete"
+    assert "MyPort" in results_out
+
+    df_after = pd.read_json(StringIO(new_raw), orient="split")
+    df_after.index = pd.to_datetime(df_after.index)
+    assert pd.Timestamp("1976-07-30") not in df_after.index
+    assert pd.Timestamp("1976-07-31") in df_after.index
+    assert pd.Timestamp("1976-08-31") in df_after.index
+    assert df_after.index.is_month_end.all()
+    assert df_after.loc[pd.Timestamp("1976-07-31"), "MyPort"] == pytest.approx(0.006)
+    assert df_after.loc[pd.Timestamp("1976-08-31"), "MyPort"] == pytest.approx(0.007)
+
+
 def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, page_modules):
     _, portopt = page_modules
 

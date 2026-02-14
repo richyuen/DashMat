@@ -20,6 +20,8 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import detect_periodicity, get_sheet_names, parse_uploaded_file
 from utils.returns import (
+    align_monthly_index_to_month_end,
+    align_monthly_series_to_month_end,
     calculate_excess_returns,
     df_to_json,
     get_available_periodicities,
@@ -272,6 +274,13 @@ def _annualization_for_periodicity(periodicity) -> int:
     if p == "monthly":
         return 12
     return 252
+
+
+def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
+    """Canonicalize monthly indexes only when the workflow is monthly."""
+    if periodicity == "monthly":
+        return align_monthly_index_to_month_end(df)
+    return df
 
 
 RF_CANONICAL_NAMES = {
@@ -4999,13 +5008,15 @@ def po_add_series_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for selected FOFBench values.")
 
-        # Database import is treated as daily by design.
+        # Database import is daily unless every selected series is monthly-only.
         new_periodicity = "daily"
+        any_start_daily = False
         all_start_daily = True
         daily_transition_notes: list[str] = []
         for series_name in new_df.columns:
             meta = db_meta.get(series_name, {}) if isinstance(db_meta, dict) else {}
             starts_daily = bool(meta.get("starts_daily", True))
+            any_start_daily = any_start_daily or starts_daily
             if not starts_daily:
                 all_start_daily = False
                 daily_start_date = meta.get("daily_start_date")
@@ -5013,6 +5024,8 @@ def po_add_series_from_database(
                     daily_transition_notes.append(f"{series_name}: {daily_start_date}")
                 else:
                     daily_transition_notes.append(f"{series_name}: no daily phase detected")
+        if not any_start_daily:
+            new_periodicity = "monthly"
 
         if existing_data is not None:
             existing_df = json_to_df(existing_data)
@@ -5024,10 +5037,13 @@ def po_add_series_from_database(
                 combined_periodicity = "monthly"
             else:
                 combined_periodicity = existing_periodicity
+            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
+            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
             merged_df = merge_returns(existing_df, new_df)
         else:
             merged_df = new_df
             combined_periodicity = new_periodicity
+            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
 
         periodicity_options = get_available_periodicities(combined_periodicity)
         if combined_periodicity == "daily":
@@ -5161,10 +5177,13 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
                 combined_periodicity = "monthly"
             else:
                 combined_periodicity = existing_periodicity
+            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
+            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
             merged_df = merge_returns(existing_df, new_df)
         else:
             merged_df = new_df
             combined_periodicity = new_periodicity
+            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
 
         periodicity_options = get_available_periodicities(combined_periodicity)
         default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
@@ -5278,10 +5297,13 @@ def po_on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_fi
                 combined_periodicity = "monthly"
             else:
                 combined_periodicity = existing_periodicity
+            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
+            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
             merged_df = merge_returns(existing_df, new_df)
         else:
             merged_df = new_df
             combined_periodicity = new_periodicity
+            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
 
         periodicity_options = get_available_periodicities(combined_periodicity)
         default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
@@ -6639,8 +6661,14 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             counter += 1
 
         # Add portfolio returns to raw data
-        portfolio_series = portfolio_returns.reindex(existing_df.index)
-        existing_df[final_name] = portfolio_series
+        if periodicity == "monthly":
+            existing_df = align_monthly_index_to_month_end(existing_df)
+            portfolio_series = align_monthly_series_to_month_end(portfolio_returns)
+            portfolio_frame = portfolio_series.to_frame(name=final_name)
+            existing_df = merge_returns(existing_df, portfolio_frame)
+        else:
+            portfolio_series = portfolio_returns.reindex(existing_df.index)
+            existing_df[final_name] = portfolio_series
         new_raw_data = df_to_json(existing_df)
 
         # Store results

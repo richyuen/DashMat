@@ -131,6 +131,64 @@ def compound_returns(returns: pd.Series) -> float:
     return np.prod(growth_factors) - 1
 
 
+def align_monthly_series_to_month_end(series: pd.Series) -> pd.Series:
+    """Normalize a monthly return series to calendar month-end.
+
+    If multiple observations collapse onto the same month-end date after
+    normalization, they are compounded into a single return.
+    """
+    if series is None or series.empty:
+        return series
+
+    out = series.copy()
+    out.index = pd.to_datetime(out.index)
+    shifted_index = out.index + pd.offsets.MonthEnd(0)
+
+    # Fast path: already canonical and unique.
+    if (
+        shifted_index.equals(out.index)
+        and out.index.is_monotonic_increasing
+        and not out.index.has_duplicates
+    ):
+        return out
+
+    out.index = shifted_index
+    if out.index.has_duplicates:
+        out = (1 + out).groupby(level=0).prod(min_count=1) - 1
+    out = out.sort_index()
+    out.index.name = series.index.name
+    return out
+
+
+def align_monthly_index_to_month_end(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize all monthly return rows to calendar month-end.
+
+    Duplicate month-end rows created by normalization are compounded
+    column-wise into one row per month-end.
+    """
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+    out.index = pd.to_datetime(out.index)
+    shifted_index = out.index + pd.offsets.MonthEnd(0)
+
+    # Fast path: already canonical and unique.
+    if (
+        shifted_index.equals(out.index)
+        and out.index.is_monotonic_increasing
+        and not out.index.has_duplicates
+    ):
+        return out
+
+    out.index = shifted_index
+    if out.index.has_duplicates:
+        out = (1 + out).groupby(level=0).prod(min_count=1) - 1
+    out = out.sort_index()
+    out.index.name = df.index.name
+    return out
+
+
 
 def mask_partial_periods(resampled_df: pd.DataFrame, original_df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
     """Mask partial periods at the start and end of each series based on stricter rules.

@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from utils.returns import (
+    align_monthly_index_to_month_end,
+    align_monthly_series_to_month_end,
     annualization_factor,
     calculate_excess_returns,
     df_to_json,
@@ -117,3 +119,26 @@ def test_annualization_factor_defaults_to_daily():
     assert annualization_factor("daily") == 252
     assert annualization_factor("monthly") == 12
     assert annualization_factor("unknown") == 252
+
+
+def test_align_monthly_index_to_month_end_shifts_and_compounds_duplicates():
+    idx = pd.to_datetime(["2024-01-30", "2024-01-31", "2024-02-27"])
+    df = pd.DataFrame({"A": [0.01, 0.02, 0.03]}, index=idx)
+    df.index.name = "Date"
+
+    aligned = align_monthly_index_to_month_end(df)
+
+    assert list(aligned.index) == [pd.Timestamp("2024-01-31"), pd.Timestamp("2024-02-29")]
+    assert aligned.loc[pd.Timestamp("2024-01-31"), "A"] == pytest.approx((1.01 * 1.02) - 1)
+    assert aligned.loc[pd.Timestamp("2024-02-29"), "A"] == pytest.approx(0.03)
+
+
+def test_align_monthly_series_to_month_end_is_noop_when_already_canonical():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29"])
+    s = pd.Series([0.01, 0.02], index=idx, name="R")
+    s.index.name = "Date"
+
+    aligned = align_monthly_series_to_month_end(s)
+
+    assert list(aligned.index) == list(s.index)
+    assert aligned.tolist() == pytest.approx(s.tolist())

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import StringIO
+
 import pandas as pd
 import pytest
 from dash import no_update
@@ -142,3 +144,51 @@ def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules)
     analyticstool, _ = page_modules
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "growth") is no_update
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "correlogram") == {"num_series": 2}
+
+
+def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+
+    imported = pd.DataFrame(
+        {"Test_TRIndex": [0.01, 0.02, 0.03]},
+        index=pd.to_datetime(["1976-06-30", "1976-07-30", "1976-08-30"]),
+    )
+    imported.index.name = "Date"
+    meta = {
+        "Test_TRIndex": {
+            "starts_daily": False,
+            "daily_start_date": None,
+        }
+    }
+
+    monkeypatch.setattr(
+        analyticstool,
+        "load_cma_returns_for_benches_with_meta",
+        lambda *_args, **_kwargs: (imported.copy(), meta),
+    )
+
+    result = analyticstool.add_series_from_database(
+        1,
+        ["Test_TRIndex"],
+        None,
+        None,
+        [],
+        {},
+        {},
+        [],
+        False,
+        {},
+    )
+
+    out_json = result[0]
+    out_periodicity = result[1]
+    out_default_periodicity = result[3]
+
+    out_df = pd.read_json(StringIO(out_json), orient="split")
+    out_df.index = pd.to_datetime(out_df.index)
+
+    assert out_periodicity == "monthly"
+    assert out_default_periodicity == "monthly"
+    assert out_df.index.is_month_end.all()
+    assert pd.Timestamp("1976-07-30") not in out_df.index
+    assert pd.Timestamp("1976-07-31") in out_df.index
