@@ -1,0 +1,35 @@
+# DashMat Automated Tests
+
+This directory is the single source of truth for automated validation.
+
+## Scope
+
+- `tests/unit/`: utility-layer behavior and deterministic calculation logic.
+- `tests/callbacks/`: callback-level contracts for `pages/analyticstool.py` and `pages/portopt.py`.
+- `tests/scripts/`: script/flow verification for optimization checks, benchmark tooling, and data-generation helpers.
+
+## Run
+
+```bash
+# Install dev-only test dependencies
+conda run -n dashmat python -m pip install -r requirements-dev.txt
+
+# Run full suite
+conda run -n dashmat python -m pytest -q tests
+```
+
+## Coverage Gate
+
+Coverage is enforced at `>=85%` for core deterministic modules configured in `pytest.ini`:
+
+- `cache_config`
+- `utils.serialization`
+- `utils.perf_timing`
+- `utils.parsing`
+- `tools.data.generate_test_data`
+
+## Notes
+
+- Tests are isolated: no live network or production DB dependencies.
+- Page callback tests import `app` first (required before importing `pages/*` modules due `register_page`).
+- Legacy root tests were migrated into this folder; use pytest instead of direct script execution.

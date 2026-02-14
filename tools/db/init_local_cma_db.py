@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import Date, Float, Integer, MetaData, String, Table, Column, text
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from dbengine import engine, engine_MRD, DATABASE_URL, MRD_DATABASE_URL
 from utils.sample_data import get_sample_file_path

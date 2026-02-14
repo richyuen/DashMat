@@ -46,17 +46,22 @@ conda run -n dashmat python app.py --debug
 ## Tests and checks
 
 ```bash
-python test_factor_rp.py
-python verify_linear_constraints.py
-python generate_test_data.py
-# Non-interactive shell alternative:
-conda run -n dashmat python test_factor_rp.py
-conda run -n dashmat python verify_linear_constraints.py
-conda run -n dashmat python generate_test_data.py
+python -m pip install -r requirements-dev.txt
+python -m pytest -q tests
+python tools/benchmark_callback_latency.py
+python tools/data/generate_test_data.py
+python tools/db/init_local_cma_db.py
+# Non-interactive shell alternatives:
+conda run -n dashmat python -m pip install -r requirements-dev.txt
+conda run -n dashmat python -m pytest -q tests
+conda run -n dashmat python tools/benchmark_callback_latency.py
+conda run -n dashmat python tools/data/generate_test_data.py
+conda run -n dashmat python tools/db/init_local_cma_db.py
 ```
 
-If you change optimization logic, run both optimization-related checks.
-If you change upload/parsing/statistics flows, also do a quick manual pass in `/analyticstool`.
+If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` (or the full suite).
+If you change upload/parsing/statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
+Automated test guidance is maintained in `tests/README.md`.
 
 ## Code map
 
@@ -76,7 +81,7 @@ If you change upload/parsing/statistics flows, also do a quick manual pass in `/
 - Avoid broad refactors in large callback files; patch the smallest safe section.
 - Add concise comments only when logic is non-obvious.
 - Do not introduce new dependencies unless necessary.
-- Do not mutate or delete database table data from web application runtime/callback code. Any table creation, backfill, truncate, delete, or reseed operation must live in explicit setup/migration scripts (e.g., `init_local_cma_db.py`) and never in page interaction paths.
+- Do not mutate or delete database table data from web application runtime/callback code. Any table creation, backfill, truncate, delete, or reseed operation must live in explicit setup/migration scripts (e.g., `tools/db/init_local_cma_db.py`) and never in page interaction paths.
 
 ## Data and behavior expectations
 
@@ -96,5 +101,5 @@ If you change upload/parsing/statistics flows, also do a quick manual pass in `/
 Before finishing:
 1. Confirm app starts (`python app.py`).
 2. Confirm the edited workflow executes without callback errors.
-3. Run relevant test scripts for touched logic.
+3. Run `python -m pytest -q tests` (or targeted pytest modules for touched logic).
 4. Check there are no obvious regressions in tab rendering or series selection behavior.

@@ -36,8 +36,17 @@ conda run -n dashmat python app.py
 # Run with debug mode (hot reload)
 conda run -n dashmat python app.py --debug
 
+# Install dev/test dependencies
+conda run -n dashmat python -m pip install -r requirements-dev.txt
+
+# Run automated tests
+conda run -n dashmat python -m pytest -q tests
+
 # Generate test data
-conda run -n dashmat python generate_test_data.py
+conda run -n dashmat python tools/data/generate_test_data.py
+
+# Initialize local CMA/MRD test databases
+conda run -n dashmat python tools/db/init_local_cma_db.py
 ```
 
 ## Architecture
@@ -46,10 +55,18 @@ conda run -n dashmat python generate_test_data.py
 DashMat/
 ├── app.py                    # Entry point, MantineProvider, cache init
 ├── cache_config.py           # Flask-Caching setup with lazy memoize decorator
-├── generate_test_data.py     # Test data generator (10 series named Series_1-10)
 ├── requirements.txt          # Python dependencies
+├── requirements-dev.txt      # Dev/test dependencies (pytest, pytest-cov)
 ├── CLAUDE.md                 # This file
-├── TESTING_CHECKLIST.md      # Manual testing checklist for all features
+├── TEST_PLAN.md              # High-level manual validation plan
+├── tools/
+│   ├── benchmark_callback_latency.py   # Latency benchmark harness
+│   ├── data/
+│   │   └── generate_test_data.py       # Benchmark return sample data downloader/exporter
+│   └── db/
+│       └── init_local_cma_db.py        # Local CMA/MRD database initializer
+├── tests/                    # Automated test suite (unit, callbacks, scripts)
+│   └── README.md             # Test scope, commands, and coverage rules
 ├── pages/
 │   ├── __init__.py
 │   ├── home.py               # Welcome/portal page (links to /dashboard)
@@ -368,12 +385,18 @@ dag.AgGrid(
 ## Testing
 
 ```bash
-# Generate test data with 10 series (Series_1 through Series_10)
-python generate_test_data.py
-# Creates test_data.csv with random daily returns and varying date ranges
+# Install dev/test dependencies
+conda run -n dashmat python -m pip install -r requirements-dev.txt
+
+# Run full automated suite
+conda run -n dashmat python -m pytest -q tests
+
+# Optional: run callback latency benchmark harness
+conda run -n dashmat python tools/benchmark_callback_latency.py
 ```
 
-See `TESTING_CHECKLIST.md` for a comprehensive manual testing guide covering all tabs, state persistence, periodicity conversion, and export.
+Automated test structure and coverage gate details are maintained in `tests/README.md`.
+Manual workflow validation checklist remains in `TEST_PLAN.md`.
 
 ## Excel Export
 

@@ -67,7 +67,7 @@ def convert_percents_to_decimals(df: pd.DataFrame) -> pd.DataFrame:
     result = df.copy()
 
     for col in result.columns:
-        if result[col].dtype == object:
+        if pd.api.types.is_object_dtype(result[col]) or pd.api.types.is_string_dtype(result[col]):
             # Convert to string once and cache it
             str_series = result[col].astype(str)
             # Check if any values contain '%'

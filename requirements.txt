@@ -10,3 +10,4 @@ Flask-Caching>=2.3.1
 pandas_market_calendars>=5.3.0
 riskfolio-lib>=7.2.0
 SQLAlchemy>=2.0.0
+yfinance>=0.2.66

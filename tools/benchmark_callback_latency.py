@@ -9,13 +9,19 @@ from __future__ import annotations
 import hashlib
 from io import StringIO
 import itertools
+from pathlib import Path
 import statistics
+import sys
 import time
 from typing import Callable
 
 import numpy as np
 import pandas as pd
 from flask import Flask
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import cache_config
 from utils.returns import df_to_json, get_working_returns
