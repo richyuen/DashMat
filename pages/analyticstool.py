@@ -620,7 +620,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
                                         "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "center-header",
+                                        "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -711,7 +711,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
                                         "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "center-header",
+                                        "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -755,7 +755,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
                                         "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "center-header",
+                                        "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -809,7 +809,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 "resizable": True,
                                 "suppressHeaderMenuButton": True,
                                 "cellStyle": {"textAlign": "center"},
-                                "headerClass": "center-header",
+                                "headerClass": "dashmat-center-header",
                             },
                             style={"height": "100%", "width": "100%"},
                             dashGridOptions={
@@ -895,7 +895,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
                                         "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "center-header",
+                                        "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -952,7 +952,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "resizable": True,
                                         "suppressHeaderMenuButton": True,
                                         "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "center-header",
+                                        "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
                                     dashGridOptions={
@@ -975,7 +975,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 layout = dmc.Container(
     fluid=True,
     style={"height": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "hidden"}, # 45px for header + 10px bottom margin
-    className='page-container',
+    className='dashmat-page-container',
     children=[
         # Stores for state management
         dmc.Paper(
@@ -2951,7 +2951,7 @@ def update_series_selectors(
 
     grid = dag.AgGrid(
         id="series-selection-grid",
-        className="ag-theme-alpine series-modal-grid",
+        className="ag-theme-alpine dashmat-series-modal-grid",
         getRowId="params.data.Series",
         columnDefs=[
             {
@@ -2964,7 +2964,7 @@ def update_series_selectors(
                 "width": 36,
                 "pinned": "left",
                 "valueGetter": {"function": "''"},
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "headerName": "",
@@ -2976,14 +2976,14 @@ def update_series_selectors(
                 "resizable": False,
                 "width": 56,
                 "pinned": "left",
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "field": "Series",
                 "editable": True,
                 "minWidth": 150,
                 "cellStyle": {"textAlign": "left", "fontFamily": "monospace"},
-                "headerClass": "left-header",
+                "headerClass": "dashmat-left-header",
             },
             {
                 "field": "Benchmark",
@@ -2998,7 +2998,7 @@ def update_series_selectors(
                 },
                 "minWidth": 150,
                 "cellStyle": {"textAlign": "left"},
-                "headerClass": "left-header",
+                "headerClass": "dashmat-left-header",
             },
             {
                 "field": "LongShort",
@@ -3007,7 +3007,7 @@ def update_series_selectors(
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
                 "width": 72,
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "field": "ScaleVol",
@@ -3016,7 +3016,7 @@ def update_series_selectors(
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
                 "width": 106,
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "field": "Delete",
@@ -3024,7 +3024,7 @@ def update_series_selectors(
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
                 "width": 78,
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
         ],
         rowData=row_data,
@@ -3036,7 +3036,7 @@ def update_series_selectors(
             "suppressHeaderMenuButton": True,
             "suppressMovable": True,
             "cellStyle": {"textAlign": "center"},
-            "headerClass": "center-header",
+            "headerClass": "dashmat-center-header",
         },
         style={"height": "46vh", "width": "100%"},
         dashGridOptions={
@@ -3826,7 +3826,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                     "pinned": "left",
                     "width": 100,
                     "cellStyle": {"textAlign": "center"},
-                    "headerClass": "center-header",
+                    "headerClass": "dashmat-center-header",
                 }
             ]
 
@@ -3836,7 +3836,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                         "field": series,
                         "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                         "width": 120,
-                        "headerClass": "center-header",
+                        "headerClass": "dashmat-center-header",
                     }
                     if cell_style:
                         col_def["cellStyle"] = cell_style

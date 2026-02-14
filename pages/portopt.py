@@ -1455,14 +1455,14 @@ def build_po_main_layout():
                                         id="po-linear-constraints-grid",
                                         className='ag-theme-alpine',
                                         columnDefs=[
-                                            {"field": "Constraint", "editable": True, "width": 120, "headerClass": "center-header"},
+                                            {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
                                             {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
-                                             "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+                                             "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
                                             {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
-                                             "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+                                             "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
                                         ],
                                         rowData=[],
-                                        defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "200px"},
                                         dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                     ),
@@ -1747,7 +1747,7 @@ def build_po_main_layout():
                                                          "hide": True}, # Hidden by default
                                                     ],
                                                     rowData=[],
-                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "200px"},
                                                     dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
@@ -1814,7 +1814,7 @@ def build_po_main_layout():
                                                     columnDefs=[], # Populated dynamically
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100, "suppressHeaderMenuButton": True,
-                                                    "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format('.4f')(Number(params.value)) : ''"}, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                                    "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format('.4f')(Number(params.value)) : ''"}, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "300px"},
                                                     dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
@@ -1866,24 +1866,24 @@ def build_po_main_layout():
                                                         {"field": "Type", "editable": True, "width": 100,
                                                          "cellEditor": "agSelectCellEditor",
                                                          "cellEditorParams": {"values": ["absolute", "relative"]},
-                                                         "headerClass": "center-header"},
+                                                         "headerClass": "dashmat-center-header"},
                                                         {"field": "Asset", "editable": True, "width": 150,
-                                                         "headerClass": "center-header"},
+                                                         "headerClass": "dashmat-center-header"},
                                                         {"field": "Asset_To", "editable": True, "width": 150,
                                                          "headerName": "vs Asset (rel)",
-                                                         "headerClass": "center-header"},
+                                                         "headerClass": "dashmat-center-header"},
                                                         {"field": "Return", "editable": True, "width": 100,
                                                          "type": "numericColumn",
                                                          "valueFormatter": {"function": "d3.format('.2f')(params.value) + '%'"},
                                                          "valueParser": {"function": "Number(params.newValue)"},
-                                                         "headerClass": "center-header"},
+                                                         "headerClass": "dashmat-center-header"},
                                                         {"field": "Confidence", "editable": True, "width": 100,
                                                          "type": "numericColumn",
                                                          "valueFormatter": {"function": "d3.format('.2f')(params.value)"},
-                                                         "headerClass": "center-header"},
+                                                         "headerClass": "dashmat-center-header"},
                                                     ],
                                                     rowData=[],
-                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "200px"},
                                                     dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
                                                 ),
@@ -2018,7 +2018,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -2058,7 +2058,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -2098,7 +2098,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -2138,7 +2138,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -2209,7 +2209,7 @@ def build_po_main_layout():
                                         className='ag-theme-alpine',
                                         columnDefs=[],
                                         rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "100%", "width": "100%"},
                                         dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                                     ),
@@ -2229,7 +2229,7 @@ def build_po_main_layout():
                                 className='ag-theme-alpine',
                                 columnDefs=[],
                                 rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                 style={"height": "100%", "width": "100%"},
                                 dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                             ),
@@ -2247,7 +2247,7 @@ def build_po_main_layout():
                                 className='ag-theme-alpine',
                                 columnDefs=[],
                                 rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "center-header"},
+                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                 style={"height": "100%", "width": "100%"},
                                 dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
                             ),
@@ -2277,7 +2277,7 @@ def build_po_main_layout():
 layout = dmc.Container(
     fluid=True,
     style={"minHeight": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "auto"},
-    className='page-container',
+    className='dashmat-page-container',
     children=[
         # Menu bar
         dmc.Paper(
@@ -3551,18 +3551,18 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
     hide_vol = (mode != "ret_vol_corr")
     
     column_defs = [
-        {"field": "Asset", "editable": False, "width": 140, "headerClass": "center-header"},
+        {"field": "Asset", "editable": False, "width": 140, "headerClass": "dashmat-center-header"},
         {"field": "Return", "editable": True, "width": 110,
          "type": "numericColumn",
          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
          "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
-         "headerClass": "center-header"},
+         "headerClass": "dashmat-center-header"},
         {"field": "Volatility", "editable": True, "width": 110,
          "type": "numericColumn",
          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
          "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
          "hide": hide_vol,
-         "headerClass": "center-header"},
+         "headerClass": "dashmat-center-header"},
     ]
 
     rows = []
@@ -3870,7 +3870,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
     existing_matrix = existing_matrix or {}
 
     matrix_defs = [{"field": "Asset", "editable": False, "width": 140, "pinned": "left",
-                    "valueFormatter": {"function": "params.value"}, "headerClass": "center-header"}]
+                    "valueFormatter": {"function": "params.value"}, "headerClass": "dashmat-center-header"}]
     for s in selected_series:
         matrix_defs.append({
             "field": s,
@@ -3878,7 +3878,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
             "width": 110,
             "type": "numericColumn",
             "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format(',.4f')(Number(params.value)) : ''"},
-            "headerClass": "center-header",
+            "headerClass": "dashmat-center-header",
         })
 
     rows = []
@@ -4320,11 +4320,11 @@ def po_populate_linear_constraints_columns(selected_series):
         return []
     
     cols = [
-        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "center-header"},
+        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
         {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
-         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
         {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
-         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "center-header"},
+         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
     ]
     
     for s in selected_series:
@@ -4334,7 +4334,7 @@ def po_populate_linear_constraints_columns(selected_series):
             "width": 100,
             "type": "numericColumn",
             "valueFormatter": {"function": "d3.format('.4f')(params.value)"},
-            "headerClass": "center-header",
+            "headerClass": "dashmat-center-header",
         })
         
     return cols
@@ -5525,7 +5525,7 @@ def po_update_series_selectors(
 
     grid = dag.AgGrid(
         id="po-series-selection-grid",
-        className="ag-theme-alpine series-modal-grid",
+        className="ag-theme-alpine dashmat-series-modal-grid",
         getRowId="params.data.Series",
         columnDefs=[
             {
@@ -5538,7 +5538,7 @@ def po_update_series_selectors(
                 "width": 36,
                 "pinned": "left",
                 "valueGetter": {"function": "''"},
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "headerName": "",
@@ -5550,14 +5550,14 @@ def po_update_series_selectors(
                 "resizable": False,
                 "width": 56,
                 "pinned": "left",
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "field": "Series",
                 "editable": True,
                 "minWidth": 150,
                 "cellStyle": {"textAlign": "left", "fontFamily": "monospace"},
-                "headerClass": "left-header",
+                "headerClass": "dashmat-left-header",
             },
             {
                 "field": "Benchmark",
@@ -5572,7 +5572,7 @@ def po_update_series_selectors(
                 },
                 "minWidth": 150,
                 "cellStyle": {"textAlign": "left"},
-                "headerClass": "left-header",
+                "headerClass": "dashmat-left-header",
             },
             {
                 "field": "CMABench",
@@ -5595,7 +5595,7 @@ def po_update_series_selectors(
                 },
                 "minWidth": 130,
                 "cellStyle": {"textAlign": "left"},
-                "headerClass": "left-header",
+                "headerClass": "dashmat-left-header",
             },
             {
                 "field": "LongShort",
@@ -5604,7 +5604,7 @@ def po_update_series_selectors(
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
                 "width": 72,
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "field": "ScaleVol",
@@ -5613,7 +5613,7 @@ def po_update_series_selectors(
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
                 "width": 112,
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "field": "MinWt",
@@ -5621,8 +5621,8 @@ def po_update_series_selectors(
                 "editable": {"function": "!params.data.ForceMax"},
                 "width": 98,
                 "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 0; return Math.max(0, Math.min(100, n));"},
-                "cellClass": "series-center-cell",
-                "headerClass": "center-header",
+                "cellClass": "dashmat-series-center-cell",
+                "headerClass": "dashmat-center-header",
             },
             {
                 "field": "MaxWt",
@@ -5630,8 +5630,8 @@ def po_update_series_selectors(
                 "editable": True,
                 "width": 98,
                 "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 100; return Math.max(0, Math.min(100, n));"},
-                "cellClass": "series-center-cell",
-                "headerClass": "center-header",
+                "cellClass": "dashmat-series-center-cell",
+                "headerClass": "dashmat-center-header",
             },
             {
                 "field": "ForceMax",
@@ -5640,7 +5640,7 @@ def po_update_series_selectors(
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
                 "width": 70,
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
             {
                 "field": "Delete",
@@ -5648,7 +5648,7 @@ def po_update_series_selectors(
                 "cellRenderer": "agCheckboxCellRenderer",
                 "cellEditor": "agCheckboxCellEditor",
                 "width": 74,
-                "cellClass": "series-center-cell",
+                "cellClass": "dashmat-series-center-cell",
             },
         ],
         rowData=row_data,
@@ -5660,7 +5660,7 @@ def po_update_series_selectors(
             "suppressHeaderMenuButton": True,
             "suppressMovable": True,
             "cellStyle": {"textAlign": "center"},
-            "headerClass": "center-header",
+            "headerClass": "dashmat-center-header",
         },
         style={"height": "46vh", "width": "100%"},
         dashGridOptions={

@@ -6,8 +6,8 @@
     --ag-list-item-height: 22px;
 }
 
-[data-mantine-color-scheme="light"] .ag-theme-alpine.series-modal-grid,
-[data-mantine-color-scheme="dark"] .ag-theme-alpine.series-modal-grid {
+[data-mantine-color-scheme="light"] .ag-theme-alpine.dashmat-series-modal-grid,
+[data-mantine-color-scheme="dark"] .ag-theme-alpine.dashmat-series-modal-grid {
     --ag-grid-size: 4px;
     --ag-row-height: 28px;
     --ag-header-height: 30px;
@@ -26,27 +26,27 @@
     --ag-secondary-foreground-color: #909296;
 }
 
-.ag-theme-alpine .center-header .ag-header-cell-label {
+.ag-theme-alpine .dashmat-center-header .ag-header-cell-label {
     justify-content: center;
 }
 
-.ag-theme-alpine .left-header .ag-header-cell-label {
+.ag-theme-alpine .dashmat-left-header .ag-header-cell-label {
     justify-content: flex-start;
 }
 
-.ag-theme-alpine.series-modal-grid .ag-cell.series-center-cell {
+.ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell {
     text-align: center;
 }
 
-.ag-theme-alpine.series-modal-grid .ag-cell.series-center-cell .ag-cell-wrapper {
+.ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-cell-wrapper {
     justify-content: center;
 }
 
-.ag-theme-alpine.series-modal-grid .ag-cell.series-center-cell .ag-row-drag {
+.ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-row-drag {
     margin: 0 auto;
 }
 
-.ag-theme-alpine.series-modal-grid .ag-header-cell.center-header .ag-header-cell-comp-wrapper {
+.ag-theme-alpine.dashmat-series-modal-grid .ag-header-cell.dashmat-center-header .ag-header-cell-comp-wrapper {
     display: flex;
     width: 100%;
     justify-content: center;
@@ -142,7 +142,7 @@
 }
 
 /* Rounded accordion treatment (controls + help guides) */
-.page-container .mantine-Accordion-item,
+.dashmat-page-container .mantine-Accordion-item,
 .dashmat-modal .mantine-Accordion-item {
     border-radius: 12px;
     overflow: hidden;
@@ -151,17 +151,17 @@
     margin-bottom: 8px;
 }
 
-.page-container .mantine-Accordion-item:last-of-type,
+.dashmat-page-container .mantine-Accordion-item:last-of-type,
 .dashmat-modal .mantine-Accordion-item:last-of-type {
     margin-bottom: 0;
 }
 
-.page-container .mantine-Accordion-control,
+.dashmat-page-container .mantine-Accordion-control,
 .dashmat-modal .mantine-Accordion-control {
     border-radius: 12px;
 }
 
-[data-mantine-color-scheme="dark"] .page-container .mantine-Accordion-item,
+[data-mantine-color-scheme="dark"] .dashmat-page-container .mantine-Accordion-item,
 [data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Accordion-item {
     border: 1px solid rgba(148, 163, 184, 0.24);
     background: rgba(30, 33, 39, 0.92);

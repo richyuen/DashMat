@@ -1065,7 +1065,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
             "pinned": "left",
             "width": 80,
             "cellStyle": {"textAlign": "center"},
-            "headerClass": "center-header",
+            "headerClass": "dashmat-center-header",
         }
     ]
 
@@ -1075,7 +1075,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
             "field": month,
             "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
             "width": 90,
-            "headerClass": "center-header",
+            "headerClass": "dashmat-center-header",
         }
         if cell_style:
             col_def["cellStyle"] = cell_style
@@ -1086,7 +1086,7 @@ def create_monthly_view(raw_data, series_name, original_periodicity, selected_pe
         "field": "Ann",
         "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
         "width": 90,
-        "headerClass": "center-header",
+        "headerClass": "dashmat-center-header",
     }
     if cell_style:
         ann_def["cellStyle"] = cell_style
