@@ -73,7 +73,7 @@ def test_factor_risk_parity_optimization_smoke():
         "linear_constraints": [],
     }
 
-    windows, portfolio_returns = run_portfolio_optimization(returns_df, config)
+    windows, portfolio_returns, _meta = run_portfolio_optimization(returns_df, config)
 
     assert len(windows) == 1
     weights = windows[0].weights
@@ -105,7 +105,7 @@ def test_linear_constraints_respected_in_rolling_min_variance():
         "linear_constraints": linear_constraints,
     }
 
-    windows, portfolio_returns = run_portfolio_optimization(returns_df, config)
+    windows, portfolio_returns, _meta = run_portfolio_optimization(returns_df, config)
 
     assert len(windows) > 0
     assert len(portfolio_returns) > 0

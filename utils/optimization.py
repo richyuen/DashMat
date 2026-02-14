@@ -20,6 +20,66 @@ class WindowResult:
     est_end: pd.Timestamp = None    # Estimation window end    
 
 
+def _annualized_return(returns: pd.Series, periods_per_year: float) -> float:
+    """Annualized return with <=1 year shortcut used by statistics layer."""
+    clean = returns.dropna()
+    n_periods = len(clean)
+    if n_periods == 0:
+        return np.nan
+    cum_ret = (1 + clean).prod() - 1
+    years = n_periods / periods_per_year
+    if years == 0:
+        return np.nan
+    if years <= 1.0:
+        return float(cum_ret)
+    return float((1 + cum_ret) ** (1 / years) - 1)
+
+
+def _annualized_return_calendar_days(returns: pd.Series, periodicity: str) -> float:
+    """Annualized return based on calendar days for daily/weekly periodicities."""
+    clean = returns.dropna()
+    if clean.empty:
+        return np.nan
+    cum_ret = (1 + clean).prod() - 1
+    end_date = clean.index.max()
+    start_date = clean.index.min()
+    if str(periodicity or "").startswith("weekly_"):
+        start_date = start_date - pd.Timedelta(days=6)
+    calendar_days = (end_date - start_date).days + 1
+    if calendar_days <= 0:
+        return np.nan
+    years = calendar_days / 365.25
+    if years <= 1.0:
+        return float(cum_ret)
+    return float((1 + cum_ret) ** (1 / years) - 1)
+
+
+def _annualized_return_for_periodicity(returns: pd.Series, periodicity: str, periods_per_year: float) -> float:
+    p = periodicity or "daily"
+    if p in ("daily", "daily_trading") or p.startswith("weekly_"):
+        return _annualized_return_calendar_days(returns, p)
+    return _annualized_return(returns, periods_per_year)
+
+
+def _window_risk_free_annual(
+    risk_free_series: pd.Series | None,
+    est_index: pd.DatetimeIndex,
+    periodicity: str,
+    periods_per_year: float,
+    fallback_rf: float,
+):
+    """Resolve window-level annual risk-free return from cached risk-free series."""
+    if risk_free_series is None or risk_free_series.empty:
+        return float(fallback_rf), False
+    aligned = risk_free_series.reindex(pd.DatetimeIndex(est_index)).dropna()
+    if aligned.empty:
+        return float(fallback_rf), False
+    ann = _annualized_return_for_periodicity(aligned, periodicity, periods_per_year)
+    if not np.isfinite(ann):
+        return float(fallback_rf), False
+    return float(ann), True
+
+
 def _compute_windows(df, window_type, window_size, opt_step, fill_in_sample=False,
                      opt_step_unit="periods"):
     """Compute optimization windows as (est_start, est_end, apply_start, apply_end) tuples.
@@ -327,7 +387,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
                          forced_weights, free_series,
                          ex_ante_returns, ex_ante_cov, objective,
         window_data=None, exp_wt_cov=False, halflife=63,
-        ex_ante_vol=None, ex_ante_corr=None, linear_constraints=None):
+        ex_ante_vol=None, ex_ante_corr=None, linear_constraints=None, rf=0.0):
     """Run ex ante mean-variance optimization.
 
     Args:
@@ -471,7 +531,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            w = port.optimization(model="Classic", rm=rm, obj=obj_str, hist=False)
+            w = port.optimization(model="Classic", rm=rm, obj=obj_str, hist=False, rf=rf)
     except Exception:
         w = None
 
@@ -480,7 +540,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                w = port.optimization(model="Classic", rm=rm, obj="MinRisk", hist=False)
+                w = port.optimization(model="Classic", rm=rm, obj="MinRisk", hist=False, rf=rf)
         except Exception:
             w = None
 
@@ -507,7 +567,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
 def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_bounds,
                               forced_weights, free_series,
                               bl_views, bl_tau, objective,
-                              exp_wt_cov=False, halflife=63, linear_constraints=None):
+                              exp_wt_cov=False, halflife=63, linear_constraints=None, rf=0.0):
     """Run Black-Litterman optimization.
 
     Uses historical returns for the equilibrium prior, then blends with user views.
@@ -595,7 +655,7 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
             P=P_df,
             Q=Q_df,
             delta=None,  # auto-compute market risk aversion
-            rf=0,
+            rf=rf,
             eq=True,  # use equilibrium returns as prior
         )
 
@@ -655,7 +715,7 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
     obj_str, rm = obj_map.get(objective, ("Sharpe", "MV"))
 
     try:
-        w = port.optimization(model="BL", rm=rm, obj=obj_str, hist=False)
+        w = port.optimization(model="BL", rm=rm, obj=obj_str, hist=False, rf=rf)
     except Exception:
         # Fallback to equal weight
         result = dict(forced_weights)
@@ -689,7 +749,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
                              ex_ante_returns=None, ex_ante_cov=None,
                              ex_ante_vol=None, ex_ante_corr=None,
                              bl_views=None, bl_tau=0.05, objective="maximize_sharpe",
-                             linear_constraints=None):
+                             linear_constraints=None, rf=0.0):
     """Run optimization for a single window.
 
     Args:
@@ -735,6 +795,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             exp_wt_cov, halflife,
             ex_ante_vol, ex_ante_corr,
             linear_constraints,
+            rf,
         )
 
     if model == "black_litterman":
@@ -744,6 +805,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             bl_views or [], bl_tau, objective,
             exp_wt_cov, halflife,
             linear_constraints=linear_constraints,
+            rf=rf,
         )
 
     # Build riskfolio Portfolio
@@ -852,7 +914,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             use_hist = not exp_wt_cov
             # Explicitly ensure ainequality is set if provided
 
-            w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=use_hist)
+            w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=use_hist, rf=rf)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
         elif model == "minimize_variance":
@@ -899,7 +961,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
         progress_callback: Dash set_progress function for background callbacks
 
     Returns:
-        Tuple of (list[WindowResult], pd.Series of portfolio returns)
+        Tuple of (list[WindowResult], pd.Series of portfolio returns, dict run_meta)
 
     Raises:
         ValueError: If constraints are infeasible or insufficient data
@@ -926,8 +988,33 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     bl_views = config.get("bl_views", None)
     bl_tau = config.get("bl_tau", 0.05)
     objective = config.get("objective", "maximize_sharpe")
-    objective = config.get("objective", "maximize_sharpe")
+    periodicity = config.get("periodicity", "daily")
     linear_constraints = config.get("linear_constraints", None)
+    risk_free_annual = float(config.get("risk_free_annual", 0.0) or 0.0)
+    risk_free_mode = config.get("risk_free_mode", "fixed_annual")
+    risk_free_series = config.get("risk_free_series", None)
+    if isinstance(risk_free_series, pd.Series):
+        risk_free_series = risk_free_series.sort_index()
+        try:
+            risk_free_series.index = pd.to_datetime(risk_free_series.index)
+        except Exception:
+            pass
+    else:
+        risk_free_series = None
+
+    run_meta = {
+        "risk_free_source": config.get("risk_free_source", "unused"),
+        "risk_free_warning": config.get("risk_free_warning"),
+        "risk_free_annual_default": risk_free_annual,
+        "risk_free_fallback_used": False,
+    }
+    p = periodicity or "daily"
+    if str(p).startswith("weekly"):
+        periods_per_year = 52
+    elif p == "monthly":
+        periods_per_year = 12
+    else:
+        periods_per_year = 252
 
     # Filter to selected series only
     available_cols = [s for s in selected_series if s in returns_df.columns]
@@ -967,7 +1054,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
             est_start=df.index[0],
             est_end=df.index[-1],
         )]
-        return window_results, portfolio_returns
+        return window_results, portfolio_returns, run_meta
 
     # ----- Ex ante models: single-period optimization (no windowing) -----
     is_ex_ante = model in ("ex_ante_mv", "black_litterman")
@@ -1015,6 +1102,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
             "bl_tau": bl_tau,
             "objective": objective,
             "linear_constraints": linear_constraints,
+            "rf": risk_free_annual,
         })
             
         # Optimization
@@ -1037,7 +1125,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
                 )
             )
 
-        return window_results, portfolio_returns
+        return window_results, portfolio_returns, run_meta
 
     # ----- Standard models: windowed optimization -----
     # Compute windows
@@ -1102,11 +1190,24 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
                     w_result[s] = 0.0
             w_result_final = w_result
         else:
+            rf_window = risk_free_annual
+            if model == "maximize_sharpe":
+                if risk_free_mode == "series":
+                    rf_window, has_rf = _window_risk_free_annual(
+                        risk_free_series=risk_free_series,
+                        est_index=est_data.index,
+                        periodicity=periodicity,
+                        periods_per_year=periods_per_year,
+                        fallback_rf=risk_free_annual,
+                    )
+                    if not has_rf:
+                        run_meta["risk_free_fallback_used"] = True
             # Run optimization
             w_result = _optimize_single_window(
                 est_data, model, window_assets, window_lower, window_upper,
                 window_forced, window_free, exp_wt_cov, halflife,
                 linear_constraints=linear_constraints,
+                rf=rf_window,
             )
             # Add zero weight for excluded series
             w_result_final = {s: w_result.get(s, 0.0) for s in available_cols}
@@ -1145,7 +1246,13 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     has_weights = weights_df.sum(axis=1) > 0
     portfolio_returns = portfolio_returns[has_weights]
 
-    return window_results, portfolio_returns
+    if model == "maximize_sharpe" and run_meta.get("risk_free_fallback_used"):
+        run_meta["risk_free_warning"] = (
+            run_meta.get("risk_free_warning")
+            or "Risk-free series unavailable for one or more windows; used default fallback risk-free rate."
+        )
+
+    return window_results, portfolio_returns, run_meta
 
 
 def compute_risk_contributions(weights_dict, returns_df):

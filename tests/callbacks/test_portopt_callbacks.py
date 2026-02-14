@@ -216,20 +216,20 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
     with pytest.raises(PreventUpdate):
         # Guard path first: no click should PreventUpdate.
         portopt.po_run_optimization(
-            0, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, None, 0, {},
+            0, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, {}, None, 0, {},
             {}, {}, {}, False, 63, "MyPortfolio", "full", 252, 21, "periods",
             "risk_parity", "fill_na", "off", {}, [],
             {}, {}, [], 0.05, "maximize_sharpe",
-            {}, {}, "ret_cov", [],
+            {}, {}, "ret_cov", [], None,
         )
 
     # Now force callback path and verify returned error payload.
     result = portopt.po_run_optimization(
-        1, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, None, 0, {},
+        1, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, {}, None, 0, {},
         {}, {}, {}, False, 63, "MyPortfolio", "full", 252, 21, "periods",
         "risk_parity", "fill_na", "off", {}, [],
         {}, {}, [], 0.05, "maximize_sharpe",
-        {}, {}, "ret_cov", [],
+        {}, {}, "ret_cov", [], None,
     )
     status = result[2]
     assert status["status"] == "error"
@@ -351,10 +351,13 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         {},
         0,
         {},
+        {},
+        None,
         [],
     )
 
     assert any(col["field"] == "Wt_Asset_A" for col in column_defs)
+    assert any(col["field"] == "Sharpe Ratio" for col in column_defs)
     assert any(row["Type"] == "Optimized Portfolio" for row in row_data)
     assert any(row["Type"] == "Frontier Point" for row in row_data)
 
@@ -410,6 +413,7 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
         ["Asset_A", "Asset_B"],
         {},
         {},
+        {},
         None,
         0,
         {},
@@ -437,6 +441,7 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
         {},
         "ret_cov",
         [],
+        None,
     )
 
     assert status["status"] == "complete"
@@ -508,6 +513,7 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
         "daily",
         {},
         {},
+        {},
         None,
         0,
         {},
@@ -529,4 +535,5 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
 
     frontier_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Frontier")
     assert "Wt_Asset_A" in frontier_df.columns
+    assert "Sharpe Ratio" in frontier_df.columns
     assert "Frontier Point" in set(frontier_df["Type"])

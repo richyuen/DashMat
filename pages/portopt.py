@@ -29,6 +29,7 @@ from utils.returns import (
     resample_returns,
     resample_returns_cached,
     annualization_factor,
+    is_daily,
 )
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
 from utils.perf_timing import timed_block
@@ -38,7 +39,11 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
-from utils.statistics import calculate_statistics_cached
+from utils.statistics import (
+    calculate_statistics_cached,
+    annualized_return,
+    annualized_return_calendar_days,
+)
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
 from utils.core_categories import (
@@ -267,6 +272,171 @@ def _annualization_for_periodicity(periodicity) -> int:
     if p == "monthly":
         return 12
     return 252
+
+
+RF_CANONICAL_NAMES = {
+    "bctbill13",
+    "bctbill13trindex",
+}
+RF_KEYWORD_TOKENS = (
+    "sofr",
+    "tbill",
+    "t bill",
+    "treasury bill",
+    "3m cash",
+    "3 month cash",
+    "3m treasury",
+    "3 month treasury",
+)
+
+
+def _normalize_label_for_match(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value).strip().lower().replace("-", " ").replace("_", " ")
+    text = " ".join(text.split())
+    return text
+
+
+def _looks_like_risk_free_label(value: str | None) -> bool:
+    label = _normalize_label_for_match(value)
+    if not label:
+        return False
+    compact = label.replace(" ", "")
+    if compact in RF_CANONICAL_NAMES:
+        return True
+    return any(tok in label for tok in RF_KEYWORD_TOKENS)
+
+
+def _resolve_risk_free_asset_name(asset_names, cmabench_assignments):
+    """Find a risk-free asset among selected assets via name/CMABench mapping."""
+    bench_map = cmabench_assignments or {}
+    for asset in asset_names or ():
+        if _looks_like_risk_free_label(asset):
+            return str(asset)
+        mapped_bench = bench_map.get(asset)
+        if _looks_like_risk_free_label(mapped_bench):
+            return str(asset)
+    return None
+
+
+@cache_config.cache.memoize(timeout=3600)
+def _get_latest_bctbill13_hmm_mean_cached():
+    """Return latest 10-year (hmm) CMA mean for BCTBill13, if available."""
+    try:
+        with DB_ENGINE.connect() as conn:
+            latest_version = conn.execute(
+                text("SELECT MAX(Version) FROM CMAStats WHERE Type = 'hmm'")
+            ).scalar()
+            if latest_version is None:
+                return {"version": None, "mean": None}
+            mean_value = conn.execute(
+                text(
+                    "SELECT Value FROM CMAStats "
+                    "WHERE Version = :v AND Type = 'hmm' "
+                    "AND Bench = 'BCTBill13' AND Item = 'Mean'"
+                ),
+                {"v": int(latest_version)},
+            ).scalar()
+            if mean_value is None:
+                return {"version": int(latest_version), "mean": None}
+            return {"version": int(latest_version), "mean": float(mean_value)}
+    except Exception:
+        return {"version": None, "mean": None}
+
+
+def _annualized_return_for_periodicity_local(returns: pd.Series, periodicity: str) -> float:
+    """Match statistics annualization behavior for risk-free return streams."""
+    if returns is None:
+        return np.nan
+    clean = returns.dropna()
+    if clean.empty:
+        return np.nan
+    p = periodicity or "daily"
+    periods_per_year = _annualization_for_periodicity(p)
+    if is_daily(p) or p.startswith("weekly_"):
+        return annualized_return_calendar_days(clean, p)
+    return annualized_return(clean, periods_per_year)
+
+
+def _risk_free_series_for_periodicity(saved_series_store, periodicity):
+    """Get cached risk-free series (BCTBill13_TRIndex) for selected periodicity."""
+    rf_json = _risk_free_json_from_store(saved_series_store)
+    if not rf_json:
+        return None
+    try:
+        rf_df = resample_returns_cached(rf_json, periodicity or "daily")
+    except Exception:
+        return None
+    if rf_df is None or rf_df.empty:
+        return None
+    rf_col = rf_df.columns[0]
+    rf_series = rf_df[rf_col]
+    if rf_series.empty:
+        return None
+    rf_series.index = pd.to_datetime(rf_series.index)
+    return rf_series.sort_index().dropna()
+
+
+def _resolve_risk_free_context(
+    model,
+    asset_order,
+    periodicity,
+    expected_mu_annual,
+    reference_index,
+    saved_series_store,
+    cmabench_assignments,
+):
+    """Resolve annual risk-free rate for optimization/frontier Sharpe logic."""
+    if model in {"ex_ante_mv", "black_litterman"}:
+        rf_asset = _resolve_risk_free_asset_name(asset_order, cmabench_assignments)
+        if rf_asset and expected_mu_annual:
+            rf_value = _coerce_float(expected_mu_annual.get(rf_asset))
+            if rf_value is not None:
+                return {
+                    "rf_annual": float(rf_value),
+                    "rf_source": "asset_expected",
+                    "rf_warning": None,
+                    "rf_asset": rf_asset,
+                }
+        cma_payload = _get_latest_bctbill13_hmm_mean_cached() or {}
+        cma_mean = _coerce_float(cma_payload.get("mean"))
+        if cma_mean is not None:
+            return {
+                "rf_annual": float(cma_mean),
+                "rf_source": "cma_bctbill13_hmm_latest",
+                "rf_warning": None,
+                "rf_asset": "BCTBill13",
+            }
+        return {
+            "rf_annual": 0.0,
+            "rf_source": "fallback_0",
+            "rf_warning": "Risk-free rate unavailable; using rf=0 fallback.",
+            "rf_asset": None,
+        }
+
+    rf_series = _risk_free_series_for_periodicity(saved_series_store, periodicity)
+    if rf_series is not None:
+        if reference_index is not None:
+            aligned = rf_series.reindex(pd.DatetimeIndex(reference_index)).dropna()
+        else:
+            aligned = rf_series.dropna()
+        if not aligned.empty:
+            ann_rf = _annualized_return_for_periodicity_local(aligned, periodicity or "daily")
+            ann_rf = _coerce_float(ann_rf)
+            if ann_rf is not None:
+                return {
+                    "rf_annual": float(ann_rf),
+                    "rf_source": "stats_cached_bctbill13",
+                    "rf_warning": None,
+                    "rf_asset": "BCTBill13_TRIndex",
+                }
+    return {
+        "rf_annual": 0.0,
+        "rf_source": "fallback_0",
+        "rf_warning": "Risk-free rate unavailable; using rf=0 fallback.",
+        "rf_asset": None,
+    }
 
 
 def _validate_ex_ante_expected_inputs(
@@ -680,6 +850,8 @@ def _build_frontier_snapshot(
     window_idx,
     rm,
     linear_constraints,
+    saved_series_store=None,
+    cmabench_assignments=None,
 ):
     """Compute frontier snapshot for chart/table/export with optional custom moments."""
     window_weights = portfolio_data.get("window_weights", []) or []
@@ -750,6 +922,18 @@ def _build_frontier_snapshot(
         mu_vec = est_data.mean().values
         cov_mat = est_data.cov().values
 
+    expected_mu_annual = {c: float(mu_vec[i] * ann) for i, c in enumerate(actual_cols)}
+    rf_context = _resolve_risk_free_context(
+        model=model,
+        asset_order=actual_cols,
+        periodicity=periodicity,
+        expected_mu_annual=expected_mu_annual,
+        reference_index=est_data.index,
+        saved_series_store=saved_series_store,
+        cmabench_assignments=cmabench_assignments,
+    )
+    rf_annual = float(rf_context.get("rf_annual", 0.0) or 0.0)
+
     port_ret = float((w_arr @ mu_vec) * ann)
     if risk_measure == "CVaR":
         port_returns = est_data.values @ w_arr
@@ -789,6 +973,9 @@ def _build_frontier_snapshot(
         "window_est_start": est_start.strftime("%Y-%m-%d"),
         "window_est_end": est_end.strftime("%Y-%m-%d"),
         "asset_order": actual_cols,
+        "rf_annual": rf_annual,
+        "rf_source": rf_context.get("rf_source"),
+        "rf_warning": rf_context.get("rf_warning"),
         "portfolio": {
             "name": str(selected_portfolio),
             "return": port_ret,
@@ -808,7 +995,17 @@ def _build_frontier_table_rows(snapshot):
         return []
 
     asset_order = snapshot.get("asset_order", []) or []
+    rf_annual = _coerce_float(snapshot.get("rf_annual"))
+    if rf_annual is None:
+        rf_annual = 0.0
     rows = []
+
+    def _sharpe(ret_value, risk_value):
+        ret_f = _coerce_float(ret_value)
+        risk_f = _coerce_float(risk_value)
+        if ret_f is None or risk_f is None or abs(risk_f) <= 1e-12:
+            return None
+        return float((ret_f - rf_annual) / risk_f)
 
     portfolio = snapshot.get("portfolio", {}) or {}
     prow = {
@@ -816,6 +1013,7 @@ def _build_frontier_table_rows(snapshot):
         "Name": portfolio.get("name", ""),
         "Return": portfolio.get("return"),
         "Risk": portfolio.get("risk"),
+        "Sharpe Ratio": _sharpe(portfolio.get("return"), portfolio.get("risk")),
     }
     for asset in asset_order:
         prow[f"Wt_{asset}"] = (portfolio.get("weights", {}) or {}).get(asset, 0.0)
@@ -828,6 +1026,7 @@ def _build_frontier_table_rows(snapshot):
             "Name": name,
             "Return": asset_point.get("return"),
             "Risk": asset_point.get("risk"),
+            "Sharpe Ratio": _sharpe(asset_point.get("return"), asset_point.get("risk")),
         }
         for asset in asset_order:
             row[f"Wt_{asset}"] = 1.0 if asset == name else 0.0
@@ -839,6 +1038,7 @@ def _build_frontier_table_rows(snapshot):
             "Name": f"Frontier {int(fp.get('point_index', 0)) + 1}",
             "Return": fp.get("return"),
             "Risk": fp.get("risk"),
+            "Sharpe Ratio": _sharpe(fp.get("return"), fp.get("risk")),
         }
         for asset in asset_order:
             row[f"Wt_{asset}"] = (fp.get("weights", {}) or {}).get(asset, 0.0)
@@ -866,6 +1066,12 @@ def _build_frontier_column_defs(snapshot):
             "headerName": "Annual Risk",
             "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
             "width": 130,
+        },
+        {
+            "field": "Sharpe Ratio",
+            "headerName": "Sharpe Ratio",
+            "valueFormatter": {"function": "params.value != null ? d3.format('.2f')(params.value) : ''"},
+            "width": 120,
         },
     ]
     for asset in asset_order:
@@ -1969,6 +2175,10 @@ def build_po_main_layout():
                                     style={"marginTop": "24px"},
                                 ),
                             ]),
+                            html.Div(
+                                id="po-frontier-rf-warning",
+                                style={"display": "none"},
+                            ),
                             html.Div(
                                 id="po-frontier-chart-container",
                                 style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
@@ -6109,6 +6319,7 @@ def po_update_date_range_store(start, end):
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
@@ -6138,10 +6349,11 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-corr-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-linear-constraints-store", "data"),
+    State("analyticstool-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
-                        selected_series, benchmark_assignments, long_short_assignments,
+                        selected_series, benchmark_assignments, cmabench_assignments, long_short_assignments,
                         date_range, vol_scaler, vol_scaling_assignments,
                         min_wt, max_wt, force_max, exp_wt_cov, halflife,
                         portfolio_name, opt_window, window_size, opt_step,
@@ -6149,7 +6361,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         opt_model, missing_data, fill_in_sample_value, current_results,
                         pending_series,
                         ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
-                        ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints):
+                        ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints,
+                        saved_series_store):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -6297,7 +6510,10 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "min_wt": min_wt or {},
             "max_wt": max_wt or {},
             "force_max": force_max or {},
+            "periodicity": periodicity or "daily",
         }
+
+        bl_mu_frame = None
 
         # Add ex ante params if applicable
         if model_value in ("ex_ante_mv", "black_litterman"):
@@ -6342,7 +6558,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                     bl_data = bl_data[opt_cols]
                 else:
                     bl_data = opt_df.fillna(0)
-            _, _, bl_error = _build_black_litterman_mu_cov(bl_data[opt_cols], config, opt_cols)
+            bl_mu_frame, _, bl_error = _build_black_litterman_mu_cov(bl_data[opt_cols], config, opt_cols)
             if bl_error:
                 return (
                     no_update,
@@ -6354,8 +6570,61 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
         # Add linear constraints to config
         config["linear_constraints"] = linear_constraints or []
 
+        sharpe_target = (
+            model_value == "maximize_sharpe"
+            or (
+                model_value in {"ex_ante_mv", "black_litterman"}
+                and (config.get("objective", "") == "maximize_sharpe")
+            )
+        )
+        resolved_rf_context = {
+            "rf_annual": 0.0,
+            "rf_source": "unused",
+            "rf_warning": None,
+            "rf_asset": None,
+        }
+        rf_series_runtime = None
+        if sharpe_target:
+            expected_mu_annual = None
+            ann_factor = _annualization_for_periodicity(periodicity)
+            if model_value == "ex_ante_mv":
+                expected_mu_annual = {
+                    c: float((ex_ante_returns or {}).get(c, 0.0) or 0.0)
+                    for c in opt_cols
+                }
+            elif model_value == "black_litterman" and bl_mu_frame is not None:
+                expected_mu_annual = {
+                    c: float(bl_mu_frame.iloc[0][c] * ann_factor) for c in opt_cols if c in bl_mu_frame.columns
+                }
+
+            resolved_rf_context = _resolve_risk_free_context(
+                model=model_value,
+                asset_order=opt_cols,
+                periodicity=periodicity,
+                expected_mu_annual=expected_mu_annual,
+                reference_index=opt_df.index,
+                saved_series_store=saved_series_store,
+                cmabench_assignments=cmabench_assignments,
+            )
+            if model_value == "maximize_sharpe":
+                rf_series_runtime = _risk_free_series_for_periodicity(saved_series_store, periodicity)
+
+        config["risk_free_source"] = resolved_rf_context.get("rf_source")
+        config["risk_free_annual_default"] = float(resolved_rf_context.get("rf_annual", 0.0) or 0.0)
+        config["risk_free_warning"] = resolved_rf_context.get("rf_warning")
+
+        runtime_config = dict(config)
+        runtime_config["risk_free_annual"] = float(resolved_rf_context.get("rf_annual", 0.0) or 0.0)
+        runtime_config["risk_free_mode"] = "series" if rf_series_runtime is not None else "fixed_annual"
+        runtime_config["risk_free_series"] = rf_series_runtime
+
         # Run optimization
-        window_results, portfolio_returns = run_portfolio_optimization(opt_df, config)
+        run_out = run_portfolio_optimization(opt_df, runtime_config)
+        if isinstance(run_out, tuple) and len(run_out) == 3:
+            window_results, portfolio_returns, optimization_meta = run_out
+        else:
+            window_results, portfolio_returns = run_out
+            optimization_meta = {}
 
         # Determine unique portfolio name
         current_results = current_results or {}
@@ -6389,6 +6658,11 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "window_weights": window_data,
             "returns_json": portfolio_returns.to_json(date_format="iso"),
             "config": config,
+            "risk_free_meta": {
+                "source": resolved_rf_context.get("rf_source"),
+                "annual": float(resolved_rf_context.get("rf_annual", 0.0) or 0.0),
+                "warning": resolved_rf_context.get("rf_warning"),
+            },
         }
         if model_value in {"ex_ante_mv", "black_litterman"}:
             frontier_snapshot = _build_frontier_snapshot(
@@ -6403,6 +6677,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 window_idx=0,
                 rm="MV",
                 linear_constraints=linear_constraints,
+                saved_series_store=saved_series_store,
+                cmabench_assignments=cmabench_assignments,
             )
             _cache_frontier_snapshot(result_entry, frontier_snapshot)
 
@@ -6410,11 +6686,17 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         # Add to pending list so Analytics Tool auto-selects this series
         updated_pending = list(pending_series or []) + [final_name]
+        warning_parts = []
+        if resolved_rf_context.get("rf_warning"):
+            warning_parts.append(str(resolved_rf_context.get("rf_warning")))
+        if isinstance(optimization_meta, dict) and optimization_meta.get("risk_free_warning"):
+            warning_parts.append(str(optimization_meta.get("risk_free_warning")))
+        warning_text = " ".join(dict.fromkeys([w for w in warning_parts if w])).strip() or None
 
         return (
             current_results,
             new_raw_data,
-            {"status": "complete", "name": final_name},
+            {"status": "complete", "name": final_name, "warning": warning_text},
             updated_pending,
         )
 
@@ -6454,9 +6736,13 @@ def po_show_completion(status):
     hide = {"display": "none"}
     show = {"display": "block"}
     if status.get("status") == "complete":
+        warning = status.get("warning")
+        message = f"Portfolio '{status['name']}' created successfully."
+        if warning:
+            message = f"{message}\nWarning: {warning}"
         return (
             hide, show,
-            f"Portfolio '{status['name']}' created successfully.",
+            message,
             "tabler:check", "green",
             True,
         )
@@ -7090,6 +7376,7 @@ def po_render_returns(results, active_tab, selected_portfolios):
     State("analyticstool-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
@@ -7097,7 +7384,7 @@ def po_render_returns(results, active_tab, selected_portfolios):
     State("analyticstool-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
+def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
                       date_range, vol_scaler, vol_scaling, saved_series_store):
     if n_clicks is None or not results:
         raise PreventUpdate
@@ -7352,6 +7639,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
                             window_idx=latest_idx,
                             rm=risk_measure,
                             linear_constraints=config.get("linear_constraints", []),
+                            saved_series_store=saved_series_store,
+                            cmabench_assignments=cmabench,
                         )
 
                     window_label = f"{snapshot.get('window_est_start')} - {snapshot.get('window_est_end')}"
@@ -7363,7 +7652,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, ls,
                                 frontier_weight_cols.append(k)
                 except Exception:
                     continue
-        frontier_base_cols = ["Portfolio", "Window", "Type", "Name", "Return", "Risk"]
+        frontier_base_cols = ["Portfolio", "Window", "Type", "Name", "Return", "Risk", "Sharpe Ratio"]
         if frontier_rows:
             frontier_df = pd.DataFrame(frontier_rows)
             ordered_cols = [c for c in frontier_base_cols if c in frontier_df.columns] + frontier_weight_cols
@@ -7758,6 +8047,8 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
+    State("analyticstool-saved-series-cache-store", "data"),
     State("po-series-select", "data"),
     State("theme-store", "data"),
     State("po-linear-constraints-store", "data"),
@@ -7766,7 +8057,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
 def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value,
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
-                             vol_scaler, vol_scaling, series_select, theme,
+                             vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, series_select, theme,
                              linear_constraints):
     if active_tab != "frontier" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
@@ -7812,6 +8103,8 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
                 window_idx=resolved_idx,
                 rm=risk_measure,
                 linear_constraints=linear_constraints,
+                saved_series_store=saved_series_store,
+                cmabench_assignments=cmabench_assignments,
             )
 
         frontier_pts = snapshot.get("frontier_points", []) or []
@@ -7900,6 +8193,8 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     State("po-long-short-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
+    State("analyticstool-saved-series-cache-store", "data"),
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
@@ -7916,6 +8211,8 @@ def po_render_frontier_table(
     ls,
     vol_scaler,
     vol_scaling,
+    cmabench_assignments,
+    saved_series_store,
     linear_constraints,
 ):
     if active_tab != "frontier" or switch_value != "table" or not selected_portfolio or not results:
@@ -7960,10 +8257,77 @@ def po_render_frontier_table(
                     window_idx=resolved_idx,
                     rm=risk_measure,
                     linear_constraints=linear_constraints,
+                    saved_series_store=saved_series_store,
+                    cmabench_assignments=cmabench_assignments,
                 )
             except Exception:
                 return [], []
 
         return _build_frontier_column_defs(snapshot), _build_frontier_table_rows(snapshot)
+
+
+@callback(
+    Output("po-frontier-rf-warning", "children"),
+    Output("po-frontier-rf-warning", "style"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-frontier-window-select", "value"),
+    Input("po-frontier-rm-select", "value"),
+    State("po-periodicity-select", "value"),
+    State("analyticstool-saved-series-cache-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+def po_render_frontier_rf_warning(
+    selected_portfolio,
+    results,
+    active_tab,
+    window_idx,
+    rm,
+    periodicity,
+    saved_series_store,
+    cmabench_assignments,
+):
+    hidden = {"display": "none"}
+    shown = {"display": "block", "marginBottom": "8px"}
+    if active_tab != "frontier" or not selected_portfolio or not results:
+        return "", hidden
+    if selected_portfolio not in results:
+        return "", hidden
+
+    portfolio_data = results[selected_portfolio]
+    config = portfolio_data.get("config", {}) or {}
+    model = config.get("model", "")
+    warning = None
+
+    if model in {"ex_ante_mv", "black_litterman"}:
+        risk_measure = rm or "MV"
+        if risk_measure == "CVaR":
+            risk_measure = "MV"
+        try:
+            resolved_idx, _ = _resolve_frontier_window(portfolio_data.get("window_weights", []) or [], window_idx)
+            snapshot = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
+        except Exception:
+            snapshot = None
+        warning = (
+            (snapshot or {}).get("rf_warning")
+            or (portfolio_data.get("risk_free_meta", {}) or {}).get("warning")
+        )
+    else:
+        rf_ctx = _resolve_risk_free_context(
+            model=model,
+            asset_order=config.get("selected_series", []) or [],
+            periodicity=periodicity,
+            expected_mu_annual=None,
+            reference_index=None,
+            saved_series_store=saved_series_store,
+            cmabench_assignments=cmabench_assignments,
+        )
+        warning = rf_ctx.get("rf_warning")
+
+    if warning:
+        return dmc.Alert(warning, color="orange", variant="light", withCloseButton=False), shown
+    return "", hidden
 
 
