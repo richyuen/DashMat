@@ -1,6 +1,7 @@
 """Analytics tool page - Market Returns Time Series Dashboard."""
 
 from dataclasses import dataclass
+import hashlib
 from io import BytesIO, StringIO
 import json
 
@@ -91,6 +92,37 @@ def _has_complete_date_range(value) -> bool:
         and bool(value.get("start"))
         and bool(value.get("end"))
     )
+
+
+def _correlogram_request_key(
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    correlation_view,
+    block_width,
+):
+    payload = "|".join(
+        [
+            hashlib.md5((raw_data or "").encode("utf-8")).hexdigest(),
+            str(periodicity or "daily"),
+            ",".join(selected_series or ()),
+            str(returns_type or "total"),
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
+            str(vol_scaler or 0),
+            _mapping_payload(vol_scaling_assignments),
+            str(correlation_view or "correlogram"),
+            str(block_width if block_width is not None else ""),
+        ]
+    )
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -871,9 +903,19 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                             ],
                         ),
-                        html.Div(
-                            id="at-correlogram-container",
-                            style={"flex": "1", "minHeight": "520px", "overflow": "auto"},
+                        dcc.Loading(
+                            id="at-loading-correlogram",
+                            type="default",
+                            delay_show=0,
+                            delay_hide=150,
+                            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+                            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+                            children=[
+                                html.Div(
+                                    id="at-correlogram-container",
+                                    style={"flex": "1", "minHeight": "520px", "overflow": "auto"},
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -1662,6 +1704,7 @@ layout = dmc.Container(
         dcc.Store(id="at-monthly-series-store", data=None, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
+        dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="at-download-enabled-store", data=False),
@@ -1705,6 +1748,8 @@ layout = dmc.Container(
         
         # Correlogram metadata for client-side sizing
         dcc.Store(id="at-correlogram-meta-store", data={}),
+        dcc.Store(id="at-correlogram-target-key-store", data=None),
+        dcc.Store(id="at-correlogram-rendered-key-store", data=None),
 
         # UI Blocker for file dialog (Overlay)
         dcc.Store(id="at-ui-blocker-store", data=False),
@@ -2107,7 +2152,8 @@ def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_del
             # Also remove from temp_select if present
             temp_select = [s for s in temp_select if s not in series_to_drop]
 
-    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select, updated_raw_data, temp_vol_scaling
+    raw_data_output = updated_raw_data if updated_raw_data != raw_data else no_update
+    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select, raw_data_output, temp_vol_scaling
 
 
 @callback(
@@ -3299,9 +3345,11 @@ def update_vol_scaling_assignments(cell_change, row_data, raw_data):
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
     State("at-date-range-store", "data"),
+    State("at-start-date-picker", "value"),
+    State("at-end-date-picker", "value"),
     prevent_initial_call="initial_duplicate",
 )
-def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
+def initialize_date_range(raw_data, periodicity, selected_series, stored_range, current_start_date, current_end_date):
     """Initialize date range to maximum range when data is loaded."""
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
@@ -3324,6 +3372,12 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
 
         has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
         next_range = {"start": start_date, "end": end_date}
+        start_output = start_date
+        end_output = end_date
+        if current_start_date == start_date:
+            start_output = no_update
+        if current_end_date == end_date:
+            end_output = no_update
         range_output = (
             no_update
             if _has_complete_date_range(stored_range)
@@ -3332,8 +3386,8 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
             else next_range
         )
         return (
-            start_date,
-            end_date,
+            start_output,
+            end_output,
             enabled_style,
             False,
             not has_common_daily,
@@ -3494,6 +3548,29 @@ def update_download_excel_disabled(raw_data, selected_series, date_range, state_
     if not state_ready:
         return True
     return not _has_complete_date_range(date_range)
+
+
+@callback(
+    Output("at-statistics-loaded-store", "data"),
+    Input("at-state-ready-store", "data"),
+    prevent_initial_call=True,
+)
+def reset_statistics_loaded_on_hydration(state_ready):
+    if state_ready:
+        raise PreventUpdate
+    return False
+
+
+@callback(
+    Output("at-loading-statistics", "display"),
+    Input("at-main-tabs", "value"),
+    Input("at-state-ready-store", "data"),
+    Input("at-statistics-loaded-store", "data"),
+)
+def control_statistics_loading_display(active_tab, state_ready, statistics_loaded):
+    if active_tab == "statistics" and (not state_ready or not statistics_loaded):
+        return "show"
+    return "auto"
 
 
 @callback(
@@ -3920,6 +3997,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
 @callback(
     Output("at-statistics-grid", "columnDefs"),
     Output("at-statistics-grid", "rowData"),
+    Output("at-statistics-loaded-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -3938,7 +4016,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
-        return [], []
+        return [], [], True
 
     try:
         # Use cached function to avoid repeated computation
@@ -3956,7 +4034,7 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         )
 
         if not stats:
-            return [], []
+            return [], [], True
 
         # Transpose: rows become statistics, columns become series
         # First column is "Statistic" (pinned), then one column per series
@@ -3990,10 +4068,10 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
             row_data.append(row)
             
-        return column_defs, row_data
+        return column_defs, row_data, True
 
     except Exception:
-        return [], []
+        return [], [], True
 
 
 @callback(
@@ -4006,6 +4084,93 @@ def update_correlogram_meta(selected_series, active_tab):
     if active_tab != "correlogram" or not selected_series:
         return no_update
     return {"num_series": len(selected_series)}
+
+
+@callback(
+    Output("at-correlogram-target-key-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-correlation-view-switch", "value"),
+    Input("at-correlogram-block-width", "value"),
+    State("at-correlogram-target-key-store", "data"),
+    prevent_initial_call=True,
+)
+def update_correlogram_target_key(
+    active_tab,
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    state_ready,
+    vol_scaler,
+    vol_scaling_assignments,
+    correlation_view,
+    block_width,
+    current_target_key,
+):
+    if active_tab != "correlogram":
+        return no_update
+    if not state_ready:
+        return no_update
+
+    effective_date_range = date_range
+    try:
+        candidates = compute_date_range_candidates(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series or ()),
+        )
+        start_date, end_date = resolve_initial_range(candidates, date_range)
+        if start_date and end_date:
+            effective_date_range = {"start": start_date, "end": end_date}
+    except Exception:
+        effective_date_range = date_range
+
+    if not _has_complete_date_range(effective_date_range):
+        return no_update
+
+    next_key = _correlogram_request_key(
+        raw_data,
+        periodicity,
+        tuple(selected_series or ()),
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        effective_date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+        correlation_view,
+        block_width,
+    )
+    if next_key == current_target_key:
+        return no_update
+    return next_key
+
+
+@callback(
+    Output("at-loading-correlogram", "display"),
+    Input("at-main-tabs", "value"),
+    Input("at-correlogram-target-key-store", "data"),
+    Input("at-correlogram-rendered-key-store", "data"),
+)
+def control_correlogram_loading_display(active_tab, target_key, rendered_key):
+    if active_tab != "correlogram":
+        return "auto"
+    if target_key and target_key != rendered_key:
+        return "show"
+    return "auto"
 
 
 clientside_callback(
@@ -4048,23 +4213,25 @@ clientside_callback(
 
 @callback(
     Output("at-correlogram-container", "children"),
-    Input("at-main-tabs", "value"),  # Lazy loading: only update when tab is active
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-correlation-view-switch", "value"),
-    Input("at-correlogram-block-width", "value"),
+    Output("at-correlogram-rendered-key-store", "data", allow_duplicate=True),
+    Input("at-correlogram-target-key-store", "data"),
+    State("at-main-tabs", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-correlation-view-switch", "value"),
+    State("at-correlogram-block-width", "value"),
     State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
+def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -4081,12 +4248,19 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     )
     empty_graph = dcc.Graph(figure=empty_fig, style={"height": "100%"})
 
-    # Lazy loading: only generate when correlogram tab is active and ready.
-    if active_tab != "correlogram" or not state_ready or not _has_complete_date_range(date_range):
+    # Only generate when there is a fresh target key and correlogram is active/ready.
+    if (
+        not target_key
+        or active_tab != "correlogram"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
         raise PreventUpdate
 
+    request_key = target_key
+
     if raw_data is None or not selected_series or len(selected_series) < 2:
-        return empty_graph
+        return empty_graph, request_key
 
     try:
         result = generate_correlogram_cached(
@@ -4102,7 +4276,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
         )
 
         if result is None:
-            return empty_graph
+            return empty_graph, request_key
 
         available_series = result['available_series']
         corr_matrix = result['corr_matrix']
@@ -4133,7 +4307,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
             )
             apply_chart_theme(heatmap_fig, theme)
 
-            return dcc.Graph(figure=heatmap_fig, style={"height": "100%"})
+            return dcc.Graph(figure=heatmap_fig, style={"height": "100%"}), request_key
 
         # 2. Correlogram (Scatter Matrix)
         else:
@@ -4252,10 +4426,10 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
 
 
             apply_chart_theme(fig, theme)
-            return dcc.Graph(figure=fig, style=graph_style)
+            return dcc.Graph(figure=fig, style=graph_style), request_key
 
     except Exception:
-        return empty_graph
+        return empty_graph, request_key
 
 
 @callback(

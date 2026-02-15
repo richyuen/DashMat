@@ -70,6 +70,8 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
             "daily",
             ["Asset_A"],
             {"start": "2024-01-01", "end": "2024-12-31"},
+            None,
+            None,
         )
     )
 
@@ -90,7 +92,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
 
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
 
-    column_defs, row_data = analyticstool.update_statistics(
+    column_defs, row_data, loaded = analyticstool.update_statistics(
         "raw-json",
         "daily",
         ["Asset_A", "Asset_B"],
@@ -108,6 +110,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     cum_row = next(row for row in row_data if row["Statistic"] == "Cumulative Return")
     assert cum_row["Asset_A"] == pytest.approx(0.10)
     assert cum_row["Asset_B"] == pytest.approx(0.20)
+    assert loaded is True
 
 
 def test_update_download_excel_disabled_uses_ready_state(page_modules):
@@ -141,6 +144,14 @@ def test_update_statistics_requires_ready_state(page_modules):
             {},
             None,
         )
+
+
+def test_control_statistics_loading_display(page_modules):
+    analyticstool, _ = page_modules
+    assert analyticstool.control_statistics_loading_display("statistics", False, False) == "show"
+    assert analyticstool.control_statistics_loading_display("statistics", True, False) == "show"
+    assert analyticstool.control_statistics_loading_display("statistics", True, True) == "auto"
+    assert analyticstool.control_statistics_loading_display("returns", False, False) == "auto"
 
 
 def test_update_growth_grid_requires_growth_table_view(page_modules):
@@ -222,6 +233,23 @@ def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules)
     analyticstool, _ = page_modules
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "growth") is no_update
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "correlogram") == {"num_series": 2}
+
+
+def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.on_modal_ok(
+        1,
+        ["Asset_A"],
+        {},
+        {},
+        ["Asset_A"],
+        [],
+        raw_json,
+        {},
+    )
+
+    assert result[6] is no_update
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):
