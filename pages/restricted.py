@@ -26,8 +26,8 @@ layout = dmc.Container(
         "justifyContent": "center",
     },
     children=[
-        dcc.Location(id="dashmat-restricted-url", refresh=False),
-        dcc.Location(id="dashmat-restricted-nav", refresh=False),
+        dcc.Location(id="restricted-url", refresh=False),
+        dcc.Location(id="restricted-nav", refresh=False),
         dmc.Stack(
             gap="xs",
             w="100%",
@@ -39,7 +39,7 @@ layout = dmc.Container(
                     style={"fontSize": "40px", "lineHeight": 1.1},
                 ),
                 dmc.Divider(),
-                dmc.Text(id="dashmat-restricted-message", size="lg"),
+                dmc.Text(id="restricted-message", size="lg"),
                 dmc.Text(
                     "Please contact the administrator to request access.",
                     size="md",
@@ -48,7 +48,7 @@ layout = dmc.Container(
                 dmc.Space(h="sm"),
                 dmc.Button(
                     "Return to Home",
-                    id="dashmat-restricted-return-home-btn",
+                    id="restricted-return-home-btn",
                     color="orange",
                 ),
             ],
@@ -58,8 +58,8 @@ layout = dmc.Container(
 
 
 @callback(
-    Output("dashmat-restricted-message", "children"),
-    Input("dashmat-restricted-url", "search"),
+    Output("restricted-message", "children"),
+    Input("restricted-url", "search"),
 )
 def update_restricted_message(search):
     target = _decode_target(search)
@@ -75,7 +75,7 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("dashmat-restricted-nav", "pathname"),
-    Input("dashmat-restricted-return-home-btn", "n_clicks"),
+    Output("restricted-nav", "pathname"),
+    Input("restricted-return-home-btn", "n_clicks"),
     prevent_initial_call=True,
 )

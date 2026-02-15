@@ -44,14 +44,14 @@ PORTOPT_PATH = _registry_path("pages.portopt", "/portopt")
 # Layout wraps page content with MantineProvider
 # Shared stores are defined here so they are accessible across all pages
 app.layout = dmc.MantineProvider(
-    id="dashmat-mantine-provider",
+    id="mantine-provider",
     children=[
         dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
         dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
         dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
         dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
-        dcc.Store(id="dashmat-userinfo", data=USERINFO_DATA, storage_type="session"),
-        dcc.Store(id="dashmat-theme-store", data="light", storage_type="local"),
+        dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
+        dcc.Store(id="theme-store", data="light", storage_type="local"),
         dmc.AppShell(
             header={"height": 45},
             padding=0,
@@ -84,23 +84,23 @@ app.layout = dmc.MantineProvider(
                                         children=[
                                             dmc.MenuItem(
                                                 "Home",
-                                                id="dashmat-nav-home",
+                                                id="app-nav-home",
                                                 href=HOME_PATH,
                                             ),
                                             dmc.MenuItem(
                                                 "Analytics Tool",
-                                                id="dashmat-nav-analytics",
+                                                id="app-nav-analytics",
                                                 href=ANALYTICS_PATH,
                                             ),
                                             dmc.MenuItem(
                                                 "Portfolio Optimization",
-                                                id="dashmat-nav-portopt",
+                                                id="app-nav-portopt",
                                                 href=PORTOPT_PATH,
                                             ),
                                             dmc.MenuDivider(),
                                             dmc.MenuItem(
                                                 "Toggle Dark Mode",
-                                                id="dashmat-menu-theme-toggle",
+                                                id="app-menu-theme-toggle",
                                             ),
                                         ],
                                     ),
@@ -120,10 +120,10 @@ app.layout = dmc.MantineProvider(
 
 
 @app.callback(
-    Output("dashmat-nav-home", "href"),
-    Output("dashmat-nav-analytics", "href"),
-    Output("dashmat-nav-portopt", "href"),
-    Input("dashmat-userinfo", "data"),
+    Output("app-nav-home", "href"),
+    Output("app-nav-analytics", "href"),
+    Output("app-nav-portopt", "href"),
+    Input("userinfo", "data"),
     prevent_initial_call=True,
 )
 def update_app_nav_links(userinfo):
@@ -144,7 +144,7 @@ def update_app_nav_links(userinfo):
 @app.callback(
     Output("_pages_location", "href"),
     Input("_pages_location", "pathname"),
-    Input("dashmat-userinfo", "data"),
+    Input("userinfo", "data"),
     prevent_initial_call=False,
 )
 def guard_protected_pages(pathname, userinfo):
@@ -157,8 +157,8 @@ def guard_protected_pages(pathname, userinfo):
 # Apply theme to MantineProvider
 app.clientside_callback(
     "function(theme) { return theme || 'light'; }",
-    Output("dashmat-mantine-provider", "forceColorScheme"),
-    Input("dashmat-theme-store", "data"),
+    Output("mantine-provider", "forceColorScheme"),
+    Input("theme-store", "data"),
 )
 
 app.clientside_callback(
@@ -168,9 +168,9 @@ app.clientside_callback(
         return current_theme === "dark" ? "light" : "dark";
     }
     """,
-    Output("dashmat-theme-store", "data", allow_duplicate=True),
-    Input("dashmat-menu-theme-toggle", "n_clicks"),
-    State("dashmat-theme-store", "data"),
+    Output("theme-store", "data", allow_duplicate=True),
+    Input("app-menu-theme-toggle", "n_clicks"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 

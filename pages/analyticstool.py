@@ -3544,7 +3544,7 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
     Input("at-date-range-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    State("dashmat-theme-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
@@ -3999,7 +3999,7 @@ clientside_callback(
     Input("at-vol-scaling-assignments-store", "data"),
     Input("at-correlation-view-switch", "value"),
     Input("at-correlogram-block-width", "value"),
-    State("dashmat-theme-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
@@ -4208,7 +4208,7 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     Input("at-date-range-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    State("dashmat-theme-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
@@ -4465,7 +4465,7 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     Input("at-date-range-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    State("dashmat-theme-store", "data"),
+    State("theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
