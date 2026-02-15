@@ -3,7 +3,7 @@
 import dash
 import dash_mantine_components as dmc
 from flask import redirect, request
-from dash import Dash, Input, Output, dcc, page_container
+from dash import Dash, Input, Output, State, dcc, page_container
 from cache_config import init_cache
 
 # Initialize the app with multi-page support
@@ -104,6 +104,11 @@ app.layout = dmc.MantineProvider(
                                                 id="app-nav-portopt",
                                                 href=PORTOPT_PATH,
                                             ),
+                                            dmc.MenuDivider(),
+                                            dmc.MenuItem(
+                                                "Toggle Dark Mode",
+                                                id="app-menu-theme-toggle",
+                                            ),
                                         ],
                                     ),
                                 ],
@@ -143,6 +148,19 @@ app.clientside_callback(
     "function(theme) { return theme || 'light'; }",
     Output("mantine-provider", "forceColorScheme"),
     Input("theme-store", "data"),
+)
+
+app.clientside_callback(
+    """
+    function(n_clicks, current_theme) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        return current_theme === "dark" ? "light" : "dark";
+    }
+    """,
+    Output("theme-store", "data", allow_duplicate=True),
+    Input("app-menu-theme-toggle", "n_clicks"),
+    State("theme-store", "data"),
+    prevent_initial_call=True,
 )
 
 # Dark mode toggle callbacks are defined in each page module
