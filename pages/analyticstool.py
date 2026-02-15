@@ -16,7 +16,12 @@ from dash import Input, Output, State, callback, dcc, html, no_update, register_
 from dash.exceptions import PreventUpdate
 
 import cache_config
-from utils.parsing import detect_periodicity, get_sheet_names, parse_uploaded_file
+from utils.parsing import get_sheet_names
+from utils.upload_flow import (
+    import_selected_workbook_sheets as _shared_import_selected_workbook_sheets,
+    import_single_upload as _shared_import_single_upload,
+    merge_uploaded_with_existing as _shared_merge_uploaded_with_existing,
+)
 from utils.returns import (
     align_monthly_index_to_month_end,
     calculate_calendar_year_returns,
@@ -118,50 +123,7 @@ def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.Da
 
 
 def _import_selected_workbook_sheets(contents, filename, selected_sheets):
-    """Parse selected workbook sheets in workbook order.
-
-    Later sheets overwrite earlier sheet values where they provide non-null data.
-    """
-    workbook_sheets = get_sheet_names(contents, filename)
-    if isinstance(selected_sheets, str):
-        selected_values = [selected_sheets]
-    else:
-        selected_values = list(selected_sheets or [])
-    selected_set = set(selected_values)
-    ordered_sheets = [sheet for sheet in workbook_sheets if sheet in selected_set]
-    if not ordered_sheets:
-        raise ValueError("Select at least one sheet to import.")
-
-    combined_df = None
-    periodicity_hint = None
-    imported_sheets = []
-    first_error = None
-    for sheet in ordered_sheets:
-        try:
-            parsed_df = parse_uploaded_file(contents, filename, sheet_name=sheet)
-        except Exception as exc:
-            if first_error is None:
-                first_error = exc
-            continue
-        if parsed_df.empty:
-            continue
-        if periodicity_hint is None:
-            periodicity_hint = parsed_df.attrs.get("periodicity_hint")
-        if combined_df is None:
-            combined_df = parsed_df
-        else:
-            combined_df = parsed_df.combine_first(combined_df)
-        imported_sheets.append(sheet)
-
-    if combined_df is None:
-        if first_error is not None:
-            raise ValueError(f"No importable data rows found in selected sheets: {first_error}") from first_error
-        raise ValueError("No importable data rows found in selected sheets.")
-
-    combined_df = combined_df.sort_index()
-    if periodicity_hint in {"daily", "monthly"}:
-        combined_df.attrs["periodicity_hint"] = periodicity_hint
-    return combined_df, imported_sheets
+    return _shared_import_selected_workbook_sheets(contents, filename, selected_sheets)
 
 
 def build_welcome_screen():
@@ -237,12 +199,11 @@ clientside_callback(
                             setTimeout(function() {
                                 if (!input.files || input.files.length === 0) {
                                     // User cancelled - hide the blocker
-                                    var store = document.getElementById('ui-blocker-store');
+                                    var store = document.getElementById('at-ui-blocker-store');
                                     if (store && store._dashprivate_setValue) {
                                         store._dashprivate_setValue(false);
                                     }
-                                    window.dash_clientside.set_props('ui-blocker-store', {data: false});
-                                    window.dash_clientside.set_props('ui-blocker-timeout', {disabled: true});
+                                    window.dash_clientside.set_props('at-ui-blocker-store', {data: false});
                                 }
                             }, 500);
                         };
@@ -252,14 +213,12 @@ clientside_callback(
                 }
             }, 100);
             
-            // Show Blocker (True), Enable Timeout (False)
-            return [true, false];
+            return true;
         }
-        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        return window.dash_clientside.no_update;
     }
     """,
-    Output("ui-blocker-store", "data", allow_duplicate=True),
-    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -1265,7 +1224,7 @@ layout = dmc.Container(
 
         # Sheet Selection Modal (for multi-tab Excel files)
         dmc.Modal(
-            id="sheet-select-modal",
+            id="at-sheet-select-modal",
             title=dmc.Group(
                 gap="xs",
                 children=[
@@ -1273,7 +1232,7 @@ layout = dmc.Container(
                     dmc.Text("Select Sheets", fw=600, size="sm"),
                 ],
             ),
-            size="sm",
+            size="lg",
             centered=True,
             closeOnClickOutside=False,
             radius="lg",
@@ -1283,7 +1242,7 @@ layout = dmc.Container(
             children=[
                 dmc.Text("This file contains multiple sheets. Select one or more sheets to import:", size="sm", mb="md"),
                 dmc.MultiSelect(
-                    id="sheet-select-dropdown",
+                    id="at-sheet-select-dropdown",
                     data=[],
                     value=[],
                     w="100%",
@@ -1293,10 +1252,11 @@ layout = dmc.Container(
                 dmc.Group(
                     mt="md",
                     justify="flex-end",
+                    style={"flexWrap": "nowrap"},
                     children=[
-                        dmc.Button("Cancel", id="sheet-select-cancel-button", variant="outline", color="red"),
-                        dmc.Button("Import All Sheets", id="sheet-select-import-all-button", variant="light"),
-                        dmc.Button("Import Selected", id="sheet-select-ok-button", color="blue"),
+                        dmc.Button("Cancel", id="at-sheet-select-cancel-button", variant="outline", color="red"),
+                        dmc.Button("Import All Sheets", id="at-sheet-select-import-all-button", variant="light"),
+                        dmc.Button("Import Selected", id="at-sheet-select-ok-button", color="blue"),
                     ],
                 ),
             ],
@@ -1695,8 +1655,8 @@ layout = dmc.Container(
         dcc.Store(id="temp-series-order-store", data=[]),
         dcc.Store(id="temp-deleted-series-store", data=[]),
         # Temp stores for sheet selection (stash upload while user picks a tab)
-        dcc.Store(id="sheet-select-contents-store", data=None),
-        dcc.Store(id="sheet-select-filename-store", data=None),
+        dcc.Store(id="at-sheet-select-contents-store", data=None),
+        dcc.Store(id="at-sheet-select-filename-store", data=None),
         dcc.Download(id="download-excel"),
         dcc.Download(id="download-sample-daily"),
         dcc.Download(id="download-sample-monthly"),
@@ -1727,10 +1687,9 @@ layout = dmc.Container(
         dcc.Store(id="correlogram-meta-store", data={}),
 
         # UI Blocker for file dialog (Overlay)
-        dcc.Store(id="ui-blocker-store", data=False),
-        dcc.Interval(id="ui-blocker-timeout", interval=15000, disabled=True), # 15 second timeout
+        dcc.Store(id="at-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
-            id="ui-blocker-overlay",
+            id="at-ui-blocker-overlay",
             visible=False,
             zIndex=2000,
             overlayProps={"radius": "sm", "blur": 2},
@@ -2012,8 +1971,7 @@ clientside_callback(
                             setTimeout(function() {
                                 if (!input.files || input.files.length === 0) {
                                     // User cancelled - hide the blocker
-                                    window.dash_clientside.set_props('ui-blocker-store', {data: false});
-                                    window.dash_clientside.set_props('ui-blocker-timeout', {disabled: true});
+                                    window.dash_clientside.set_props('at-ui-blocker-store', {data: false});
                                 }
                             }, 500);
                         };
@@ -2023,29 +1981,13 @@ clientside_callback(
                 }
             }, 100);
 
-            // Show Blocker (True), Enable Timeout (False)
-            return [true, false];
+            return true;
         }
-        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        return window.dash_clientside.no_update;
     }
     """,
-    Output("ui-blocker-store", "data", allow_duplicate=True),
-    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("menu-add-series", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n) {
-        // Hide Blocker (False), Disable Timeout (True)
-        return [false, true];
-    }
-    """,
-    Output("ui-blocker-store", "data", allow_duplicate=True),
-    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
-    Input("ui-blocker-timeout", "n_intervals"),
     prevent_initial_call=True,
 )
 
@@ -2056,8 +1998,8 @@ clientside_callback(
         return is_loading || false;
     }
     """,
-    Output("ui-blocker-overlay", "visible"),
-    Input("ui-blocker-store", "data"),
+    Output("at-ui-blocker-overlay", "visible"),
+    Input("at-ui-blocker-store", "data"),
 )
 
 
@@ -2635,14 +2577,13 @@ def add_series_from_database(
     Output("first-load-store", "data"),
     Output("temp-deleted-series-store", "data", allow_duplicate=True),
     Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("ui-blocker-store", "data", allow_duplicate=True),
-    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     # Sheet-select modal outputs
-    Output("sheet-select-modal", "opened", allow_duplicate=True),
-    Output("sheet-select-dropdown", "data", allow_duplicate=True),
-    Output("sheet-select-dropdown", "value", allow_duplicate=True),
-    Output("sheet-select-contents-store", "data", allow_duplicate=True),
-    Output("sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("at-sheet-select-dropdown", "data", allow_duplicate=True),
+    Output("at-sheet-select-dropdown", "value", allow_duplicate=True),
+    Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
     Input("upload-data", "contents"),
     State("upload-data", "filename"),
     State("analyticstool-raw-data-store", "data"),
@@ -2675,50 +2616,26 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                 n_no, n_no, True,  # hide alert
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no,
-                False, True,  # hide blocker
+                False,  # hide blocker
                 True, dropdown_data, [sheet_names[0]], contents, filename,  # open sheet modal
             )
 
-        # Parse the uploaded file
-        new_df = parse_uploaded_file(contents, filename)
-        new_periodicity = detect_periodicity(new_df)
-
-        # Determine the effective periodicity
-        if existing_data is not None:
-            existing_df = json_to_df(existing_data)
-
-            # Check periodicity compatibility and resample if needed
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                # Resample new daily data to monthly before appending
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                # If new data is monthly but existing is daily, convert existing to monthly
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-
-            # Merge the data
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = new_df
-            combined_periodicity = new_periodicity
-            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
-
-        # Get available periodicities
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+        # Parse and merge upload
+        new_df = _shared_import_single_upload(contents, filename)
+        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = merge_result.default_periodicity
+        imported_df = merge_result.imported_df
 
         # Keep current selection and add new series
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
 
         # Determine alert state
         if not first_load:
-            alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename}"
+            alert_msg = f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from {filename}"
             alert_color = "green"
             alert_hide = False
             new_first_load = True
@@ -2746,7 +2663,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             new_first_load,
             [], # Reset deleted series
             current_vol_scaling or {},
-            False, True, # Hide blocker
+            False, # Hide blocker
             *sheet_no,
         )
 
@@ -2759,7 +2676,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             False,
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
-            False, True, # Hide blocker
+            False, # Hide blocker
             *sheet_no,
         )
 
@@ -2785,17 +2702,16 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Output("first-load-store", "data", allow_duplicate=True),
     Output("temp-deleted-series-store", "data", allow_duplicate=True),
     Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("ui-blocker-store", "data", allow_duplicate=True),
-    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
-    Output("sheet-select-modal", "opened", allow_duplicate=True),
-    Output("sheet-select-contents-store", "data", allow_duplicate=True),
-    Output("sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
     Output("upload-data", "contents", allow_duplicate=True),
-    Input("sheet-select-ok-button", "n_clicks"),
-    Input("sheet-select-import-all-button", "n_clicks"),
-    State("sheet-select-dropdown", "value"),
-    State("sheet-select-contents-store", "data"),
-    State("sheet-select-filename-store", "data"),
+    Input("at-sheet-select-ok-button", "n_clicks"),
+    Input("at-sheet-select-import-all-button", "n_clicks"),
+    State("at-sheet-select-dropdown", "value"),
+    State("at-sheet-select-contents-store", "data"),
+    State("at-sheet-select-filename-store", "data"),
     State("analyticstool-raw-data-store", "data"),
     State("analyticstool-original-periodicity-store", "data"),
     State("series-select", "data"),
@@ -2815,12 +2731,12 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
 
     n_no = no_update
     triggered_id = callback_context.triggered_id
-    if triggered_id not in {"sheet-select-ok-button", "sheet-select-import-all-button"}:
+    if triggered_id not in {"at-sheet-select-ok-button", "at-sheet-select-import-all-button"}:
         raise PreventUpdate
 
     try:
         workbook_sheets = get_sheet_names(stashed_contents, stashed_filename)
-        if triggered_id == "sheet-select-import-all-button":
+        if triggered_id == "at-sheet-select-import-all-button":
             target_sheets = workbook_sheets
         else:
             target_sheets = selected_sheets or []
@@ -2834,38 +2750,20 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
                 False,
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no,
-                False, True,  # Hide blocker
+                False,  # Hide blocker
                 True, stashed_contents, stashed_filename, n_no,  # keep modal open and stash
             )
 
-        new_df, imported_sheets = _import_selected_workbook_sheets(
-            stashed_contents, stashed_filename, target_sheets
-        )
-        new_periodicity = detect_periodicity(new_df)
+        new_df, imported_sheets = _import_selected_workbook_sheets(stashed_contents, stashed_filename, target_sheets)
+        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = merge_result.default_periodicity
+        imported_df = merge_result.imported_df
         filename = stashed_filename
 
-        if existing_data is not None:
-            existing_df = json_to_df(existing_data)
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = new_df
-            combined_periodicity = new_periodicity
-            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
-
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
-
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
 
         if not first_load:
@@ -2873,7 +2771,10 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
                 sheet_msg = f"sheet: {imported_sheets[0]}"
             else:
                 sheet_msg = f"{len(imported_sheets)} sheets"
-            alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename} ({sheet_msg})"
+            alert_msg = (
+                f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows "
+                f"from {filename} ({sheet_msg})"
+            )
             alert_color = "green"
             alert_hide = False
             new_first_load = True
@@ -2901,7 +2802,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             new_first_load,
             [],
             current_vol_scaling or {},
-            False, True,  # Hide blocker
+            False,  # Hide blocker
             False, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
@@ -2914,37 +2815,66 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             False,
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
-            False, True,  # Hide blocker
+            False,  # Hide blocker
             False, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
 
 @callback(
-    Output("sheet-select-ok-button", "disabled"),
-    Input("sheet-select-dropdown", "value"),
+    Output("at-sheet-select-ok-button", "disabled"),
+    Input("at-sheet-select-dropdown", "value"),
 )
 def toggle_sheet_select_import_selected_disabled(selected_sheets):
     return not bool(selected_sheets)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        return true;
+    }
+    """,
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-sheet-select-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        return true;
+    }
+    """,
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-sheet-select-import-all-button", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------
 # Sheet selection modal: cancel
 # ---------------------------------------------------------------------------
 @callback(
-    Output("sheet-select-modal", "opened", allow_duplicate=True),
-    Output("sheet-select-contents-store", "data", allow_duplicate=True),
-    Output("sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
     Output("upload-data", "contents", allow_duplicate=True),
-    Output("ui-blocker-store", "data", allow_duplicate=True),
-    Output("ui-blocker-timeout", "disabled", allow_duplicate=True),
-    Input("sheet-select-cancel-button", "n_clicks"),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-sheet-select-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def on_sheet_select_cancel(n_clicks):
     """Cancel sheet selection and clear stashed data."""
     if not n_clicks:
         raise PreventUpdate
-    return False, None, None, None, False, True
+    return False, None, None, None, False
 
 
 # Clear the file input so the same file can be re-uploaded
@@ -2961,8 +2891,8 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("sheet-select-modal", "title", allow_duplicate=True),
-    Input("sheet-select-modal", "opened"),
+    Output("at-sheet-select-modal", "title", allow_duplicate=True),
+    Input("at-sheet-select-modal", "opened"),
     prevent_initial_call=True,
 )
 
@@ -4933,4 +4863,5 @@ def download_sample_monthly(n_clicks):
         raise PreventUpdate
 
     return dcc.send_file(str(get_sample_file_path("monthly")))
+
 

@@ -38,7 +38,7 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
     monkeypatch.setattr(
         analyticstool,
         "callback_context",
-        SimpleNamespace(triggered_id="sheet-select-ok-button"),
+        SimpleNamespace(triggered_id="at-sheet-select-ok-button"),
     )
     selected_result = analyticstool.on_sheet_select_ok(
         1,
@@ -59,13 +59,13 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
     selected_df.index = pd.to_datetime(selected_df.index)
     assert selected_result[1] == "daily"
     assert selected_result[7] == "green"
-    assert selected_result[19] is False
+    assert selected_result[18] is False
     assert selected_df.shape == (2, 1)
 
     monkeypatch.setattr(
         analyticstool,
         "callback_context",
-        SimpleNamespace(triggered_id="sheet-select-import-all-button"),
+        SimpleNamespace(triggered_id="at-sheet-select-import-all-button"),
     )
     all_result = analyticstool.on_sheet_select_ok(
         1,
@@ -159,7 +159,7 @@ def test_sheet_callbacks_return_validation_error_when_selected_empty(monkeypatch
     monkeypatch.setattr(
         analyticstool,
         "callback_context",
-        SimpleNamespace(triggered_id="sheet-select-ok-button"),
+        SimpleNamespace(triggered_id="at-sheet-select-ok-button"),
     )
     at_result = analyticstool.on_sheet_select_ok(
         1,
@@ -178,7 +178,7 @@ def test_sheet_callbacks_return_validation_error_when_selected_empty(monkeypatch
     )
     assert at_result[6] == "Select at least one sheet to import."
     assert at_result[7] == "red"
-    assert at_result[19] is True
+    assert at_result[18] is True
 
     monkeypatch.setattr(
         portopt,

@@ -41,21 +41,86 @@ def parse_uploaded_file(contents: str, filename: str, sheet_name=0) -> pd.DataFr
     Returns:
         DataFrame with DatetimeIndex and returns as columns
     """
+    parsed = parse_uploaded_sheets(contents, filename, [sheet_name])
+    return next(iter(parsed.values()))
+
+
+def parse_uploaded_sheets(
+    contents: str,
+    filename: str,
+    sheet_names: list[int | str],
+    ignore_errors: bool = False,
+) -> dict[str, pd.DataFrame]:
+    """Parse one or more uploaded sheets with a single decode/load pass.
+
+    Args:
+        contents: Base64 encoded file contents from dcc.Upload
+        filename: Original filename to determine file type
+        sheet_names: Requested sheet names/indices
+        ignore_errors: If True, skip per-sheet parse errors and continue.
+
+    Returns:
+        Mapping of resolved sheet name -> parsed returns DataFrame.
+    """
     _content_type, content_string = contents.split(",")
     decoded = base64.b64decode(content_string)
 
     if filename.endswith(".csv"):
+        if len(sheet_names) > 1:
+            raise ValueError("CSV uploads do not support multiple sheets.")
         df = pd.read_csv(io.StringIO(decoded.decode("utf-8")))
-        return _normalize_standard_returns_df(df)
+        key = str(sheet_names[0]) if sheet_names else "Sheet1"
+        return {key: _normalize_standard_returns_df(df)}
 
-    if filename.endswith((".xlsx", ".xls")):
+    if not filename.endswith((".xlsx", ".xls")):
+        raise ValueError(f"Unsupported file type: {filename}")
+
+    wb = load_workbook(io.BytesIO(decoded), data_only=True)
+    xls = pd.ExcelFile(io.BytesIO(decoded))
+    requested = _resolve_requested_sheet_names(wb, sheet_names)
+
+    results: dict[str, pd.DataFrame] = {}
+    first_error = None
+    for resolved_sheet in requested:
         try:
-            return _parse_morningstar_report(decoded, sheet_name)
-        except _MorningstarLayoutNotFoundError:
-            standard_df = pd.read_excel(io.BytesIO(decoded), sheet_name=sheet_name)
-            return _normalize_standard_returns_df(standard_df)
+            results[resolved_sheet] = _parse_excel_sheet_from_context(wb, xls, resolved_sheet)
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            if not ignore_errors:
+                raise
 
-    raise ValueError(f"Unsupported file type: {filename}")
+    if not results:
+        if first_error is not None:
+            raise first_error
+        raise ValueError("No sheets were parsed.")
+
+    return results
+
+
+def _resolve_requested_sheet_names(workbook, sheet_names: list[int | str]) -> list[str]:
+    if not sheet_names:
+        return [workbook.sheetnames[0]]
+
+    resolved: list[str] = []
+    seen = set()
+    for raw in sheet_names:
+        name = _resolve_sheet_name(workbook, raw)
+        if name not in workbook.sheetnames:
+            raise ValueError(f"Sheet not found: {name}")
+        if name not in seen:
+            resolved.append(name)
+            seen.add(name)
+    return resolved
+
+
+def _parse_excel_sheet_from_context(workbook, excel_file: pd.ExcelFile, sheet_name: str) -> pd.DataFrame:
+    worksheet = workbook[sheet_name]
+    try:
+        return _parse_morningstar_report_from_worksheet(worksheet)
+    except _MorningstarLayoutNotFoundError:
+        standard_df = excel_file.parse(sheet_name=sheet_name)
+        return _normalize_standard_returns_df(standard_df)
 
 
 def _normalize_standard_returns_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -149,7 +214,10 @@ def _find_morningstar_header_row(ws) -> int | None:
 def _parse_morningstar_report(decoded: bytes, sheet_name: int | str) -> pd.DataFrame:
     wb = load_workbook(io.BytesIO(decoded), data_only=True)
     ws = wb[_resolve_sheet_name(wb, sheet_name)]
+    return _parse_morningstar_report_from_worksheet(ws)
 
+
+def _parse_morningstar_report_from_worksheet(ws) -> pd.DataFrame:
     header_row = _find_morningstar_header_row(ws)
     if header_row is None:
         raise _MorningstarLayoutNotFoundError("Unsupported Excel layout.")

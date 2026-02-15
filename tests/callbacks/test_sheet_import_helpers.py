@@ -3,10 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from utils import upload_flow
 
-def test_analyticstool_import_selected_sheets_overwrites_with_later_sheet(monkeypatch, page_modules):
-    analyticstool, _portopt = page_modules
 
+def test_shared_import_selected_sheets_overwrites_with_later_sheet(monkeypatch):
     idx_1 = pd.to_datetime(["2024-01-01", "2024-01-02"])
     idx_2 = pd.to_datetime(["2024-01-02", "2024-01-03"])
     frames = {
@@ -17,16 +17,16 @@ def test_analyticstool_import_selected_sheets_overwrites_with_later_sheet(monkey
     for frame in frames.values():
         frame.index.name = "Date"
 
-    monkeypatch.setattr(analyticstool, "get_sheet_names", lambda *_args, **_kwargs: ["S1", "S2", "S3"])
+    monkeypatch.setattr(upload_flow, "get_sheet_names", lambda *_args, **_kwargs: ["S1", "S2", "S3"])
     monkeypatch.setattr(
-        analyticstool,
-        "parse_uploaded_file",
-        lambda _contents, _filename, sheet_name=0: frames[sheet_name].copy(),
+        upload_flow,
+        "parse_uploaded_sheets",
+        lambda _contents, _filename, ordered_sheets, ignore_errors=False: {  # noqa: ARG005
+            sheet: frames[sheet].copy() for sheet in ordered_sheets
+        },
     )
 
-    combined, imported = analyticstool._import_selected_workbook_sheets(
-        "contents", "book.xlsx", ["S2", "S1"]
-    )
+    combined, imported = upload_flow.import_selected_workbook_sheets("contents", "book.xlsx", ["S2", "S1"])
 
     assert imported == ["S1", "S2"]
     assert combined.loc[pd.Timestamp("2024-01-02"), "SeriesA"] == pytest.approx(0.03)
@@ -34,33 +34,48 @@ def test_analyticstool_import_selected_sheets_overwrites_with_later_sheet(monkey
     assert combined.loc[pd.Timestamp("2024-01-03"), "SeriesA"] == pytest.approx(0.04)
 
 
-def test_portopt_import_selected_sheets_overwrites_with_later_sheet(monkeypatch, page_modules):
-    _analyticstool, portopt = page_modules
+def test_shared_import_selected_sheets_accepts_string_selection(monkeypatch):
+    idx = pd.to_datetime(["2024-03-01"])
+    frame = pd.DataFrame({"Series": [0.01]}, index=idx)
+    frame.index.name = "Date"
 
-    idx_1 = pd.to_datetime(["2024-02-01", "2024-02-02"])
-    idx_2 = pd.to_datetime(["2024-02-02", "2024-02-03"])
-    frames = {
-        "A": pd.DataFrame({"SeriesX": [0.10, 0.20]}, index=idx_1),
-        "B": pd.DataFrame({"SeriesX": [0.30, 0.40]}, index=idx_2),
-    }
-    for frame in frames.values():
-        frame.index.name = "Date"
+    monkeypatch.setattr(upload_flow, "get_sheet_names", lambda *_args, **_kwargs: ["S1"])
+    monkeypatch.setattr(
+        upload_flow,
+        "parse_uploaded_sheets",
+        lambda *_args, **_kwargs: {"S1": frame.copy()},
+    )
 
-    monkeypatch.setattr(portopt, "get_sheet_names", lambda *_args, **_kwargs: ["A", "B"])
+    combined, imported = upload_flow.import_selected_workbook_sheets("contents", "book.xlsx", "S1")
+
+    assert imported == ["S1"]
+    assert combined.shape == (1, 1)
+
+
+def test_page_sheet_helpers_delegate_to_shared_helper(monkeypatch, page_modules):
+    analyticstool, portopt = page_modules
+    idx = pd.to_datetime(["2024-04-01"])
+    frame = pd.DataFrame({"Series": [0.02]}, index=idx)
+    frame.index.name = "Date"
+
+    monkeypatch.setattr(
+        analyticstool,
+        "_shared_import_selected_workbook_sheets",
+        lambda *_args, **_kwargs: (frame.copy(), ["S1"]),
+    )
     monkeypatch.setattr(
         portopt,
-        "parse_uploaded_file",
-        lambda _contents, _filename, sheet_name=0: frames[sheet_name].copy(),
+        "_shared_import_selected_workbook_sheets",
+        lambda *_args, **_kwargs: (frame.copy(), ["S1"]),
     )
 
-    combined, imported = portopt._po_import_selected_workbook_sheets(
-        "contents", "book.xlsx", ["B", "A"]
-    )
+    at_df, at_sheets = analyticstool._import_selected_workbook_sheets("contents", "book.xlsx", ["S1"])
+    po_df, po_sheets = portopt._po_import_selected_workbook_sheets("contents", "book.xlsx", ["S1"])
 
-    assert imported == ["A", "B"]
-    assert combined.loc[pd.Timestamp("2024-02-02"), "SeriesX"] == pytest.approx(0.30)
-    assert combined.loc[pd.Timestamp("2024-02-01"), "SeriesX"] == pytest.approx(0.10)
-    assert combined.loc[pd.Timestamp("2024-02-03"), "SeriesX"] == pytest.approx(0.40)
+    assert at_sheets == ["S1"]
+    assert po_sheets == ["S1"]
+    assert at_df.equals(frame)
+    assert po_df.equals(frame)
 
 
 def test_import_selected_disabled_toggles_with_selected_values(page_modules):
@@ -70,31 +85,3 @@ def test_import_selected_disabled_toggles_with_selected_values(page_modules):
     assert analyticstool.toggle_sheet_select_import_selected_disabled(["Sheet1"]) is False
     assert portopt.po_toggle_sheet_select_import_selected_disabled([]) is True
     assert portopt.po_toggle_sheet_select_import_selected_disabled(["Sheet1"]) is False
-
-
-def test_sheet_helpers_accept_string_selection(monkeypatch, page_modules):
-    analyticstool, portopt = page_modules
-
-    idx = pd.to_datetime(["2024-03-01"])
-    frame = pd.DataFrame({"Series": [0.01]}, index=idx)
-    frame.index.name = "Date"
-
-    monkeypatch.setattr(analyticstool, "get_sheet_names", lambda *_args, **_kwargs: ["S1"])
-    monkeypatch.setattr(
-        analyticstool,
-        "parse_uploaded_file",
-        lambda *_args, **_kwargs: frame.copy(),
-    )
-    a_df, a_sheets = analyticstool._import_selected_workbook_sheets("contents", "book.xlsx", "S1")
-    assert a_sheets == ["S1"]
-    assert a_df.shape == (1, 1)
-
-    monkeypatch.setattr(portopt, "get_sheet_names", lambda *_args, **_kwargs: ["S1"])
-    monkeypatch.setattr(
-        portopt,
-        "parse_uploaded_file",
-        lambda *_args, **_kwargs: frame.copy(),
-    )
-    p_df, p_sheets = portopt._po_import_selected_workbook_sheets("contents", "book.xlsx", "S1")
-    assert p_sheets == ["S1"]
-    assert p_df.shape == (1, 1)

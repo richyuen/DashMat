@@ -14,6 +14,7 @@ from utils.parsing import (
     detect_periodicity,
     get_sheet_names,
     parse_uploaded_file,
+    parse_uploaded_sheets,
 )
 
 
@@ -145,6 +146,23 @@ def test_parse_uploaded_file_csv_sorts_dates_and_converts_percents():
     assert parsed["A"].iloc[1] == pytest.approx(0.01)
 
 
+def test_parse_uploaded_sheets_csv_respects_requested_key_name():
+    csv = "Date,A\n2024-01-01,1%\n"
+    payload = _as_upload_payload(csv)
+
+    parsed = parse_uploaded_sheets(payload, "returns.csv", ["Custom"])
+
+    assert list(parsed.keys()) == ["Custom"]
+    assert parsed["Custom"].iloc[0, 0] == pytest.approx(0.01)
+
+
+def test_parse_uploaded_sheets_csv_rejects_multi_sheet_requests():
+    csv = "Date,A\n2024-01-01,1%\n"
+    payload = _as_upload_payload(csv)
+    with pytest.raises(ValueError, match="do not support multiple sheets"):
+        parse_uploaded_sheets(payload, "returns.csv", ["S1", "S2"])
+
+
 def test_parse_uploaded_file_raises_for_unsupported_extension():
     payload = _as_upload_payload("Date,A\n2024-01-01,0.01\n")
     with pytest.raises(ValueError):
@@ -171,6 +189,52 @@ def test_get_sheet_names_and_parse_uploaded_file_excel():
     assert sheets == ["Sheet1"]
     assert parsed.index[0].strftime("%Y-%m-%d") == "2024-01-01"
     assert parsed["A"].iloc[0] == pytest.approx(0.02)
+
+
+def test_parse_uploaded_sheets_excel_resolves_indices_and_deduplicates_requests():
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        pd.DataFrame({"Date": ["2024-01-01"], "A": [0.1]}).to_excel(writer, sheet_name="S1", index=False)
+        pd.DataFrame({"Date": ["2024-01-02"], "B": [0.2]}).to_excel(writer, sheet_name="S2", index=False)
+    payload = (
+        "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"
+        + base64.b64encode(bio.getvalue()).decode("ascii")
+    )
+
+    parsed = parse_uploaded_sheets(payload, "multi.xlsx", [0, "S2", 0])
+
+    assert list(parsed.keys()) == ["S1", "S2"]
+    assert list(parsed["S1"].columns) == ["A"]
+    assert list(parsed["S2"].columns) == ["B"]
+
+
+def test_parse_uploaded_sheets_ignore_errors_skips_bad_sheet():
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        pd.DataFrame({"Date": ["2024-01-01"], "A": [0.1]}).to_excel(writer, sheet_name="Good", index=False)
+        pd.DataFrame({"Date": ["not-a-date"], "A": [0.2]}).to_excel(writer, sheet_name="Bad", index=False)
+    payload = (
+        "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"
+        + base64.b64encode(bio.getvalue()).decode("ascii")
+    )
+
+    parsed = parse_uploaded_sheets(payload, "mixed.xlsx", ["Good", "Bad"], ignore_errors=True)
+
+    assert list(parsed.keys()) == ["Good"]
+    assert parsed["Good"].shape == (1, 1)
+
+
+def test_parse_uploaded_sheets_ignore_errors_raises_when_all_bad():
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        pd.DataFrame({"Date": ["not-a-date"], "A": [0.2]}).to_excel(writer, sheet_name="Bad", index=False)
+    payload = (
+        "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"
+        + base64.b64encode(bio.getvalue()).decode("ascii")
+    )
+
+    with pytest.raises(Exception):
+        parse_uploaded_sheets(payload, "bad.xlsx", ["Bad"], ignore_errors=True)
 
 
 def test_parse_uploaded_file_morningstar_daily_imports_only_exact_return_columns():
@@ -241,6 +305,17 @@ def test_resolve_sheet_name_accepts_string():
     wb.active.title = "SheetX"
     assert parsing._resolve_sheet_name(wb, "SheetX") == "SheetX"
     assert parsing._resolve_sheet_name(wb, 0) == "SheetX"
+
+
+def test_resolve_requested_sheet_names_defaults_and_rejects_missing():
+    wb = Workbook()
+    wb.active.title = "First"
+    wb.create_sheet("Second")
+
+    assert parsing._resolve_requested_sheet_names(wb, []) == ["First"]
+    assert parsing._resolve_requested_sheet_names(wb, [0, "Second", 0]) == ["First", "Second"]
+    with pytest.raises(ValueError, match="Sheet not found"):
+        parsing._resolve_requested_sheet_names(wb, ["Missing"])
 
 
 def test_find_morningstar_header_row_returns_none_when_missing():
