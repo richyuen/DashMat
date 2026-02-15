@@ -20,6 +20,9 @@ conda run -n dashmat python -m pytest -q tests
 # Optional callback-level upload smoke checks
 conda run -n dashmat python tools/smoke_upload_flow.py --file C:\Git\SampleMstar.xlsx --page both --mode both
 conda run -n dashmat python tools/smoke_upload_flow.py --file C:\Git\SampleMstarMulti.xlsx --page both --mode both
+
+# Optional upload/date-range latency benchmark
+conda run -n dashmat python tools/benchmark_upload_date_range.py
 ```
 
 ## Coverage Gate
