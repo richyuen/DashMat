@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pandas as pd
+import pytest
 
 from tools.data import generate_test_data as gtd
 
@@ -85,3 +87,44 @@ def test_main_saves_daily_and_monthly_files(monkeypatch):
     assert len(written_paths) == 2
     assert any(path.name == gtd.SAMPLE_DAILY_FILE for path in written_paths)
     assert any(path.name == gtd.SAMPLE_MONTHLY_FILE for path in written_paths)
+
+
+def test_download_close_series_raises_when_yfinance_missing(monkeypatch):
+    monkeypatch.setattr(gtd, "yf", None)
+    with pytest.raises(ImportError):
+        gtd._download_close_series("^GSPC", "SPX")
+
+
+def test_download_close_series_raises_when_download_empty(monkeypatch):
+    fake_yf = SimpleNamespace(download=lambda *_args, **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(gtd, "yf", fake_yf)
+    with pytest.raises(ValueError, match="No history returned"):
+        gtd._download_close_series("^GSPC", "SPX")
+
+
+def test_download_close_series_handles_single_index_close_column(monkeypatch):
+    idx = pd.date_range("2020-01-01", periods=5, freq="B")
+    mock_df = pd.DataFrame(
+        {
+            "Close": [100, 101, 102, 103, 104],
+            "Open": [99, 100, 101, 102, 103],
+        },
+        index=idx,
+    )
+    fake_yf = SimpleNamespace(download=lambda *_args, **_kwargs: mock_df)
+    monkeypatch.setattr(gtd, "yf", fake_yf)
+
+    series = gtd._download_close_series("^GSPC", "SPX")
+    assert series.name == "SPX"
+    assert len(series) == len(idx)
+    assert series.iloc[0] == 100
+
+
+def test_download_close_series_raises_when_filtered_range_empty(monkeypatch):
+    idx = pd.date_range("2010-01-01", periods=5, freq="B")
+    mock_df = pd.DataFrame({"Close": [100, 101, 102, 103, 104]}, index=idx)
+    fake_yf = SimpleNamespace(download=lambda *_args, **_kwargs: mock_df)
+    monkeypatch.setattr(gtd, "yf", fake_yf)
+
+    with pytest.raises(ValueError, match="No data in target range"):
+        gtd._download_close_series("^GSPC", "SPX")

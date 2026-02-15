@@ -117,6 +117,53 @@ def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.Da
     return df
 
 
+def _import_selected_workbook_sheets(contents, filename, selected_sheets):
+    """Parse selected workbook sheets in workbook order.
+
+    Later sheets overwrite earlier sheet values where they provide non-null data.
+    """
+    workbook_sheets = get_sheet_names(contents, filename)
+    if isinstance(selected_sheets, str):
+        selected_values = [selected_sheets]
+    else:
+        selected_values = list(selected_sheets or [])
+    selected_set = set(selected_values)
+    ordered_sheets = [sheet for sheet in workbook_sheets if sheet in selected_set]
+    if not ordered_sheets:
+        raise ValueError("Select at least one sheet to import.")
+
+    combined_df = None
+    periodicity_hint = None
+    imported_sheets = []
+    first_error = None
+    for sheet in ordered_sheets:
+        try:
+            parsed_df = parse_uploaded_file(contents, filename, sheet_name=sheet)
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            continue
+        if parsed_df.empty:
+            continue
+        if periodicity_hint is None:
+            periodicity_hint = parsed_df.attrs.get("periodicity_hint")
+        if combined_df is None:
+            combined_df = parsed_df
+        else:
+            combined_df = parsed_df.combine_first(combined_df)
+        imported_sheets.append(sheet)
+
+    if combined_df is None:
+        if first_error is not None:
+            raise ValueError(f"No importable data rows found in selected sheets: {first_error}") from first_error
+        raise ValueError("No importable data rows found in selected sheets.")
+
+    combined_df = combined_df.sort_index()
+    if periodicity_hint in {"daily", "monthly"}:
+        combined_df.attrs["periodicity_hint"] = periodicity_hint
+    return combined_df, imported_sheets
+
+
 def build_welcome_screen():
     return dmc.Stack(
         align="center",
@@ -1223,7 +1270,7 @@ layout = dmc.Container(
                 gap="xs",
                 children=[
                     dmc.ThemeIcon(DashIconify(icon="tabler:table"), color="teal", variant="light", size="sm"),
-                    dmc.Text("Select Sheet", fw=600, size="sm"),
+                    dmc.Text("Select Sheets", fw=600, size="sm"),
                 ],
             ),
             size="sm",
@@ -1234,21 +1281,22 @@ layout = dmc.Container(
             overlayProps={"blur": 2, "opacity": 0.45},
             transitionProps={"transition": "fade", "duration": 180},
             children=[
-                dmc.Text("This file contains multiple sheets. Select which sheet to import:", size="sm", mb="md"),
-                dmc.Select(
+                dmc.Text("This file contains multiple sheets. Select one or more sheets to import:", size="sm", mb="md"),
+                dmc.MultiSelect(
                     id="sheet-select-dropdown",
                     data=[],
-                    value=None,
+                    value=[],
                     w="100%",
                     size="sm",
-                    placeholder="Select a sheet",
+                    placeholder="Select sheet(s)",
                 ),
                 dmc.Group(
                     mt="md",
                     justify="flex-end",
                     children=[
                         dmc.Button("Cancel", id="sheet-select-cancel-button", variant="outline", color="red"),
-                        dmc.Button("OK", id="sheet-select-ok-button", color="blue"),
+                        dmc.Button("Import All Sheets", id="sheet-select-import-all-button", variant="light"),
+                        dmc.Button("Import Selected", id="sheet-select-ok-button", color="blue"),
                     ],
                 ),
             ],
@@ -2628,7 +2676,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no,
                 False, True,  # hide blocker
-                True, dropdown_data, sheet_names[0], contents, filename,  # open sheet modal
+                True, dropdown_data, [sheet_names[0]], contents, filename,  # open sheet modal
             )
 
         # Parse the uploaded file
@@ -2744,6 +2792,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Output("sheet-select-filename-store", "data", allow_duplicate=True),
     Output("upload-data", "contents", allow_duplicate=True),
     Input("sheet-select-ok-button", "n_clicks"),
+    Input("sheet-select-import-all-button", "n_clicks"),
     State("sheet-select-dropdown", "value"),
     State("sheet-select-contents-store", "data"),
     State("sheet-select-filename-store", "data"),
@@ -2757,16 +2806,41 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     State("vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filename,
+def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename,
                        existing_data, existing_periodicity, current_selection,
                        current_bench, current_ls, current_order, first_load, current_vol_scaling):
-    """Parse the selected sheet and complete the import."""
-    if not n_clicks or not stashed_contents:
+    """Parse selected sheet(s) and complete the import."""
+    if not stashed_contents:
         raise PreventUpdate
 
     n_no = no_update
+    triggered_id = callback_context.triggered_id
+    if triggered_id not in {"sheet-select-ok-button", "sheet-select-import-all-button"}:
+        raise PreventUpdate
+
     try:
-        new_df = parse_uploaded_file(stashed_contents, stashed_filename, sheet_name=selected_sheet)
+        workbook_sheets = get_sheet_names(stashed_contents, stashed_filename)
+        if triggered_id == "sheet-select-import-all-button":
+            target_sheets = workbook_sheets
+        else:
+            target_sheets = selected_sheets or []
+
+        if not target_sheets:
+            return (
+                n_no, n_no, n_no, n_no, n_no,
+                n_no,
+                "Select at least one sheet to import.",
+                "red",
+                False,
+                n_no, n_no, n_no, n_no, n_no,
+                n_no, n_no, n_no,
+                False, True,  # Hide blocker
+                True, stashed_contents, stashed_filename, n_no,  # keep modal open and stash
+            )
+
+        new_df, imported_sheets = _import_selected_workbook_sheets(
+            stashed_contents, stashed_filename, target_sheets
+        )
         new_periodicity = detect_periodicity(new_df)
         filename = stashed_filename
 
@@ -2795,7 +2869,11 @@ def on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filen
         updated_selection = (current_selection or []) + new_series
 
         if not first_load:
-            alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename} (sheet: {selected_sheet})"
+            if len(imported_sheets) == 1:
+                sheet_msg = f"sheet: {imported_sheets[0]}"
+            else:
+                sheet_msg = f"{len(imported_sheets)} sheets"
+            alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {filename} ({sheet_msg})"
             alert_color = "green"
             alert_hide = False
             new_first_load = True
@@ -2839,6 +2917,14 @@ def on_sheet_select_ok(n_clicks, selected_sheet, stashed_contents, stashed_filen
             False, True,  # Hide blocker
             False, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
+
+
+@callback(
+    Output("sheet-select-ok-button", "disabled"),
+    Input("sheet-select-dropdown", "value"),
+)
+def toggle_sheet_select_import_selected_disabled(selected_sheets):
+    return not bool(selected_sheets)
 
 
 # ---------------------------------------------------------------------------

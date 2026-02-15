@@ -16,6 +16,10 @@ conda run -n dashmat python -m pip install -r requirements-dev.txt
 
 # Run full suite
 conda run -n dashmat python -m pytest -q tests
+
+# Optional callback-level upload smoke checks
+conda run -n dashmat python tools/smoke_upload_flow.py --file C:\Git\SampleMstar.xlsx --page both --mode both
+conda run -n dashmat python tools/smoke_upload_flow.py --file C:\Git\SampleMstarMulti.xlsx --page both --mode both
 ```
 
 ## Coverage Gate
