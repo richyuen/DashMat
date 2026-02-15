@@ -31,11 +31,52 @@ def test_build_analytics_compute_bundle_normalizes_inputs(page_modules, raw_json
 def test_update_date_range_store_returns_payload_or_no_update(page_modules):
     analyticstool, _ = page_modules
 
-    assert analyticstool.update_date_range_store("2024-01-01", "2024-12-31") == {
+    assert analyticstool.update_date_range_store("2024-01-01", "2024-12-31", None) == {
         "start": "2024-01-01",
         "end": "2024-12-31",
     }
-    assert analyticstool.update_date_range_store("2024-01-01", None) is no_update
+    assert analyticstool.update_date_range_store("2024-01-01", None, None) is no_update
+    assert (
+        analyticstool.update_date_range_store(
+            "2024-01-01",
+            "2024-12-31",
+            {"start": "2024-01-01", "end": "2024-12-31"},
+        )
+        is no_update
+    )
+
+
+def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+
+    monkeypatch.setattr(
+        analyticstool,
+        "compute_date_range_candidates",
+        lambda *_args, **_kwargs: {
+            "available_series": ["Asset_A"],
+            "common_daily_start": "2024-01-01",
+            "common_daily_end": "2024-12-31",
+        },
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "resolve_initial_range",
+        lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
+    )
+
+    start, end, _style, _common_disabled, _daily_disabled, _max_disabled, range_store, ready = (
+        analyticstool.initialize_date_range(
+            "raw-json",
+            "daily",
+            ["Asset_A"],
+            {"start": "2024-01-01", "end": "2024-12-31"},
+        )
+    )
+
+    assert start == "2024-01-01"
+    assert end == "2024-12-31"
+    assert range_store is no_update
+    assert ready is True
 
 
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
@@ -55,7 +96,8 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         ["Asset_A", "Asset_B"],
         {},
         {},
-        None,
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
         0,
         {},
         None,
@@ -66,6 +108,39 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     cum_row = next(row for row in row_data if row["Statistic"] == "Cumulative Return")
     assert cum_row["Asset_A"] == pytest.approx(0.10)
     assert cum_row["Asset_B"] == pytest.approx(0.20)
+
+
+def test_update_download_excel_disabled_uses_ready_state(page_modules):
+    analyticstool, _ = page_modules
+    assert analyticstool.update_download_excel_disabled(None, ["Asset_A"], None, True) is True
+    assert analyticstool.update_download_excel_disabled("raw", ["Asset_A"], None, True) is True
+    assert (
+        analyticstool.update_download_excel_disabled(
+            "raw",
+            ["Asset_A"],
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            True,
+        )
+        is False
+    )
+
+
+def test_update_statistics_requires_ready_state(page_modules):
+    analyticstool, _ = page_modules
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_statistics(
+            "raw-json",
+            "daily",
+            ["Asset_A"],
+            {},
+            {},
+            None,
+            False,
+            0,
+            {},
+            None,
+        )
 
 
 def test_update_growth_grid_requires_growth_table_view(page_modules):
@@ -79,7 +154,8 @@ def test_update_growth_grid_requires_growth_table_view(page_modules):
             ["Asset_A"],
             {},
             {},
-            None,
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            True,
             0,
             {},
         )
@@ -102,7 +178,8 @@ def test_update_growth_grid_builds_columns_and_rows(monkeypatch, page_modules):
         ["Asset_A"],
         {},
         {},
-        None,
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
         0,
         {},
     )
@@ -130,7 +207,8 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
         "total",
         {},
         {},
-        None,
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
         0,
         {},
     )

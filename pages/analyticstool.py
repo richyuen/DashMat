@@ -17,6 +17,12 @@ from dash.exceptions import PreventUpdate
 
 import cache_config
 from utils.parsing import get_sheet_names
+from utils.add_series_flow import find_duplicate_series, import_selected_disabled
+from utils.date_range_flow import (
+    compute_date_range_candidates,
+    resolve_button_range,
+    resolve_initial_range,
+)
 from utils.upload_flow import (
     import_selected_workbook_sheets as _shared_import_selected_workbook_sheets,
     import_single_upload as _shared_import_single_upload,
@@ -56,7 +62,6 @@ from utils.shared_metrics import (
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 from utils.core_categories import (
     clear_dropdown_caches,
-    get_common_daily_range,
     get_core_category_options_cached,
     load_cma_returns_for_benches,
     load_cma_returns_for_benches_with_meta,
@@ -78,6 +83,14 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
+
+
+def _has_complete_date_range(value) -> bool:
+    return (
+        isinstance(value, dict)
+        and bool(value.get("start"))
+        and bool(value.get("end"))
+    )
 
 
 @dataclass(frozen=True)
@@ -122,8 +135,13 @@ def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.Da
     return df
 
 
-def _import_selected_workbook_sheets(contents, filename, selected_sheets):
-    return _shared_import_selected_workbook_sheets(contents, filename, selected_sheets)
+def _import_selected_workbook_sheets(contents, filename, selected_sheets, workbook_sheets=None):
+    return _shared_import_selected_workbook_sheets(
+        contents,
+        filename,
+        selected_sheets,
+        workbook_sheets=workbook_sheets,
+    )
 
 
 def build_welcome_screen():
@@ -421,14 +439,7 @@ def validate_db_add_selection(selected_benches, raw_data, opened):
     if not selected_benches:
         return no_update, True, True
 
-    existing_cols = set()
-    if raw_data:
-        try:
-            existing_cols = set(json_to_df(raw_data).columns)
-        except Exception:
-            existing_cols = set()
-
-    duplicates = [s for s in selected_benches if s in existing_cols]
+    duplicates = find_duplicate_series(selected_benches, raw_data)
     if duplicates:
         return f"Cannot add duplicate series: {', '.join(duplicates)}", False, True
     return no_update, True, False
@@ -611,6 +622,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dcc.Loading(
                             id="at-loading-returns",
                             type="default",
+                            delay_show=300,
+                            delay_hide=150,
                             style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             children=[
@@ -747,6 +760,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dcc.Loading(
                             id="at-loading-statistics",
                             type="default",
+                            delay_show=300,
+                            delay_hide=150,
                             style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             children=[
@@ -856,7 +871,10 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                             ],
                         ),
-                        html.Div(id="at-correlogram-container", style={"flex": "1", "minHeight": "0", "overflow": "auto"}),
+                        html.Div(
+                            id="at-correlogram-container",
+                            style={"flex": "1", "minHeight": "520px", "overflow": "auto"},
+                        ),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -1643,6 +1661,7 @@ layout = dmc.Container(
         dcc.Store(id="at-monthly-view-store", data="annual", storage_type="session"),
         dcc.Store(id="at-monthly-series-store", data=None, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
+        dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="at-download-enabled-store", data=False),
@@ -1657,6 +1676,7 @@ layout = dmc.Container(
         # Temp stores for sheet selection (stash upload while user picks a tab)
         dcc.Store(id="at-sheet-select-contents-store", data=None),
         dcc.Store(id="at-sheet-select-filename-store", data=None),
+        dcc.Store(id="at-sheet-select-sheetnames-store", data=None),
         dcc.Download(id="at-download-excel"),
         dcc.Download(id="at-download-sample-daily"),
         dcc.Download(id="at-download-sample-monthly"),
@@ -1737,6 +1757,7 @@ clientside_callback(
     Output("at-growth-chart-switch", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
+    Output("at-state-ready-store", "data", allow_duplicate=True),
     Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
@@ -1762,7 +1783,7 @@ def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_pe
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", []
+            "annual", [], False
         )
 
     try:
@@ -1826,7 +1847,7 @@ def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_pe
         return (
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            monthly_view, valid_selection
+            monthly_view, valid_selection, False
         )
 
     except Exception:
@@ -1834,7 +1855,7 @@ def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_pe
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", []
+            "annual", [], False
         )
 
 
@@ -2584,6 +2605,7 @@ def add_series_from_database(
     Output("at-sheet-select-dropdown", "value", allow_duplicate=True),
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Input("at-upload-data", "contents"),
     State("at-upload-data", "filename"),
     State("dashmat-raw-data-store", "data"),
@@ -2603,7 +2625,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 
     n_no = no_update
     # Sheet-select outputs default to no_update
-    sheet_no = (n_no, n_no, n_no, n_no, n_no)
+    sheet_no = (n_no, n_no, n_no, n_no, n_no, n_no)
 
     try:
         # Check for multi-tab Excel files
@@ -2617,7 +2639,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no,
                 False,  # hide blocker
-                True, dropdown_data, [sheet_names[0]], contents, filename,  # open sheet modal
+                True, dropdown_data, [sheet_names[0]], contents, filename, sheet_names,  # open sheet modal
             )
 
         # Parse and merge upload
@@ -2706,12 +2728,14 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Output("at-sheet-select-modal", "opened", allow_duplicate=True),
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Output("at-upload-data", "contents", allow_duplicate=True),
     Input("at-sheet-select-ok-button", "n_clicks"),
     Input("at-sheet-select-import-all-button", "n_clicks"),
     State("at-sheet-select-dropdown", "value"),
     State("at-sheet-select-contents-store", "data"),
     State("at-sheet-select-filename-store", "data"),
+    State("at-sheet-select-sheetnames-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-series-select", "data"),
@@ -2722,7 +2746,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename,
+def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename, stashed_sheet_names,
                        existing_data, existing_periodicity, current_selection,
                        current_bench, current_ls, current_order, first_load, current_vol_scaling):
     """Parse selected sheet(s) and complete the import."""
@@ -2735,7 +2759,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
         raise PreventUpdate
 
     try:
-        workbook_sheets = get_sheet_names(stashed_contents, stashed_filename)
+        workbook_sheets = stashed_sheet_names or get_sheet_names(stashed_contents, stashed_filename)
         if triggered_id == "at-sheet-select-import-all-button":
             target_sheets = workbook_sheets
         else:
@@ -2751,10 +2775,15 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no,
                 False,  # Hide blocker
-                True, stashed_contents, stashed_filename, n_no,  # keep modal open and stash
+                True, stashed_contents, stashed_filename, workbook_sheets, n_no,  # keep modal open and stash
             )
 
-        new_df, imported_sheets = _import_selected_workbook_sheets(stashed_contents, stashed_filename, target_sheets)
+        new_df, imported_sheets = _import_selected_workbook_sheets(
+            stashed_contents,
+            stashed_filename,
+            target_sheets,
+            workbook_sheets=workbook_sheets,
+        )
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
@@ -2803,7 +2832,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             [],
             current_vol_scaling or {},
             False,  # Hide blocker
-            False, None, None, None,  # Close sheet modal, clear stash, reset upload
+            False, None, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
     except Exception as e:
@@ -2816,7 +2845,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
             False,  # Hide blocker
-            False, None, None, None,  # Close sheet modal, clear stash, reset upload
+            False, None, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
 
@@ -2825,7 +2854,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
     Input("at-sheet-select-dropdown", "value"),
 )
 def toggle_sheet_select_import_selected_disabled(selected_sheets):
-    return not bool(selected_sheets)
+    return import_selected_disabled(selected_sheets)
 
 
 clientside_callback(
@@ -2865,6 +2894,7 @@ clientside_callback(
     Output("at-sheet-select-modal", "opened", allow_duplicate=True),
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("at-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Output("at-upload-data", "contents", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-sheet-select-cancel-button", "n_clicks"),
@@ -2874,7 +2904,7 @@ def on_sheet_select_cancel(n_clicks):
     """Cancel sheet selection and clear stashed data."""
     if not n_clicks:
         raise PreventUpdate
-    return False, None, None, None, False
+    return False, None, None, None, None, False
 
 
 # Clear the file input so the same file can be re-uploaded
@@ -3264,6 +3294,7 @@ def update_vol_scaling_assignments(cell_change, row_data, raw_data):
     Output("at-common-daily-button", "disabled"),
     Output("at-maximum-range-button", "disabled"),
     Output("at-date-range-store", "data", allow_duplicate=True),
+    Output("at-state-ready-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -3276,35 +3307,43 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
     if raw_data is None or not selected_series:
-        return None, None, disabled_style, True, True, True, None
+        return None, None, disabled_style, True, True, True, None, False
 
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
+        candidates = compute_date_range_candidates(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series or ()),
+        )
+        if not candidates.get("available_series"):
+            return None, None, disabled_style, True, True, True, None, False
 
-        # Filter to selected series
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
-            return None, None, disabled_style, True, True, True, None
+        start_date, end_date = resolve_initial_range(candidates, stored_range)
+        if not start_date or not end_date:
+            return None, None, disabled_style, True, True, True, None, False
 
-        daily_df = resample_returns_cached(raw_data, "daily_trading")
-        daily_available = [s for s in selected_series if s in daily_df.columns]
-        has_common_daily = bool(get_common_daily_range(daily_df, daily_available)) if daily_available else False
-
-        # Get maximum range (earliest start, latest end)
-        data_start = df.index.min().strftime("%Y-%m-%d")
-        data_end = df.index.max().strftime("%Y-%m-%d")
-
-        # Use stored dates if they fall within the available data range
-        if stored_range and stored_range.get("start") and stored_range.get("end"):
-            s = stored_range["start"]
-            e = stored_range["end"]
-            if s >= data_start and e <= data_end:
-                return s, e, enabled_style, False, not has_common_daily, False, {"start": s, "end": e}
-
-        return data_start, data_end, enabled_style, False, not has_common_daily, False, {"start": data_start, "end": data_end}
+        has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
+        next_range = {"start": start_date, "end": end_date}
+        range_output = (
+            no_update
+            if _has_complete_date_range(stored_range)
+            and stored_range.get("start") == start_date
+            and stored_range.get("end") == end_date
+            else next_range
+        )
+        return (
+            start_date,
+            end_date,
+            enabled_style,
+            False,
+            not has_common_daily,
+            False,
+            range_output,
+            True,
+        )
 
     except Exception:
-        return None, None, disabled_style, True, True, True, None
+        return None, None, disabled_style, True, True, True, None, False
 
 
 @callback(
@@ -3333,35 +3372,19 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
-
-        # Filter to selected series
-        available_series = [s for s in selected_series if s in df.columns]
-        if not available_series:
+        candidates = compute_date_range_candidates(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series or ()),
+        )
+        if not candidates.get("available_series"):
             raise PreventUpdate
 
-        if button_id == "at-common-range-button":
-            # Common range: only dates where ALL selected series have data
-            subset_df = df[available_series].dropna()
-            if len(subset_df) == 0:
-                raise PreventUpdate
-            start_date = subset_df.index.min().strftime("%Y-%m-%d")
-            end_date = subset_df.index.max().strftime("%Y-%m-%d")
-            periodicity_value = no_update
-        elif button_id == "at-common-daily-button":
-            daily_df = resample_returns_cached(raw_data, "daily_trading")
-            daily_available = [s for s in selected_series if s in daily_df.columns]
-            common_daily = get_common_daily_range(daily_df, daily_available)
-            if not common_daily:
-                raise PreventUpdate
-            start_date = common_daily[0].strftime("%Y-%m-%d")
-            end_date = common_daily[1].strftime("%Y-%m-%d")
-            periodicity_value = "daily_trading"
-        else:  # maximum-range-button
-            # Maximum range: earliest start to latest end across all selected series
-            start_date = df.index.min().strftime("%Y-%m-%d")
-            end_date = df.index.max().strftime("%Y-%m-%d")
-            periodicity_value = no_update
+        start_date, end_date, force_daily = resolve_button_range(candidates, button_id)
+        if not start_date or not end_date:
+            raise PreventUpdate
+
+        periodicity_value = "daily_trading" if force_daily else no_update
 
         date_range = {"start": start_date, "end": end_date}
         return start_date, end_date, date_range, periodicity_value, periodicity_value
@@ -3374,19 +3397,23 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
     Output("at-date-range-store", "data", allow_duplicate=True),
     Input("at-start-date-picker", "value"),
     Input("at-end-date-picker", "value"),
+    State("at-date-range-store", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_store(start_date, end_date):
+def update_date_range_store(start_date, end_date, existing_range):
     """Store date range when user manually changes dates."""
     if start_date and end_date:
-        return {"start": start_date, "end": end_date}
+        next_range = {"start": start_date, "end": end_date}
+        if _has_complete_date_range(existing_range):
+            if existing_range.get("start") == start_date and existing_range.get("end") == end_date:
+                return no_update
+        return next_range
     return no_update
 
 
 @callback(
     Output("at-returns-grid", "columnDefs"),
     Output("at-returns-grid", "rowData"),
-    Output("at-menu-download-excel", "disabled"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -3394,14 +3421,18 @@ def update_date_range_store(start_date, end_date):
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update the AG Grid based on selections (optimized with caching)."""
+    if not state_ready or not _has_complete_date_range(date_range):
+        raise PreventUpdate
+
     if raw_data is None or not selected_series:
-        return [], [], True
+        return [], []
 
     try:
         # Use cached function to avoid repeated deserialization and computation
@@ -3418,7 +3449,7 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
         )
 
         if display_df.empty:
-            return [], [], True
+            return [], []
 
         # Create column definitions
         column_defs = [
@@ -3442,16 +3473,34 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
         df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
         row_data = df_reset.to_dict("records")
 
-        return column_defs, row_data, False
+        return column_defs, row_data
 
     except Exception:
-        return [], [], True
+        return [], []
+
+
+@callback(
+    Output("at-menu-download-excel", "disabled"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-series-select", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
+)
+def update_download_excel_disabled(raw_data, selected_series, date_range, state_ready):
+    if not raw_data:
+        return True
+    if not selected_series:
+        return True
+    if not state_ready:
+        return True
+    return not _has_complete_date_range(date_range)
 
 
 @callback(
     Output("at-rolling-grid", "columnDefs"),
     Output("at-rolling-grid", "rowData"),
     Input("at-main-tabs", "value"),
+    Input("at-rolling-chart-switch", "value"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -3461,14 +3510,15 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update the Rolling Returns grid with rolling window calculations."""
-    # Lazy loading: only calculate when rolling tab is active
-    if active_tab != "rolling":
+    # Lazy loading: only calculate when rolling tab/table view is active and ready.
+    if active_tab != "rolling" or chart_checked != "table" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -3533,6 +3583,7 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
 @callback(
     Output("at-rolling-chart-wrapper", "children"),
     Input("at-main-tabs", "value"),
+    Input("at-rolling-chart-switch", "value"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -3542,12 +3593,13 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
+def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
     """Update the Rolling Returns chart with rolling window calculations."""
     # Create empty figure
     empty_fig = go.Figure()
@@ -3560,8 +3612,8 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
     apply_chart_theme(empty_fig, theme)
     empty_graph = dcc.Graph(figure=empty_fig, style={"height": "550px"})
 
-    # Lazy loading: only calculate when rolling tab is active
-    if active_tab != "rolling":
+    # Lazy loading: only calculate when rolling tab/chart view is active and ready.
+    if active_tab != "rolling" or chart_checked != "chart" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -3723,16 +3775,17 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-monthly-view-checkbox", "value"),
     Input("at-monthly-series-select", "value"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments):
+def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments):
     """Update the Calendar Year Returns grid (lazy loaded)."""
     # Lazy loading: only calculate when calendar tab is active
-    if active_tab != "calendar":
+    if active_tab != "calendar" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -3873,13 +3926,17 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, saved_series_store):
+def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, saved_series_store):
     """Update the Statistics grid with transposed data (optimized with caching)."""
+    if not state_ready or not _has_complete_date_range(date_range):
+        raise PreventUpdate
+
     if raw_data is None or not selected_series:
         return [], []
 
@@ -3953,7 +4010,10 @@ def update_correlogram_meta(selected_series, active_tab):
 
 clientside_callback(
     """
-    function(meta) {
+    function(meta, currentValue) {
+        if (currentValue !== null && currentValue !== undefined) {
+            return dash_clientside.no_update;
+        }
         if (!meta || !meta.num_series || meta.num_series <= 1) {
             return dash_clientside.no_update;
         }
@@ -3982,6 +4042,7 @@ clientside_callback(
     """,
     Output("at-correlogram-block-width", "value"),
     Input("at-correlogram-meta-store", "data"),
+    State("at-correlogram-block-width", "value"),
 )
 
 
@@ -3995,6 +4056,7 @@ clientside_callback(
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     Input("at-correlation-view-switch", "value"),
@@ -4002,7 +4064,7 @@ clientside_callback(
     State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
+def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -4019,8 +4081,8 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     )
     empty_graph = dcc.Graph(figure=empty_fig, style={"height": "100%"})
 
-    # Lazy loading: only generate when correlogram tab is active
-    if active_tab != "correlogram":
+    # Lazy loading: only generate when correlogram tab is active and ready.
+    if active_tab != "correlogram" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series or len(selected_series) < 2:
@@ -4206,15 +4268,21 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
+def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
     """Update Growth of $1 charts (lazy loaded)."""
     # Lazy loading: only generate when growth tab is active and chart view is selected
-    if active_tab != "growth" or chart_checked != "chart":
+    if (
+        active_tab != "growth"
+        or chart_checked != "chart"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -4393,14 +4461,20 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update Growth of $1 grid (lazy loaded)."""
     # Lazy loading: only generate when growth tab is active and table view is selected
-    if active_tab != "growth" or chart_checked != "table":
+    if (
+        active_tab != "growth"
+        or chart_checked != "table"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -4463,15 +4537,21 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
+def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
     """Update Drawdown charts (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and chart view is selected
-    if active_tab != "drawdown" or chart_checked != "chart":
+    if (
+        active_tab != "drawdown"
+        or chart_checked != "chart"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
@@ -4549,14 +4629,20 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
     Input("at-benchmark-assignments-store", "data"),
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
+def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update Drawdown grid (lazy loaded)."""
     # Lazy loading: only generate when drawdown tab is active and table view is selected
-    if active_tab != "drawdown" or chart_checked != "table":
+    if (
+        active_tab != "drawdown"
+        or chart_checked != "table"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:

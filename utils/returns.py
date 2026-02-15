@@ -546,6 +546,66 @@ def calculate_excess_returns(json_str: str, periodicity: str, selected_series: t
 
 # Rolling returns calculation
 
+def _legacy_rolling_return_series(
+    series: pd.Series,
+    use_calendar_days: bool,
+    window_spec,
+    window_size: int | None,
+    rolling_return_type: str,
+    window_years: float,
+) -> pd.Series:
+    """Legacy rolling-return implementation using rolling.apply."""
+
+    def calc_rolling_return(window):
+        if len(window) == 0:
+            return np.nan
+        if not use_calendar_days and window_size and len(window) < window_size:
+            return np.nan
+        cum_ret = (1 + window).prod() - 1
+        if rolling_return_type == "annualized":
+            if window_years <= 1.0:
+                return cum_ret
+            return (1 + cum_ret) ** (1 / window_years) - 1
+        return cum_ret
+
+    if use_calendar_days:
+        return series.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
+    return series.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+
+
+def _fast_rolling_return_series(
+    series: pd.Series,
+    use_calendar_days: bool,
+    window_spec,
+    window_size: int | None,
+    rolling_return_type: str,
+    window_years: float,
+) -> pd.Series:
+    """Vectorized rolling total return using log-additivity with safe fallback."""
+    valid = series.dropna()
+    if (not valid.empty) and (valid <= -1).any():
+        # log1p is undefined for <= -100%; preserve legacy behavior.
+        return _legacy_rolling_return_series(
+            series,
+            use_calendar_days,
+            window_spec,
+            window_size,
+            rolling_return_type,
+            window_years,
+        )
+
+    log_returns = np.log1p(series)
+    if use_calendar_days:
+        rolling_log = log_returns.rolling(window=window_spec).sum()
+    else:
+        rolling_log = log_returns.rolling(window=window_spec, min_periods=window_size).sum()
+
+    cumulative = np.expm1(rolling_log)
+    if rolling_return_type == "annualized" and window_years > 1.0:
+        cumulative = np.power(1.0 + cumulative, 1.0 / window_years) - 1.0
+    return cumulative
+
+
 @cache_config.cache.memoize(timeout=0)
 def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized", rolling_metric="total_return", vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate rolling returns for Excel export - matches the Rolling grid logic."""
@@ -601,21 +661,6 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
         # Map rolling window to number of years for annualization (only used for returns)
         window_years = WINDOW_YEARS_MAP.get(rolling_window, 1.0)
 
-        # Helper functions for rolling apply
-        def calc_rolling_return(window):
-            if len(window) == 0:
-                return np.nan
-            # For count-based windows, check minimum size
-            if not use_calendar_days and len(window) < window_size:
-                return np.nan
-            cum_ret = (1 + window).prod() - 1
-            if rolling_return_type == "annualized":
-                if window_years <= 1.0:
-                    return cum_ret
-                return (1 + cum_ret) ** (1 / window_years) - 1
-            else:
-                return cum_ret
-
         # Wrapper for statistics functions to handle window requirements
         def apply_rolling_stat(series, func):
             if use_calendar_days:
@@ -652,30 +697,47 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
 
             # 3. Calculate based on Metric
             if rolling_metric == "total_return":
-                if use_calendar_days:
-                    res = series_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
-                else:
-                    res = series_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                res = _fast_rolling_return_series(
+                    series_ret,
+                    use_calendar_days,
+                    window_spec,
+                    window_size,
+                    rolling_return_type,
+                    window_years,
+                )
                 rolling_df[series] = res
 
             elif rolling_metric == "excess_return":
                 # Excess Return: Rolling(Series) - Rolling(Bench)
                 if bench_ret is not None and not is_long_short:
-                     # Calculate separately
-                     if use_calendar_days:
-                         roll_s = series_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
-                         roll_b = bench_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
-                     else:
-                         roll_s = series_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
-                         roll_b = bench_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
-                     res = roll_s - roll_b
+                    # Calculate separately
+                    roll_s = _fast_rolling_return_series(
+                        series_ret,
+                        use_calendar_days,
+                        window_spec,
+                        window_size,
+                        rolling_return_type,
+                        window_years,
+                    )
+                    roll_b = _fast_rolling_return_series(
+                        bench_ret,
+                        use_calendar_days,
+                        window_spec,
+                        window_size,
+                        rolling_return_type,
+                        window_years,
+                    )
+                    res = roll_s - roll_b
                 else:
-                     # L/S or No Benchmark -> Just calculate rolling of the series (which IS the L/S diff)
-                     # or if no benchmark, just total return
-                     if use_calendar_days:
-                        res = series_ret.rolling(window=window_spec).apply(calc_rolling_return, raw=False)
-                     else:
-                        res = series_ret.rolling(window=window_spec, min_periods=window_size).apply(calc_rolling_return, raw=False)
+                    # L/S or No Benchmark -> series already represents desired stream.
+                    res = _fast_rolling_return_series(
+                        series_ret,
+                        use_calendar_days,
+                        window_spec,
+                        window_size,
+                        rolling_return_type,
+                        window_years,
+                    )
                 
                 rolling_df[series] = res
 

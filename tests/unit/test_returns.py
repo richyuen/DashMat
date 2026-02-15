@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from utils.returns import (
+    _fast_rolling_return_series,
+    _legacy_rolling_return_series,
     align_monthly_index_to_month_end,
     align_monthly_series_to_month_end,
     annualization_factor,
@@ -142,3 +144,79 @@ def test_align_monthly_series_to_month_end_is_noop_when_already_canonical():
 
     assert list(aligned.index) == list(s.index)
     assert aligned.tolist() == pytest.approx(s.tolist())
+
+
+def test_fast_rolling_return_series_matches_legacy_for_count_windows():
+    idx = pd.date_range("2020-01-31", periods=60, freq="ME")
+    series = pd.Series(np.linspace(-0.02, 0.03, len(idx)), index=idx)
+    series.iloc[10] = np.nan
+    series.iloc[22] = np.nan
+
+    legacy = _legacy_rolling_return_series(
+        series,
+        use_calendar_days=False,
+        window_spec=12,
+        window_size=12,
+        rolling_return_type="cumulative",
+        window_years=1.0,
+    )
+    fast = _fast_rolling_return_series(
+        series,
+        use_calendar_days=False,
+        window_spec=12,
+        window_size=12,
+        rolling_return_type="cumulative",
+        window_years=1.0,
+    )
+
+    pd.testing.assert_series_equal(fast, legacy)
+
+
+def test_fast_rolling_return_series_matches_legacy_for_calendar_windows():
+    idx = pd.date_range("2018-01-01", periods=1200, freq="B")
+    series = pd.Series(np.sin(np.linspace(0, 12, len(idx))) * 0.01, index=idx)
+    series.iloc[50] = np.nan
+    series.iloc[100] = np.nan
+
+    legacy = _legacy_rolling_return_series(
+        series,
+        use_calendar_days=True,
+        window_spec="1096D",
+        window_size=None,
+        rolling_return_type="annualized",
+        window_years=3.0,
+    )
+    fast = _fast_rolling_return_series(
+        series,
+        use_calendar_days=True,
+        window_spec="1096D",
+        window_size=None,
+        rolling_return_type="annualized",
+        window_years=3.0,
+    )
+
+    pd.testing.assert_series_equal(fast, legacy)
+
+
+def test_fast_rolling_return_series_falls_back_for_negative_hundred_percent_returns():
+    idx = pd.date_range("2024-01-01", periods=10, freq="D")
+    series = pd.Series([0.01, 0.02, -1.0, 0.03, 0.01, 0.0, 0.01, 0.02, 0.01, 0.0], index=idx)
+
+    legacy = _legacy_rolling_return_series(
+        series,
+        use_calendar_days=False,
+        window_spec=3,
+        window_size=3,
+        rolling_return_type="cumulative",
+        window_years=1.0,
+    )
+    fast = _fast_rolling_return_series(
+        series,
+        use_calendar_days=False,
+        window_spec=3,
+        window_size=3,
+        rolling_return_type="cumulative",
+        window_years=1.0,
+    )
+
+    pd.testing.assert_series_equal(fast, legacy)
