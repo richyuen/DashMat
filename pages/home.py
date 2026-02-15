@@ -119,6 +119,7 @@ def update_toggle_icon(theme):
     Output("home-analytics-link", "href"),
     Output("home-portopt-link", "href"),
     Input("userinfo", "data"),
+    prevent_initial_call=True,
 )
 def update_home_nav_links(userinfo):
     if (userinfo or {}).get("role") == "Test":

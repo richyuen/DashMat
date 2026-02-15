@@ -974,7 +974,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 
 layout = dmc.Container(
     fluid=True,
-    style={"height": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "hidden"}, # 45px for header + 10px bottom margin
+    style={"height": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "visible"}, # 45px for header + 10px bottom margin
     className='dashmat-page-container',
     children=[
         # Stores for state management

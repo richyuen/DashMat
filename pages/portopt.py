@@ -2276,7 +2276,7 @@ def build_po_main_layout():
 
 layout = dmc.Container(
     fluid=True,
-    style={"minHeight": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+    style={"minHeight": "calc(100vh - 55px)", "display": "flex", "flexDirection": "column", "overflow": "visible"},
     className='dashmat-page-container',
     children=[
         # Menu bar

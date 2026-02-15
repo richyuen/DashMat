@@ -16,7 +16,7 @@ app = Dash(
 # Initialize cache for performance optimization (after app creation)
 cache = init_cache(app.server)
 
-USERINFO_DATA = {"role": "Test"}
+USERINFO_DATA = {"role": "Admin"}
 
 
 def _registry_path(page_key: str, fallback: str) -> str:
@@ -109,7 +109,10 @@ app.layout = dmc.MantineProvider(
                         ],
                     ),
                 ),
-                dmc.AppShellMain(page_container),
+                dmc.AppShellMain(
+                    page_container,
+                    style={"paddingTop": "56px"},
+                ),
             ],
         ),
     ]
@@ -121,6 +124,7 @@ app.layout = dmc.MantineProvider(
     Output("app-nav-analytics", "href"),
     Output("app-nav-portopt", "href"),
     Input("userinfo", "data"),
+    prevent_initial_call=True,
 )
 def update_app_nav_links(userinfo):
     home_path = _registry_path("pages.home", "/")
