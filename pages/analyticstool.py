@@ -981,7 +981,7 @@ layout = dmc.Container(
         dmc.Paper(
             shadow="xs",
             p="xs",
-            mb="md",
+            mb="xs",
             radius="md",
             withBorder=True,
             className="dashmat-menu-bar",

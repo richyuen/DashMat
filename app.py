@@ -53,7 +53,7 @@ app.layout = dmc.MantineProvider(
         dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
         dcc.Store(id="theme-store", data="light", storage_type="local"),
         dmc.AppShell(
-            header={"height": 48},
+            header={"height": 45},
             padding=0,
             children=[
                 dmc.AppShellHeader(
@@ -111,7 +111,7 @@ app.layout = dmc.MantineProvider(
                 ),
                 dmc.AppShellMain(
                     page_container,
-                    style={"paddingTop": "56px"},
+                    style={"paddingTop": "53px"},
                 ),
             ],
         ),
