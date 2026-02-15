@@ -182,7 +182,7 @@ def build_welcome_screen():
         justify="center",
         h=400,
         children=[
-            DashIconify(icon="fluent-mdl2:chart", width=60, color="#adb5bd"),
+            DashIconify(icon="tabler:chart-line", width=60, color="#adb5bd"),
             dmc.Text("Welcome to the Analytics Tool", size="xl", fw=500, c="dimmed", mt="md"),
             dmc.Text("Add a data series to begin", size="sm", c="dimmed"),
             dmc.Group(

@@ -1261,7 +1261,7 @@ def build_po_welcome_screen():
         justify="center",
         h=400,
         children=[
-            DashIconify(icon="tabler:chart-pie", width=60, color="#adb5bd"),
+            DashIconify(icon="grommet-icons:optimize", width=60, color="#adb5bd"),
             dmc.Text("Portfolio Optimization", size="xl", fw=500, c="dimmed", mt="md"),
             dmc.Text("Add series from file to begin", size="sm", c="dimmed"),
             dmc.Group(
