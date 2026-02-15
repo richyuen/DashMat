@@ -1057,7 +1057,7 @@ layout = dmc.Container(
                     children=[
                         # File Menu (left)
                         dmc.Menu(
-                            trigger="hover",
+                            trigger="click",
                             openDelay=100,
                             closeDelay=200,
                             position="bottom-start",
@@ -1118,7 +1118,7 @@ layout = dmc.Container(
                         ),
                         # Edit Menu (left)
                         dmc.Menu(
-                            trigger="hover",
+                            trigger="click",
                             openDelay=100,
                             closeDelay=200,
                             position="bottom-start",

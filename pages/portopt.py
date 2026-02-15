@@ -2311,7 +2311,7 @@ layout = dmc.Container(
                     gap="xs",
                     children=[
                         dmc.Menu(
-                            trigger="hover",
+                            trigger="click",
                             openDelay=100,
                             closeDelay=200,
                             position="bottom-start",
@@ -2366,7 +2366,7 @@ layout = dmc.Container(
                             ],
                         ),
                         dmc.Menu(
-                            trigger="hover",
+                            trigger="click",
                             openDelay=100,
                             closeDelay=200,
                             position="bottom-start",
