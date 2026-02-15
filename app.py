@@ -2,8 +2,8 @@
 
 import dash
 import dash_mantine_components as dmc
-from flask import redirect, request
 from dash import Dash, Input, Output, State, dcc, page_container
+from dash.exceptions import PreventUpdate
 from cache_config import init_cache
 
 # Initialize the app with multi-page support
@@ -16,12 +16,7 @@ app = Dash(
 # Initialize cache for performance optimization (after app creation)
 cache = init_cache(app.server)
 
-_PROTECTED_ROUTE_TARGETS = {
-    "/analyticstool": "Analytics%20Tool",
-    "/analyticstool/": "Analytics%20Tool",
-    "/portopt": "Portfolio%20Optimization",
-    "/portopt/": "Portfolio%20Optimization",
-}
+USERINFO_DATA = {"role": "Test"}
 
 
 def _registry_path(page_key: str, fallback: str) -> str:
@@ -32,16 +27,14 @@ def _registry_path(page_key: str, fallback: str) -> str:
     return fallback
 
 
-@app.server.before_request
-def _guard_protected_routes():
-    target = _PROTECTED_ROUTE_TARGETS.get(request.path)
-    if not target:
+def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> str | None:
+    if (userinfo or {}).get("role") != "Test":
         return None
 
-    # Test role for local validation; production role is sourced from Azure SSO/database.
-    role = "Test"
-    if role == "Test":
-        return redirect(f"/restricted?target={target}", code=302)
+    if pathname in ("/analyticstool", "/analyticstool/"):
+        return "/restricted?target=Analytics%20Tool"
+    if pathname in ("/portopt", "/portopt/"):
+        return "/restricted?target=Portfolio%20Optimization"
     return None
 
 HOME_PATH = _registry_path("pages.home", "/")
@@ -57,7 +50,7 @@ app.layout = dmc.MantineProvider(
         dcc.Store(id="analyticstool-original-periodicity-store", data="daily", storage_type="session"),
         dcc.Store(id="analyticstool-pending-new-series-store", data=[], storage_type="session"),
         dcc.Store(id="analyticstool-saved-series-cache-store", data=None, storage_type="session"),
-        dcc.Store(id="userinfo", data={"role": "Test"}, storage_type="session"),
+        dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
         dcc.Store(id="theme-store", data="light", storage_type="local"),
         dmc.AppShell(
             header={"height": 48},
@@ -142,6 +135,20 @@ def update_app_nav_links(userinfo):
         )
 
     return home_path, analytics_path, portopt_path
+
+
+@app.callback(
+    Output("_pages_location", "href"),
+    Input("_pages_location", "pathname"),
+    Input("userinfo", "data"),
+    prevent_initial_call=False,
+)
+def guard_protected_pages(pathname, userinfo):
+    restricted_href = _restricted_href_for_path(pathname, userinfo)
+    if not restricted_href:
+        raise PreventUpdate
+    return restricted_href
+
 
 # Apply theme to MantineProvider
 app.clientside_callback(

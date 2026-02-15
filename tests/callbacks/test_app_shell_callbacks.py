@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from dash.exceptions import PreventUpdate
+
 
 def test_update_app_nav_links_for_test_role():
     import app as app_module
@@ -19,15 +22,29 @@ def test_update_app_nav_links_for_non_test_role():
     assert portopt_href == "/portopt"
 
 
-def test_server_guard_redirects_protected_routes():
+def test_restricted_href_for_path_resolves_for_test_role():
     import app as app_module
 
-    client = app_module.app.server.test_client()
+    assert app_module._restricted_href_for_path("/analyticstool", {"role": "Test"}) == (
+        "/restricted?target=Analytics%20Tool"
+    )
+    assert app_module._restricted_href_for_path("/portopt", {"role": "Test"}) == (
+        "/restricted?target=Portfolio%20Optimization"
+    )
 
-    analytics_response = client.get("/analyticstool", follow_redirects=False)
-    assert analytics_response.status_code == 302
-    assert analytics_response.headers["Location"] == "/restricted?target=Analytics%20Tool"
 
-    portopt_response = client.get("/portopt", follow_redirects=False)
-    assert portopt_response.status_code == 302
-    assert portopt_response.headers["Location"] == "/restricted?target=Portfolio%20Optimization"
+def test_restricted_href_for_path_skips_non_test_or_other_paths():
+    import app as app_module
+
+    assert app_module._restricted_href_for_path("/analyticstool", {"role": "Admin"}) is None
+    assert app_module._restricted_href_for_path("/", {"role": "Test"}) is None
+
+
+def test_guard_protected_pages_redirects_or_prevent_update():
+    import app as app_module
+
+    assert app_module.guard_protected_pages("/analyticstool", {"role": "Test"}) == (
+        "/restricted?target=Analytics%20Tool"
+    )
+    with pytest.raises(PreventUpdate):
+        app_module.guard_protected_pages("/", {"role": "Test"})
