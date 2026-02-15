@@ -19,6 +19,12 @@ from dash.exceptions import PreventUpdate
 
 import cache_config
 from utils.parsing import get_sheet_names
+from utils.add_series_flow import find_duplicate_series, import_selected_disabled
+from utils.date_range_flow import (
+    compute_date_range_candidates,
+    resolve_button_range,
+    resolve_initial_range,
+)
 from utils.upload_flow import (
     import_selected_workbook_sheets as _shared_import_selected_workbook_sheets,
     import_single_upload as _shared_import_single_upload,
@@ -56,7 +62,6 @@ from utils.sample_data import get_sample_file_path
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
-    get_common_daily_range,
     get_cmabench_map_for_fofbench,
     get_core_category_options_cached,
     get_unique_cmabench_values_cached,
@@ -288,8 +293,13 @@ def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.Da
     return df
 
 
-def _po_import_selected_workbook_sheets(contents, filename, selected_sheets):
-    return _shared_import_selected_workbook_sheets(contents, filename, selected_sheets)
+def _po_import_selected_workbook_sheets(contents, filename, selected_sheets, workbook_sheets=None):
+    return _shared_import_selected_workbook_sheets(
+        contents,
+        filename,
+        selected_sheets,
+        workbook_sheets=workbook_sheets,
+    )
 
 
 RF_CANONICAL_NAMES = {
@@ -2954,6 +2964,7 @@ layout = dmc.Container(
         # Temp stores for sheet selection (stash upload while user picks a tab)
         dcc.Store(id="po-sheet-select-contents-store", data=None),
         dcc.Store(id="po-sheet-select-filename-store", data=None),
+        dcc.Store(id="po-sheet-select-sheetnames-store", data=None),
         # Controls stores
         dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="po-periodicity-load-sync-dummy", data=None),
@@ -3220,14 +3231,7 @@ def po_validate_db_add_selection(selected_benches, raw_data, opened):
     if not selected_benches:
         return no_update, True, True
 
-    existing_cols = set()
-    if raw_data:
-        try:
-            existing_cols = set(json_to_df(raw_data).columns)
-        except Exception:
-            existing_cols = set()
-
-    duplicates = [s for s in selected_benches if s in existing_cols]
+    duplicates = find_duplicate_series(selected_benches, raw_data)
     if duplicates:
         return f"Cannot add duplicate series: {', '.join(duplicates)}", False, True
     return no_update, True, False
@@ -5112,6 +5116,7 @@ def po_add_series_from_database(
     Output("po-sheet-select-dropdown", "value", allow_duplicate=True),
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("po-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     # Blocker outputs
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-upload-data", "contents"),
@@ -5137,7 +5142,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
 
     n_no = no_update
     # Sheet-select outputs default to no_update
-    sheet_no = (n_no, n_no, n_no, n_no, n_no)
+    sheet_no = (n_no, n_no, n_no, n_no, n_no, n_no)
 
     try:
         # Check for multi-tab Excel files
@@ -5150,7 +5155,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
                 n_no, n_no, True,  # hide alert
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no, n_no, n_no, n_no,
-                True, dropdown_data, [sheet_names[0]], contents, filename,  # open sheet modal
+                True, dropdown_data, [sheet_names[0]], contents, filename, sheet_names,  # open sheet modal
                 False,  # hide blocker
             )
 
@@ -5226,6 +5231,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     Output("po-sheet-select-modal", "opened", allow_duplicate=True),
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("po-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Output("po-upload-data", "contents", allow_duplicate=True),
     # Blocker outputs
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
@@ -5234,6 +5240,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     State("po-sheet-select-dropdown", "value"),
     State("po-sheet-select-contents-store", "data"),
     State("po-sheet-select-filename-store", "data"),
+    State("po-sheet-select-sheetnames-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("po-series-select", "data"),
@@ -5247,7 +5254,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     State("po-force-max-store", "data"),
     prevent_initial_call=True,
 )
-def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename,
+def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename, stashed_sheet_names,
                           existing_data, existing_periodicity, current_selection,
                           current_bench, current_cmabench, current_ls, current_order,
                           current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
@@ -5261,7 +5268,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
         raise PreventUpdate
 
     try:
-        workbook_sheets = get_sheet_names(stashed_contents, stashed_filename)
+        workbook_sheets = stashed_sheet_names or get_sheet_names(stashed_contents, stashed_filename)
         if triggered_id == "po-sheet-select-import-all-button":
             target_sheets = workbook_sheets
         else:
@@ -5272,12 +5279,12 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
                 n_no, n_no, n_no, n_no, n_no, n_no,
                 "Select at least one sheet to import.", "red", False,
                 n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
-                True, stashed_contents, stashed_filename, n_no,  # keep modal open and stash
+                True, stashed_contents, stashed_filename, workbook_sheets, n_no,  # keep modal open and stash
                 False,  # hide blocker
             )
 
         new_df, imported_sheets = _po_import_selected_workbook_sheets(
-            stashed_contents, stashed_filename, target_sheets
+            stashed_contents, stashed_filename, target_sheets, workbook_sheets=workbook_sheets
         )
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
@@ -5318,7 +5325,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
             current_min_wt or {},
             current_max_wt or {},
             current_force_max or {},
-            False, None, None, None,  # close sheet modal, clear stash, reset upload
+            False, None, None, None, None,  # close sheet modal, clear stash, reset upload
             False,  # hide blocker
         )
     except Exception as e:
@@ -5326,7 +5333,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
             n_no, n_no, n_no, n_no, n_no, n_no,
             f"Error loading file: {str(e)}", "red", False,
             n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no,
-            False, None, None, None,  # close sheet modal, clear stash, reset upload
+            False, None, None, None, None,  # close sheet modal, clear stash, reset upload
             False,  # hide blocker
         )
 
@@ -5336,7 +5343,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
     Input("po-sheet-select-dropdown", "value"),
 )
 def po_toggle_sheet_select_import_selected_disabled(selected_sheets):
-    return not bool(selected_sheets)
+    return import_selected_disabled(selected_sheets)
 
 
 clientside_callback(
@@ -5376,6 +5383,7 @@ clientside_callback(
     Output("po-sheet-select-modal", "opened", allow_duplicate=True),
     Output("po-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("po-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("po-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Output("po-upload-data", "contents", allow_duplicate=True),
     # Blocker outputs
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
@@ -5386,7 +5394,7 @@ def po_on_sheet_select_cancel(n_clicks):
     """Cancel sheet selection and clear stashed data."""
     if not n_clicks:
         raise PreventUpdate
-    return False, None, None, None, False
+    return False, None, None, None, None, False
 
 
 # Clear the file input so the same file can be re-uploaded
@@ -6258,26 +6266,28 @@ def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
         return None, None, disabled_style, True, True, True, None
 
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
-        available = [s for s in selected_series if s in df.columns]
-        if not available:
+        candidates = compute_date_range_candidates(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series or ()),
+        )
+        if not candidates.get("available_series"):
             return None, None, disabled_style, True, True, True, None
 
-        daily_df = resample_returns_cached(raw_data, "daily_trading")
-        daily_available = [s for s in selected_series if s in daily_df.columns]
-        has_common_daily = bool(get_common_daily_range(daily_df, daily_available)) if daily_available else False
+        start_date, end_date = resolve_initial_range(candidates, stored_range)
+        if not start_date or not end_date:
+            return None, None, disabled_style, True, True, True, None
 
-        data_start = df.index.min().strftime("%Y-%m-%d")
-        data_end = df.index.max().strftime("%Y-%m-%d")
-
-        # Use stored dates if they fall within the available data range
-        if stored_range and stored_range.get("start") and stored_range.get("end"):
-            s = stored_range["start"]
-            e = stored_range["end"]
-            if s >= data_start and e <= data_end:
-                return s, e, enabled_style, False, not has_common_daily, False, {"start": s, "end": e}
-
-        return data_start, data_end, enabled_style, False, not has_common_daily, False, {"start": data_start, "end": data_end}
+        has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
+        return (
+            start_date,
+            end_date,
+            enabled_style,
+            False,
+            not has_common_daily,
+            False,
+            {"start": start_date, "end": end_date},
+        )
     except Exception:
         return None, None, disabled_style, True, True, True, None
 
@@ -6308,30 +6318,19 @@ def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_da
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        df = resample_returns_cached(raw_data, periodicity or "daily")
-        available = [s for s in selected_series if s in df.columns]
-        if not available:
+        candidates = compute_date_range_candidates(
+            raw_data,
+            periodicity or "daily",
+            tuple(selected_series or ()),
+        )
+        if not candidates.get("available_series"):
             raise PreventUpdate
-        if button_id == "po-common-range-button":
-            subset = df[available].dropna()
-            if len(subset) == 0:
-                raise PreventUpdate
-            start_date = subset.index.min().strftime("%Y-%m-%d")
-            end_date = subset.index.max().strftime("%Y-%m-%d")
-            periodicity_value = no_update
-        elif button_id == "po-common-daily-button":
-            daily_df = resample_returns_cached(raw_data, "daily_trading")
-            daily_available = [s for s in selected_series if s in daily_df.columns]
-            common_daily = get_common_daily_range(daily_df, daily_available)
-            if not common_daily:
-                raise PreventUpdate
-            start_date = common_daily[0].strftime("%Y-%m-%d")
-            end_date = common_daily[1].strftime("%Y-%m-%d")
-            periodicity_value = "daily_trading"
-        else:
-            start_date = df.index.min().strftime("%Y-%m-%d")
-            end_date = df.index.max().strftime("%Y-%m-%d")
-            periodicity_value = no_update
+
+        start_date, end_date, force_daily = resolve_button_range(candidates, button_id)
+        if not start_date or not end_date:
+            raise PreventUpdate
+
+        periodicity_value = "daily_trading" if force_daily else no_update
         return start_date, end_date, {"start": start_date, "end": end_date}, periodicity_value, periodicity_value
     except Exception:
         raise PreventUpdate

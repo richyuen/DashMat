@@ -16,12 +16,15 @@ from utils.returns import (
 )
 
 
-def import_selected_workbook_sheets(contents, filename, selected_sheets):
+def import_selected_workbook_sheets(contents, filename, selected_sheets, workbook_sheets=None):
     """Parse selected workbook sheets in workbook order.
 
     Later sheets overwrite earlier sheet values where they provide non-null data.
     """
-    workbook_sheets = get_sheet_names(contents, filename)
+    if workbook_sheets is None:
+        workbook_sheets = get_sheet_names(contents, filename)
+    else:
+        workbook_sheets = list(workbook_sheets)
     if isinstance(selected_sheets, str):
         selected_values = [selected_sheets]
     else:
