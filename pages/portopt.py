@@ -3096,29 +3096,29 @@ clientside_callback(
     function(n_clicks) {
         if (n_clicks) {
             const keysToRemove = [
-                'analyticstool-raw-data-store',
-                'analyticstool-original-periodicity-store',
-                'analyticstool-pending-new-series-store',
-                'analyticstool-saved-series-cache-store',
+                'dashmat-raw-data-store',
+                'dashmat-original-periodicity-store',
+                'dashmat-pending-new-series-store',
+                'dashmat-saved-series-cache-store',
                 'bctbill13-cache-store',
-                'series-select',
-                'benchmark-assignments-store',
-                'long-short-store',
-                'periodicity-value-store',
-                'returns-type-value-store',
-                'series-select-value-store',
-                'series-order-store',
-                'active-tab-store',
-                'rolling-window-store',
-                'rolling-return-type-store',
-                'rolling-chart-switch-store',
-                'drawdown-chart-switch-store',
-                'growth-chart-switch-store',
-                'monthly-view-store',
-                'monthly-series-store',
-                'date-range-store',
-                'vol-scaler-value-store',
-                'vol-scaling-assignments-store',
+                'at-series-select',
+                'at-benchmark-assignments-store',
+                'at-long-short-store',
+                'at-periodicity-value-store',
+                'at-returns-type-value-store',
+                'at-series-select-value-store',
+                'at-series-order-store',
+                'at-active-tab-store',
+                'at-rolling-window-store',
+                'at-rolling-return-type-store',
+                'at-rolling-chart-switch-store',
+                'at-drawdown-chart-switch-store',
+                'at-growth-chart-switch-store',
+                'at-monthly-view-store',
+                'at-monthly-series-store',
+                'at-date-range-store',
+                'at-vol-scaler-value-store',
+                'at-vol-scaling-assignments-store',
                 'po-series-select',
                 'po-series-order-store',
                 'po-benchmark-assignments-store',
@@ -3209,7 +3209,7 @@ def po_close_db_add_modal(n_clicks):
     Output("po-db-add-error-alert", "hide"),
     Output("po-db-add-ok-button", "disabled"),
     Input("po-db-add-series-select", "value"),
-    Input("analyticstool-raw-data-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
     Input("po-db-add-modal", "opened"),
     prevent_initial_call=True,
 )
@@ -3325,17 +3325,17 @@ clientside_callback(
         const ctx = window.dash_clientside.callback_context;
         const triggered = (ctx && ctx.triggered) ? ctx.triggered : [];
         const rawTriggered = triggered.some(
-            t => t && t.prop_id && t.prop_id.indexOf("analyticstool-raw-data-store.") === 0
+            t => t && t.prop_id && t.prop_id.indexOf("dashmat-raw-data-store.") === 0
         );
         if (!rawTriggered || !rawData || !periodicityValue) {
             return window.dash_clientside.no_update;
         }
-        sessionStorage.setItem("periodicity-value-store", JSON.stringify(periodicityValue));
+        sessionStorage.setItem("at-periodicity-value-store", JSON.stringify(periodicityValue));
         return periodicityValue;
     }
     """,
     Output("po-periodicity-load-sync-dummy", "data"),
-    Input("analyticstool-raw-data-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
     Input("po-periodicity-value-store", "data"),
     prevent_initial_call=True,
 )
@@ -3896,7 +3896,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
     Output("po-ex-ante-corr-store", "data", allow_duplicate=True),
     Output("po-ex-ante-matrix-grid", "rowData", allow_duplicate=True),
     Input("po-estimate-matrix-btn", "n_clicks"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-series-select", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-periodicity-select", "value"),
@@ -3970,7 +3970,7 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
     Output("po-ex-ante-vol-store", "data", allow_duplicate=True),
     Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
     Input("po-estimate-returns-btn", "n_clicks"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-series-select", "data"),
     State("po-periodicity-select", "value"),
     State("po-exp-wt-cov-switch", "checked"),
@@ -4642,7 +4642,7 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 # Toggle welcome/main visibility.
 # Uses a one-shot Interval to guarantee session-storage has hydrated on
-# cross-page navigation, plus analyticstool-raw-data-store Input for same-page uploads.
+# cross-page navigation, plus dashmat-raw-data-store Input for same-page uploads.
 # ---------------------------------------------------------------------------
 
 clientside_callback(
@@ -4657,7 +4657,7 @@ clientside_callback(
     Output("po-welcome-screen", "style"),
     Output("po-main-container", "style"),
     Input("po-page-load-trigger", "n_intervals"),
-    Input("analyticstool-raw-data-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
 )
 
 # ---------------------------------------------------------------------------
@@ -4669,8 +4669,8 @@ clientside_callback(
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
     Output("po-series-select", "data"),
-    Input("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
     State("po-periodicity-value-store", "data"),
     State("po-series-select-value-store", "data"),
     State("po-vol-scaler-value-store", "data"),
@@ -4911,8 +4911,8 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
-    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
     Output("po-periodicity-select", "data", allow_duplicate=True),
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-periodicity-select", "disabled", allow_duplicate=True),
@@ -4935,8 +4935,8 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     Output("po-db-add-series-select", "value", allow_duplicate=True),
     Input("po-db-add-ok-button", "n_clicks"),
     State("po-db-add-series-select", "value"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -5086,8 +5086,8 @@ def po_add_series_from_database(
 
 
 @callback(
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
-    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
     Output("po-periodicity-select", "data"),
     Output("po-periodicity-select", "value"),
     Output("po-periodicity-select", "disabled"),
@@ -5116,8 +5116,8 @@ def po_add_series_from_database(
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-upload-data", "contents"),
     State("po-upload-data", "filename"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -5203,8 +5203,8 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
 # Sheet selection modal: confirm
 # ---------------------------------------------------------------------------
 @callback(
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
-    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
     Output("po-periodicity-select", "data", allow_duplicate=True),
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-periodicity-select", "disabled", allow_duplicate=True),
@@ -5234,8 +5234,8 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     State("po-sheet-select-dropdown", "value"),
     State("po-sheet-select-contents-store", "data"),
     State("po-sheet-select-filename-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -5452,7 +5452,7 @@ def po_open_modal(n_clicks, current_select, current_bench, current_cmabench, cur
 @callback(
     Output("po-series-selection-container", "children"),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
-    Input("analyticstool-raw-data-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
     Input("po-temp-series-select", "data"),
     Input("po-temp-series-order-store", "data"),
     Input("po-temp-deleted-series-store", "data"),
@@ -5721,7 +5721,7 @@ def _po_latest_series_grid_change(cell_change):
     Output("po-temp-benchmark-assignments-store", "data"),
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("po-series-selection-grid", "rowData", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_update_benchmarks(cell_change, row_data, raw_data):
@@ -5786,7 +5786,7 @@ def po_update_cmabench(cell_change, row_data):
     Output("po-temp-long-short-store", "data"),
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("po-series-selection-grid", "rowData", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_update_ls(cell_change, row_data, raw_data):
@@ -5816,7 +5816,7 @@ def po_update_ls(cell_change, row_data, raw_data):
     Output("po-temp-vol-scaling-assignments-store", "data"),
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("po-series-selection-grid", "rowData", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_update_vol_scaling(cell_change, row_data, raw_data):
@@ -5956,7 +5956,7 @@ def po_delete_series(cell_change, row_data):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
@@ -5968,7 +5968,7 @@ def po_delete_series(cell_change, row_data):
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-series-select-value-store", "data", allow_duplicate=True),
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-temp-benchmark-assignments-store", "data"),
     State("po-temp-cmabench-assignments-store", "data"),
     State("po-temp-long-short-store", "data"),
@@ -6115,7 +6115,7 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     Output("po-series-order-store", "data", allow_duplicate=True),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
     Output("po-series-select-value-store", "data", allow_duplicate=True),
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("po-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("po-min-wt-store", "data"),
     Output("po-max-wt-store", "data"),
@@ -6128,7 +6128,7 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     State("po-temp-long-short-store", "data"),
     State("po-temp-series-order-store", "data"),
     State("po-temp-deleted-series-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-temp-vol-scaling-assignments-store", "data"),
     State("po-temp-min-wt-store", "data"),
     State("po-temp-max-wt-store", "data"),
@@ -6244,7 +6244,7 @@ def po_on_modal_cancel(n_clicks):
     Output("po-common-daily-button", "disabled"),
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
-    Input("analyticstool-raw-data-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
     State("po-date-range-store", "data"),
@@ -6295,7 +6295,7 @@ def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
     Input("po-common-range-button", "n_clicks"),
     Input("po-common-daily-button", "n_clicks"),
     Input("po-maximum-range-button", "n_clicks"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     prevent_initial_call=True,
@@ -6355,12 +6355,12 @@ def po_update_date_range_store(start, end):
 
 @callback(
     Output("po-results-store", "data", allow_duplicate=True),
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("po-opt-status-store", "data"),
-    Output("analyticstool-pending-new-series-store", "data", allow_duplicate=True),
+    Output("dashmat-pending-new-series-store", "data", allow_duplicate=True),
     Input("po-run-button", "n_clicks"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -6383,7 +6383,7 @@ def po_update_date_range_store(start, end):
     State("po-missing-data-select", "value"),
     State("po-fill-in-sample-select", "value"),
     State("po-results-store", "data"),
-    State("analyticstool-pending-new-series-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
     # Ex ante states
     State("po-ex-ante-returns-store", "data"),
     State("po-ex-ante-cov-store", "data"),
@@ -6394,7 +6394,7 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-corr-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-linear-constraints-store", "data"),
-    State("analyticstool-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -6873,7 +6873,7 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
 
 @callback(
     Output("po-results-store", "data", allow_duplicate=True),
-    Input("analyticstool-raw-data-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
@@ -6896,12 +6896,12 @@ def po_sync_results_with_raw_data(raw_data, _n, results):
 
 @callback(
     Output("po-results-store", "data", allow_duplicate=True),
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("po-weight-portfolio-select", "value", allow_duplicate=True),
     Input("po-delete-portfolio-button", "n_clicks"),
     State("po-weight-portfolio-select", "value"),
     State("po-results-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
@@ -6942,7 +6942,7 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
-    State("theme-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme):
@@ -7008,7 +7008,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     Input("po-growth-portfolio-multiselect", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    State("theme-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
@@ -7056,15 +7056,15 @@ def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-attribution-chart-switch", "value"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("theme-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value,
@@ -7190,7 +7190,7 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-attribution-chart-switch", "value"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -7273,7 +7273,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-growth-portfolio-multiselect", "value"),
-    Input("analyticstool-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
     State("po-periodicity-select", "value"),
     prevent_initial_call=True,
 )
@@ -7424,7 +7424,7 @@ def po_render_returns(results, active_tab, selected_portfolios):
     Output("po-download-excel", "data"),
     Input("po-menu-download-excel", "n_clicks"),
     State("po-results-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -7432,7 +7432,7 @@ def po_render_returns(results, active_tab, selected_portfolios):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("analyticstool-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
@@ -7743,7 +7743,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-risk-chart-switch", "value"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -7751,7 +7751,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
-    State("theme-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
@@ -7831,7 +7831,7 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-risk-chart-switch", "value"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -7914,7 +7914,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
-    State("theme-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
@@ -8091,7 +8091,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     Input("po-frontier-chart-switch", "value"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -8099,9 +8099,9 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
-    State("analyticstool-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     State("po-series-select", "data"),
-    State("theme-store", "data"),
+    State("dashmat-theme-store", "data"),
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
@@ -8238,14 +8238,14 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     Input("po-frontier-chart-switch", "value"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
-    State("analyticstool-raw-data-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
-    State("analyticstool-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
@@ -8326,7 +8326,7 @@ def po_render_frontier_table(
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
     State("po-periodicity-select", "value"),
-    State("analyticstool-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     State("po-cmabench-assignments-store", "data"),
     prevent_initial_call=True,
 )

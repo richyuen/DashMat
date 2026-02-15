@@ -145,7 +145,7 @@ def build_welcome_screen():
                         variant="outline",
                         size="sm",
                         w=210,
-                        id="welcome-add-db-btn",
+                        id="at-welcome-add-db-btn",
                     ),
                     dmc.Button(
                         "Add series from file",
@@ -153,7 +153,7 @@ def build_welcome_screen():
                         variant="outline",
                         size="sm",
                         w=210,
-                        id="welcome-add-series-btn",
+                        id="at-welcome-add-series-btn",
                     ),
                 ],
             ),
@@ -164,7 +164,7 @@ def build_welcome_screen():
                     dmc.Button(
                         "Sample Daily File",
                         leftSection=DashIconify(icon="tabler:download"),
-                        id="download-sample-daily-btn",
+                        id="at-download-sample-daily-btn",
                         size="sm",
                         variant="light",
                         w=210,
@@ -172,7 +172,7 @@ def build_welcome_screen():
                     dmc.Button(
                         "Sample Monthly File",
                         leftSection=DashIconify(icon="tabler:download"),
-                        id="download-sample-monthly-btn",
+                        id="at-download-sample-monthly-btn",
                         size="sm",
                         variant="light",
                         w=210,
@@ -189,7 +189,7 @@ clientside_callback(
         if (n_clicks) {
             // Trigger the file input click with a small delay to allow overlay to render
             setTimeout(function() {
-                var uploadDiv = document.getElementById('upload-data');
+                var uploadDiv = document.getElementById('at-upload-data');
                 if (uploadDiv) {
                     var input = uploadDiv.querySelector('input[type="file"]');
                     if (input) {
@@ -219,14 +219,14 @@ clientside_callback(
     }
     """,
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
-    Input("welcome-add-series-btn", "n_clicks"),
+    Input("at-welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
     "function(n) { return true; }",
-    Output("help-modal", "opened"),
-    Input("menu-help-guide", "n_clicks"),
+    Output("at-help-modal", "opened"),
+    Input("at-menu-help-guide", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -250,8 +250,8 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("save-session-dummy", "data"),
-    Input("menu-save-session", "n_clicks"),
+    Output("at-save-session-dummy", "data"),
+    Input("at-menu-save-session", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -267,8 +267,8 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("load-session-dummy", "data"),
-    Input("menu-load-session", "n_clicks"),
+    Output("at-load-session-dummy", "data"),
+    Input("at-menu-load-session", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -287,14 +287,14 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("load-session-dummy", "data", allow_duplicate=True),    Input("load-session-upload", "contents"),
+    Output("at-load-session-dummy", "data", allow_duplicate=True),    Input("at-load-session-upload", "contents"),
     prevent_initial_call=True,
 )
 
 
 @callback(
-    Output("menu-save-session", "disabled"),
-    Input("welcome-screen-container", "style"),
+    Output("at-menu-save-session", "disabled"),
+    Input("at-welcome-screen-container", "style"),
 )
 def at_toggle_save_session(welcome_style):
     if not welcome_style:
@@ -303,11 +303,11 @@ def at_toggle_save_session(welcome_style):
 
 
 @callback(
-    Output("db-add-modal", "opened", allow_duplicate=True),
-    Output("db-add-series-select", "data", allow_duplicate=True),
-    Output("db-add-series-select", "value", allow_duplicate=True),
-    Input("menu-add-from-db", "n_clicks"),
-    Input("welcome-add-db-btn", "n_clicks"),
+    Output("at-db-add-modal", "opened", allow_duplicate=True),
+    Output("at-db-add-series-select", "data", allow_duplicate=True),
+    Output("at-db-add-series-select", "value", allow_duplicate=True),
+    Input("at-menu-add-from-db", "n_clicks"),
+    Input("at-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def open_db_add_modal(menu_clicks, welcome_clicks):
@@ -318,9 +318,9 @@ def open_db_add_modal(menu_clicks, welcome_clicks):
 
 
 @callback(
-    Output("db-add-modal", "opened", allow_duplicate=True),
-    Output("db-add-series-select", "value", allow_duplicate=True),
-    Input("db-add-cancel-button", "n_clicks"),
+    Output("at-db-add-modal", "opened", allow_duplicate=True),
+    Output("at-db-add-series-select", "value", allow_duplicate=True),
+    Input("at-db-add-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def close_db_add_modal(n_clicks):
@@ -330,9 +330,9 @@ def close_db_add_modal(n_clicks):
 
 
 @callback(
-    Output("analyticstool-saved-series-cache-store", "data"),
-    Input("analyticstool-raw-data-store", "data"),
-    State("analyticstool-saved-series-cache-store", "data"),
+    Output("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
 )
 def refresh_saved_series_cache(raw_data, cache_data):
     """Cache shared saved benchmark series and refresh if raw data extends beyond them."""
@@ -406,12 +406,12 @@ def refresh_saved_series_cache(raw_data, cache_data):
 
 
 @callback(
-    Output("db-add-error-alert", "children"),
-    Output("db-add-error-alert", "hide"),
-    Output("db-add-ok-button", "disabled"),
-    Input("db-add-series-select", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("db-add-modal", "opened"),
+    Output("at-db-add-error-alert", "children"),
+    Output("at-db-add-error-alert", "hide"),
+    Output("at-db-add-ok-button", "disabled"),
+    Input("at-db-add-series-select", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-db-add-modal", "opened"),
     prevent_initial_call=True,
 )
 def validate_db_add_selection(selected_benches, raw_data, opened):
@@ -479,14 +479,14 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             dmc.Text("Series Selection", size="sm", mb=3, fw=500),
                                             dmc.Button(
                                                 "Select Series",
-                                                id="open-series-modal-button",
+                                                id="at-open-series-modal-button",
                                                 variant="light",
                                                 size="sm",
                                                 w=200,
                                             ),
                                         ]),
                                         dmc.Select(
-                                            id="periodicity-select",
+                                            id="at-periodicity-select",
                                             label="Periodicity",
                                             data=periodicity_options,
                                             value=periodicity_value,
@@ -496,7 +496,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         html.Div([
                                             dmc.Text("Returns Type", size="sm", mb=3, fw=500),
                                             dmc.SegmentedControl(
-                                                id="returns-type-select",
+                                                id="at-returns-type-select",
                                                 data=[
                                                     {"value": "total", "label": "Total"},
                                                     {"value": "excess", "label": "Excess"},
@@ -512,7 +512,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                 position="top",
                                                 withArrow=True,
                                                 children=dmc.NumberInput(
-                                                    id="vol-scaler-input",
+                                                    id="at-vol-scaler-input",
                                                     value=vol_scaler,
                                                     min=0,
                                                     step=1,
@@ -525,11 +525,11 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                                 html.Div([
                                     html.Div(
-                                        id="date-picker-wrapper",
+                                        id="at-date-picker-wrapper",
                                         children=[
                                             html.Div([
                                                 dmc.DateInput(
-                                                    id="start-date-picker",
+                                                    id="at-start-date-picker",
                                                     label="Start Date",
                                                     value=None,
                                                     w=200,
@@ -538,7 +538,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             ], style={"marginRight": "15px"}),
                                             html.Div([
                                                 dmc.DateInput(
-                                                    id="end-date-picker",
+                                                    id="at-end-date-picker",
                                                     label="End Date",
                                                     value=None,
                                                     w=200,
@@ -548,7 +548,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             html.Div([
                                                 dmc.Button(
                                                     "Common Range",
-                                                    id="common-range-button",
+                                                    id="at-common-range-button",
                                                     size="xs",
                                                     variant="outline",
                                                     disabled=True,
@@ -558,7 +558,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             html.Div([
                                                 dmc.Button(
                                                     "Common Daily",
-                                                    id="common-daily-button",
+                                                    id="at-common-daily-button",
                                                     size="xs",
                                                     variant="outline",
                                                     disabled=True,
@@ -568,7 +568,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             html.Div([
                                                 dmc.Button(
                                                     "Max Range",
-                                                    id="maximum-range-button",
+                                                    id="at-maximum-range-button",
                                                     size="xs",
                                                     variant="outline",
                                                     disabled=True,
@@ -588,7 +588,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 
         # Tabs with AG Grid and Statistics
         dmc.Tabs(
-            id="main-tabs",
+            id="at-main-tabs",
             value=active_tab,
             style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
             children=[
@@ -609,7 +609,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dcc.Loading(
-                            id="loading-returns",
+                            id="at-loading-returns",
                             type="default",
                             style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
@@ -617,7 +617,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 dag.AgGrid(
                                     enableEnterpriseModules=True,
                                     licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="returns-grid",
+                                    id="at-returns-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
@@ -649,7 +649,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             mb="md",
                             children=[
                                 dmc.Select(
-                                    id="rolling-metric-select",
+                                    id="at-rolling-metric-select",
                                     data=[
                                         {"value": "total_return", "label": "Total Return"},
                                         {"value": "volatility", "label": "Volatility"},
@@ -666,7 +666,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     clearable=False,
                                 ),
                                 dmc.Select(
-                                    id="rolling-window-select",
+                                    id="at-rolling-window-select",
                                     data=[
                                         {"value": "3m", "label": "3-month"},
                                         {"value": "6m", "label": "6-month"},
@@ -680,7 +680,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     size="sm",
                                 ),
                                 dmc.SegmentedControl(
-                                    id="rolling-return-type-select",
+                                    id="at-rolling-return-type-select",
                                     data=[
                                         {"value": "cumulative", "label": "Cumulative"},
                                         {"value": "annualized", "label": "Annualized"},
@@ -691,7 +691,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     style=rolling_return_type_style,
                                 ),
                                 dmc.SegmentedControl(
-                                    id="rolling-chart-switch",
+                                    id="at-rolling-chart-switch",
                                     data=[
                                         {"value": "table", "label": "Table"},
                                         {"value": "chart", "label": "Chart"},
@@ -702,13 +702,13 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             ],
                         ),
                         html.Div(
-                            id="rolling-grid-container",
+                            id="at-rolling-grid-container",
                             style=rolling_grid_style,
                             children=[
                                 dag.AgGrid(
                                     enableEnterpriseModules=True,
                                     licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="rolling-grid",
+                                    id="at-rolling-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
@@ -731,10 +731,10 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             ],
                         ),
                         html.Div(
-                            id="rolling-chart-container",
+                            id="at-rolling-chart-container",
                             style=rolling_chart_style,
                             children=[
-                                html.Div(id="rolling-chart-wrapper", style={"height": "100%", "width": "100%"}),
+                                html.Div(id="at-rolling-chart-wrapper", style={"height": "100%", "width": "100%"}),
                             ],
                         ),
                     ],
@@ -745,7 +745,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
                         dcc.Loading(
-                            id="loading-statistics",
+                            id="at-loading-statistics",
                             type="default",
                             style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                             parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
@@ -753,7 +753,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 dag.AgGrid(
                                     enableEnterpriseModules=True,
                                     licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="statistics-grid",
+                                    id="at-statistics-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
@@ -784,7 +784,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             mb="md",
                             children=[
                                 dmc.SegmentedControl(
-                                    id="monthly-view-checkbox",
+                                    id="at-monthly-view-checkbox",
                                     data=[
                                         {"value": "annual", "label": "Annual"},
                                         {"value": "monthly", "label": "Monthly"},
@@ -793,7 +793,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     size="sm",
                                 ),
                                 dmc.Select(
-                                    id="monthly-series-select",
+                                    id="at-monthly-series-select",
                                     data=monthly_series_options,
                                     value=monthly_series,
                                     w=200,
@@ -806,7 +806,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dag.AgGrid(
                             enableEnterpriseModules=True,
                             licenseKey=AG_GRID_LICENSE_KEY,
-                            id="calendar-grid",
+                            id="at-calendar-grid",
                             className='ag-theme-alpine',
                             columnDefs=[],
                             rowData=[],
@@ -836,7 +836,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             mb="md",
                             children=[
                                 dmc.SegmentedControl(
-                                    id="correlation-view-switch",
+                                    id="at-correlation-view-switch",
                                     data=[
                                         {"value": "correlation", "label": "Correlation"},
                                         {"value": "correlogram", "label": "Correlogram"},
@@ -845,7 +845,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     size="sm",
                                 ),
                                 dmc.NumberInput(
-                                    id="correlogram-block-width",
+                                    id="at-correlogram-block-width",
                                     label=None,
                                     value=100,
                                     min=50,
@@ -856,7 +856,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                             ],
                         ),
-                        html.Div(id="correlogram-container", style={"flex": "1", "minHeight": "0", "overflow": "auto"}),
+                        html.Div(id="at-correlogram-container", style={"flex": "1", "minHeight": "0", "overflow": "auto"}),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -868,7 +868,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             mb="md",
                             children=[
                                 dmc.SegmentedControl(
-                                    id="growth-chart-switch",
+                                    id="at-growth-chart-switch",
                                     data=[
                                         {"value": "table", "label": "Table"},
                                         {"value": "chart", "label": "Chart"},
@@ -879,20 +879,20 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             ],
                         ),
                         html.Div(
-                            id="growth-chart-container",
+                            id="at-growth-chart-container",
                             style=growth_chart_style,
                             children=[
-                                html.Div(id="growth-charts-container", style={"height": "100%", "width": "100%"}),
+                                html.Div(id="at-growth-charts-container", style={"height": "100%", "width": "100%"}),
                             ],
                         ),
                         html.Div(
-                            id="growth-grid-container",
+                            id="at-growth-grid-container",
                             style=growth_grid_style,
                             children=[
                                 dag.AgGrid(
                                     enableEnterpriseModules=True,
                                     licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="growth-grid",
+                                    id="at-growth-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
@@ -925,7 +925,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             mb="md",
                             children=[
                                 dmc.SegmentedControl(
-                                    id="drawdown-chart-switch",
+                                    id="at-drawdown-chart-switch",
                                     data=[
                                         {"value": "table", "label": "Table"},
                                         {"value": "chart", "label": "Chart"},
@@ -936,20 +936,20 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             ],
                         ),
                         html.Div(
-                            id="drawdown-chart-container",
+                            id="at-drawdown-chart-container",
                             style=drawdown_chart_style,
                             children=[
-                                html.Div(id="drawdown-charts", style={"height": "100%", "width": "100%"}),
+                                html.Div(id="at-drawdown-charts", style={"height": "100%", "width": "100%"}),
                             ],
                         ),
                         html.Div(
-                            id="drawdown-grid-container",
+                            id="at-drawdown-grid-container",
                             style=drawdown_grid_style,
                             children=[
                                 dag.AgGrid(
                                     enableEnterpriseModules=True,
                                     licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="drawdown-grid",
+                                    id="at-drawdown-grid",
                                     className='ag-theme-alpine',
                                     columnDefs=[],
                                     rowData=[],
@@ -1018,37 +1018,37 @@ layout = dmc.Container(
                                     children=[
                                         dmc.MenuItem(
                                             "Add series from database...",
-                                            id="menu-add-from-db",
+                                            id="at-menu-add-from-db",
                                             leftSection=DashIconify(icon="tabler:database", width=14),
                                         ),
                                         dmc.MenuItem(
                                             "Add series from file...",
-                                            id="menu-add-series",
+                                            id="at-menu-add-series",
                                             leftSection=DashIconify(icon="tabler:upload", width=14),
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Save Session",
-                                            id="menu-save-session",
+                                            id="at-menu-save-session",
                                             disabled=True,
                                             leftSection=DashIconify(icon="tabler:device-floppy", width=14),
                                         ),
                                         dmc.MenuItem(
                                             "Load Session",
-                                            id="menu-load-session",
+                                            id="at-menu-load-session",
                                             leftSection=DashIconify(icon="tabler:folder-open", width=14),
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Download Excel",
-                                            id="menu-download-excel",
+                                            id="at-menu-download-excel",
                                             disabled=True,
                                             leftSection=DashIconify(icon="tabler:file-spreadsheet", width=14),
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Exit",
-                                            id="menu-exit",
+                                            id="at-menu-exit",
                                             color="red",
                                             leftSection=DashIconify(icon="tabler:door-exit", width=14),
                                         ),
@@ -1079,12 +1079,12 @@ layout = dmc.Container(
                                     children=[
                                         dmc.MenuItem(
                                             "Clear session storage and refresh",
-                                            id="menu-clear-local-storage",
+                                            id="at-menu-clear-local-storage",
                                             leftSection=DashIconify(icon="tabler:trash", width=14),
                                         ),
                                         dmc.MenuItem(
                                             "Clear server cache",
-                                            id="menu-clear-server-cache",
+                                            id="at-menu-clear-server-cache",
                                             leftSection=DashIconify(icon="tabler:server-off", width=14),
                                         ),
                                     ],
@@ -1094,7 +1094,7 @@ layout = dmc.Container(
                         # Page switch button
                         dmc.Button(
                             "Switch to Optimization",
-                            id="menu-view-portfolio",
+                            id="at-menu-view-portfolio",
                             size="sm",
                             radius="md",
                             variant="gradient",
@@ -1106,7 +1106,7 @@ layout = dmc.Container(
                         # Help button (opens User Guide)
                         dmc.Button(
                             "Help",
-                            id="menu-help-guide",
+                            id="at-menu-help-guide",
                             variant="gradient",
                             gradient={"from": "teal", "to": "cyan", "deg": 90},
                             size="sm",
@@ -1122,8 +1122,8 @@ layout = dmc.Container(
         # Hidden file upload (triggered by menu item) - Moved here for startup priority
         html.Div(
             dcc.Upload(
-                id="upload-data",
-                children=html.Div(id="upload-trigger"),
+                id="at-upload-data",
+                children=html.Div(id="at-upload-trigger"),
                 multiple=False,
                 accept=".csv,.xlsx,.xls",
             ),
@@ -1132,7 +1132,7 @@ layout = dmc.Container(
 
         # Series Selection Modal
         dmc.Modal(
-            id="series-selection-modal",
+            id="at-series-selection-modal",
             title=dmc.Group(
                 gap="xs",
                 children=[
@@ -1151,7 +1151,7 @@ layout = dmc.Container(
             children=[
                 # Alert for messages (with close button)
                 dmc.Alert(
-                    id="alert-message",
+                    id="at-alert-message",
                     title="Info",
                     color="blue",
                     hide=True,
@@ -1159,7 +1159,7 @@ layout = dmc.Container(
                     withCloseButton=True,
                 ),
                 html.Div(
-                    id="series-selection-container",
+                    id="at-series-selection-container",
                     children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
                     style={"maxHeight": "50vh"},
                 ),
@@ -1167,8 +1167,8 @@ layout = dmc.Container(
                     mt="md",
                     justify="flex-end",
                     children=[
-                        dmc.Button("Cancel", id="modal-cancel-button", variant="outline", color="red"),
-                        dmc.Button("OK", id="modal-ok-button", color="blue"),
+                        dmc.Button("Cancel", id="at-modal-cancel-button", variant="outline", color="red"),
+                        dmc.Button("OK", id="at-modal-ok-button", color="blue"),
                     ],
                 ),
             ],
@@ -1176,7 +1176,7 @@ layout = dmc.Container(
 
         # Add-from-database Modal
         dmc.Modal(
-            id="db-add-modal",
+            id="at-db-add-modal",
             title=dmc.Group(
                 gap="xs",
                 children=[
@@ -1194,14 +1194,14 @@ layout = dmc.Container(
             transitionProps={"transition": "fade", "duration": 180},
             children=[
                 dmc.Alert(
-                    id="db-add-error-alert",
+                    id="at-db-add-error-alert",
                     title="Cannot add series",
                     color="red",
                     hide=True,
                     mb="sm",
                 ),
                 dmc.MultiSelect(
-                    id="db-add-series-select",
+                    id="at-db-add-series-select",
                     label="Select Series",
                     data=[],
                     value=[],
@@ -1215,8 +1215,8 @@ layout = dmc.Container(
                     mt="md",
                     justify="flex-end",
                     children=[
-                        dmc.Button("Cancel", id="db-add-cancel-button", variant="outline", color="red"),
-                        dmc.Button("OK", id="db-add-ok-button", color="blue", disabled=True),
+                        dmc.Button("Cancel", id="at-db-add-cancel-button", variant="outline", color="red"),
+                        dmc.Button("OK", id="at-db-add-ok-button", color="blue", disabled=True),
                     ],
                 ),
             ],
@@ -1264,7 +1264,7 @@ layout = dmc.Container(
 
         # Help Modal
         dmc.Modal(
-            id="help-modal",
+            id="at-help-modal",
             title=dmc.Group(
                 gap="xs",
                 children=[
@@ -1596,14 +1596,14 @@ layout = dmc.Container(
 
         # Welcome Screen (Initially Visible)
         html.Div(
-            id="welcome-screen-container",
+            id="at-welcome-screen-container",
             children=build_welcome_screen(),
             style={"display": "block"}
         ),
 
         # Main App Container (Initially Hidden)
         html.Div(
-            id="main-app-container",
+            id="at-main-app-container",
             children=build_main_layout(
                 periodicity_options=[{"value": "daily", "label": "Daily"}],
                 periodicity_value="daily",
@@ -1625,66 +1625,66 @@ layout = dmc.Container(
         ),
 
         # Hidden stores for state management (using local storage for persistence)
-        # analyticstool-raw-data-store and analyticstool-original-periodicity-store are defined in app.py (shared across pages)
-        dcc.Store(id="benchmark-assignments-store", data={}, storage_type="session"),
-        dcc.Store(id="long-short-store", data={}, storage_type="session"),
-        dcc.Store(id="periodicity-value-store", data="daily_trading", storage_type="session"),
+        # dashmat-raw-data-store and dashmat-original-periodicity-store are defined in app.py (shared across pages)
+        dcc.Store(id="at-benchmark-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="at-long-short-store", data={}, storage_type="session"),
+        dcc.Store(id="at-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="at-periodicity-load-sync-dummy", data=None),
-        dcc.Store(id="returns-type-value-store", data="total", storage_type="session"),
-        dcc.Store(id="series-select-value-store", data=[], storage_type="session"),
-        dcc.Store(id="series-order-store", data=[], storage_type="session"),
-        dcc.Store(id="active-tab-store", data="statistics", storage_type="session"),
-        dcc.Store(id="rolling-window-store", data="1y", storage_type="session"),
-        dcc.Store(id="rolling-metric-store", data="total_return", storage_type="session"),
-        dcc.Store(id="rolling-return-type-store", data="annualized", storage_type="session"),
-        dcc.Store(id="rolling-chart-switch-store", data="chart", storage_type="session"),
-        dcc.Store(id="drawdown-chart-switch-store", data="chart", storage_type="session"),
-        dcc.Store(id="growth-chart-switch-store", data="chart", storage_type="session"),
-        dcc.Store(id="monthly-view-store", data="annual", storage_type="session"),
-        dcc.Store(id="monthly-series-store", data=None, storage_type="session"),
-        dcc.Store(id="date-range-store", data=None, storage_type="session"),
-        dcc.Store(id="vol-scaler-value-store", data=0, storage_type="session"),
-        dcc.Store(id="vol-scaling-assignments-store", data={}, storage_type="session"),
-        dcc.Store(id="download-enabled-store", data=False),
-        dcc.Store(id="first-load-store", data=False, storage_type="session"),
+        dcc.Store(id="at-returns-type-value-store", data="total", storage_type="session"),
+        dcc.Store(id="at-series-select-value-store", data=[], storage_type="session"),
+        dcc.Store(id="at-series-order-store", data=[], storage_type="session"),
+        dcc.Store(id="at-active-tab-store", data="statistics", storage_type="session"),
+        dcc.Store(id="at-rolling-window-store", data="1y", storage_type="session"),
+        dcc.Store(id="at-rolling-metric-store", data="total_return", storage_type="session"),
+        dcc.Store(id="at-rolling-return-type-store", data="annualized", storage_type="session"),
+        dcc.Store(id="at-rolling-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="at-drawdown-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="at-growth-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="at-monthly-view-store", data="annual", storage_type="session"),
+        dcc.Store(id="at-monthly-series-store", data=None, storage_type="session"),
+        dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
+        dcc.Store(id="at-vol-scaler-value-store", data=0, storage_type="session"),
+        dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="at-download-enabled-store", data=False),
+        dcc.Store(id="at-first-load-store", data=False, storage_type="session"),
         # Temporary stores for modal state
-        dcc.Store(id="temp-series-select", data=[]),
-        dcc.Store(id="temp-benchmark-assignments-store", data={}),
-        dcc.Store(id="temp-long-short-store", data={}),
-        dcc.Store(id="temp-vol-scaling-assignments-store", data={}),
-        dcc.Store(id="temp-series-order-store", data=[]),
-        dcc.Store(id="temp-deleted-series-store", data=[]),
+        dcc.Store(id="at-temp-series-select", data=[]),
+        dcc.Store(id="at-temp-benchmark-assignments-store", data={}),
+        dcc.Store(id="at-temp-long-short-store", data={}),
+        dcc.Store(id="at-temp-vol-scaling-assignments-store", data={}),
+        dcc.Store(id="at-temp-series-order-store", data=[]),
+        dcc.Store(id="at-temp-deleted-series-store", data=[]),
         # Temp stores for sheet selection (stash upload while user picks a tab)
         dcc.Store(id="at-sheet-select-contents-store", data=None),
         dcc.Store(id="at-sheet-select-filename-store", data=None),
-        dcc.Download(id="download-excel"),
-        dcc.Download(id="download-sample-daily"),
-        dcc.Download(id="download-sample-monthly"),
+        dcc.Download(id="at-download-excel"),
+        dcc.Download(id="at-download-sample-daily"),
+        dcc.Download(id="at-download-sample-monthly"),
         # Save/Load session
-        dcc.Store(id="save-session-dummy", data=None, storage_type="memory"),
-        dcc.Store(id="load-session-dummy", data=None, storage_type="memory"),
-        dcc.Store(id="server-cache-clear-result", data=None, storage_type="memory"),
+        dcc.Store(id="at-save-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="at-load-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="at-server-cache-clear-result", data=None, storage_type="memory"),
         html.Div(
             dcc.Upload(
-                id="load-session-upload",
+                id="at-load-session-upload",
                 children=html.Div(),
                 multiple=False,
                 accept=".json",
             ),
             style={"display": "none"},
         ),
-        dcc.Location(id="url-location", refresh=False),
+        dcc.Location(id="at-url-location", refresh=False),
         # Moved series-select and edit-mode to global scope
-        dcc.Store(id="series-select", data=[], storage_type="session"),
-        dcc.Store(id="series-edit-mode", data=None),
+        dcc.Store(id="at-series-select", data=[], storage_type="session"),
+        dcc.Store(id="at-series-edit-mode", data=None),
 
         # Store to trigger clientside focus on edit input
-        dcc.Store(id="edit-box-focus-trigger", data=None),
+        dcc.Store(id="at-edit-box-focus-trigger", data=None),
         # Dummy div for clientside callback output
-        html.Div(id="dummy-focus-output"),
+        html.Div(id="at-dummy-focus-output"),
         
         # Correlogram metadata for client-side sizing
-        dcc.Store(id="correlogram-meta-store", data={}),
+        dcc.Store(id="at-correlogram-meta-store", data={}),
 
         # UI Blocker for file dialog (Overlay)
         dcc.Store(id="at-ui-blocker-store", data=False),
@@ -1702,9 +1702,9 @@ layout = dmc.Container(
 )
 
 
-# Toggle welcome/main visibility based on analyticstool-raw-data-store.
+# Toggle welcome/main visibility based on dashmat-raw-data-store.
 # Uses a one-shot Interval to guarantee session-storage has hydrated on
-# cross-page navigation, plus analyticstool-raw-data-store Input for same-page uploads.
+# cross-page navigation, plus dashmat-raw-data-store Input for same-page uploads.
 clientside_callback(
     """
     function(n_intervals, data) {
@@ -1714,46 +1714,46 @@ clientside_callback(
         return [{display: "block"}, {display: "none"}];
     }
     """,
-    Output("welcome-screen-container", "style"),
-    Output("main-app-container", "style"),
+    Output("at-welcome-screen-container", "style"),
+    Output("at-main-app-container", "style"),
     Input("at-page-load-trigger", "n_intervals"),
-    Input("analyticstool-raw-data-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
 )
 
 
 @callback(
-    Output("periodicity-select", "data", allow_duplicate=True),
-    Output("periodicity-select", "value", allow_duplicate=True),
-    Output("returns-type-select", "value"),
-    Output("vol-scaler-input", "value"),
-    Output("main-tabs", "value"),
-    Output("rolling-window-select", "value"),
-    Output("rolling-metric-select", "value"),
-    Output("rolling-return-type-select", "value"),
-    Output("rolling-return-type-select", "disabled", allow_duplicate=True),
-    Output("rolling-return-type-select", "style", allow_duplicate=True),
-    Output("rolling-chart-switch", "value"),
-    Output("drawdown-chart-switch", "value"),
-    Output("growth-chart-switch", "value"),
-    Output("monthly-view-checkbox", "value"),
-    Output("series-select", "data"),
+    Output("at-periodicity-select", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "value", allow_duplicate=True),
+    Output("at-returns-type-select", "value"),
+    Output("at-vol-scaler-input", "value"),
+    Output("at-main-tabs", "value"),
+    Output("at-rolling-window-select", "value"),
+    Output("at-rolling-metric-select", "value"),
+    Output("at-rolling-return-type-select", "value"),
+    Output("at-rolling-return-type-select", "disabled", allow_duplicate=True),
+    Output("at-rolling-return-type-select", "style", allow_duplicate=True),
+    Output("at-rolling-chart-switch", "value"),
+    Output("at-drawdown-chart-switch", "value"),
+    Output("at-growth-chart-switch", "value"),
+    Output("at-monthly-view-checkbox", "value"),
+    Output("at-series-select", "data"),
     Input("at-page-load-trigger", "n_intervals"),
-    Input("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
-    State("periodicity-value-store", "data"),
-    State("series-select-value-store", "data"),
-    State("returns-type-value-store", "data"),
-    State("vol-scaler-value-store", "data"),
-    State("active-tab-store", "data"),
-    State("rolling-window-store", "data"),
-    State("rolling-metric-store", "data"),
-    State("rolling-return-type-store", "data"),
-    State("rolling-chart-switch-store", "data"),
-    State("drawdown-chart-switch-store", "data"),
-    State("growth-chart-switch-store", "data"),
-    State("monthly-view-store", "data"),
-    State("monthly-series-store", "data"),
-    State("analyticstool-pending-new-series-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-periodicity-value-store", "data"),
+    State("at-series-select-value-store", "data"),
+    State("at-returns-type-value-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-active-tab-store", "data"),
+    State("at-rolling-window-store", "data"),
+    State("at-rolling-metric-store", "data"),
+    State("at-rolling-return-type-store", "data"),
+    State("at-rolling-chart-switch-store", "data"),
+    State("at-drawdown-chart-switch-store", "data"),
+    State("at-growth-chart-switch-store", "data"),
+    State("at-monthly-view-store", "data"),
+    State("at-monthly-series-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series, pending_series):
@@ -1848,8 +1848,8 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("url-location", "pathname"),
-    Input("menu-exit", "n_clicks"),
+    Output("at-url-location", "pathname"),
+    Input("at-menu-exit", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -1864,8 +1864,8 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("url-location", "pathname", allow_duplicate=True),
-    Input("menu-view-portfolio", "n_clicks"),
+    Output("at-url-location", "pathname", allow_duplicate=True),
+    Input("at-menu-view-portfolio", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -1877,29 +1877,29 @@ clientside_callback(
         if (n_clicks) {
             // Clear all sessionStorage keys for both pages
             const keysToRemove = [
-                'analyticstool-raw-data-store',
-                'analyticstool-original-periodicity-store',
-                'analyticstool-pending-new-series-store',
-                'analyticstool-saved-series-cache-store',
+                'dashmat-raw-data-store',
+                'dashmat-original-periodicity-store',
+                'dashmat-pending-new-series-store',
+                'dashmat-saved-series-cache-store',
                 'bctbill13-cache-store',
-                'series-select',
-                'benchmark-assignments-store',
-                'long-short-store',
-                'periodicity-value-store',
-                'returns-type-value-store',
-                'series-select-value-store',
-                'series-order-store',
-                'active-tab-store',
-                'rolling-window-store',
-                'rolling-return-type-store',
-                'rolling-chart-switch-store',
-                'drawdown-chart-switch-store',
-                'growth-chart-switch-store',
-                'monthly-view-store',
-                'monthly-series-store',
-                'date-range-store',
-                'vol-scaler-value-store',
-                'vol-scaling-assignments-store',
+                'at-series-select',
+                'at-benchmark-assignments-store',
+                'at-long-short-store',
+                'at-periodicity-value-store',
+                'at-returns-type-value-store',
+                'at-series-select-value-store',
+                'at-series-order-store',
+                'at-active-tab-store',
+                'at-rolling-window-store',
+                'at-rolling-return-type-store',
+                'at-rolling-chart-switch-store',
+                'at-drawdown-chart-switch-store',
+                'at-growth-chart-switch-store',
+                'at-monthly-view-store',
+                'at-monthly-series-store',
+                'at-date-range-store',
+                'at-vol-scaler-value-store',
+                'at-vol-scaling-assignments-store',
                 'po-series-select',
                 'po-series-order-store',
                 'po-benchmark-assignments-store',
@@ -1935,15 +1935,15 @@ clientside_callback(
         return window.dash_clientside.no_update;
     }
     """,
-    Output("url-location", "pathname", allow_duplicate=True),
-    Input("menu-clear-local-storage", "n_clicks"),
+    Output("at-url-location", "pathname", allow_duplicate=True),
+    Input("at-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
 )
 
 
 @callback(
-    Output("server-cache-clear-result", "data"),
-    Input("menu-clear-server-cache", "n_clicks"),
+    Output("at-server-cache-clear-result", "data"),
+    Input("at-menu-clear-server-cache", "n_clicks"),
     prevent_initial_call=True,
 )
 def clear_server_cache(n_clicks):
@@ -1961,7 +1961,7 @@ clientside_callback(
         if (n_clicks) {
             // Trigger the file input click with a small delay to allow overlay to render
             setTimeout(function() {
-                var uploadDiv = document.getElementById('upload-data');
+                var uploadDiv = document.getElementById('at-upload-data');
                 if (uploadDiv) {
                     var input = uploadDiv.querySelector('input[type="file"]');
                     if (input) {
@@ -1987,7 +1987,7 @@ clientside_callback(
     }
     """,
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
-    Input("menu-add-series", "n_clicks"),
+    Input("at-menu-add-series", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -2004,19 +2004,19 @@ clientside_callback(
 
 
 @callback(
-    Output("series-selection-modal", "opened", allow_duplicate=True),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("temp-long-short-store", "data", allow_duplicate=True),
-    Output("temp-series-order-store", "data", allow_duplicate=True),
-    Output("temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Input("open-series-modal-button", "n_clicks"),
-    State("series-select", "data"),
-    State("benchmark-assignments-store", "data"),
-    State("long-short-store", "data"),
-    State("series-order-store", "data"),
-    State("vol-scaling-assignments-store", "data"),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-long-short-store", "data", allow_duplicate=True),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Input("at-open-series-modal-button", "n_clicks"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def open_modal(n_clicks, current_select, current_bench, current_ls, current_order, current_vol_scaling):
@@ -2026,22 +2026,22 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
 
 
 @callback(
-    Output("series-select", "data", allow_duplicate=True),
-    Output("benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("long-short-store", "data", allow_duplicate=True),
-    Output("series-order-store", "data", allow_duplicate=True),
-    Output("series-selection-modal", "opened", allow_duplicate=True),
-    Output("series-select-value-store", "data", allow_duplicate=True), # Sync persistence
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
-    Output("vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Input("modal-ok-button", "n_clicks"),
-    State("temp-series-select", "data"),
-    State("temp-benchmark-assignments-store", "data"),
-    State("temp-long-short-store", "data"),
-    State("temp-series-order-store", "data"),
-    State("temp-deleted-series-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
-    State("temp-vol-scaling-assignments-store", "data"),
+    Output("at-series-select", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-series-select-value-store", "data", allow_duplicate=True), # Sync persistence
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Input("at-modal-ok-button", "n_clicks"),
+    State("at-temp-series-select", "data"),
+    State("at-temp-benchmark-assignments-store", "data"),
+    State("at-temp-long-short-store", "data"),
+    State("at-temp-series-order-store", "data"),
+    State("at-temp-deleted-series-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_deleted, raw_data, temp_vol_scaling):
@@ -2090,8 +2090,8 @@ def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_del
 
 
 @callback(
-    Output("series-selection-modal", "opened", allow_duplicate=True),
-    Input("modal-cancel-button", "n_clicks"),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Input("at-modal-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def on_modal_cancel(n_clicks):
@@ -2101,12 +2101,12 @@ def on_modal_cancel(n_clicks):
 
 
 @callback(
-    Output("temp-series-order-store", "data", allow_duplicate=True),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Input("series-selection-grid", "virtualRowData", allow_optional=True),
-    Input("series-selection-grid", "selectedRows", allow_optional=True),
-    State("temp-series-order-store", "data"),
-    State("temp-series-select", "data"),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Input("at-series-selection-grid", "virtualRowData", allow_optional=True),
+    Input("at-series-selection-grid", "selectedRows", allow_optional=True),
+    State("at-temp-series-order-store", "data"),
+    State("at-temp-series-select", "data"),
     prevent_initial_call=True,
 )
 def reorder_series(virtual_rows, selected_rows, current_order, current_selected):
@@ -2162,8 +2162,8 @@ def reorder_series(virtual_rows, selected_rows, current_order, current_selected)
 # Clientside callback for periodicity selection storage
 clientside_callback(
     "function(value) { return value; }",
-    Output("periodicity-value-store", "data"),
-    Input("periodicity-select", "value"),
+    Output("at-periodicity-value-store", "data"),
+    Input("at-periodicity-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -2175,7 +2175,7 @@ clientside_callback(
         const ctx = window.dash_clientside.callback_context;
         const triggered = (ctx && ctx.triggered) ? ctx.triggered : [];
         const rawTriggered = triggered.some(
-            t => t && t.prop_id && t.prop_id.indexOf("analyticstool-raw-data-store.") === 0
+            t => t && t.prop_id && t.prop_id.indexOf("dashmat-raw-data-store.") === 0
         );
         if (!rawTriggered || !rawData || !periodicityValue) {
             return window.dash_clientside.no_update;
@@ -2185,8 +2185,8 @@ clientside_callback(
     }
     """,
     Output("at-periodicity-load-sync-dummy", "data"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-value-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-value-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -2194,8 +2194,8 @@ clientside_callback(
 # Clientside callback for returns type selection storage
 clientside_callback(
     "function(value) { return value; }",
-    Output("returns-type-value-store", "data"),
-    Input("returns-type-select", "value"),
+    Output("at-returns-type-value-store", "data"),
+    Input("at-returns-type-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -2203,8 +2203,8 @@ clientside_callback(
 # Clientside callback for vol scaler value storage
 clientside_callback(
     "function(value) { return value; }",
-    Output("vol-scaler-value-store", "data"),
-    Input("vol-scaler-input", "value"),
+    Output("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaler-input", "value"),
     prevent_initial_call=True,
 )
 
@@ -2212,8 +2212,8 @@ clientside_callback(
 # Clientside callback for series selection storage
 clientside_callback(
     "function(value) { return value || []; }",
-    Output("series-select-value-store", "data"),
-    Input("series-select", "data"),
+    Output("at-series-select-value-store", "data"),
+    Input("at-series-select", "data"),
     prevent_initial_call=True,
 )
 
@@ -2221,8 +2221,8 @@ clientside_callback(
 # Clientside callback for active tab storage
 clientside_callback(
     "function(value) { return value || 'statistics'; }",
-    Output("active-tab-store", "data"),
-    Input("main-tabs", "value"),
+    Output("at-active-tab-store", "data"),
+    Input("at-main-tabs", "value"),
     prevent_initial_call=True,
 )
 
@@ -2233,8 +2233,8 @@ clientside_callback(
 # Clientside callback for rolling window selection storage
 clientside_callback(
     "function(value) { return value || '1y'; }",
-    Output("rolling-window-store", "data"),
-    Input("rolling-window-select", "value"),
+    Output("at-rolling-window-store", "data"),
+    Input("at-rolling-window-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -2242,8 +2242,8 @@ clientside_callback(
 # Clientside callback for rolling metric selection storage
 clientside_callback(
     "function(value) { return value || 'total_return'; }",
-    Output("rolling-metric-store", "data"),
-    Input("rolling-metric-select", "value"),
+    Output("at-rolling-metric-store", "data"),
+    Input("at-rolling-metric-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -2251,16 +2251,16 @@ clientside_callback(
 # Clientside callback for rolling return type storage
 clientside_callback(
     "function(value) { return value || 'annualized'; }",
-    Output("rolling-return-type-store", "data"),
-    Input("rolling-return-type-select", "value"),
+    Output("at-rolling-return-type-store", "data"),
+    Input("at-rolling-return-type-select", "value"),
     prevent_initial_call=True,
 )
 
 
 @callback(
-    Output("rolling-return-type-select", "disabled"),
-    Output("rolling-return-type-select", "style"),
-    Input("rolling-metric-select", "value"),
+    Output("at-rolling-return-type-select", "disabled"),
+    Output("at-rolling-return-type-select", "style"),
+    Input("at-rolling-metric-select", "value"),
 )
 def update_rolling_controls_state(metric):
     """Enable/disable return type select based on metric."""
@@ -2275,8 +2275,8 @@ def update_rolling_controls_state(metric):
 # Clientside callback for rolling chart switch storage
 clientside_callback(
     "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
-    Output("rolling-chart-switch-store", "data"),
-    Input("rolling-chart-switch", "value"),
+    Output("at-rolling-chart-switch-store", "data"),
+    Input("at-rolling-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -2296,9 +2296,9 @@ clientside_callback(
         }
     }
     """,
-    Output("rolling-grid-container", "style"),
-    Output("rolling-chart-container", "style"),
-    Input("rolling-chart-switch", "value"),
+    Output("at-rolling-grid-container", "style"),
+    Output("at-rolling-chart-container", "style"),
+    Input("at-rolling-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -2306,8 +2306,8 @@ clientside_callback(
 # Clientside callback for drawdown chart switch storage
 clientside_callback(
     "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
-    Output("drawdown-chart-switch-store", "data"),
-    Input("drawdown-chart-switch", "value"),
+    Output("at-drawdown-chart-switch-store", "data"),
+    Input("at-drawdown-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -2328,9 +2328,9 @@ clientside_callback(
         }
     }
     """,
-    Output("drawdown-grid-container", "style"),
-    Output("drawdown-chart-container", "style"),
-    Input("drawdown-chart-switch", "value"),
+    Output("at-drawdown-grid-container", "style"),
+    Output("at-drawdown-chart-container", "style"),
+    Input("at-drawdown-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -2338,8 +2338,8 @@ clientside_callback(
 # Clientside callback for growth chart switch storage
 clientside_callback(
     "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
-    Output("growth-chart-switch-store", "data"),
-    Input("growth-chart-switch", "value"),
+    Output("at-growth-chart-switch-store", "data"),
+    Input("at-growth-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -2360,9 +2360,9 @@ clientside_callback(
         }
     }
     """,
-    Output("growth-grid-container", "style"),
-    Output("growth-chart-container", "style"),
-    Input("growth-chart-switch", "value"),
+    Output("at-growth-grid-container", "style"),
+    Output("at-growth-chart-container", "style"),
+    Input("at-growth-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -2370,8 +2370,8 @@ clientside_callback(
 # Clientside callback for monthly view storage
 clientside_callback(
     "function(value) { return value !== null && value !== undefined ? value : 'annual'; }",
-    Output("monthly-view-store", "data"),
-    Input("monthly-view-checkbox", "value"),
+    Output("at-monthly-view-store", "data"),
+    Input("at-monthly-view-checkbox", "value"),
     prevent_initial_call=True,
 )
 
@@ -2379,8 +2379,8 @@ clientside_callback(
 # Clientside callback for monthly series selection storage
 clientside_callback(
     "function(value) { return value; }",
-    Output("monthly-series-store", "data"),
-    Input("monthly-series-select", "value"),
+    Output("at-monthly-series-store", "data"),
+    Input("at-monthly-series-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -2389,35 +2389,35 @@ clientside_callback(
 
 
 @callback(
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
-    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
-    Output("periodicity-select", "data", allow_duplicate=True),
-    Output("periodicity-select", "value", allow_duplicate=True),
-    Output("periodicity-select", "disabled", allow_duplicate=True),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Output("alert-message", "children", allow_duplicate=True),
-    Output("alert-message", "color", allow_duplicate=True),
-    Output("alert-message", "hide", allow_duplicate=True),
-    Output("periodicity-value-store", "data", allow_duplicate=True),
-    Output("series-selection-modal", "opened", allow_duplicate=True),
-    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("temp-long-short-store", "data", allow_duplicate=True),
-    Output("temp-series-order-store", "data", allow_duplicate=True),
-    Output("first-load-store", "data", allow_duplicate=True),
-    Output("temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("db-add-modal", "opened", allow_duplicate=True),
-    Output("db-add-series-select", "value", allow_duplicate=True),
-    Input("db-add-ok-button", "n_clicks"),
-    State("db-add-series-select", "value"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
-    State("series-select", "data"),
-    State("benchmark-assignments-store", "data"),
-    State("long-short-store", "data"),
-    State("series-order-store", "data"),
-    State("first-load-store", "data"),
-    State("vol-scaling-assignments-store", "data"),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "value", allow_duplicate=True),
+    Output("at-periodicity-select", "disabled", allow_duplicate=True),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-alert-message", "children", allow_duplicate=True),
+    Output("at-alert-message", "color", allow_duplicate=True),
+    Output("at-alert-message", "hide", allow_duplicate=True),
+    Output("at-periodicity-value-store", "data", allow_duplicate=True),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-long-short-store", "data", allow_duplicate=True),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-first-load-store", "data", allow_duplicate=True),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-db-add-modal", "opened", allow_duplicate=True),
+    Output("at-db-add-series-select", "value", allow_duplicate=True),
+    Input("at-db-add-ok-button", "n_clicks"),
+    State("at-db-add-series-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-first-load-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def add_series_from_database(
@@ -2560,23 +2560,23 @@ def add_series_from_database(
 
 
 @callback(
-    Output("analyticstool-raw-data-store", "data"),
-    Output("analyticstool-original-periodicity-store", "data"),
-    Output("periodicity-select", "data"),
-    Output("periodicity-select", "value"),
-    Output("periodicity-select", "disabled"),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Output("alert-message", "children"),
-    Output("alert-message", "color"),
-    Output("alert-message", "hide"),
-    Output("periodicity-value-store", "data", allow_duplicate=True),
-    Output("series-selection-modal", "opened", allow_duplicate=True),
-    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("temp-long-short-store", "data", allow_duplicate=True),
-    Output("temp-series-order-store", "data", allow_duplicate=True),
-    Output("first-load-store", "data"),
-    Output("temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data"),
+    Output("dashmat-original-periodicity-store", "data"),
+    Output("at-periodicity-select", "data"),
+    Output("at-periodicity-select", "value"),
+    Output("at-periodicity-select", "disabled"),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-alert-message", "children"),
+    Output("at-alert-message", "color"),
+    Output("at-alert-message", "hide"),
+    Output("at-periodicity-value-store", "data", allow_duplicate=True),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-long-short-store", "data", allow_duplicate=True),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-first-load-store", "data"),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     # Sheet-select modal outputs
     Output("at-sheet-select-modal", "opened", allow_duplicate=True),
@@ -2584,16 +2584,16 @@ def add_series_from_database(
     Output("at-sheet-select-dropdown", "value", allow_duplicate=True),
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
-    Input("upload-data", "contents"),
-    State("upload-data", "filename"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
-    State("series-select", "data"),
-    State("benchmark-assignments-store", "data"),
-    State("long-short-store", "data"),
-    State("series-order-store", "data"),
-    State("first-load-store", "data"),
-    State("vol-scaling-assignments-store", "data"),
+    Input("at-upload-data", "contents"),
+    State("at-upload-data", "filename"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-first-load-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load, current_vol_scaling):
@@ -2685,41 +2685,41 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 # Sheet selection modal: confirm
 # ---------------------------------------------------------------------------
 @callback(
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
-    Output("analyticstool-original-periodicity-store", "data", allow_duplicate=True),
-    Output("periodicity-select", "data", allow_duplicate=True),
-    Output("periodicity-select", "value", allow_duplicate=True),
-    Output("periodicity-select", "disabled", allow_duplicate=True),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Output("alert-message", "children", allow_duplicate=True),
-    Output("alert-message", "color", allow_duplicate=True),
-    Output("alert-message", "hide", allow_duplicate=True),
-    Output("periodicity-value-store", "data", allow_duplicate=True),
-    Output("series-selection-modal", "opened", allow_duplicate=True),
-    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("temp-long-short-store", "data", allow_duplicate=True),
-    Output("temp-series-order-store", "data", allow_duplicate=True),
-    Output("first-load-store", "data", allow_duplicate=True),
-    Output("temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "value", allow_duplicate=True),
+    Output("at-periodicity-select", "disabled", allow_duplicate=True),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-alert-message", "children", allow_duplicate=True),
+    Output("at-alert-message", "color", allow_duplicate=True),
+    Output("at-alert-message", "hide", allow_duplicate=True),
+    Output("at-periodicity-value-store", "data", allow_duplicate=True),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-long-short-store", "data", allow_duplicate=True),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-first-load-store", "data", allow_duplicate=True),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Output("at-sheet-select-modal", "opened", allow_duplicate=True),
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
-    Output("upload-data", "contents", allow_duplicate=True),
+    Output("at-upload-data", "contents", allow_duplicate=True),
     Input("at-sheet-select-ok-button", "n_clicks"),
     Input("at-sheet-select-import-all-button", "n_clicks"),
     State("at-sheet-select-dropdown", "value"),
     State("at-sheet-select-contents-store", "data"),
     State("at-sheet-select-filename-store", "data"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
-    State("series-select", "data"),
-    State("benchmark-assignments-store", "data"),
-    State("long-short-store", "data"),
-    State("series-order-store", "data"),
-    State("first-load-store", "data"),
-    State("vol-scaling-assignments-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-first-load-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename,
@@ -2865,7 +2865,7 @@ clientside_callback(
     Output("at-sheet-select-modal", "opened", allow_duplicate=True),
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
-    Output("upload-data", "contents", allow_duplicate=True),
+    Output("at-upload-data", "contents", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-sheet-select-cancel-button", "n_clicks"),
     prevent_initial_call=True,
@@ -2882,7 +2882,7 @@ clientside_callback(
     """
     function(opened) {
         if (!opened) {
-            var el = document.getElementById('upload-data');
+            var el = document.getElementById('at-upload-data');
             if (el) {
                 var inp = el.querySelector('input[type="file"]');
                 if (inp) inp.value = '';
@@ -2898,16 +2898,16 @@ clientside_callback(
 
 
 @callback(
-    Output("series-selection-container", "children"),
-    Output("temp-series-order-store", "data", allow_duplicate=True),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("temp-series-select", "data"),
-    Input("temp-series-order-store", "data"),
-    Input("temp-deleted-series-store", "data"),
-    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
-    Input("temp-benchmark-assignments-store", "data"),
-    Input("temp-long-short-store", "data"),
-    Input("temp-vol-scaling-assignments-store", "data"),
+    Output("at-series-selection-container", "children"),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-temp-series-select", "data"),
+    Input("at-temp-series-order-store", "data"),
+    Input("at-temp-deleted-series-store", "data"),
+    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
+    Input("at-temp-benchmark-assignments-store", "data"),
+    Input("at-temp-long-short-store", "data"),
+    Input("at-temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def update_series_selectors(
@@ -2966,7 +2966,7 @@ def update_series_selectors(
     ]
 
     grid = dag.AgGrid(
-        id="series-selection-grid",
+        id="at-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
         getRowId="params.data.Series",
         columnDefs=[
@@ -3075,9 +3075,9 @@ def update_series_selectors(
 
 
 @callback(
-    Output("temp-deleted-series-store", "data", allow_duplicate=True),
-    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("series-selection-grid", "rowData", allow_optional=True),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("at-series-selection-grid", "rowData", allow_optional=True),
     prevent_initial_call=True,
 )
 def delete_series(cell_change, row_data):
@@ -3098,22 +3098,22 @@ def delete_series(cell_change, row_data):
 
 
 @callback(
-    Output("analyticstool-raw-data-store", "data", allow_duplicate=True),
-    Output("temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("temp-long-short-store", "data", allow_duplicate=True),
-    Output("temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("temp-series-select", "data", allow_duplicate=True),
-    Output("temp-series-order-store", "data", allow_duplicate=True),
-    Output("series-edit-mode", "data", allow_duplicate=True),
-    Output("series-select-value-store", "data", allow_duplicate=True),
-    Output("edit-box-focus-trigger", "data", allow_duplicate=True),
-    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
-    State("temp-benchmark-assignments-store", "data"),
-    State("temp-long-short-store", "data"),
-    State("temp-vol-scaling-assignments-store", "data"),
-    State("temp-series-select", "data"),
-    State("temp-series-order-store", "data"),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-long-short-store", "data", allow_duplicate=True),
+    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-edit-mode", "data", allow_duplicate=True),
+    Output("at-series-select-value-store", "data", allow_duplicate=True),
+    Output("at-edit-box-focus-trigger", "data", allow_duplicate=True),
+    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("dashmat-raw-data-store", "data"),
+    State("at-temp-benchmark-assignments-store", "data"),
+    State("at-temp-long-short-store", "data"),
+    State("at-temp-vol-scaling-assignments-store", "data"),
+    State("at-temp-series-select", "data"),
+    State("at-temp-series-order-store", "data"),
     prevent_initial_call=True,
 )
 def save_edit(
@@ -3179,10 +3179,10 @@ def save_edit(
 
 
 @callback(
-    Output("temp-benchmark-assignments-store", "data"),
-    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("series-selection-grid", "rowData", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
+    Output("at-temp-benchmark-assignments-store", "data"),
+    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("at-series-selection-grid", "rowData", allow_optional=True),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def update_benchmark_assignments(cell_change, row_data, raw_data):
@@ -3207,10 +3207,10 @@ def update_benchmark_assignments(cell_change, row_data, raw_data):
 
 
 @callback(
-    Output("temp-long-short-store", "data"),
-    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("series-selection-grid", "rowData", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
+    Output("at-temp-long-short-store", "data"),
+    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("at-series-selection-grid", "rowData", allow_optional=True),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def update_long_short_assignments(cell_change, row_data, raw_data):
@@ -3232,10 +3232,10 @@ def update_long_short_assignments(cell_change, row_data, raw_data):
 
 
 @callback(
-    Output("temp-vol-scaling-assignments-store", "data"),
-    Input("series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("series-selection-grid", "rowData", allow_optional=True),
-    State("analyticstool-raw-data-store", "data"),
+    Output("at-temp-vol-scaling-assignments-store", "data"),
+    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("at-series-selection-grid", "rowData", allow_optional=True),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
 def update_vol_scaling_assignments(cell_change, row_data, raw_data):
@@ -3257,17 +3257,17 @@ def update_vol_scaling_assignments(cell_change, row_data, raw_data):
 
 
 @callback(
-    Output("start-date-picker", "value"),
-    Output("end-date-picker", "value"),
-    Output("date-picker-wrapper", "style"),
-    Output("common-range-button", "disabled"),
-    Output("common-daily-button", "disabled"),
-    Output("maximum-range-button", "disabled"),
-    Output("date-range-store", "data", allow_duplicate=True),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    State("date-range-store", "data"),
+    Output("at-start-date-picker", "value"),
+    Output("at-end-date-picker", "value"),
+    Output("at-date-picker-wrapper", "style"),
+    Output("at-common-range-button", "disabled"),
+    Output("at-common-daily-button", "disabled"),
+    Output("at-maximum-range-button", "disabled"),
+    Output("at-date-range-store", "data", allow_duplicate=True),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    State("at-date-range-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
@@ -3308,17 +3308,17 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range):
 
 
 @callback(
-    Output("start-date-picker", "value", allow_duplicate=True),
-    Output("end-date-picker", "value", allow_duplicate=True),
-    Output("date-range-store", "data"),
-    Output("periodicity-select", "value", allow_duplicate=True),
-    Output("periodicity-value-store", "data", allow_duplicate=True),
-    Input("common-range-button", "n_clicks"),
-    Input("common-daily-button", "n_clicks"),
-    Input("maximum-range-button", "n_clicks"),
-    State("analyticstool-raw-data-store", "data"),
-    State("periodicity-select", "value"),
-    State("series-select", "data"),
+    Output("at-start-date-picker", "value", allow_duplicate=True),
+    Output("at-end-date-picker", "value", allow_duplicate=True),
+    Output("at-date-range-store", "data"),
+    Output("at-periodicity-select", "value", allow_duplicate=True),
+    Output("at-periodicity-value-store", "data", allow_duplicate=True),
+    Input("at-common-range-button", "n_clicks"),
+    Input("at-common-daily-button", "n_clicks"),
+    Input("at-maximum-range-button", "n_clicks"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
     prevent_initial_call=True,
 )
 def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, periodicity, selected_series):
@@ -3340,7 +3340,7 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
         if not available_series:
             raise PreventUpdate
 
-        if button_id == "common-range-button":
+        if button_id == "at-common-range-button":
             # Common range: only dates where ALL selected series have data
             subset_df = df[available_series].dropna()
             if len(subset_df) == 0:
@@ -3348,7 +3348,7 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
             start_date = subset_df.index.min().strftime("%Y-%m-%d")
             end_date = subset_df.index.max().strftime("%Y-%m-%d")
             periodicity_value = no_update
-        elif button_id == "common-daily-button":
+        elif button_id == "at-common-daily-button":
             daily_df = resample_returns_cached(raw_data, "daily_trading")
             daily_available = [s for s in selected_series if s in daily_df.columns]
             common_daily = get_common_daily_range(daily_df, daily_available)
@@ -3371,9 +3371,9 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
 
 
 @callback(
-    Output("date-range-store", "data", allow_duplicate=True),
-    Input("start-date-picker", "value"),
-    Input("end-date-picker", "value"),
+    Output("at-date-range-store", "data", allow_duplicate=True),
+    Input("at-start-date-picker", "value"),
+    Input("at-end-date-picker", "value"),
     prevent_initial_call=True,
 )
 def update_date_range_store(start_date, end_date):
@@ -3384,18 +3384,18 @@ def update_date_range_store(start_date, end_date):
 
 
 @callback(
-    Output("returns-grid", "columnDefs"),
-    Output("returns-grid", "rowData"),
-    Output("menu-download-excel", "disabled"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("returns-type-select", "value"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
+    Output("at-returns-grid", "columnDefs"),
+    Output("at-returns-grid", "rowData"),
+    Output("at-menu-download-excel", "disabled"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
@@ -3449,20 +3449,20 @@ def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_
 
 
 @callback(
-    Output("rolling-grid", "columnDefs"),
-    Output("rolling-grid", "rowData"),
-    Input("main-tabs", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("rolling-window-select", "value"),
-    Input("rolling-return-type-select", "value"),
-    Input("rolling-metric-select", "value"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
+    Output("at-rolling-grid", "columnDefs"),
+    Output("at-rolling-grid", "rowData"),
+    Input("at-main-tabs", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-rolling-window-select", "value"),
+    Input("at-rolling-return-type-select", "value"),
+    Input("at-rolling-metric-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
@@ -3531,20 +3531,20 @@ def update_rolling_grid(active_tab, raw_data, periodicity, selected_series, roll
 
 
 @callback(
-    Output("rolling-chart-wrapper", "children"),
-    Input("main-tabs", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("rolling-window-select", "value"),
-    Input("rolling-return-type-select", "value"),
-    Input("rolling-metric-select", "value"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
-    State("theme-store", "data"),
+    Output("at-rolling-chart-wrapper", "children"),
+    Input("at-main-tabs", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-rolling-window-select", "value"),
+    Input("at-rolling-return-type-select", "value"),
+    Input("at-rolling-metric-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
@@ -3665,13 +3665,13 @@ def update_rolling_chart(active_tab, raw_data, periodicity, selected_series, rol
 
 
 @callback(
-    Output("monthly-series-select", "disabled"),
-    Output("monthly-series-select", "data"),
-    Output("monthly-series-select", "value", allow_duplicate=True),
-    Input("monthly-view-checkbox", "value"),
-    Input("series-select", "data"),
-    State("monthly-series-store", "data"),
-    State("monthly-series-select", "value"),
+    Output("at-monthly-series-select", "disabled"),
+    Output("at-monthly-series-select", "data"),
+    Output("at-monthly-series-select", "value", allow_duplicate=True),
+    Input("at-monthly-view-checkbox", "value"),
+    Input("at-series-select", "data"),
+    State("at-monthly-series-store", "data"),
+    State("at-monthly-series-select", "value"),
     prevent_initial_call=True,
 )
 def update_monthly_series_select(monthly_view, selected_series, stored_monthly_series, current_value):
@@ -3692,7 +3692,7 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
 
     # Enable when in monthly view
     # Only update value when switching TO monthly view
-    if triggered_id == "monthly-view-checkbox":
+    if triggered_id == "at-monthly-view-checkbox":
         # Use stored value when switching to monthly view
         if stored_monthly_series and stored_monthly_series in selected_series:
             default_value = stored_monthly_series
@@ -3712,21 +3712,21 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
 
 
 @callback(
-    Output("calendar-grid", "columnDefs"),
-    Output("calendar-grid", "rowData"),
-    Input("main-tabs", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("analyticstool-original-periodicity-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("returns-type-select", "value"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("monthly-view-checkbox", "value"),
-    Input("monthly-series-select", "value"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
+    Output("at-calendar-grid", "columnDefs"),
+    Output("at-calendar-grid", "rowData"),
+    Input("at-main-tabs", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-original-periodicity-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-monthly-view-checkbox", "value"),
+    Input("at-monthly-series-select", "value"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments):
@@ -3865,17 +3865,17 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
 
 
 @callback(
-    Output("statistics-grid", "columnDefs"),
-    Output("statistics-grid", "rowData"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
-    Input("analyticstool-saved-series-cache-store", "data"),
+    Output("at-statistics-grid", "columnDefs"),
+    Output("at-statistics-grid", "rowData"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
 def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, saved_series_store):
@@ -3940,9 +3940,9 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 
 @callback(
-    Output("correlogram-meta-store", "data"),
-    Input("series-select", "data"),
-    Input("main-tabs", "value"),
+    Output("at-correlogram-meta-store", "data"),
+    Input("at-series-select", "data"),
+    Input("at-main-tabs", "value"),
 )
 def update_correlogram_meta(selected_series, active_tab):
     """Update correlogram metadata (num_series) when tab is active."""
@@ -3958,7 +3958,7 @@ clientside_callback(
             return dash_clientside.no_update;
         }
 
-        var container = document.getElementById('correlogram-container');
+        var container = document.getElementById('at-correlogram-container');
         if (!container) {
             return dash_clientside.no_update;
         }
@@ -3980,26 +3980,26 @@ clientside_callback(
         return default_width;
     }
     """,
-    Output("correlogram-block-width", "value"),
-    Input("correlogram-meta-store", "data"),
+    Output("at-correlogram-block-width", "value"),
+    Input("at-correlogram-meta-store", "data"),
 )
 
 
 @callback(
-    Output("correlogram-container", "children"),
-    Input("main-tabs", "value"),  # Lazy loading: only update when tab is active
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("returns-type-select", "value"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
-    Input("correlation-view-switch", "value"),
-    Input("correlogram-block-width", "value"),
-    State("theme-store", "data"),
+    Output("at-correlogram-container", "children"),
+    Input("at-main-tabs", "value"),  # Lazy loading: only update when tab is active
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-correlation-view-switch", "value"),
+    Input("at-correlogram-block-width", "value"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_correlogram(active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
@@ -4197,18 +4197,18 @@ def update_correlogram(active_tab, raw_data, periodicity, selected_series, retur
 
 
 @callback(
-    Output("growth-charts-container", "children"),
-    Input("main-tabs", "value"),
-    Input("growth-chart-switch", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
-    State("theme-store", "data"),
+    Output("at-growth-charts-container", "children"),
+    Input("at-main-tabs", "value"),
+    Input("at-growth-chart-switch", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
@@ -4383,18 +4383,18 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
 
 
 @callback(
-    Output("growth-grid", "columnDefs"),
-    Output("growth-grid", "rowData"),
-    Input("main-tabs", "value"),
-    Input("growth-chart-switch", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
+    Output("at-growth-grid", "columnDefs"),
+    Output("at-growth-grid", "rowData"),
+    Input("at-main-tabs", "value"),
+    Input("at-growth-chart-switch", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
@@ -4453,19 +4453,19 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
 
 
 @callback(
-    Output("drawdown-charts", "children"),
-    Input("main-tabs", "value"),
-    Input("drawdown-chart-switch", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("returns-type-select", "value"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
-    State("theme-store", "data"),
+    Output("at-drawdown-charts", "children"),
+    Input("at-main-tabs", "value"),
+    Input("at-drawdown-chart-switch", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments, theme):
@@ -4538,19 +4538,19 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
 
 
 @callback(
-    Output("drawdown-grid", "columnDefs"),
-    Output("drawdown-grid", "rowData"),
-    Input("main-tabs", "value"),
-    Input("drawdown-chart-switch", "value"),
-    Input("analyticstool-raw-data-store", "data"),
-    Input("periodicity-select", "value"),
-    Input("series-select", "data"),
-    Input("returns-type-select", "value"),
-    Input("benchmark-assignments-store", "data"),
-    Input("long-short-store", "data"),
-    Input("date-range-store", "data"),
-    Input("vol-scaler-value-store", "data"),
-    Input("vol-scaling-assignments-store", "data"),
+    Output("at-drawdown-grid", "columnDefs"),
+    Output("at-drawdown-grid", "rowData"),
+    Input("at-main-tabs", "value"),
+    Input("at-drawdown-chart-switch", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler, vol_scaling_assignments):
@@ -4611,23 +4611,23 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
 
 
 @callback(
-    Output("download-excel", "data"),
-    Input("menu-download-excel", "n_clicks"),
-    State("analyticstool-raw-data-store", "data"),
-    State("analyticstool-original-periodicity-store", "data"),
-    State("periodicity-select", "value"),
-    State("series-select", "data"),
-    State("returns-type-select", "value"),
-    State("benchmark-assignments-store", "data"),
-    State("long-short-store", "data"),
-    State("date-range-store", "data"),
-    State("rolling-window-store", "data"),
-    State("rolling-return-type-store", "data"),
-    State("monthly-view-store", "data"),
-    State("monthly-series-store", "data"),
-    State("vol-scaler-value-store", "data"),
-    State("vol-scaling-assignments-store", "data"),
-    State("analyticstool-saved-series-cache-store", "data"),
+    Output("at-download-excel", "data"),
+    Input("at-menu-download-excel", "n_clicks"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-rolling-window-store", "data"),
+    State("at-rolling-return-type-store", "data"),
+    State("at-monthly-view-store", "data"),
+    State("at-monthly-series-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
 def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, saved_series_store):
@@ -4840,8 +4840,8 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
 
 # Sample file download callbacks
 @callback(
-    Output("download-sample-daily", "data"),
-    Input("download-sample-daily-btn", "n_clicks"),
+    Output("at-download-sample-daily", "data"),
+    Input("at-download-sample-daily-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def download_sample_daily(n_clicks):
@@ -4853,8 +4853,8 @@ def download_sample_daily(n_clicks):
 
 
 @callback(
-    Output("download-sample-monthly", "data"),
-    Input("download-sample-monthly-btn", "n_clicks"),
+    Output("at-download-sample-monthly", "data"),
+    Input("at-download-sample-monthly-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def download_sample_monthly(n_clicks):

@@ -17,7 +17,7 @@ layout = dmc.Container(
             children=[
                 dmc.ActionIcon(
                     DashIconify(icon="tabler:sun", width=20),
-                    id="home-theme-toggle",
+                    id="dashmat-home-theme-toggle",
                     variant="outline",
                     size="lg",
                     color="yellow",
@@ -66,7 +66,7 @@ layout = dmc.Container(
                                                 size="lg",
                                                 variant="filled",
                                             ),
-                                            id="home-analytics-link",
+                                            id="dashmat-home-analytics-link",
                                             href="/analyticstool",
                                         ),
                                         dmc.Anchor(
@@ -75,7 +75,7 @@ layout = dmc.Container(
                                                 size="lg",
                                                 variant="outline",
                                             ),
-                                            id="home-portopt-link",
+                                            id="dashmat-home-portopt-link",
                                             href="/portopt",
                                         ),
                                     ],
@@ -97,17 +97,17 @@ clientside_callback(
         return current_theme === "dark" ? "light" : "dark";
     }
     """,
-    Output("theme-store", "data", allow_duplicate=True),
-    Input("home-theme-toggle", "n_clicks"),
-    State("theme-store", "data"),
+    Output("dashmat-theme-store", "data", allow_duplicate=True),
+    Input("dashmat-home-theme-toggle", "n_clicks"),
+    State("dashmat-theme-store", "data"),
     prevent_initial_call=True,
 )
 
 # Server-side callback to update toggle icon and color
 @callback(
-    Output("home-theme-toggle", "children"),
-    Output("home-theme-toggle", "color"),
-    Input("theme-store", "data"),
+    Output("dashmat-home-theme-toggle", "children"),
+    Output("dashmat-home-theme-toggle", "color"),
+    Input("dashmat-theme-store", "data"),
 )
 def update_toggle_icon(theme):
     if theme == "dark":
@@ -116,9 +116,9 @@ def update_toggle_icon(theme):
 
 
 @callback(
-    Output("home-analytics-link", "href"),
-    Output("home-portopt-link", "href"),
-    Input("userinfo", "data"),
+    Output("dashmat-home-analytics-link", "href"),
+    Output("dashmat-home-portopt-link", "href"),
+    Input("dashmat-userinfo", "data"),
     prevent_initial_call=True,
 )
 def update_home_nav_links(userinfo):
