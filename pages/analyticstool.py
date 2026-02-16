@@ -1173,7 +1173,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 dmc.NumberInput(
                                     id="at-correlogram-block-width",
                                     label=None,
-                                    value=100,
+                                    value=None,
                                     min=50,
                                     step=50,
                                     suffix="px",
@@ -4766,7 +4766,7 @@ def control_correlogram_loading_display(active_tab, target_key, rendered_key):
 clientside_callback(
     """
     function(meta, currentValue) {
-        if (currentValue !== null && currentValue !== undefined) {
+        if (currentValue !== null && currentValue !== undefined && currentValue !== "") {
             return dash_clientside.no_update;
         }
         if (!meta || !meta.num_series || meta.num_series <= 1) {
@@ -4774,18 +4774,17 @@ clientside_callback(
         }
 
         var container = document.getElementById('at-correlogram-container');
-        if (!container) {
-            return dash_clientside.no_update;
+        var container_width = container ? container.clientWidth : 0;
+        if (!container_width) {
+            // Fallback for first render timing when container width is not measured yet.
+            container_width = Math.max((window.innerWidth || 1200) - 260, 400);
         }
-        
-        var container_width = container.clientWidth;
-        if (!container_width) return dash_clientside.no_update;
 
         // Default strategy: Clamp between 100 and 200, based on (Container - Buffer) / N
         // This ensures we fill the window if possible, but respect min 100px and max 200px defaults.
-        var available_width = container_width - 40;
+        var available_width = Math.max(container_width - 40, 200);
         var default_width = Math.floor(available_width / meta.num_series);
-        
+
         if (default_width < 100) {
             default_width = 100;
         } else if (default_width > 200) {
