@@ -75,7 +75,7 @@ from utils.core_categories import (
     load_cma_returns_for_benches,
     load_cma_returns_for_benches_with_meta,
 )
-from utils.portfolio_series import get_portfolio_options, load_portfolio_series
+from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark, load_portfolio_series
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -621,6 +621,23 @@ clientside_callback(
     State("at-portfolio-add-benchmark-type-select", "value"),
     prevent_initial_call=True,
 )
+
+
+@callback(
+    Output("at-portfolio-add-include-benchmark", "disabled"),
+    Output("at-portfolio-add-include-benchmark", "checked", allow_duplicate=True),
+    Input("at-portfolio-add-mode-store", "data"),
+    Input("at-portfolio-add-series-select", "value"),
+    State("at-portfolio-add-include-benchmark", "checked"),
+    prevent_initial_call=True,
+)
+def at_sync_include_benchmark_enabled(mode, selected_portfolio, current_checked):
+    if mode not in {"peer", "index", "other"} or not selected_portfolio:
+        return True, False
+    has_bm = has_portfolio_benchmark(DB_ENGINE, mode, selected_portfolio)
+    if not has_bm:
+        return True, False
+    return False, bool(current_checked)
 
 
 clientside_callback(
@@ -1663,6 +1680,7 @@ layout = dmc.Container(
                                     id="at-portfolio-add-include-benchmark",
                                     label="Include Benchmark",
                                     checked=False,
+                                    disabled=True,
                                     mt=24,
                                 ),
                                 dmc.Select(

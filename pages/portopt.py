@@ -75,7 +75,7 @@ from utils.core_categories import (
     get_unique_cmabench_values_cached,
     load_cma_returns_for_benches_with_meta,
 )
-from utils.portfolio_series import get_portfolio_options, load_portfolio_series
+from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark, load_portfolio_series
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
@@ -2726,6 +2726,7 @@ layout = dmc.Container(
                                     id="po-portfolio-add-include-benchmark",
                                     label="Include Benchmark",
                                     checked=False,
+                                    disabled=True,
                                     mt=24,
                                 ),
                                 dmc.Select(
@@ -3511,6 +3512,23 @@ def po_open_portfolio_add_modal(
         [],
         True,
     )
+
+
+@callback(
+    Output("po-portfolio-add-include-benchmark", "disabled"),
+    Output("po-portfolio-add-include-benchmark", "checked", allow_duplicate=True),
+    Input("po-portfolio-add-mode-store", "data"),
+    Input("po-portfolio-add-series-select", "value"),
+    State("po-portfolio-add-include-benchmark", "checked"),
+    prevent_initial_call=True,
+)
+def po_sync_include_benchmark_enabled(mode, selected_portfolio, current_checked):
+    if mode not in {"peer", "index", "other"} or not selected_portfolio:
+        return True, False
+    has_bm = has_portfolio_benchmark(DB_ENGINE, mode, selected_portfolio)
+    if not has_bm:
+        return True, False
+    return False, bool(current_checked)
 
 
 clientside_callback(

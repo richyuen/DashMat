@@ -198,6 +198,15 @@ PORTFOLIO_ROWS: list[dict] = [
         "PortfolioVintage": "AltTS",
         "IncepDate": date(2017, 1, 3),
     },
+    {
+        "PortfolioID": 8,
+        "PortfolioName": "Alternative No Benchmark Fund",
+        "Portfolio": "ALTNOBM",
+        "PortfolioSuite": "IndNoAttr",
+        "PeerVintage": "",
+        "PortfolioVintage": "AltTS",
+        "IncepDate": date(2018, 1, 2),
+    },
 ]
 
 
@@ -382,6 +391,7 @@ def _build_alt_seed_series(daily_df: pd.DataFrame) -> dict[str, pd.Series]:
         "ALTTRN|BenchRet": 0.31 * spx + 0.29 * agg + 0.00010 * np.sin(0.09 * x),
         "ALTMAC|PortRet": 0.30 * spx + 0.30 * agg + 0.00018 * np.cos(0.08 * x),
         "ALTMAC|BenchRet": 0.27 * spx + 0.33 * agg + 0.00008 * np.cos(0.06 * x),
+        "ALTNOBM|PortRet": 0.22 * spx + 0.38 * agg + 0.00015 * np.sin(0.07 * x),
     }
 
     out: dict[str, pd.Series] = {}

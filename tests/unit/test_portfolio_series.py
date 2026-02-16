@@ -6,7 +6,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from utils.constants import INDEX_BENCHMARK_SUFFIX
-from utils.portfolio_series import get_portfolio_options, load_portfolio_series
+from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark, load_portfolio_series
 
 
 def _seed_db():
@@ -86,7 +86,8 @@ def _seed_db():
                 "(2, 'TDF 2030 B', 'TD2030B', 'TD', '2030', '', '2020-01-31'), "
                 "(3, 'Risk 60', 'Risk60', 'RISK', '', '', '2020-01-31'), "
                 "(4, 'Alternative Trend', 'ALTTRN', 'IndNoAttr', '', 'AltTS', '2020-01-31'), "
-                "(5, 'Alternative Macro', 'ALTMAC', 'IndNoAttr', '', 'AltTS', '2020-01-31')"
+                "(5, 'Alternative Macro', 'ALTMAC', 'IndNoAttr', '', 'AltTS', '2020-01-31'), "
+                "(6, 'Alternative No Benchmark', 'ALTNOBM', 'IndNoAttr', '', 'AltTS', '2020-01-31')"
             )
         )
 
@@ -136,6 +137,10 @@ def _seed_db():
                 text("INSERT INTO AltTS (Date, Portfolio, Item, Value) VALUES (:d, 'ALTMAC', 'BenchRet', :v)"),
                 {"d": dt, "v": 0.010},
             )
+            conn.execute(
+                text("INSERT INTO AltTS (Date, Portfolio, Item, Value) VALUES (:d, 'ALTNOBM', 'PortRet', :v)"),
+                {"d": dt, "v": 0.007},
+            )
     return engine
 
 
@@ -143,6 +148,7 @@ def test_get_portfolio_options_labels_and_mode_filters():
     engine = _seed_db()
 
     peer_options = get_portfolio_options(engine, "peer")
+    assert [opt["value"] for opt in peer_options] == ["TD2030A", "TD2030B"]
     assert {"value": "TD2030A", "label": "TDF 2030 A [TD2030A]"} in peer_options
     assert {"value": "TD2030B", "label": "TDF 2030 B [TD2030B]"} in peer_options
     assert not any(opt["value"] == "Risk60" for opt in peer_options)
@@ -152,9 +158,11 @@ def test_get_portfolio_options_labels_and_mode_filters():
     assert not any(opt["value"] == "TD2030A" for opt in index_options)
 
     other_options = get_portfolio_options(engine, "other")
+    assert [opt["value"] for opt in other_options] == ["ALTTRN", "ALTMAC", "ALTNOBM"]
     assert {"value": "ALTTRN", "label": "Alternative Trend [ALTTRN]"} in other_options
     assert {"value": "ALTMAC", "label": "Alternative Macro [ALTMAC]"} in other_options
     assert not any(opt["value"] == "Risk60" for opt in other_options)
+    assert {"value": "ALTNOBM", "label": "Alternative No Benchmark [ALTNOBM]"} in other_options
 
 
 def test_load_portfolio_series_peer_dedup_and_incep_cutoff():
@@ -237,3 +245,11 @@ def test_load_portfolio_series_other_two_portfolios_get_two_benchmarks():
 
     assert list(result.returns_df.columns) == ["ALTTRN", "ALTTRN_BM", "ALTMAC", "ALTMAC_BM"]
     assert result.benchmark_assignments == {"ALTTRN": "ALTTRN_BM", "ALTMAC": "ALTMAC_BM"}
+
+
+def test_has_portfolio_benchmark_respects_source_logic():
+    engine = _seed_db()
+    assert has_portfolio_benchmark(engine, "peer", "TD2030A")
+    assert has_portfolio_benchmark(engine, "index", "Risk60")
+    assert has_portfolio_benchmark(engine, "other", "ALTTRN")
+    assert not has_portfolio_benchmark(engine, "other", "ALTNOBM")

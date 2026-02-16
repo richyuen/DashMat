@@ -81,7 +81,7 @@ def get_portfolio_options(engine: Engine, mode: PortfolioMode) -> list[dict]:
             "FROM Portfolios p "
             "WHERE p.PortfolioSuite = 'IndNoAttr' "
             "AND COALESCE(p.PortfolioVintage, '') = 'AltTS' "
-            "ORDER BY p.Portfolio"
+            "ORDER BY p.PortfolioID, p.Portfolio"
         )
     elif mode == "peer":
         where_clause = (
@@ -90,13 +90,10 @@ def get_portfolio_options(engine: Engine, mode: PortfolioMode) -> list[dict]:
             "OR COALESCE(s.PeerAllocOrder, 0) > 0 "
             "OR COALESCE(s.Peer529Order, 0) > 0"
         )
-        order_clause = (
-            "COALESCE(s.PeerTDOrder, s.PeerModelOrder, s.PeerAllocOrder, s.Peer529Order, 999999), "
-            "p.Portfolio"
-        )
+        order_clause = "p.PortfolioName, p.Portfolio"
     else:
         where_clause = "COALESCE(s.IndexMonthlyOrder, 0) > 0"
-        order_clause = "COALESCE(s.IndexMonthlyOrder, 999999), p.Portfolio"
+        order_clause = "p.PortfolioName, p.Portfolio"
 
     if mode in {"peer", "index"}:
         q = text(
@@ -117,6 +114,66 @@ def get_portfolio_options(engine: Engine, mode: PortfolioMode) -> list[dict]:
         p_name = str(portfolio_name or p)
         options.append({"value": p, "label": f"{p_name} [{p}]"})
     return options
+
+
+def has_portfolio_benchmark(engine: Engine, mode: PortfolioMode, portfolio: str | None) -> bool:
+    p = str(portfolio or "").strip()
+    if mode not in {"peer", "index", "other"} or not p:
+        return False
+
+    if mode == "index":
+        q = text(
+            "SELECT COUNT(1) "
+            "FROM IndexTS "
+            "WHERE Portfolio = :portfolio "
+            "AND Item = :item "
+            "AND [Desc] = :desc"
+        )
+        with engine.connect() as conn:
+            count = conn.execute(
+                q,
+                {"portfolio": p, "item": "PortRet", "desc": INDEX_BENCHMARK_DESC},
+            ).scalar()
+        return int(count or 0) > 0
+
+    if mode == "other":
+        q = text(
+            "SELECT COUNT(1) "
+            "FROM AltTS "
+            "WHERE Portfolio = :portfolio "
+            "AND Item = :item"
+        )
+        with engine.connect() as conn:
+            count = conn.execute(q, {"portfolio": p, "item": "BenchRet"}).scalar()
+        return int(count or 0) > 0
+
+    meta_q = text("SELECT PeerVintage FROM Portfolios WHERE Portfolio = :portfolio")
+    with engine.connect() as conn:
+        row = conn.execute(meta_q, {"portfolio": p}).first()
+    if not row:
+        return False
+    vintage = str(row[0] or "").strip()
+
+    if vintage:
+        peer_q = text(
+            "SELECT COUNT(1) "
+            "FROM PeerTS "
+            "WHERE Item = :item "
+            "AND (Portfolio = :portfolio OR Portfolio = :vintage)"
+        )
+        params = {"item": "MeanRet", "portfolio": p, "vintage": vintage}
+    else:
+        peer_q = text(
+            "SELECT COUNT(1) "
+            "FROM PeerTS "
+            "WHERE Item = :item "
+            "AND Portfolio = :portfolio"
+        )
+        params = {"item": "MeanRet", "portfolio": p}
+
+    with engine.connect() as conn:
+        count = conn.execute(peer_q, params).scalar()
+    return int(count or 0) > 0
 
 
 def _read_series(
