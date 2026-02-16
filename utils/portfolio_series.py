@@ -18,6 +18,8 @@ from utils.constants import (
 )
 
 PortfolioMode = Literal["peer", "index", "other"]
+OTHER_SUPPORTED_SOURCES = {"AltTS", "Perf"}
+PERF_GROSS_FEE_TYPE = "G"
 
 
 def _option_db_values(options: list[dict]) -> set[str]:
@@ -80,7 +82,7 @@ def get_portfolio_options(engine: Engine, mode: PortfolioMode) -> list[dict]:
             "SELECT p.Portfolio, p.PortfolioName "
             "FROM Portfolios p "
             "WHERE p.PortfolioSuite = 'IndNoAttr' "
-            "AND COALESCE(p.PortfolioVintage, '') = 'AltTS' "
+            "AND COALESCE(p.PortfolioVintage, '') IN ('AltTS', 'Perf') "
             "ORDER BY p.PortfolioID, p.Portfolio"
         )
     elif mode == "peer":
@@ -136,23 +138,33 @@ def has_portfolio_benchmark(engine: Engine, mode: PortfolioMode, portfolio: str 
             ).scalar()
         return int(count or 0) > 0
 
-    if mode == "other":
-        q = text(
-            "SELECT COUNT(1) "
-            "FROM AltTS "
-            "WHERE Portfolio = :portfolio "
-            "AND Item = :item"
-        )
-        with engine.connect() as conn:
-            count = conn.execute(q, {"portfolio": p, "item": "BenchRet"}).scalar()
-        return int(count or 0) > 0
-
-    meta_q = text("SELECT PeerVintage FROM Portfolios WHERE Portfolio = :portfolio")
+    meta_q = text(
+        "SELECT PeerVintage, PortfolioVintage "
+        "FROM Portfolios "
+        "WHERE Portfolio = :portfolio"
+    )
     with engine.connect() as conn:
         row = conn.execute(meta_q, {"portfolio": p}).first()
     if not row:
         return False
     vintage = str(row[0] or "").strip()
+    source = str(row[1] or "").strip()
+
+    if mode == "other":
+        if source == "AltTS":
+            q = text(
+                "SELECT COUNT(1) "
+                "FROM AltTS "
+                "WHERE Portfolio = :portfolio "
+                "AND Item = :item"
+            )
+            with engine.connect() as conn:
+                count = conn.execute(q, {"portfolio": p, "item": "BenchRet"}).scalar()
+            return int(count or 0) > 0
+        if source == "Perf":
+            # Perf benchmark availability is metadata-driven.
+            return bool(vintage)
+        return False
 
     if vintage:
         peer_q = text(
@@ -231,6 +243,49 @@ def _read_series_no_desc(
     return _rows_to_series(rows, portfolio, normalize_values=normalize_values)
 
 
+def _performance_table_name(table_name: str) -> str:
+    return f"[{table_name}]"
+
+
+def _read_perf_series(
+    performance_engine: Engine,
+    portfolio: str,
+    value_column: str,
+) -> pd.Series:
+    if value_column not in {"Daily_ror", "Daily_ror_index"}:
+        raise ValueError(f"Unsupported performance value column: {value_column}")
+
+    account_table = _performance_table_name("ACCOUNT")
+    account_benchmark_table = _performance_table_name("ACCOUNT_BENCHMARK")
+    daily_return_table = _performance_table_name("DAILY_RETURN")
+
+    q = text(
+        f"SELECT dr.Effective_Date AS Date, dr.{value_column} AS Value "
+        f"FROM {daily_return_table} dr "
+        f"JOIN {account_table} a ON a.ACCT_ID = dr.ACCT_ID "
+        f"JOIN {account_benchmark_table} ab ON ab.BENCHMARK_ID = dr.BENCHMARK_ACCT_ID "
+        "WHERE a.ACCT_CD = :portfolio "
+        "AND dr.IS_LATEST = 1 "
+        "AND ab.PRECEDENCE = 1 "
+        "AND dr.FEE_TYPE = :fee_type "
+        "ORDER BY dr.Effective_Date"
+    )
+    with performance_engine.connect() as conn:
+        rows = conn.execute(
+            q,
+            {
+                "portfolio": portfolio,
+                "fee_type": PERF_GROSS_FEE_TYPE,
+            },
+        ).fetchall()
+
+    series = _rows_to_series(rows, portfolio, normalize_values=False)
+    if series.empty:
+        return series
+    series = (series / 100.0).dropna()
+    return series.rename(portfolio)
+
+
 def _rows_to_series(rows, series_name: str, normalize_values: bool = True) -> pd.Series:
     if not rows:
         return pd.Series(dtype=float, name=series_name)
@@ -268,11 +323,13 @@ def load_portfolio_series(
     engine: Engine,
     mode: PortfolioMode,
     staged_rows: list[dict] | None,
+    performance_engine: Engine | None = None,
 ) -> PortfolioImportResult:
     """Load staged portfolio requests from CMA tables."""
     rows = [r for r in (staged_rows or []) if isinstance(r, dict)]
     if mode not in {"peer", "index", "other"} or not rows:
         return PortfolioImportResult(pd.DataFrame(), {}, "monthly")
+    perf_engine = performance_engine or engine
 
     requested = [str(r.get("portfolio", "")).strip() for r in rows if r.get("portfolio")]
     if not requested:
@@ -327,18 +384,21 @@ def load_portfolio_series(
             port_series = _read_series(engine, "IndexTS", portfolio, "PortRet", ret_desc)
         else:
             source = str(metadata[portfolio].get("portfolio_vintage", "")).strip()
-            if source != "AltTS":
+            if source == "AltTS":
+                # AltTS stores arithmetic returns directly.
+                port_series = _read_series_no_desc(
+                    engine,
+                    "AltTS",
+                    portfolio,
+                    "PortRet",
+                    normalize_values=False,
+                )
+            elif source == "Perf":
+                port_series = _read_perf_series(perf_engine, portfolio, "Daily_ror")
+            else:
                 raise ValueError(
                     f"PortfolioVintage `{source}` is not implemented for portfolio `{portfolio}`."
                 )
-            # AltTS stores arithmetic returns directly.
-            port_series = _read_series_no_desc(
-                engine,
-                "AltTS",
-                portfolio,
-                "PortRet",
-                normalize_values=False,
-            )
 
         incep = metadata[portfolio].get("incep_date")
         if incep is not None:
@@ -404,17 +464,32 @@ def load_portfolio_series(
                 ordered_cols.append(bm_col)
             benchmark_assignments[portfolio] = bm_col
         else:
+            source = str(metadata[portfolio].get("portfolio_vintage", "")).strip()
             bm_col = f"{portfolio}{INDEX_BENCHMARK_SUFFIX}"
             if bm_col not in series_map:
-                bm_series = _read_series_no_desc(
-                    engine,
-                    "AltTS",
-                    portfolio,
-                    "BenchRet",
-                    normalize_values=False,
-                )
-                if bm_series.empty:
-                    raise ValueError(f"No AltTS benchmark rows for portfolio `{portfolio}`.")
+                if source == "AltTS":
+                    bm_series = _read_series_no_desc(
+                        engine,
+                        "AltTS",
+                        portfolio,
+                        "BenchRet",
+                        normalize_values=False,
+                    )
+                    if bm_series.empty:
+                        raise ValueError(f"No AltTS benchmark rows for portfolio `{portfolio}`.")
+                elif source == "Perf":
+                    vintage = str(metadata[portfolio].get("peer_vintage", "")).strip()
+                    if not vintage:
+                        raise ValueError(f"PeerVintage is missing for portfolio `{portfolio}`.")
+                    bm_series = _read_perf_series(perf_engine, portfolio, "Daily_ror_index")
+                    if bm_series.empty:
+                        raise ValueError(f"No Perf benchmark rows for portfolio `{portfolio}`.")
+                else:
+                    if source in OTHER_SUPPORTED_SOURCES:
+                        raise ValueError(f"No benchmark source rows for portfolio `{portfolio}`.")
+                    raise ValueError(
+                        f"PortfolioVintage `{source}` is not implemented for portfolio `{portfolio}`."
+                    )
                 series_map[bm_col] = bm_series.rename(bm_col)
                 ordered_cols.append(bm_col)
             benchmark_assignments[portfolio] = bm_col

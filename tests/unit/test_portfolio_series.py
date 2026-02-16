@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import pandas as pd
+import pytest
 from sqlalchemy import create_engine, text
 
 from utils.constants import INDEX_BENCHMARK_SUFFIX
@@ -66,6 +68,32 @@ def _seed_db():
                 "Value REAL NOT NULL)"
             )
         )
+        conn.execute(
+            text(
+                "CREATE TABLE [ACCOUNT] ("
+                "ACCT_ID INTEGER PRIMARY KEY, "
+                "ACCT_CD TEXT NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE [ACCOUNT_BENCHMARK] ("
+                "BENCHMARK_ID INTEGER PRIMARY KEY, "
+                "PRECEDENCE INTEGER NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE [DAILY_RETURN] ("
+                "Effective_Date DATE NOT NULL, "
+                "Daily_ror REAL NOT NULL, "
+                "Daily_ror_index REAL NOT NULL, "
+                "ACCT_ID INTEGER NOT NULL, "
+                "BENCHMARK_ACCT_ID INTEGER NOT NULL, "
+                "FEE_TYPE TEXT NOT NULL, "
+                "IS_LATEST INTEGER NOT NULL)"
+            )
+        )
 
         conn.execute(
             text(
@@ -87,7 +115,23 @@ def _seed_db():
                 "(3, 'Risk 60', 'Risk60', 'RISK', '', '', '2020-01-31'), "
                 "(4, 'Alternative Trend', 'ALTTRN', 'IndNoAttr', '', 'AltTS', '2020-01-31'), "
                 "(5, 'Alternative Macro', 'ALTMAC', 'IndNoAttr', '', 'AltTS', '2020-01-31'), "
-                "(6, 'Alternative No Benchmark', 'ALTNOBM', 'IndNoAttr', '', 'AltTS', '2020-01-31')"
+                "(6, 'Alternative No Benchmark', 'ALTNOBM', 'IndNoAttr', '', 'AltTS', '2020-01-31'), "
+                "(7, 'Performance Trend', 'PERFTRN', 'IndNoAttr', '2030', 'Perf', '2020-01-31'), "
+                "(8, 'Performance No Benchmark', 'PERFNOBM', 'IndNoAttr', '', 'Perf', '2020-01-31')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO [ACCOUNT] (ACCT_ID, ACCT_CD) VALUES "
+                "(101, 'PERFTRN'), "
+                "(102, 'PERFNOBM')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO [ACCOUNT_BENCHMARK] (BENCHMARK_ID, PRECEDENCE) VALUES "
+                "(901, 1), "
+                "(902, 2)"
             )
         )
 
@@ -141,6 +185,48 @@ def _seed_db():
                 text("INSERT INTO AltTS (Date, Portfolio, Item, Value) VALUES (:d, 'ALTNOBM', 'PortRet', :v)"),
                 {"d": dt, "v": 0.007},
             )
+
+            # Perf rows: only (PRECEDENCE=1, IS_LATEST=1, FEE_TYPE='G') should survive.
+            conn.execute(
+                text(
+                    "INSERT INTO [DAILY_RETURN] "
+                    "(Effective_Date, Daily_ror, Daily_ror_index, ACCT_ID, BENCHMARK_ACCT_ID, FEE_TYPE, IS_LATEST) "
+                    "VALUES (:d, 1.50, 1.10, 101, 901, 'G', 1)"
+                ),
+                {"d": dt},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO [DAILY_RETURN] "
+                    "(Effective_Date, Daily_ror, Daily_ror_index, ACCT_ID, BENCHMARK_ACCT_ID, FEE_TYPE, IS_LATEST) "
+                    "VALUES (:d, 1.80, 1.30, 101, 902, 'G', 1)"
+                ),
+                {"d": dt},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO [DAILY_RETURN] "
+                    "(Effective_Date, Daily_ror, Daily_ror_index, ACCT_ID, BENCHMARK_ACCT_ID, FEE_TYPE, IS_LATEST) "
+                    "VALUES (:d, 1.90, 1.40, 101, 901, 'N', 1)"
+                ),
+                {"d": dt},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO [DAILY_RETURN] "
+                    "(Effective_Date, Daily_ror, Daily_ror_index, ACCT_ID, BENCHMARK_ACCT_ID, FEE_TYPE, IS_LATEST) "
+                    "VALUES (:d, 2.10, 1.60, 101, 901, 'G', 0)"
+                ),
+                {"d": dt},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO [DAILY_RETURN] "
+                    "(Effective_Date, Daily_ror, Daily_ror_index, ACCT_ID, BENCHMARK_ACCT_ID, FEE_TYPE, IS_LATEST) "
+                    "VALUES (:d, 0.60, 0.40, 102, 901, 'G', 1)"
+                ),
+                {"d": dt},
+            )
     return engine
 
 
@@ -158,11 +244,11 @@ def test_get_portfolio_options_labels_and_mode_filters():
     assert not any(opt["value"] == "TD2030A" for opt in index_options)
 
     other_options = get_portfolio_options(engine, "other")
-    assert [opt["value"] for opt in other_options] == ["ALTTRN", "ALTMAC", "ALTNOBM"]
+    assert [opt["value"] for opt in other_options] == ["ALTTRN", "ALTMAC", "ALTNOBM", "PERFTRN", "PERFNOBM"]
     assert {"value": "ALTTRN", "label": "Alternative Trend [ALTTRN]"} in other_options
-    assert {"value": "ALTMAC", "label": "Alternative Macro [ALTMAC]"} in other_options
+    assert {"value": "PERFTRN", "label": "Performance Trend [PERFTRN]"} in other_options
     assert not any(opt["value"] == "Risk60" for opt in other_options)
-    assert {"value": "ALTNOBM", "label": "Alternative No Benchmark [ALTNOBM]"} in other_options
+    assert {"value": "PERFNOBM", "label": "Performance No Benchmark [PERFNOBM]"} in other_options
 
 
 def test_load_portfolio_series_peer_dedup_and_incep_cutoff():
@@ -247,9 +333,56 @@ def test_load_portfolio_series_other_two_portfolios_get_two_benchmarks():
     assert result.benchmark_assignments == {"ALTTRN": "ALTTRN_BM", "ALTMAC": "ALTMAC_BM"}
 
 
+def test_load_portfolio_series_other_perf_filters_and_scales_returns():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "other",
+        [
+            {"portfolio": "PERFTRN", "type": "Actual", "include_benchmark": False, "benchmark_type": ""},
+        ],
+        performance_engine=engine,
+    )
+
+    assert list(result.returns_df.columns) == ["PERFTRN"]
+    assert np.allclose(result.returns_df["PERFTRN"].dropna().values, 0.015)
+
+
+def test_load_portfolio_series_other_perf_benchmark_name_and_series():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "other",
+        [
+            {"portfolio": "PERFTRN", "type": "Actual", "include_benchmark": True, "benchmark_type": "Actual"},
+        ],
+        performance_engine=engine,
+    )
+
+    bm_name = f"PERFTRN{INDEX_BENCHMARK_SUFFIX}"
+    assert list(result.returns_df.columns) == ["PERFTRN", bm_name]
+    assert result.benchmark_assignments == {"PERFTRN": bm_name}
+    assert np.allclose(result.returns_df[bm_name].dropna().values, 0.011)
+
+
+def test_load_portfolio_series_other_perf_requires_peer_vintage_for_benchmark():
+    engine = _seed_db()
+    with pytest.raises(ValueError, match="PeerVintage is missing"):
+        load_portfolio_series(
+            engine,
+            "other",
+            [
+                {"portfolio": "PERFNOBM", "type": "Actual", "include_benchmark": True, "benchmark_type": "Actual"},
+            ],
+            performance_engine=engine,
+        )
+
+
 def test_has_portfolio_benchmark_respects_source_logic():
     engine = _seed_db()
     assert has_portfolio_benchmark(engine, "peer", "TD2030A")
     assert has_portfolio_benchmark(engine, "index", "Risk60")
     assert has_portfolio_benchmark(engine, "other", "ALTTRN")
     assert not has_portfolio_benchmark(engine, "other", "ALTNOBM")
+    assert has_portfolio_benchmark(engine, "other", "PERFTRN")
+    assert not has_portfolio_benchmark(engine, "other", "PERFNOBM")

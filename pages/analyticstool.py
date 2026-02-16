@@ -68,7 +68,12 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
-from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
+from dbengine import (
+    AG_GRID_LICENSE_KEY,
+    engine as DB_ENGINE,
+    engine_MRD as MRD_ENGINE,
+    engine_PERFORMANCE as PERF_ENGINE,
+)
 from utils.core_categories import (
     clear_dropdown_caches,
     get_core_category_options_cached,
@@ -3181,7 +3186,12 @@ def at_add_portfolios_from_database(
         )
 
     try:
-        load_result = load_portfolio_series(DB_ENGINE, mode, rows)
+        load_result = load_portfolio_series(
+            DB_ENGINE,
+            mode,
+            rows,
+            performance_engine=PERF_ENGINE,
+        )
         new_df = load_result.returns_df
         if new_df.empty:
             raise ValueError("No rows returned for staged portfolio requests.")

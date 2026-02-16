@@ -76,7 +76,12 @@ from utils.core_categories import (
     load_cma_returns_for_benches_with_meta,
 )
 from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark, load_portfolio_series
-from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
+from dbengine import (
+    AG_GRID_LICENSE_KEY,
+    engine as DB_ENGINE,
+    engine_MRD as MRD_ENGINE,
+    engine_PERFORMANCE as PERF_ENGINE,
+)
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
 
@@ -5653,7 +5658,12 @@ def po_add_portfolios_from_database(
         )
 
     try:
-        load_result = load_portfolio_series(DB_ENGINE, mode, rows)
+        load_result = load_portfolio_series(
+            DB_ENGINE,
+            mode,
+            rows,
+            performance_engine=PERF_ENGINE,
+        )
         new_df = load_result.returns_df
         if new_df.empty:
             raise ValueError("No rows returned for staged portfolio requests.")

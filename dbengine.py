@@ -26,6 +26,12 @@ def _default_mrd_sqlite_url() -> str:
     return f"sqlite:///{db_path.as_posix()}"
 
 
+def _default_performance_sqlite_url() -> str:
+    db_path = Path(__file__).resolve().parent / "data" / "Performance.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{db_path.as_posix()}"
+
+
 def _build_database_url() -> str:
     """Resolve database URL with SQLite default and SQL Server support."""
     # Preferred: explicit SQLAlchemy URL, e.g.
@@ -55,3 +61,13 @@ engine: Engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True)
 
 MRD_DATABASE_URL = os.getenv("DASHMAT_MRD_DATABASE_URL", _default_mrd_sqlite_url())
 engine_MRD: Engine = create_engine(MRD_DATABASE_URL, future=True, pool_pre_ping=True)
+
+PERFORMANCE_DATABASE_URL = os.getenv(
+    "DASHMAT_PERFORMANCE_DATABASE_URL",
+    _default_performance_sqlite_url(),
+)
+engine_PERFORMANCE: Engine = create_engine(
+    PERFORMANCE_DATABASE_URL,
+    future=True,
+    pool_pre_ping=True,
+)

@@ -14,7 +14,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dbengine import engine, engine_MRD, DATABASE_URL, MRD_DATABASE_URL
+from dbengine import (
+    DATABASE_URL,
+    MRD_DATABASE_URL,
+    PERFORMANCE_DATABASE_URL,
+    engine,
+    engine_MRD,
+    engine_PERFORMANCE,
+)
 from utils.sample_data import get_sample_file_path
 
 
@@ -205,6 +212,24 @@ PORTFOLIO_ROWS: list[dict] = [
         "PortfolioSuite": "IndNoAttr",
         "PeerVintage": "",
         "PortfolioVintage": "AltTS",
+        "IncepDate": date(2018, 1, 2),
+    },
+    {
+        "PortfolioID": 9,
+        "PortfolioName": "Performance Trend Fund",
+        "Portfolio": "PERFTRN",
+        "PortfolioSuite": "IndNoAttr",
+        "PeerVintage": "2030",
+        "PortfolioVintage": "Perf",
+        "IncepDate": date(2016, 1, 4),
+    },
+    {
+        "PortfolioID": 10,
+        "PortfolioName": "Performance No Benchmark Fund",
+        "Portfolio": "PERFNOBM",
+        "PortfolioSuite": "IndNoAttr",
+        "PeerVintage": "",
+        "PortfolioVintage": "Perf",
         "IncepDate": date(2018, 1, 2),
     },
 ]
@@ -441,6 +466,106 @@ def _alt_ts_rows(series_map: dict[str, pd.Series]) -> list[dict]:
     return rows
 
 
+def _build_perf_seed_rows(
+    daily_df: pd.DataFrame,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Build deterministic Performance DB seed rows.
+
+    Performance.DAILY_RETURN stores returns in percentage points, not decimals.
+    """
+    account_rows = [
+        {"ACCT_ID": 9001, "ACCT_CD": "PERFTRN"},
+        {"ACCT_ID": 9002, "ACCT_CD": "PERFNOBM"},
+    ]
+    benchmark_rows = [
+        {"BENCHMARK_ID": 9101, "PRECEDENCE": 1},
+        {"BENCHMARK_ID": 9102, "PRECEDENCE": 2},
+    ]
+
+    if daily_df.empty:
+        return account_rows, benchmark_rows, []
+
+    idx = pd.DatetimeIndex(daily_df.index).sort_values()
+    source_df = daily_df.reindex(idx)
+    spx = _pick_seed_column(source_df, "SPX", 0)
+    agg = _pick_seed_column(source_df, "BCAgg", 1)
+    x = np.arange(len(idx), dtype=float)
+
+    perf_trend = 0.40 * spx + 0.30 * agg + 0.00015 * np.sin(0.11 * x)
+    perf_trend_bm = 0.35 * spx + 0.35 * agg + 0.00009 * np.sin(0.08 * x)
+    perf_no_bm = 0.24 * spx + 0.36 * agg + 0.00012 * np.cos(0.07 * x)
+    perf_no_bm_idx = 0.20 * spx + 0.32 * agg + 0.00008 * np.cos(0.05 * x)
+
+    daily_rows: list[dict] = []
+    for dt in idx:
+        d = date(dt.year, dt.month, dt.day)
+
+        trend_ret = float(pd.to_numeric(pd.Series([perf_trend.loc[dt]]), errors="coerce").iloc[0])
+        trend_bm_ret = float(pd.to_numeric(pd.Series([perf_trend_bm.loc[dt]]), errors="coerce").iloc[0])
+        no_bm_ret = float(pd.to_numeric(pd.Series([perf_no_bm.loc[dt]]), errors="coerce").iloc[0])
+        no_bm_bm_ret = float(pd.to_numeric(pd.Series([perf_no_bm_idx.loc[dt]]), errors="coerce").iloc[0])
+
+        # Keep only one valid row by filters (latest=1, precedence=1, gross fee),
+        # plus extra rows that should be excluded by query predicates.
+        daily_rows.append(
+            {
+                "Effective_Date": d,
+                "Daily_ror": trend_ret * 100.0,
+                "Daily_ror_index": trend_bm_ret * 100.0,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 1,
+            }
+        )
+        daily_rows.append(
+            {
+                "Effective_Date": d,
+                "Daily_ror": trend_ret * 96.0,
+                "Daily_ror_index": trend_bm_ret * 96.0,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "N",
+                "IS_LATEST": 1,
+            }
+        )
+        daily_rows.append(
+            {
+                "Effective_Date": d,
+                "Daily_ror": trend_ret * 105.0,
+                "Daily_ror_index": trend_bm_ret * 105.0,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9102,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 1,
+            }
+        )
+        daily_rows.append(
+            {
+                "Effective_Date": d,
+                "Daily_ror": trend_ret * 102.0,
+                "Daily_ror_index": trend_bm_ret * 102.0,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 0,
+            }
+        )
+        daily_rows.append(
+            {
+                "Effective_Date": d,
+                "Daily_ror": no_bm_ret * 100.0,
+                "Daily_ror_index": no_bm_bm_ret * 100.0,
+                "ACCT_ID": 9002,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 1,
+            }
+        )
+
+    return account_rows, benchmark_rows, daily_rows
+
+
 def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table]:
     cma_corr = Table(
         "CMACorrelation",
@@ -551,6 +676,33 @@ def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table]:
         Column("SOURCE_SYSTEM", String(16), nullable=False),
     )
     return account, factor_data
+
+
+def _build_performance_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
+    account = Table(
+        "ACCOUNT",
+        metadata,
+        Column("ACCT_ID", Integer, primary_key=True),
+        Column("ACCT_CD", String(128), nullable=False, unique=True),
+    )
+    account_benchmark = Table(
+        "ACCOUNT_BENCHMARK",
+        metadata,
+        Column("BENCHMARK_ID", Integer, primary_key=True),
+        Column("PRECEDENCE", Integer, nullable=False),
+    )
+    daily_return = Table(
+        "DAILY_RETURN",
+        metadata,
+        Column("Effective_Date", Date, primary_key=True),
+        Column("ACCT_ID", Integer, primary_key=True),
+        Column("BENCHMARK_ACCT_ID", Integer, primary_key=True),
+        Column("FEE_TYPE", String(8), primary_key=True),
+        Column("IS_LATEST", Integer, primary_key=True),
+        Column("Daily_ror", Float, nullable=False),
+        Column("Daily_ror_index", Float, nullable=False),
+    )
+    return account, account_benchmark, daily_return
 
 
 def _default_core_category_meta(bench: str) -> dict[str, str]:
@@ -683,6 +835,8 @@ def main() -> None:
     cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts, alt_ts = _build_tables(metadata)
     mrd_metadata = MetaData()
     mrd_account, mrd_factor_data = _build_mrd_tables(mrd_metadata)
+    perf_metadata = MetaData()
+    perf_account, perf_account_benchmark, perf_daily_return = _build_performance_tables(perf_metadata)
 
     metadata.drop_all(engine, checkfirst=True)
     metadata.create_all(engine)
@@ -690,6 +844,8 @@ def main() -> None:
         conn.execute(text('DROP TABLE IF EXISTS [CORE_DATA.FACTOR_DATA]'))
     mrd_metadata.drop_all(engine_MRD, checkfirst=True)
     mrd_metadata.create_all(engine_MRD)
+    perf_metadata.drop_all(engine_PERFORMANCE, checkfirst=True)
+    perf_metadata.create_all(engine_PERFORMANCE)
 
     corr_rows: list[dict] = []
     ret_rows: list[dict] = []
@@ -716,6 +872,7 @@ def main() -> None:
     index_ts_rows = _portfolio_ts_rows(index_series_map)
     alt_ts_rows = _alt_ts_rows(alt_series_map)
     mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)
+    perf_account_rows, perf_benchmark_rows, perf_daily_rows = _build_perf_seed_rows(daily_df)
 
     with engine.begin() as conn:
         conn.execute(cma_corr.insert(), corr_rows)
@@ -740,6 +897,14 @@ def main() -> None:
         if mrd_factor_rows:
             conn.execute(mrd_factor_data.insert(), mrd_factor_rows)
 
+    with engine_PERFORMANCE.begin() as conn:
+        if perf_account_rows:
+            conn.execute(perf_account.insert(), perf_account_rows)
+        if perf_benchmark_rows:
+            conn.execute(perf_account_benchmark.insert(), perf_benchmark_rows)
+        if perf_daily_rows:
+            conn.execute(perf_daily_return.insert(), perf_daily_rows)
+
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
     print(f"CMAReturns rows: {len(ret_rows)}")
@@ -753,6 +918,10 @@ def main() -> None:
     print(f"Initialized MRD database at {MRD_DATABASE_URL}")
     print(f"CORE_DATA.ACCOUNT rows: {len(mrd_account_rows)}")
     print(f"CORE_DATA.ACCOUNT_FACTOR_DATA rows: {len(mrd_factor_rows)}")
+    print(f"Initialized Performance database at {PERFORMANCE_DATABASE_URL}")
+    print(f"ACCOUNT rows: {len(perf_account_rows)}")
+    print(f"ACCOUNT_BENCHMARK rows: {len(perf_benchmark_rows)}")
+    print(f"DAILY_RETURN rows: {len(perf_daily_rows)}")
 
 
 if __name__ == "__main__":
