@@ -10,8 +10,10 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 from utils.constants import (
+    INDEX_BENCHMARK_TYPE_OPTIONS,
     INDEX_BENCHMARK_DESC,
     INDEX_BENCHMARK_SUFFIX,
+    INDEX_PORTFOLIO_TYPE_OPTIONS,
     PEER_BENCHMARK_TYPE_OPTIONS,
     PEER_PORTFOLIO_TYPE_OPTIONS,
     PORTFOLIO_TS_VALUE_MODE,
@@ -37,6 +39,39 @@ def _option_db_values(options: list[dict]) -> set[str]:
 PEER_PORTFOLIO_BENCHMARK_OVERLAP = _option_db_values(PEER_BENCHMARK_TYPE_OPTIONS).intersection(
     _option_db_values(PEER_PORTFOLIO_TYPE_OPTIONS)
 )
+INDEX_PORTFOLIO_BENCHMARK_OVERLAP = _option_db_values(INDEX_BENCHMARK_TYPE_OPTIONS).intersection(
+    _option_db_values(INDEX_PORTFOLIO_TYPE_OPTIONS)
+)
+INDEX_BENCHMARK_DESC_VALUES = _option_db_values(INDEX_BENCHMARK_TYPE_OPTIONS)
+
+
+def _first_portfolio_type(mode: PortfolioMode) -> str:
+    if mode == "peer":
+        options = PEER_PORTFOLIO_TYPE_OPTIONS
+    elif mode == "index":
+        options = INDEX_PORTFOLIO_TYPE_OPTIONS
+    else:
+        return ""
+
+    for opt in options:
+        if not isinstance(opt, dict):
+            continue
+        val = str(opt.get("db_value", "")).strip()
+        if val:
+            return val
+    return ""
+
+
+def _effective_portfolio_series_name(portfolio: str, mode: PortfolioMode, selected_type: str | None) -> str:
+    p = str(portfolio or "").strip()
+    if mode not in {"peer", "index"}:
+        return p
+
+    selected = str(selected_type or "").strip()
+    first_type = _first_portfolio_type(mode)
+    if not selected or selected == first_type:
+        return p
+    return f"{p}_{selected}"
 
 
 def _should_convert_levels_to_returns(series: pd.Series) -> bool:
@@ -124,17 +159,18 @@ def has_portfolio_benchmark(engine: Engine, mode: PortfolioMode, portfolio: str 
         return False
 
     if mode == "index":
+        descs = sorted(INDEX_BENCHMARK_DESC_VALUES or {INDEX_BENCHMARK_DESC})
         q = text(
             "SELECT COUNT(1) "
             "FROM IndexTS "
             "WHERE Portfolio = :portfolio "
             "AND Item = :item "
-            "AND [Desc] = :desc"
-        )
+            "AND [Desc] IN :descs"
+        ).bindparams(bindparam("descs", expanding=True))
         with engine.connect() as conn:
             count = conn.execute(
                 q,
-                {"portfolio": p, "item": "PortRet", "desc": INDEX_BENCHMARK_DESC},
+                {"portfolio": p, "item": "PortRet", "descs": descs},
             ).scalar()
         return int(count or 0) > 0
 
@@ -377,6 +413,7 @@ def load_portfolio_series(
 
         if not ret_desc:
             raise ValueError(f"Missing type for portfolio: {portfolio}")
+        portfolio_col = _effective_portfolio_series_name(portfolio, mode, ret_desc)
 
         if mode == "peer":
             port_series = _read_series(engine, "PeerTS", portfolio, "PortRet", ret_desc)
@@ -408,9 +445,9 @@ def load_portfolio_series(
         if port_series.empty:
             raise ValueError(f"No rows found for portfolio `{portfolio}` with type `{ret_desc}`.")
 
-        if portfolio not in series_map:
-            series_map[portfolio] = port_series.rename(portfolio)
-            ordered_cols.append(portfolio)
+        if portfolio_col not in series_map:
+            series_map[portfolio_col] = port_series.rename(portfolio_col)
+            ordered_cols.append(portfolio_col)
 
         if not include_benchmark:
             continue
@@ -435,7 +472,7 @@ def load_portfolio_series(
                         )
                     series_map[bm_col] = bm_series.rename(bm_col)
                     ordered_cols.append(bm_col)
-                benchmark_assignments[portfolio] = bm_col
+                benchmark_assignments[portfolio_col] = bm_col
             else:
                 prev_type = peer_bench_type_by_vintage.get(vintage)
                 if prev_type and prev_type != benchmark_type:
@@ -453,16 +490,35 @@ def load_portfolio_series(
                         )
                     series_map[vintage] = bm_series.rename(vintage)
                     ordered_cols.append(vintage)
-                benchmark_assignments[portfolio] = vintage
+                benchmark_assignments[portfolio_col] = vintage
         elif mode == "index":
-            bm_col = f"{portfolio}{INDEX_BENCHMARK_SUFFIX}"
-            if bm_col not in series_map:
-                bm_series = _read_series(engine, "IndexTS", portfolio, "PortRet", INDEX_BENCHMARK_DESC)
-                if bm_series.empty:
-                    raise ValueError(f"No index benchmark rows for portfolio `{portfolio}`.")
-                series_map[bm_col] = bm_series.rename(bm_col)
-                ordered_cols.append(bm_col)
-            benchmark_assignments[portfolio] = bm_col
+            if not benchmark_type:
+                raise ValueError(f"Missing benchmark type for portfolio `{portfolio}`.")
+
+            if benchmark_type in INDEX_PORTFOLIO_BENCHMARK_OVERLAP:
+                bm_col = _effective_portfolio_series_name(portfolio, mode, benchmark_type)
+                if bm_col not in series_map:
+                    bm_series = _read_series(engine, "IndexTS", portfolio, "PortRet", benchmark_type)
+                    if bm_series.empty:
+                        raise ValueError(
+                            f"No index benchmark rows for portfolio `{portfolio}` and type `{benchmark_type}`."
+                        )
+                    series_map[bm_col] = bm_series.rename(bm_col)
+                    ordered_cols.append(bm_col)
+                benchmark_assignments[portfolio_col] = bm_col
+            else:
+                if benchmark_type != INDEX_BENCHMARK_DESC:
+                    raise ValueError(
+                        f"Unsupported index benchmark type `{benchmark_type}` for portfolio `{portfolio}`."
+                    )
+                bm_col = f"{portfolio}{INDEX_BENCHMARK_SUFFIX}"
+                if bm_col not in series_map:
+                    bm_series = _read_series(engine, "IndexTS", portfolio, "PortRet", INDEX_BENCHMARK_DESC)
+                    if bm_series.empty:
+                        raise ValueError(f"No index benchmark rows for portfolio `{portfolio}`.")
+                    series_map[bm_col] = bm_series.rename(bm_col)
+                    ordered_cols.append(bm_col)
+                benchmark_assignments[portfolio_col] = bm_col
         else:
             source = str(metadata[portfolio].get("portfolio_vintage", "")).strip()
             bm_col = f"{portfolio}{INDEX_BENCHMARK_SUFFIX}"
@@ -492,7 +548,7 @@ def load_portfolio_series(
                     )
                 series_map[bm_col] = bm_series.rename(bm_col)
                 ordered_cols.append(bm_col)
-            benchmark_assignments[portfolio] = bm_col
+            benchmark_assignments[portfolio_col] = bm_col
 
     if not ordered_cols:
         return PortfolioImportResult(pd.DataFrame(), {}, "monthly")

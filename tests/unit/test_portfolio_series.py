@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import create_engine, text
 
-from utils.constants import INDEX_BENCHMARK_SUFFIX
+from utils.constants import INDEX_BENCHMARK_SUFFIX, INDEX_BENCHMARK_TYPE_OPTIONS
 from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark, load_portfolio_series
 
 
@@ -142,7 +142,15 @@ def _seed_db():
                 {"d": dt},
             )
             conn.execute(
+                text("INSERT INTO PeerTS (Date, Portfolio, Item, Desc, Value) VALUES (:d, 'TD2030A', 'PortRet', 'Calculated', 0.0097)"),
+                {"d": dt},
+            )
+            conn.execute(
                 text("INSERT INTO PeerTS (Date, Portfolio, Item, Desc, Value) VALUES (:d, 'TD2030B', 'PortRet', 'Actual', 0.011)"),
+                {"d": dt},
+            )
+            conn.execute(
+                text("INSERT INTO PeerTS (Date, Portfolio, Item, Desc, Value) VALUES (:d, 'TD2030B', 'PortRet', 'Calculated', 0.0107)"),
                 {"d": dt},
             )
             conn.execute(
@@ -159,6 +167,10 @@ def _seed_db():
             )
             conn.execute(
                 text("INSERT INTO IndexTS (Date, Portfolio, Item, Desc, Value) VALUES (:d, 'Risk60', 'PortRet', 'Actual', 0.012)"),
+                {"d": dt},
+            )
+            conn.execute(
+                text("INSERT INTO IndexTS (Date, Portfolio, Item, Desc, Value) VALUES (:d, 'Risk60', 'PortRet', 'Calculated', 0.0105)"),
                 {"d": dt},
             )
             conn.execute(
@@ -251,6 +263,10 @@ def test_get_portfolio_options_labels_and_mode_filters():
     assert {"value": "PERFNOBM", "label": "Performance No Benchmark [PERFNOBM]"} in other_options
 
 
+def test_index_benchmark_options_include_calculated():
+    assert any(opt.get("db_value") == "Calculated" for opt in INDEX_BENCHMARK_TYPE_OPTIONS)
+
+
 def test_load_portfolio_series_peer_dedup_and_incep_cutoff():
     engine = _seed_db()
     result = load_portfolio_series(
@@ -285,6 +301,50 @@ def test_load_portfolio_series_index_benchmark_suffix():
     assert result.periodicity == "monthly"
 
 
+def test_load_portfolio_series_index_calculated_benchmark_maps_to_typed_series():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "index",
+        [
+            {"portfolio": "Risk60", "type": "Actual", "include_benchmark": True, "benchmark_type": "Calculated"},
+        ],
+    )
+
+    assert list(result.returns_df.columns) == ["Risk60", "Risk60_Calculated"]
+    assert result.benchmark_assignments == {"Risk60": "Risk60_Calculated"}
+
+
+def test_load_portfolio_series_index_typed_series_uses_suffixed_assignment_key():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "index",
+        [
+            {"portfolio": "Risk60", "type": "Calculated", "include_benchmark": True, "benchmark_type": "Benchmark"},
+        ],
+    )
+
+    bm_name = f"Risk60{INDEX_BENCHMARK_SUFFIX}"
+    assert list(result.returns_df.columns) == ["Risk60_Calculated", bm_name]
+    assert result.benchmark_assignments == {"Risk60_Calculated": bm_name}
+
+
+def test_load_portfolio_series_index_allows_same_portfolio_multiple_types():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "index",
+        [
+            {"portfolio": "Risk60", "type": "Actual", "include_benchmark": False},
+            {"portfolio": "Risk60", "type": "Calculated", "include_benchmark": False},
+        ],
+    )
+
+    assert list(result.returns_df.columns) == ["Risk60", "Risk60_Calculated"]
+    assert result.benchmark_assignments == {}
+
+
 def test_load_portfolio_series_peer_calculated_benchmark_uses_portfolio_key():
     engine = _seed_db()
     result = load_portfolio_series(
@@ -298,6 +358,20 @@ def test_load_portfolio_series_peer_calculated_benchmark_uses_portfolio_key():
     bm_name = "TD2030A_Calculated"
     assert list(result.returns_df.columns) == ["TD2030A", bm_name]
     assert result.benchmark_assignments == {"TD2030A": bm_name}
+
+
+def test_load_portfolio_series_peer_calculated_type_uses_suffix_and_effective_key():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "peer",
+        [
+            {"portfolio": "TD2030A", "type": "Calculated", "include_benchmark": True, "benchmark_type": "Estimated"},
+        ],
+    )
+
+    assert list(result.returns_df.columns) == ["TD2030A_Calculated", "2030"]
+    assert result.benchmark_assignments == {"TD2030A_Calculated": "2030"}
 
 
 def test_load_portfolio_series_other_uses_altts_port_and_bench_items():

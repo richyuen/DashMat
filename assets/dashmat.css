@@ -180,3 +180,74 @@
     border: 1px solid rgba(148, 163, 184, 0.24);
     background: rgba(30, 33, 39, 0.92);
 }
+
+/* Welcome section cards */
+.dashmat-welcome-sections-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    width: 100%;
+}
+
+.dashmat-welcome-section-card {
+    height: 100%;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.95));
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+    transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.dashmat-welcome-section-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 24px rgba(15, 23, 42, 0.12);
+    border-color: rgba(37, 99, 235, 0.25);
+}
+
+.dashmat-welcome-section-header {
+    align-items: flex-start;
+}
+
+.dashmat-welcome-section-title {
+    font-size: 0.96rem;
+    line-height: 1.25;
+    font-weight: 700;
+    letter-spacing: 0.1px;
+}
+
+.dashmat-welcome-section-subtitle {
+    font-size: 0.78rem;
+    line-height: 1.25;
+    color: #64748b;
+}
+
+.dashmat-welcome-section-actions .mantine-Button-root {
+    justify-content: flex-start;
+    padding-left: 12px;
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-welcome-section-card {
+    border-color: rgba(148, 163, 184, 0.22);
+    background: linear-gradient(145deg, rgba(31, 41, 55, 0.95), rgba(17, 24, 39, 0.94));
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.36);
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-welcome-section-card:hover {
+    border-color: rgba(96, 165, 250, 0.34);
+    box-shadow: 0 16px 28px rgba(0, 0, 0, 0.42);
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-welcome-section-subtitle {
+    color: #94a3b8;
+}
+
+@media (max-width: 1199px) {
+    .dashmat-welcome-sections-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 767px) {
+    .dashmat-welcome-sections-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

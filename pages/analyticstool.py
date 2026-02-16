@@ -206,85 +206,209 @@ def build_welcome_screen():
     return dmc.Stack(
         align="center",
         justify="center",
-        h=400,
+        gap="lg",
+        style={"width": "100%", "maxWidth": "1160px", "margin": "0 auto", "padding": "4px 8px 12px"},
         children=[
-            DashIconify(icon="tabler:chart-line", width=60, color="#adb5bd"),
-            dmc.Text("Welcome to the Analytics Tool", size="xl", fw=500, c="dimmed", mt="md"),
-            dmc.Text("Add a data series to begin", size="sm", c="dimmed"),
-            dmc.Group(
-                gap="sm",
-                mt="lg",
+            dmc.Stack(
+                align="center",
+                gap=2,
                 children=[
-                    dmc.Button(
-                        "Add from database",
-                        leftSection=DashIconify(icon="tabler:database"),
-                        variant="outline",
-                        size="sm",
-                        w=210,
-                        id="at-welcome-add-db-btn",
+                    DashIconify(icon="tabler:chart-line", width=54, color="#8b95a1"),
+                    dmc.Text("Welcome to the Analytics Tool", size="xl", fw=600, mt=2),
+                    dmc.Text("Choose a source to load data and get started.", size="sm", c="dimmed"),
+                ],
+            ),
+            html.Div(
+                className="dashmat-welcome-sections-grid",
+                children=[
+                    dmc.Paper(
+                        withBorder=True,
+                        radius="md",
+                        p="md",
+                        className="dashmat-welcome-section-card",
+                        children=dmc.Stack(
+                            gap="sm",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-header",
+                                    children=[
+                                        dmc.ThemeIcon(
+                                            DashIconify(icon="tabler:database"),
+                                            size="md",
+                                            radius="xl",
+                                            variant="light",
+                                            color="indigo",
+                                        ),
+                                        dmc.Stack(
+                                            gap=0,
+                                            children=[
+                                                dmc.Text(
+                                                    "Load from Database: Index Data",
+                                                    className="dashmat-welcome-section-title",
+                                                ),
+                                                dmc.Text(
+                                                    "Import AA Tool market indices",
+                                                    className="dashmat-welcome-section-subtitle",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                dmc.Stack(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-actions",
+                                    children=[
+                                        dmc.Button(
+                                            "AA Tool indices",
+                                            leftSection=DashIconify(icon="tabler:database"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id="at-welcome-add-db-btn",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
                     ),
-                    dmc.Button(
-                        "Add series from file",
-                        leftSection=DashIconify(icon="tabler:upload"),
-                        variant="outline",
-                        size="sm",
-                        w=210,
-                        id="at-welcome-add-series-btn",
+                    dmc.Paper(
+                        withBorder=True,
+                        radius="md",
+                        p="md",
+                        className="dashmat-welcome-section-card",
+                        children=dmc.Stack(
+                            gap="sm",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-header",
+                                    children=[
+                                        dmc.ThemeIcon(
+                                            DashIconify(icon="tabler:briefcase"),
+                                            size="md",
+                                            radius="xl",
+                                            variant="light",
+                                            color="blue",
+                                        ),
+                                        dmc.Stack(
+                                            gap=0,
+                                            children=[
+                                                dmc.Text(
+                                                    "Load from Database: Portfolio Data",
+                                                    className="dashmat-welcome-section-title",
+                                                ),
+                                                dmc.Text(
+                                                    "Import relative portfolio return streams",
+                                                    className="dashmat-welcome-section-subtitle",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                dmc.Stack(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-actions",
+                                    children=[
+                                        dmc.Button(
+                                            "Peer-relative",
+                                            leftSection=DashIconify(icon="tabler:users"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id="at-welcome-add-portfolios-peer-btn",
+                                        ),
+                                        dmc.Button(
+                                            "Index-relative",
+                                            leftSection=DashIconify(icon="tabler:chart-line"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id="at-welcome-add-portfolios-index-btn",
+                                        ),
+                                        dmc.Button(
+                                            "Alternatives",
+                                            leftSection=DashIconify(icon="tabler:stack"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id="at-welcome-add-portfolios-other-btn",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ),
+                    dmc.Paper(
+                        withBorder=True,
+                        radius="md",
+                        p="md",
+                        className="dashmat-welcome-section-card",
+                        children=dmc.Stack(
+                            gap="sm",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-header",
+                                    children=[
+                                        dmc.ThemeIcon(
+                                            DashIconify(icon="tabler:file-import"),
+                                            size="md",
+                                            radius="xl",
+                                            variant="light",
+                                            color="teal",
+                                        ),
+                                        dmc.Stack(
+                                            gap=0,
+                                            children=[
+                                                dmc.Text(
+                                                    "Load from File",
+                                                    className="dashmat-welcome-section-title",
+                                                ),
+                                                dmc.Text(
+                                                    "Upload returns or use sample files",
+                                                    className="dashmat-welcome-section-subtitle",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                dmc.Stack(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-actions",
+                                    children=[
+                                        dmc.Button(
+                                            "Add series from file",
+                                            leftSection=DashIconify(icon="tabler:upload"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id="at-welcome-add-series-btn",
+                                        ),
+                                        dmc.Button(
+                                            "Sample daily file",
+                                            leftSection=DashIconify(icon="tabler:download"),
+                                            id="at-download-sample-daily-btn",
+                                            size="sm",
+                                            variant="light",
+                                            fullWidth=True,
+                                        ),
+                                        dmc.Button(
+                                            "Sample monthly file",
+                                            leftSection=DashIconify(icon="tabler:download"),
+                                            id="at-download-sample-monthly-btn",
+                                            size="sm",
+                                            variant="light",
+                                            fullWidth=True,
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
                     ),
                 ],
             ),
-            dmc.Group(
-                gap="sm",
-                children=[
-                    dmc.Button(
-                        "Add portfolios (peer)",
-                        leftSection=DashIconify(icon="tabler:users"),
-                        variant="outline",
-                        size="sm",
-                        w=210,
-                        id="at-welcome-add-portfolios-peer-btn",
-                    ),
-                    dmc.Button(
-                        "Add portfolios (index)",
-                        leftSection=DashIconify(icon="tabler:chart-line"),
-                        variant="outline",
-                        size="sm",
-                        w=210,
-                        id="at-welcome-add-portfolios-index-btn",
-                    ),
-                    dmc.Button(
-                        "Add portfolios (other)",
-                        leftSection=DashIconify(icon="tabler:stack"),
-                        variant="outline",
-                        size="sm",
-                        w=210,
-                        id="at-welcome-add-portfolios-other-btn",
-                    ),
-                ],
-            ),
-            dmc.Group(
-                gap="md",
-                mt="sm",
-                children=[
-                    dmc.Button(
-                        "Sample Daily File",
-                        leftSection=DashIconify(icon="tabler:download"),
-                        id="at-download-sample-daily-btn",
-                        size="sm",
-                        variant="light",
-                        w=210,
-                    ),
-                    dmc.Button(
-                        "Sample Monthly File",
-                        leftSection=DashIconify(icon="tabler:download"),
-                        id="at-download-sample-monthly-btn",
-                        size="sm",
-                        variant="light",
-                        w=210,
-                    ),
-                ],
-            ),
-        ]
+        ],
     )
 
 # Clientside callback to trigger upload from welcome button
@@ -580,7 +704,12 @@ def at_open_portfolio_add_modal(
         mode = "other"
     else:
         mode = "peer"
-    modal_title = f"Add portfolios ({mode})"
+    mode_title_map = {
+        "peer": "Add peer-relative portfolios",
+        "index": "Add index-relative portfolios",
+        "other": "Add alternative portfolios",
+    }
+    modal_title = mode_title_map.get(mode, "Add peer-relative portfolios")
     series_options = get_portfolio_options(DB_ENGINE, mode)
     type_options, bm_type_options = _portfolio_type_options(mode)
     type_value = type_options[0]["value"] if type_options else None
@@ -671,15 +800,21 @@ clientside_callback(
 
         var exists = rows.some(function(r) {
             var key = "";
+            var existingType = "";
             if (r && r.portfolio !== undefined && r.portfolio !== null) {
                 key = String(r.portfolio).trim();
             } else if (r && r.Portfolio !== undefined && r.Portfolio !== null) {
                 key = String(r.Portfolio).trim();
             }
-            return key === portfolio;
+            if (r && r.type !== undefined && r.type !== null) {
+                existingType = String(r.type).trim();
+            } else if (r && r.Type !== undefined && r.Type !== null) {
+                existingType = String(r.Type).trim();
+            }
+            return key === portfolio && existingType === retType;
         });
         if (exists) {
-            return [rows, rows, "Portfolio `" + portfolio + "` is already staged.", false];
+            return [rows, rows, "Portfolio `" + portfolio + "` with type `" + retType + "` is already staged.", false];
         }
 
         rows.push({
@@ -1411,41 +1546,20 @@ layout = dmc.Container(
                                     className="dashmat-menu-dropdown",
                                     children=[
                                         dmc.MenuItem(
-                                            "Add series from database...",
-                                            id="at-menu-add-from-db",
-                                            leftSection=DashIconify(icon="tabler:database", width=14),
+                                            "New session",
+                                            id="at-menu-clear-local-storage",
+                                            leftSection=DashIconify(icon="tabler:trash", width=14),
                                         ),
                                         dmc.MenuItem(
-                                            "Add portfolios (peer)...",
-                                            id="at-menu-add-portfolios-peer",
-                                            leftSection=DashIconify(icon="tabler:users", width=14),
+                                            "Load session",
+                                            id="at-menu-load-session",
+                                            leftSection=DashIconify(icon="tabler:folder-open", width=14),
                                         ),
                                         dmc.MenuItem(
-                                            "Add portfolios (index)...",
-                                            id="at-menu-add-portfolios-index",
-                                            leftSection=DashIconify(icon="tabler:chart-line", width=14),
-                                        ),
-                                        dmc.MenuItem(
-                                            "Add portfolios (other)...",
-                                            id="at-menu-add-portfolios-other",
-                                            leftSection=DashIconify(icon="tabler:stack", width=14),
-                                        ),
-                                        dmc.MenuItem(
-                                            "Add series from file...",
-                                            id="at-menu-add-series",
-                                            leftSection=DashIconify(icon="tabler:upload", width=14),
-                                        ),
-                                        dmc.MenuDivider(),
-                                        dmc.MenuItem(
-                                            "Save Session",
+                                            "Save session",
                                             id="at-menu-save-session",
                                             disabled=True,
                                             leftSection=DashIconify(icon="tabler:device-floppy", width=14),
-                                        ),
-                                        dmc.MenuItem(
-                                            "Load Session",
-                                            id="at-menu-load-session",
-                                            leftSection=DashIconify(icon="tabler:folder-open", width=14),
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
@@ -1487,10 +1601,33 @@ layout = dmc.Container(
                                     className="dashmat-menu-dropdown",
                                     children=[
                                         dmc.MenuItem(
-                                            "Clear session storage and refresh",
-                                            id="at-menu-clear-local-storage",
-                                            leftSection=DashIconify(icon="tabler:trash", width=14),
+                                            "Add AA Tool indices...",
+                                            id="at-menu-add-from-db",
+                                            leftSection=DashIconify(icon="tabler:database", width=14),
                                         ),
+                                        dmc.MenuDivider(),
+                                        dmc.MenuItem(
+                                            "Add peer-relative portfolios...",
+                                            id="at-menu-add-portfolios-peer",
+                                            leftSection=DashIconify(icon="tabler:users", width=14),
+                                        ),
+                                        dmc.MenuItem(
+                                            "Add index-relative portfolios...",
+                                            id="at-menu-add-portfolios-index",
+                                            leftSection=DashIconify(icon="tabler:chart-line", width=14),
+                                        ),
+                                        dmc.MenuItem(
+                                            "Add alternative portfolios...",
+                                            id="at-menu-add-portfolios-other",
+                                            leftSection=DashIconify(icon="tabler:stack", width=14),
+                                        ),
+                                        dmc.MenuDivider(),
+                                        dmc.MenuItem(
+                                            "Add series from file...",
+                                            id="at-menu-add-series",
+                                            leftSection=DashIconify(icon="tabler:upload", width=14),
+                                        ),
+                                        dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Clear server cache",
                                             id="at-menu-clear-server-cache",
@@ -1590,7 +1727,7 @@ layout = dmc.Container(
                 gap="xs",
                 children=[
                     dmc.ThemeIcon(DashIconify(icon="tabler:database"), color="indigo", variant="light", size="sm"),
-                    dmc.Text("Add from database", fw=600, size="sm"),
+                    dmc.Text("AA Tool indices", fw=600, size="sm"),
                 ],
             ),
             size="md",

@@ -50,6 +50,7 @@ INDEX_PORTFOLIO_TYPE_OPTIONS = [
 
 INDEX_BENCHMARK_TYPE_OPTIONS = [
     {"db_value": "Benchmark", "label": "Benchmark"},
+    {"db_value": "Calculated", "label": "Calculated"},
 ]
 
 OTHER_PORTFOLIO_TYPE_OPTIONS = [
