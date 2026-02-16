@@ -14,6 +14,7 @@ from utils.constants import (
     INDEX_BENCHMARK_SUFFIX,
     PEER_BENCHMARK_TYPE_OPTIONS,
     PEER_PORTFOLIO_TYPE_OPTIONS,
+    PORTFOLIO_TS_VALUE_MODE,
 )
 
 PortfolioMode = Literal["peer", "index"]
@@ -34,6 +35,32 @@ def _option_db_values(options: list[dict]) -> set[str]:
 PEER_PORTFOLIO_BENCHMARK_OVERLAP = _option_db_values(PEER_BENCHMARK_TYPE_OPTIONS).intersection(
     _option_db_values(PEER_PORTFOLIO_TYPE_OPTIONS)
 )
+
+
+def _should_convert_levels_to_returns(series: pd.Series) -> bool:
+    mode = str(PORTFOLIO_TS_VALUE_MODE or "auto").strip().lower()
+    if mode == "levels":
+        return True
+    if mode == "returns":
+        return False
+
+    clean = pd.to_numeric(series, errors="coerce").dropna()
+    if clean.empty:
+        return False
+
+    # Levels are expected to be strictly positive and usually above return scale.
+    if (clean <= 0).any():
+        return False
+    frac_abs_gt_half = float((clean.abs() > 0.5).mean())
+    median_abs = float(clean.abs().median())
+    return frac_abs_gt_half > 0.8 or median_abs > 2.0
+
+
+def _normalize_values_to_returns(series: pd.Series) -> pd.Series:
+    clean = pd.to_numeric(series, errors="coerce").sort_index()
+    if _should_convert_levels_to_returns(clean):
+        clean = clean.pct_change(fill_method=None)
+    return clean.dropna()
 
 
 @dataclass(frozen=True)
@@ -120,6 +147,7 @@ def _read_series(
         dtype=float,
     ).sort_index()
     series = series[~series.index.duplicated(keep="last")]
+    series = _normalize_values_to_returns(series).rename(portfolio)
     return series
 
 

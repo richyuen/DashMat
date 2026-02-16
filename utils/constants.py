@@ -54,3 +54,9 @@ INDEX_BENCHMARK_TYPE_OPTIONS = [
 
 INDEX_BENCHMARK_DESC = "Benchmark"
 INDEX_BENCHMARK_SUFFIX = "_BM"
+
+# PortfolioTS/PeerTS value interpretation mode.
+# - "auto": infer levels vs returns from value magnitudes.
+# - "levels": always convert values with pct_change.
+# - "returns": treat values as arithmetic returns directly.
+PORTFOLIO_TS_VALUE_MODE = "auto"

@@ -281,16 +281,23 @@ def _pick_seed_column(df: pd.DataFrame, preferred: str, fallback_pos: int) -> pd
     return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
 
-def _build_portfolio_seed_series(base_df: pd.DataFrame) -> tuple[dict[str, pd.Series], dict[str, pd.Series]]:
-    """Build deterministic portfolio and benchmark series for PeerTS/IndexTS."""
-    if base_df.empty:
+def _returns_to_levels(series: pd.Series, start_level: float = 100.0) -> pd.Series:
+    clean = pd.to_numeric(series, errors="coerce").fillna(0.0)
+    levels = (1.0 + clean).cumprod() * float(start_level)
+    return levels
+
+
+def _build_portfolio_seed_series(daily_df: pd.DataFrame) -> tuple[dict[str, pd.Series], dict[str, pd.Series]]:
+    """Build deterministic daily-level series for PeerTS/IndexTS."""
+    if daily_df.empty:
         return {}, {}
 
-    idx = pd.DatetimeIndex(base_df.index).sort_values()
-    spx = _pick_seed_column(base_df.reindex(idx), "SPX", 0)
-    agg = _pick_seed_column(base_df.reindex(idx), "BCAgg", 1)
+    idx = pd.DatetimeIndex(daily_df.index).sort_values()
+    source_df = daily_df.reindex(idx)
+    spx = _pick_seed_column(source_df, "SPX", 0)
+    agg = _pick_seed_column(source_df, "BCAgg", 1)
 
-    peer_series: dict[str, pd.Series] = {
+    peer_returns: dict[str, pd.Series] = {
         "TD2030|PortRet|Actual": 0.62 * spx + 0.38 * agg,
         "TD2030|PortRet|Calculated": 0.98 * (0.62 * spx + 0.38 * agg),
         "TD2030|MeanRet|Calculated": 0.96 * (0.60 * spx + 0.40 * agg),
@@ -306,7 +313,7 @@ def _build_portfolio_seed_series(base_df: pd.DataFrame) -> tuple[dict[str, pd.Se
         "2050|MeanRet|Estimated": 0.96 * (0.76 * spx + 0.24 * agg),
     }
 
-    index_series: dict[str, pd.Series] = {
+    index_returns: dict[str, pd.Series] = {
         "Risk60|PortRet|Actual": 0.60 * spx + 0.40 * agg,
         "Risk60|PortRet|Calculated": 0.98 * (0.60 * spx + 0.40 * agg),
         "Risk60|PortRet|Benchmark": 0.57 * spx + 0.43 * agg,
@@ -315,10 +322,14 @@ def _build_portfolio_seed_series(base_df: pd.DataFrame) -> tuple[dict[str, pd.Se
         "Risk80|PortRet|Benchmark": 0.77 * spx + 0.23 * agg,
     }
 
-    for key, series in list(peer_series.items()):
-        peer_series[key] = pd.Series(series.values, index=idx, dtype=float)
-    for key, series in list(index_series.items()):
-        index_series[key] = pd.Series(series.values, index=idx, dtype=float)
+    peer_series: dict[str, pd.Series] = {}
+    index_series: dict[str, pd.Series] = {}
+    for key, series in peer_returns.items():
+        ret = pd.Series(series.values, index=idx, dtype=float)
+        peer_series[key] = _returns_to_levels(ret, start_level=100.0)
+    for key, series in index_returns.items():
+        ret = pd.Series(series.values, index=idx, dtype=float)
+        index_series[key] = _returns_to_levels(ret, start_level=100.0)
     return peer_series, index_series
 
 
@@ -603,7 +614,7 @@ def main() -> None:
     if MTH_TO_DLY_BENCH not in core_cat_benches:
         core_cat_benches = sorted(core_cat_benches + [MTH_TO_DLY_BENCH])
     core_cat_rows = _core_category_rows(core_cat_benches)
-    peer_series_map, index_series_map = _build_portfolio_seed_series(base_df)
+    peer_series_map, index_series_map = _build_portfolio_seed_series(daily_df)
     peer_ts_rows = _portfolio_ts_rows(peer_series_map)
     index_ts_rows = _portfolio_ts_rows(index_series_map)
     mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)

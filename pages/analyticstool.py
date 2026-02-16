@@ -727,39 +727,6 @@ clientside_callback(
     Input("at-portfolio-add-modal", "opened"),
 )
 
-clientside_callback(
-    """
-    function(opened, rows, rowData, okDisabled, addClicks, delClicks, clearClicks, okClicks) {
-        if (!opened) {
-            return "";
-        }
-        var sRows = Array.isArray(rows) ? rows : [];
-        var gRows = Array.isArray(rowData) ? rowData : [];
-        var first = sRows.length ? JSON.stringify(sRows[0]) : "none";
-        return (
-            "DEBUG | staged_rows=" + sRows.length +
-            " | grid_rows=" + gRows.length +
-            " | ok_disabled=" + (!!okDisabled) +
-            " | add=" + (addClicks || 0) +
-            " | delete=" + (delClicks || 0) +
-            " | clear=" + (clearClicks || 0) +
-            " | ok=" + (okClicks || 0) +
-            " | first=" + first
-        );
-    }
-    """,
-    Output("at-portfolio-add-debug-text", "children"),
-    Input("at-portfolio-add-modal", "opened"),
-    Input("at-portfolio-add-rows-store", "data"),
-    Input("at-portfolio-add-grid", "rowData"),
-    Input("at-portfolio-add-ok-button", "disabled"),
-    Input("at-portfolio-add-row-btn", "n_clicks"),
-    Input("at-portfolio-delete-row-btn", "n_clicks"),
-    Input("at-portfolio-clear-rows-btn", "n_clicks"),
-    Input("at-portfolio-add-ok-button", "n_clicks"),
-)
-
-
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
                       active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
@@ -1706,13 +1673,6 @@ layout = dmc.Container(
                                 dmc.Button("Cancel", id="at-portfolio-add-cancel-button", variant="outline", color="red"),
                                 dmc.Button("OK", id="at-portfolio-add-ok-button", color="blue", disabled=True),
                             ],
-                        ),
-                        dmc.Text(
-                            id="at-portfolio-add-debug-text",
-                            size="xs",
-                            c="dimmed",
-                            style={"fontFamily": "monospace"},
-                            children="",
                         ),
                     ],
                 ),
