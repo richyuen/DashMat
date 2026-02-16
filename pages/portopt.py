@@ -5552,6 +5552,8 @@ def po_add_series_from_database(
     Output("po-portfolio-add-modal", "opened", allow_duplicate=True),
     Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("po-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("po-portfolio-add-error-alert", "hide", allow_duplicate=True),
     Input("po-portfolio-add-ok-button", "n_clicks"),
     State("po-portfolio-add-mode-store", "data"),
     State("po-portfolio-add-rows-store", "data"),
@@ -5600,6 +5602,8 @@ def po_add_portfolios_from_database(
             True,
             rows,
             rows,
+            "Stage at least one portfolio row before importing.",
+            False,
         )
 
     try:
@@ -5622,6 +5626,8 @@ def po_add_portfolios_from_database(
                     True,
                     rows,
                     rows,
+                    f"Cannot add duplicate series: {', '.join(duplicates)}",
+                    False,
                 )
 
         new_periodicity = load_result.periodicity or "monthly"
@@ -5674,6 +5680,8 @@ def po_add_portfolios_from_database(
             False,
             [],
             [],
+            no_update,
+            True,
         )
     except Exception as e:
         return (
@@ -5686,6 +5694,8 @@ def po_add_portfolios_from_database(
             True,
             rows,
             rows,
+            f"Error loading portfolio series: {str(e)}",
+            False,
         )
 
 
