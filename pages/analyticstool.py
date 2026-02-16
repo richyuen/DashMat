@@ -592,45 +592,13 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(
-        nAdd,
-        nDelete,
-        nClear,
-        stagedRows,
-        selectedRows,
-        selectedPortfolio,
-        selectedType,
-        includeBenchmark,
-        benchmarkType
-    ) {
-        var ctx = dash_clientside.callback_context;
-        var triggered = null;
-        if (ctx && ctx.triggered && ctx.triggered.length) {
-            triggered = (ctx.triggered[0].prop_id || "").split(".")[0];
-        }
-
-        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
+    function(nAdd, stagedRows, selectedPortfolio, selectedType, includeBenchmark, benchmarkType) {
         var noUpdate = window.dash_clientside.no_update;
-
-        if (triggered === "at-portfolio-clear-rows-btn") {
-            return [[], [], noUpdate, true];
-        }
-
-        if (triggered === "at-portfolio-delete-row-btn") {
-            if (!selectedRows || !selectedRows.length) {
-                return [rows, rows, "Select one staged row to delete.", false];
-            }
-            var selectedKey = String((selectedRows[0] || {}).Portfolio || "").trim();
-            var kept = rows.filter(function(r) {
-                return String((r && r.Portfolio) || "").trim() !== selectedKey;
-            });
-            return [kept, kept, noUpdate, true];
-        }
-
-        if (triggered !== "at-portfolio-add-row-btn" || !nAdd) {
+        if (!nAdd) {
             return [noUpdate, noUpdate, noUpdate, noUpdate];
         }
 
+        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
         var portfolio = String(selectedPortfolio || "").trim();
         var retType = String(selectedType || "").trim();
         var bmType = String(benchmarkType || "").trim();
@@ -677,14 +645,57 @@ clientside_callback(
     Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
     Input("at-portfolio-add-row-btn", "n_clicks"),
-    Input("at-portfolio-delete-row-btn", "n_clicks"),
-    Input("at-portfolio-clear-rows-btn", "n_clicks"),
     State("at-portfolio-add-rows-store", "data"),
-    State("at-portfolio-add-grid", "selectedRows"),
     State("at-portfolio-add-series-select", "value"),
     State("at-portfolio-add-type-select", "value"),
     State("at-portfolio-add-include-benchmark", "checked"),
     State("at-portfolio-add-benchmark-type-select", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(nDelete, stagedRows, selectedRows) {
+        var noUpdate = window.dash_clientside.no_update;
+        if (!nDelete) {
+            return [noUpdate, noUpdate, noUpdate, noUpdate];
+        }
+        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
+        if (!selectedRows || !selectedRows.length) {
+            return [rows, rows, "Select one staged row to delete.", false];
+        }
+        var selectedKey = String((selectedRows[0] || {}).Portfolio || "").trim();
+        var kept = rows.filter(function(r) {
+            return String((r && r.Portfolio) || "").trim() !== selectedKey;
+        });
+        return [kept, kept, noUpdate, true];
+    }
+    """,
+    Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-portfolio-delete-row-btn", "n_clicks"),
+    State("at-portfolio-add-rows-store", "data"),
+    State("at-portfolio-add-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(nClear) {
+        var noUpdate = window.dash_clientside.no_update;
+        if (!nClear) {
+            return [noUpdate, noUpdate, noUpdate, noUpdate];
+        }
+        return [[], [], noUpdate, true];
+    }
+    """,
+    Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-portfolio-clear-rows-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 
