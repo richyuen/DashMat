@@ -52,6 +52,14 @@ INDEX_BENCHMARK_TYPE_OPTIONS = [
     {"db_value": "Benchmark", "label": "Benchmark"},
 ]
 
+OTHER_PORTFOLIO_TYPE_OPTIONS = [
+    {"db_value": "Actual", "label": "Actual"},
+]
+
+OTHER_BENCHMARK_TYPE_OPTIONS = [
+    {"db_value": "Actual", "label": "Actual"},
+]
+
 INDEX_BENCHMARK_DESC = "Benchmark"
 INDEX_BENCHMARK_SUFFIX = "_BM"
 

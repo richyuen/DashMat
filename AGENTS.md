@@ -82,6 +82,11 @@ Automated test guidance is maintained in `tests/README.md`.
 - Add concise comments only when logic is non-obvious.
 - Do not introduce new dependencies unless necessary.
 - Do not mutate or delete database table data from web application runtime/callback code. Any table creation, backfill, truncate, delete, or reseed operation must live in explicit setup/migration scripts (e.g., `tools/db/init_local_cma_db.py`) and never in page interaction paths.
+- Portfolio import source rules:
+  - `peer` mode reads `PeerTS` (`PortRet` + `MeanRet` benchmark logic).
+  - `index` mode reads `IndexTS` (`PortRet` + `Benchmark`).
+  - `other` mode currently supports `PortfolioVintage='AltTS'` only and reads `AltTS`.
+  - In `other` + `AltTS`, benchmark lookup is portfolio-based (`Portfolio=<Portfolio>`, `Item='BenchRet'`) and benchmark series names use `<Portfolio>_BM`.
 
 ## Data and behavior expectations
 

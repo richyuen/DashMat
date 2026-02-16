@@ -33,6 +33,7 @@ def _seed_db():
                 "Portfolio TEXT UNIQUE NOT NULL, "
                 "PortfolioSuite TEXT NOT NULL, "
                 "PeerVintage TEXT, "
+                "PortfolioVintage TEXT, "
                 "IncepDate DATE)"
             )
         )
@@ -56,6 +57,15 @@ def _seed_db():
                 "Value REAL NOT NULL)"
             )
         )
+        conn.execute(
+            text(
+                "CREATE TABLE AltTS ("
+                "Date DATE NOT NULL, "
+                "Portfolio TEXT NOT NULL, "
+                "Item TEXT NOT NULL, "
+                "Value REAL NOT NULL)"
+            )
+        )
 
         conn.execute(
             text(
@@ -63,17 +73,20 @@ def _seed_db():
                 "(SuiteID, SuiteShort, SuiteLong, IndexMonthlyOrder, PeerTDOrder, PeerModelOrder, PeerAllocOrder, Peer529Order) "
                 "VALUES "
                 "(1, 'TD', 'Target Date', NULL, 1, NULL, NULL, NULL), "
-                "(2, 'RISK', 'Risk Based', 1, NULL, NULL, NULL, NULL)"
+                "(2, 'RISK', 'Risk Based', 1, NULL, NULL, NULL, NULL), "
+                "(3, 'IndNoAttr', 'Index No Attribution', NULL, NULL, NULL, NULL, NULL)"
             )
         )
         conn.execute(
             text(
                 "INSERT INTO Portfolios "
-                "(PortfolioID, PortfolioName, Portfolio, PortfolioSuite, PeerVintage, IncepDate) "
+                "(PortfolioID, PortfolioName, Portfolio, PortfolioSuite, PeerVintage, PortfolioVintage, IncepDate) "
                 "VALUES "
-                "(1, 'TDF 2030 A', 'TD2030A', 'TD', '2030', '2020-02-29'), "
-                "(2, 'TDF 2030 B', 'TD2030B', 'TD', '2030', '2020-01-31'), "
-                "(3, 'Risk 60', 'Risk60', 'RISK', '', '2020-01-31')"
+                "(1, 'TDF 2030 A', 'TD2030A', 'TD', '2030', '', '2020-02-29'), "
+                "(2, 'TDF 2030 B', 'TD2030B', 'TD', '2030', '', '2020-01-31'), "
+                "(3, 'Risk 60', 'Risk60', 'RISK', '', '', '2020-01-31'), "
+                "(4, 'Alternative Trend', 'ALTTRN', 'IndNoAttr', '', 'AltTS', '2020-01-31'), "
+                "(5, 'Alternative Macro', 'ALTMAC', 'IndNoAttr', '', 'AltTS', '2020-01-31')"
             )
         )
 
@@ -107,6 +120,22 @@ def _seed_db():
                 text("INSERT INTO IndexTS (Date, Portfolio, Item, Desc, Value) VALUES (:d, 'Risk60', 'PortRet', 'Benchmark', 0.009)"),
                 {"d": dt},
             )
+            conn.execute(
+                text("INSERT INTO AltTS (Date, Portfolio, Item, Value) VALUES (:d, 'ALTTRN', 'PortRet', :v)"),
+                {"d": dt, "v": 1.20},
+            )
+            conn.execute(
+                text("INSERT INTO AltTS (Date, Portfolio, Item, Value) VALUES (:d, 'ALTTRN', 'BenchRet', :v)"),
+                {"d": dt, "v": 0.90},
+            )
+            conn.execute(
+                text("INSERT INTO AltTS (Date, Portfolio, Item, Value) VALUES (:d, 'ALTMAC', 'PortRet', :v)"),
+                {"d": dt, "v": 0.015},
+            )
+            conn.execute(
+                text("INSERT INTO AltTS (Date, Portfolio, Item, Value) VALUES (:d, 'ALTMAC', 'BenchRet', :v)"),
+                {"d": dt, "v": 0.010},
+            )
     return engine
 
 
@@ -121,6 +150,11 @@ def test_get_portfolio_options_labels_and_mode_filters():
     index_options = get_portfolio_options(engine, "index")
     assert {"value": "Risk60", "label": "Risk 60 [Risk60]"} in index_options
     assert not any(opt["value"] == "TD2030A" for opt in index_options)
+
+    other_options = get_portfolio_options(engine, "other")
+    assert {"value": "ALTTRN", "label": "Alternative Trend [ALTTRN]"} in other_options
+    assert {"value": "ALTMAC", "label": "Alternative Macro [ALTMAC]"} in other_options
+    assert not any(opt["value"] == "Risk60" for opt in other_options)
 
 
 def test_load_portfolio_series_peer_dedup_and_incep_cutoff():
@@ -170,3 +204,36 @@ def test_load_portfolio_series_peer_calculated_benchmark_uses_portfolio_key():
     bm_name = "TD2030A_Calculated"
     assert list(result.returns_df.columns) == ["TD2030A", bm_name]
     assert result.benchmark_assignments == {"TD2030A": bm_name}
+
+
+def test_load_portfolio_series_other_uses_altts_port_and_bench_items():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "other",
+        [
+            {"portfolio": "ALTTRN", "type": "Actual", "include_benchmark": True, "benchmark_type": "Actual"},
+        ],
+    )
+
+    bm_name = f"ALTTRN{INDEX_BENCHMARK_SUFFIX}"
+    assert list(result.returns_df.columns) == ["ALTTRN", bm_name]
+    assert result.benchmark_assignments == {"ALTTRN": bm_name}
+    # AltTS values are returns, so they should not be converted via pct_change.
+    assert (result.returns_df["ALTTRN"].dropna() == 1.20).all()
+    assert (result.returns_df[bm_name].dropna() == 0.90).all()
+
+
+def test_load_portfolio_series_other_two_portfolios_get_two_benchmarks():
+    engine = _seed_db()
+    result = load_portfolio_series(
+        engine,
+        "other",
+        [
+            {"portfolio": "ALTTRN", "type": "Actual", "include_benchmark": True, "benchmark_type": "Actual"},
+            {"portfolio": "ALTMAC", "type": "Actual", "include_benchmark": True, "benchmark_type": "Actual"},
+        ],
+    )
+
+    assert list(result.returns_df.columns) == ["ALTTRN", "ALTTRN_BM", "ALTMAC", "ALTMAC_BM"]
+    assert result.benchmark_assignments == {"ALTTRN": "ALTTRN_BM", "ALTMAC": "ALTMAC_BM"}

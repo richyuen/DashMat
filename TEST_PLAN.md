@@ -35,6 +35,8 @@ Run manual checks only for flows touched by the change.
 ### 3.1 Analytics Tool (`/analyticstool`)
 
 - Upload/parse returns file (CSV/XLS/XLSX, percent cells).
+- Validate `Add portfolios (peer)`, `Add portfolios (index)`, and `Add portfolios (other)` flows from menu/welcome buttons.
+- For `other`, validate AltTS benchmark mapping (`Portfolio` + `BenchRet` -> `<Portfolio>_BM`).
 - Confirm periodicity controls and date range filtering.
 - Check `Statistics`, `Returns`, `Growth`, `Drawdown`, and `Correlation` tabs for callback errors.
 - Validate Excel export succeeds from File menu.
@@ -42,6 +44,7 @@ Run manual checks only for flows touched by the change.
 ### 3.2 Portfolio Optimization (`/portopt`)
 
 - Run at least one optimization model with realistic inputs.
+- Validate `Add portfolios (peer)`, `Add portfolios (index)`, and `Add portfolios (other)` flows.
 - Confirm completion modal and saved portfolio visibility.
 - Validate `Weights`, `Attribution`, `Statistics`, `Returns`, `Risk`, and `Turnover` views.
 - Validate portfolio delete/sync behavior against Analytics data.

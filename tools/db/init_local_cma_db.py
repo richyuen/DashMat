@@ -122,6 +122,16 @@ SUITE_ROWS: list[dict] = [
         "PeerAllocOrder": None,
         "Peer529Order": None,
     },
+    {
+        "SuiteID": 3,
+        "SuiteShort": "IndNoAttr",
+        "SuiteLong": "Index No Attribution",
+        "IndexMonthlyOrder": None,
+        "PeerTDOrder": None,
+        "PeerModelOrder": None,
+        "PeerAllocOrder": None,
+        "Peer529Order": None,
+    },
 ]
 
 PORTFOLIO_ROWS: list[dict] = [
@@ -131,6 +141,7 @@ PORTFOLIO_ROWS: list[dict] = [
         "Portfolio": "TD2030",
         "PortfolioSuite": "TD",
         "PeerVintage": "2030",
+        "PortfolioVintage": "",
         "IncepDate": date(2012, 1, 31),
     },
     {
@@ -139,6 +150,7 @@ PORTFOLIO_ROWS: list[dict] = [
         "Portfolio": "TD2030S",
         "PortfolioSuite": "TD",
         "PeerVintage": "2030",
+        "PortfolioVintage": "",
         "IncepDate": date(2015, 1, 31),
     },
     {
@@ -147,6 +159,7 @@ PORTFOLIO_ROWS: list[dict] = [
         "Portfolio": "TD2050",
         "PortfolioSuite": "TD",
         "PeerVintage": "2050",
+        "PortfolioVintage": "",
         "IncepDate": date(2014, 1, 31),
     },
     {
@@ -155,6 +168,7 @@ PORTFOLIO_ROWS: list[dict] = [
         "Portfolio": "Risk60",
         "PortfolioSuite": "RISK",
         "PeerVintage": "",
+        "PortfolioVintage": "",
         "IncepDate": date(2011, 1, 31),
     },
     {
@@ -163,7 +177,26 @@ PORTFOLIO_ROWS: list[dict] = [
         "Portfolio": "Risk80",
         "PortfolioSuite": "RISK",
         "PeerVintage": "",
+        "PortfolioVintage": "",
         "IncepDate": date(2013, 1, 31),
+    },
+    {
+        "PortfolioID": 6,
+        "PortfolioName": "Alternative Trend Fund",
+        "Portfolio": "ALTTRN",
+        "PortfolioSuite": "IndNoAttr",
+        "PeerVintage": "",
+        "PortfolioVintage": "AltTS",
+        "IncepDate": date(2016, 1, 4),
+    },
+    {
+        "PortfolioID": 7,
+        "PortfolioName": "Alternative Macro Fund",
+        "Portfolio": "ALTMAC",
+        "PortfolioSuite": "IndNoAttr",
+        "PeerVintage": "",
+        "PortfolioVintage": "AltTS",
+        "IncepDate": date(2017, 1, 3),
     },
 ]
 
@@ -333,6 +366,30 @@ def _build_portfolio_seed_series(daily_df: pd.DataFrame) -> tuple[dict[str, pd.S
     return peer_series, index_series
 
 
+def _build_alt_seed_series(daily_df: pd.DataFrame) -> dict[str, pd.Series]:
+    """Build deterministic daily return series for AltTS."""
+    if daily_df.empty:
+        return {}
+
+    idx = pd.DatetimeIndex(daily_df.index).sort_values()
+    source_df = daily_df.reindex(idx)
+    spx = _pick_seed_column(source_df, "SPX", 0)
+    agg = _pick_seed_column(source_df, "BCAgg", 1)
+    x = np.arange(len(idx), dtype=float)
+
+    alt_returns: dict[str, pd.Series] = {
+        "ALTTRN|PortRet": 0.36 * spx + 0.24 * agg + 0.00020 * np.sin(0.11 * x),
+        "ALTTRN|BenchRet": 0.31 * spx + 0.29 * agg + 0.00010 * np.sin(0.09 * x),
+        "ALTMAC|PortRet": 0.30 * spx + 0.30 * agg + 0.00018 * np.cos(0.08 * x),
+        "ALTMAC|BenchRet": 0.27 * spx + 0.33 * agg + 0.00008 * np.cos(0.06 * x),
+    }
+
+    out: dict[str, pd.Series] = {}
+    for key, series in alt_returns.items():
+        out[key] = pd.Series(series.values, index=idx, dtype=float)
+    return out
+
+
 def _portfolio_ts_rows(series_map: dict[str, pd.Series]) -> list[dict]:
     rows: list[dict] = []
     for key, series in series_map.items():
@@ -354,7 +411,27 @@ def _portfolio_ts_rows(series_map: dict[str, pd.Series]) -> list[dict]:
     return rows
 
 
-def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table]:
+def _alt_ts_rows(series_map: dict[str, pd.Series]) -> list[dict]:
+    rows: list[dict] = []
+    for key, series in series_map.items():
+        parts = key.split("|")
+        if len(parts) != 2:
+            continue
+        portfolio, item = parts
+        clean = pd.to_numeric(series, errors="coerce").dropna()
+        for dt, val in clean.items():
+            rows.append(
+                {
+                    "Date": date(dt.year, dt.month, dt.day),
+                    "Portfolio": str(portfolio),
+                    "Item": str(item),
+                    "Value": float(val),
+                }
+            )
+    return rows
+
+
+def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table]:
     cma_corr = Table(
         "CMACorrelation",
         metadata,
@@ -413,6 +490,7 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
         Column("Portfolio", String(32), nullable=False, unique=True),
         Column("PortfolioSuite", String(32), ForeignKey("Suites.SuiteShort"), nullable=False),
         Column("PeerVintage", String(32), nullable=True),
+        Column("PortfolioVintage", String(32), nullable=True),
         Column("IncepDate", Date, nullable=True),
     )
     peer_ts = Table(
@@ -433,7 +511,15 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
         Column("Desc", String(32), primary_key=True),
         Column("Value", Float, nullable=False),
     )
-    return cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts
+    alt_ts = Table(
+        "AltTS",
+        metadata,
+        Column("Date", Date, primary_key=True),
+        Column("Portfolio", String(64), primary_key=True),
+        Column("Item", String(32), primary_key=True),
+        Column("Value", Float, nullable=False),
+    )
+    return cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts, alt_ts
 
 
 def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table]:
@@ -584,7 +670,7 @@ def main() -> None:
         daily_df = daily_df.join(mth_to_dly, how="outer")
     daily_df = daily_df.sort_index()
     metadata = MetaData()
-    cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts = _build_tables(metadata)
+    cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts, alt_ts = _build_tables(metadata)
     mrd_metadata = MetaData()
     mrd_account, mrd_factor_data = _build_mrd_tables(mrd_metadata)
 
@@ -615,8 +701,10 @@ def main() -> None:
         core_cat_benches = sorted(core_cat_benches + [MTH_TO_DLY_BENCH])
     core_cat_rows = _core_category_rows(core_cat_benches)
     peer_series_map, index_series_map = _build_portfolio_seed_series(daily_df)
+    alt_series_map = _build_alt_seed_series(daily_df)
     peer_ts_rows = _portfolio_ts_rows(peer_series_map)
     index_ts_rows = _portfolio_ts_rows(index_series_map)
+    alt_ts_rows = _alt_ts_rows(alt_series_map)
     mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)
 
     with engine.begin() as conn:
@@ -633,6 +721,8 @@ def main() -> None:
             conn.execute(peer_ts.insert(), peer_ts_rows)
         if index_ts_rows:
             conn.execute(index_ts.insert(), index_ts_rows)
+        if alt_ts_rows:
+            conn.execute(alt_ts.insert(), alt_ts_rows)
 
     with engine_MRD.begin() as conn:
         if mrd_account_rows:
@@ -649,6 +739,7 @@ def main() -> None:
     print(f"Portfolios rows: {len(PORTFOLIO_ROWS)}")
     print(f"PeerTS rows: {len(peer_ts_rows)}")
     print(f"IndexTS rows: {len(index_ts_rows)}")
+    print(f"AltTS rows: {len(alt_ts_rows)}")
     print(f"Initialized MRD database at {MRD_DATABASE_URL}")
     print(f"CORE_DATA.ACCOUNT rows: {len(mrd_account_rows)}")
     print(f"CORE_DATA.ACCOUNT_FACTOR_DATA rows: {len(mrd_factor_rows)}")

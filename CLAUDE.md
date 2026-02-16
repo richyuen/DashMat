@@ -97,6 +97,16 @@ DashMat/
 9. **Excel Export**: Multi-sheet export with all tabs
 10. **Sample Data Download**: File menu offers sample daily or monthly data files (Daily1-6 or Monthly1-6)
 
+### Portfolio Import Source Notes
+
+- `Add portfolios (peer)` reads `PeerTS`.
+- `Add portfolios (index)` reads `IndexTS`.
+- `Add portfolios (other)` is source-dispatch based by `Portfolios.PortfolioVintage`; currently implemented source is `AltTS`.
+- For `other` with `PortfolioVintage='AltTS'`:
+  - Portfolio series comes from `AltTS` with `Item='PortRet'`.
+  - Benchmark series (if included) comes from `AltTS` with the same portfolio key and `Item='BenchRet'`.
+  - Benchmark naming follows `<Portfolio>_BM`.
+
 ### UI Structure
 
 **Welcome Screen**: Shown when no data loaded - icon + "Add series from file" button

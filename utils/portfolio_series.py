@@ -1,4 +1,4 @@
-"""CMA portfolio-series helpers for peer/index import workflows."""
+"""CMA portfolio-series helpers for peer/index/other import workflows."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from utils.constants import (
     PORTFOLIO_TS_VALUE_MODE,
 )
 
-PortfolioMode = Literal["peer", "index"]
+PortfolioMode = Literal["peer", "index", "other"]
 
 
 def _option_db_values(options: list[dict]) -> set[str]:
@@ -72,10 +72,18 @@ class PortfolioImportResult:
 
 def get_portfolio_options(engine: Engine, mode: PortfolioMode) -> list[dict]:
     """Return dropdown options in `PortfolioName [Portfolio]` format."""
-    if mode not in {"peer", "index"}:
+    if mode not in {"peer", "index", "other"}:
         return []
 
-    if mode == "peer":
+    if mode == "other":
+        q = text(
+            "SELECT p.Portfolio, p.PortfolioName "
+            "FROM Portfolios p "
+            "WHERE p.PortfolioSuite = 'IndNoAttr' "
+            "AND COALESCE(p.PortfolioVintage, '') = 'AltTS' "
+            "ORDER BY p.Portfolio"
+        )
+    elif mode == "peer":
         where_clause = (
             "COALESCE(s.PeerTDOrder, 0) > 0 "
             "OR COALESCE(s.PeerModelOrder, 0) > 0 "
@@ -90,13 +98,14 @@ def get_portfolio_options(engine: Engine, mode: PortfolioMode) -> list[dict]:
         where_clause = "COALESCE(s.IndexMonthlyOrder, 0) > 0"
         order_clause = "COALESCE(s.IndexMonthlyOrder, 999999), p.Portfolio"
 
-    q = text(
-        "SELECT p.Portfolio, p.PortfolioName "
-        "FROM Portfolios p "
-        "JOIN Suites s ON s.SuiteShort = p.PortfolioSuite "
-        f"WHERE {where_clause} "
-        f"ORDER BY {order_clause}"
-    )
+    if mode in {"peer", "index"}:
+        q = text(
+            "SELECT p.Portfolio, p.PortfolioName "
+            "FROM Portfolios p "
+            "JOIN Suites s ON s.SuiteShort = p.PortfolioSuite "
+            f"WHERE {where_clause} "
+            f"ORDER BY {order_clause}"
+        )
     with engine.connect() as conn:
         rows = conn.execute(q).fetchall()
 
@@ -116,6 +125,7 @@ def _read_series(
     portfolio: str,
     item: str,
     desc: str,
+    normalize_values: bool = True,
 ) -> pd.Series:
     q = text(
         f"SELECT Date, Value "
@@ -135,19 +145,53 @@ def _read_series(
             },
         ).fetchall()
 
+    return _rows_to_series(rows, portfolio, normalize_values=normalize_values)
+
+
+def _read_series_no_desc(
+    engine: Engine,
+    table_name: str,
+    portfolio: str,
+    item: str,
+    normalize_values: bool = True,
+) -> pd.Series:
+    q = text(
+        f"SELECT Date, Value "
+        f"FROM {table_name} "
+        "WHERE Portfolio = :portfolio "
+        "AND Item = :item "
+        "ORDER BY Date"
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            q,
+            {
+                "portfolio": portfolio,
+                "item": item,
+            },
+        ).fetchall()
+
+    return _rows_to_series(rows, portfolio, normalize_values=normalize_values)
+
+
+def _rows_to_series(rows, series_name: str, normalize_values: bool = True) -> pd.Series:
     if not rows:
-        return pd.Series(dtype=float, name=portfolio)
+        return pd.Series(dtype=float, name=series_name)
 
     df = pd.DataFrame(rows, columns=["Date", "Value"])
     df["Date"] = pd.to_datetime(df["Date"])
     series = pd.Series(
         pd.to_numeric(df["Value"], errors="coerce").values,
         index=pd.DatetimeIndex(df["Date"]),
-        name=portfolio,
+        name=series_name,
         dtype=float,
     ).sort_index()
     series = series[~series.index.duplicated(keep="last")]
-    series = _normalize_values_to_returns(series).rename(portfolio)
+    if normalize_values:
+        series = _normalize_values_to_returns(series)
+    else:
+        series = series.dropna()
+    series = series.rename(series_name)
     return series
 
 
@@ -170,7 +214,7 @@ def load_portfolio_series(
 ) -> PortfolioImportResult:
     """Load staged portfolio requests from CMA tables."""
     rows = [r for r in (staged_rows or []) if isinstance(r, dict)]
-    if mode not in {"peer", "index"} or not rows:
+    if mode not in {"peer", "index", "other"} or not rows:
         return PortfolioImportResult(pd.DataFrame(), {}, "monthly")
 
     requested = [str(r.get("portfolio", "")).strip() for r in rows if r.get("portfolio")]
@@ -178,7 +222,7 @@ def load_portfolio_series(
         return PortfolioImportResult(pd.DataFrame(), {}, "monthly")
 
     portfolio_query = text(
-        "SELECT Portfolio, PortfolioName, PeerVintage, IncepDate "
+        "SELECT Portfolio, PortfolioName, PeerVintage, PortfolioVintage, IncepDate "
         "FROM Portfolios "
         "WHERE Portfolio IN :portfolios"
     ).bindparams(bindparam("portfolios", expanding=True))
@@ -190,13 +234,14 @@ def load_portfolio_series(
         ).fetchall()
 
     metadata: dict[str, dict[str, object]] = {}
-    for portfolio, portfolio_name, peer_vintage, incep_date in meta_rows:
+    for portfolio, portfolio_name, peer_vintage, portfolio_vintage, incep_date in meta_rows:
         p = str(portfolio or "").strip()
         if not p:
             continue
         metadata[p] = {
             "portfolio_name": str(portfolio_name or p),
             "peer_vintage": str(peer_vintage).strip() if peer_vintage is not None else "",
+            "portfolio_vintage": str(portfolio_vintage).strip() if portfolio_vintage is not None else "",
             "incep_date": pd.to_datetime(incep_date) if incep_date else None,
         }
 
@@ -221,8 +266,22 @@ def load_portfolio_series(
 
         if mode == "peer":
             port_series = _read_series(engine, "PeerTS", portfolio, "PortRet", ret_desc)
-        else:
+        elif mode == "index":
             port_series = _read_series(engine, "IndexTS", portfolio, "PortRet", ret_desc)
+        else:
+            source = str(metadata[portfolio].get("portfolio_vintage", "")).strip()
+            if source != "AltTS":
+                raise ValueError(
+                    f"PortfolioVintage `{source}` is not implemented for portfolio `{portfolio}`."
+                )
+            # AltTS stores arithmetic returns directly.
+            port_series = _read_series_no_desc(
+                engine,
+                "AltTS",
+                portfolio,
+                "PortRet",
+                normalize_values=False,
+            )
 
         incep = metadata[portfolio].get("incep_date")
         if incep is not None:
@@ -278,12 +337,27 @@ def load_portfolio_series(
                     series_map[vintage] = bm_series.rename(vintage)
                     ordered_cols.append(vintage)
                 benchmark_assignments[portfolio] = vintage
-        else:
+        elif mode == "index":
             bm_col = f"{portfolio}{INDEX_BENCHMARK_SUFFIX}"
             if bm_col not in series_map:
                 bm_series = _read_series(engine, "IndexTS", portfolio, "PortRet", INDEX_BENCHMARK_DESC)
                 if bm_series.empty:
                     raise ValueError(f"No index benchmark rows for portfolio `{portfolio}`.")
+                series_map[bm_col] = bm_series.rename(bm_col)
+                ordered_cols.append(bm_col)
+            benchmark_assignments[portfolio] = bm_col
+        else:
+            bm_col = f"{portfolio}{INDEX_BENCHMARK_SUFFIX}"
+            if bm_col not in series_map:
+                bm_series = _read_series_no_desc(
+                    engine,
+                    "AltTS",
+                    portfolio,
+                    "BenchRet",
+                    normalize_values=False,
+                )
+                if bm_series.empty:
+                    raise ValueError(f"No AltTS benchmark rows for portfolio `{portfolio}`.")
                 series_map[bm_col] = bm_series.rename(bm_col)
                 ordered_cols.append(bm_col)
             benchmark_assignments[portfolio] = bm_col

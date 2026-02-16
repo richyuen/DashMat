@@ -54,6 +54,8 @@ from utils.charting import apply_chart_theme
 from utils.constants import (
     INDEX_BENCHMARK_TYPE_OPTIONS,
     INDEX_PORTFOLIO_TYPE_OPTIONS,
+    OTHER_BENCHMARK_TYPE_OPTIONS,
+    OTHER_PORTFOLIO_TYPE_OPTIONS,
     PEER_BENCHMARK_TYPE_OPTIONS,
     PEER_PORTFOLIO_TYPE_OPTIONS,
 )
@@ -100,6 +102,8 @@ def _db_options(options: list[dict]) -> list[dict]:
 def _portfolio_type_options(mode: str) -> tuple[list[dict], list[dict]]:
     if mode == "index":
         return _db_options(INDEX_PORTFOLIO_TYPE_OPTIONS), _db_options(INDEX_BENCHMARK_TYPE_OPTIONS)
+    if mode == "other":
+        return _db_options(OTHER_PORTFOLIO_TYPE_OPTIONS), _db_options(OTHER_BENCHMARK_TYPE_OPTIONS)
     return _db_options(PEER_PORTFOLIO_TYPE_OPTIONS), _db_options(PEER_BENCHMARK_TYPE_OPTIONS)
 
 
@@ -242,6 +246,14 @@ def build_welcome_screen():
                         size="sm",
                         w=210,
                         id="at-welcome-add-portfolios-index-btn",
+                    ),
+                    dmc.Button(
+                        "Add portfolios (other)",
+                        leftSection=DashIconify(icon="tabler:stack"),
+                        variant="outline",
+                        size="sm",
+                        w=210,
+                        id="at-welcome-add-portfolios-other-btn",
                     ),
                 ],
             ),
@@ -532,16 +544,37 @@ def validate_db_add_selection(selected_benches, raw_data, opened):
     Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
     Input("at-menu-add-portfolios-peer", "n_clicks"),
     Input("at-menu-add-portfolios-index", "n_clicks"),
+    Input("at-menu-add-portfolios-other", "n_clicks"),
     Input("at-welcome-add-portfolios-peer-btn", "n_clicks"),
     Input("at-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("at-welcome-add-portfolios-other-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def at_open_portfolio_add_modal(peer_clicks, index_clicks, welcome_peer_clicks, welcome_index_clicks):
-    if not peer_clicks and not index_clicks and not welcome_peer_clicks and not welcome_index_clicks:
+def at_open_portfolio_add_modal(
+    peer_clicks,
+    index_clicks,
+    other_clicks,
+    welcome_peer_clicks,
+    welcome_index_clicks,
+    welcome_other_clicks,
+):
+    if (
+        not peer_clicks
+        and not index_clicks
+        and not other_clicks
+        and not welcome_peer_clicks
+        and not welcome_index_clicks
+        and not welcome_other_clicks
+    ):
         raise PreventUpdate
 
     triggered_id = callback_context.triggered_id
-    mode = "index" if triggered_id in {"at-menu-add-portfolios-index", "at-welcome-add-portfolios-index-btn"} else "peer"
+    if triggered_id in {"at-menu-add-portfolios-index", "at-welcome-add-portfolios-index-btn"}:
+        mode = "index"
+    elif triggered_id in {"at-menu-add-portfolios-other", "at-welcome-add-portfolios-other-btn"}:
+        mode = "other"
+    else:
+        mode = "peer"
     modal_title = f"Add portfolios ({mode})"
     series_options = get_portfolio_options(DB_ENGINE, mode)
     type_options, bm_type_options = _portfolio_type_options(mode)
@@ -1371,6 +1404,11 @@ layout = dmc.Container(
                                             leftSection=DashIconify(icon="tabler:chart-line", width=14),
                                         ),
                                         dmc.MenuItem(
+                                            "Add portfolios (other)...",
+                                            id="at-menu-add-portfolios-other",
+                                            leftSection=DashIconify(icon="tabler:stack", width=14),
+                                        ),
+                                        dmc.MenuItem(
                                             "Add series from file...",
                                             id="at-menu-add-series",
                                             leftSection=DashIconify(icon="tabler:upload", width=14),
@@ -1571,7 +1609,7 @@ layout = dmc.Container(
             ],
         ),
 
-        # Add portfolios (peer/index) modal
+        # Add portfolios (peer/index/other) modal
         dmc.Modal(
             id="at-portfolio-add-modal",
             title=dmc.Group(
@@ -3108,7 +3146,7 @@ def at_add_portfolios_from_database(
 
     n_no = no_update
     rows = [r for r in (staged_rows or []) if isinstance(r, dict)]
-    if mode not in {"peer", "index"} or not rows:
+    if mode not in {"peer", "index", "other"} or not rows:
         return (
             n_no, n_no, n_no, n_no, n_no,
             n_no,
