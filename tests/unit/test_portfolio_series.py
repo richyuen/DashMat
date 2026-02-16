@@ -358,6 +358,8 @@ def test_load_portfolio_series_peer_calculated_benchmark_uses_portfolio_key():
     bm_name = "TD2030A_Calculated"
     assert list(result.returns_df.columns) == ["TD2030A", bm_name]
     assert result.benchmark_assignments == {"TD2030A": bm_name}
+    # Calculated peer benchmark should source the portfolio's PortRet Calculated series.
+    assert (result.returns_df[bm_name].dropna() == 0.0097).all()
 
 
 def test_load_portfolio_series_peer_calculated_type_uses_suffix_and_effective_key():

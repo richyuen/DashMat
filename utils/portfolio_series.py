@@ -462,10 +462,10 @@ def load_portfolio_series(
             if benchmark_type in PEER_PORTFOLIO_BENCHMARK_OVERLAP:
                 # Special peer benchmark mode:
                 # when benchmark type matches a peer portfolio type db_value,
-                # use portfolio-specific benchmark lookup in PeerTS.
+                # use the matching portfolio return series in PeerTS.
                 bm_col = f"{portfolio}_{benchmark_type}"
                 if bm_col not in series_map:
-                    bm_series = _read_series(engine, "PeerTS", portfolio, "MeanRet", benchmark_type)
+                    bm_series = _read_series(engine, "PeerTS", portfolio, "PortRet", benchmark_type)
                     if bm_series.empty:
                         raise ValueError(
                             f"No peer benchmark rows for portfolio `{portfolio}` and type `{benchmark_type}`."
