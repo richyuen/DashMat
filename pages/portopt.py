@@ -2787,6 +2787,13 @@ layout = dmc.Container(
                                 dmc.Button("OK", id="po-portfolio-add-ok-button", color="blue", disabled=True),
                             ],
                         ),
+                        dmc.Text(
+                            id="po-portfolio-add-debug-text",
+                            size="xs",
+                            c="dimmed",
+                            style={"fontFamily": "monospace"},
+                            children="",
+                        ),
                     ],
                 ),
             ],
@@ -3634,6 +3641,38 @@ clientside_callback(
     Output("po-portfolio-add-ok-button", "disabled"),
     Input("po-portfolio-add-rows-store", "data"),
     Input("po-portfolio-add-modal", "opened"),
+)
+
+clientside_callback(
+    """
+    function(opened, rows, rowData, okDisabled, addClicks, delClicks, clearClicks, okClicks) {
+        if (!opened) {
+            return "";
+        }
+        var sRows = Array.isArray(rows) ? rows : [];
+        var gRows = Array.isArray(rowData) ? rowData : [];
+        var first = sRows.length ? JSON.stringify(sRows[0]) : "none";
+        return (
+            "DEBUG | staged_rows=" + sRows.length +
+            " | grid_rows=" + gRows.length +
+            " | ok_disabled=" + (!!okDisabled) +
+            " | add=" + (addClicks || 0) +
+            " | delete=" + (delClicks || 0) +
+            " | clear=" + (clearClicks || 0) +
+            " | ok=" + (okClicks || 0) +
+            " | first=" + first
+        );
+    }
+    """,
+    Output("po-portfolio-add-debug-text", "children"),
+    Input("po-portfolio-add-modal", "opened"),
+    Input("po-portfolio-add-rows-store", "data"),
+    Input("po-portfolio-add-grid", "rowData"),
+    Input("po-portfolio-add-ok-button", "disabled"),
+    Input("po-portfolio-add-row-btn", "n_clicks"),
+    Input("po-portfolio-delete-row-btn", "n_clicks"),
+    Input("po-portfolio-clear-rows-btn", "n_clicks"),
+    Input("po-portfolio-add-ok-button", "n_clicks"),
 )
 
 # Trigger upload from menu
