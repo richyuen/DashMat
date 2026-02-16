@@ -95,7 +95,7 @@ def _read_series(
         f"FROM {table_name} "
         "WHERE Portfolio = :portfolio "
         "AND Item = :item "
-        "AND Desc = :desc "
+        "AND [Desc] = :desc "
         "ORDER BY Date"
     )
     with engine.connect() as conn:
