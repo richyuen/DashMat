@@ -29,3 +29,28 @@ WINDOW_YEARS_MAP = {
     "5y": 5.0,
     "10y": 10.0,
 }
+
+# Portfolio import workflow constants.
+# Each option includes a DB lookup value and a display label.
+PEER_PORTFOLIO_TYPE_OPTIONS = [
+    {"db_value": "Actual", "label": "Actual"},
+    {"db_value": "Calculated", "label": "Calculated"},
+]
+
+PEER_BENCHMARK_TYPE_OPTIONS = [
+    {"db_value": "Actual", "label": "Actual"},
+    {"db_value": "Estimated", "label": "Estimated"},
+    {"db_value": "Calculated", "label": "Calculated"},
+]
+
+INDEX_PORTFOLIO_TYPE_OPTIONS = [
+    {"db_value": "Actual", "label": "Actual"},
+    {"db_value": "Calculated", "label": "Calculated"},
+]
+
+INDEX_BENCHMARK_TYPE_OPTIONS = [
+    {"db_value": "Benchmark", "label": "Benchmark"},
+]
+
+INDEX_BENCHMARK_DESC = "Benchmark"
+INDEX_BENCHMARK_SUFFIX = "_BM"

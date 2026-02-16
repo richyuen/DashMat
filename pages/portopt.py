@@ -58,6 +58,12 @@ from utils.statistics import (
     annualized_return_calendar_days,
 )
 from utils.charting import apply_chart_theme
+from utils.constants import (
+    INDEX_BENCHMARK_TYPE_OPTIONS,
+    INDEX_PORTFOLIO_TYPE_OPTIONS,
+    PEER_BENCHMARK_TYPE_OPTIONS,
+    PEER_PORTFOLIO_TYPE_OPTIONS,
+)
 from utils.sample_data import get_sample_file_path
 from utils.core_categories import (
     clear_dropdown_caches,
@@ -67,6 +73,7 @@ from utils.core_categories import (
     get_unique_cmabench_values_cached,
     load_cma_returns_for_benches_with_meta,
 )
+from utils.portfolio_series import get_portfolio_options, load_portfolio_series
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
@@ -81,6 +88,16 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
+
+
+def _db_options(options: list[dict]) -> list[dict]:
+    return [{"value": str(o["db_value"]), "label": str(o["label"])} for o in options if "db_value" in o and "label" in o]
+
+
+def _portfolio_type_options(mode: str) -> tuple[list[dict], list[dict]]:
+    if mode == "index":
+        return _db_options(INDEX_PORTFOLIO_TYPE_OPTIONS), _db_options(INDEX_BENCHMARK_TYPE_OPTIONS)
+    return _db_options(PEER_PORTFOLIO_TYPE_OPTIONS), _db_options(PEER_BENCHMARK_TYPE_OPTIONS)
 
 
 @dataclass(frozen=True)
@@ -1287,6 +1304,27 @@ def build_po_welcome_screen():
                 ],
             ),
             dmc.Group(
+                gap="sm",
+                children=[
+                    dmc.Button(
+                        "Add portfolios (peer)",
+                        leftSection=DashIconify(icon="tabler:users"),
+                        variant="outline",
+                        size="sm",
+                        w=210,
+                        id="po-welcome-add-portfolios-peer-btn",
+                    ),
+                    dmc.Button(
+                        "Add portfolios (index)",
+                        leftSection=DashIconify(icon="tabler:chart-line"),
+                        variant="outline",
+                        size="sm",
+                        w=210,
+                        id="po-welcome-add-portfolios-index-btn",
+                    ),
+                ],
+            ),
+            dmc.Group(
                 gap="md",
                 mt="sm",
                 children=[
@@ -2334,6 +2372,16 @@ layout = dmc.Container(
                                         leftSection=DashIconify(icon="tabler:database", width=14),
                                     ),
                                     dmc.MenuItem(
+                                        "Add portfolios (peer)...",
+                                        id="po-menu-add-portfolios-peer",
+                                        leftSection=DashIconify(icon="tabler:users", width=14),
+                                    ),
+                                    dmc.MenuItem(
+                                        "Add portfolios (index)...",
+                                        id="po-menu-add-portfolios-index",
+                                        leftSection=DashIconify(icon="tabler:chart-line", width=14),
+                                    ),
+                                    dmc.MenuItem(
                                         "Add series from file...",
                                         id="po-menu-add-series",
                                         leftSection=DashIconify(icon="tabler:upload", width=14),
@@ -2602,6 +2650,143 @@ layout = dmc.Container(
                     children=[
                         dmc.Button("Cancel", id="po-db-add-cancel-button", variant="outline", color="red"),
                         dmc.Button("OK", id="po-db-add-ok-button", color="blue", disabled=True),
+                    ],
+                ),
+            ],
+        ),
+
+        # Add portfolios (peer/index) modal
+        dmc.Modal(
+            id="po-portfolio-add-modal",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:briefcase"), color="indigo", variant="light", size="sm"),
+                    dmc.Text("Add portfolios", fw=600, size="sm"),
+                ],
+            ),
+            size="860px",
+            centered=True,
+            closeOnClickOutside=True,
+            withCloseButton=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
+            children=[
+                dmc.Alert(
+                    id="po-portfolio-add-error-alert",
+                    title="Cannot stage import",
+                    color="red",
+                    hide=True,
+                    mb="sm",
+                ),
+                dmc.Stack(
+                    gap="sm",
+                    children=[
+                        dmc.Select(
+                            id="po-portfolio-add-series-select",
+                            label="Series",
+                            data=[],
+                            value=None,
+                            searchable=True,
+                            clearable=True,
+                            nothingFoundMessage="No portfolios found",
+                        ),
+                        dmc.Group(
+                            gap="sm",
+                            children=[
+                                dmc.Select(
+                                    id="po-portfolio-add-type-select",
+                                    label="Type",
+                                    data=[],
+                                    value=None,
+                                    clearable=False,
+                                    searchable=True,
+                                    w=220,
+                                ),
+                                dmc.Checkbox(
+                                    id="po-portfolio-add-include-benchmark",
+                                    label="Include Benchmark",
+                                    checked=False,
+                                    mt=24,
+                                ),
+                                dmc.Select(
+                                    id="po-portfolio-add-benchmark-type-select",
+                                    label="Benchmark Type",
+                                    data=[],
+                                    value=None,
+                                    clearable=False,
+                                    searchable=True,
+                                    w=220,
+                                    disabled=True,
+                                ),
+                            ],
+                        ),
+                        dmc.Group(
+                            gap="xs",
+                            children=[
+                                dmc.Button(
+                                    "Add Series",
+                                    id="po-portfolio-add-row-btn",
+                                    variant="outline",
+                                    size="xs",
+                                    leftSection=DashIconify(icon="tabler:plus"),
+                                ),
+                                dmc.Button(
+                                    "Delete One",
+                                    id="po-portfolio-delete-row-btn",
+                                    variant="outline",
+                                    size="xs",
+                                    color="red",
+                                    leftSection=DashIconify(icon="tabler:row-remove"),
+                                ),
+                                dmc.Button(
+                                    "Clear All",
+                                    id="po-portfolio-clear-rows-btn",
+                                    variant="outline",
+                                    size="xs",
+                                    color="red",
+                                    leftSection=DashIconify(icon="tabler:trash"),
+                                ),
+                            ],
+                        ),
+                        dag.AgGrid(
+                            id="po-portfolio-add-grid",
+                            className="ag-theme-alpine",
+                            enableEnterpriseModules=True,
+                            licenseKey=AG_GRID_LICENSE_KEY,
+                            columnDefs=[
+                                {"field": "Portfolio", "headerName": "Portfolio", "width": 220, "headerClass": "dashmat-center-header"},
+                                {"field": "Type", "headerName": "Type", "width": 160, "headerClass": "dashmat-center-header"},
+                                {"field": "Include Benchmark", "headerName": "Include Benchmark", "width": 180, "headerClass": "dashmat-center-header"},
+                                {"field": "Benchmark Type", "headerName": "Benchmark Type", "width": 180, "headerClass": "dashmat-center-header"},
+                            ],
+                            rowData=[],
+                            defaultColDef={
+                                "resizable": True,
+                                "sortable": False,
+                                "suppressHeaderMenuButton": True,
+                                "cellStyle": {"textAlign": "center"},
+                                "headerClass": "dashmat-center-header",
+                            },
+                            style={"height": "230px"},
+                            dashGridOptions={
+                                "rowSelection": "single",
+                                "suppressRowClickSelection": False,
+                                "animateRows": True,
+                                "suppressExcelExport": True,
+                                "suppressCsvExport": True,
+                            },
+                        ),
+                        dmc.Group(
+                            mt="sm",
+                            justify="flex-end",
+                            children=[
+                                dmc.Button("Cancel", id="po-portfolio-add-cancel-button", variant="outline", color="red"),
+                                dmc.Button("OK", id="po-portfolio-add-ok-button", color="blue", disabled=True),
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -2961,6 +3146,8 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-min-wt-store", data={}),
         dcc.Store(id="po-temp-max-wt-store", data={}),
         dcc.Store(id="po-temp-force-max-store", data={}),
+        dcc.Store(id="po-portfolio-add-mode-store", data=None),
+        dcc.Store(id="po-portfolio-add-rows-store", data=[]),
         # Temp stores for sheet selection (stash upload while user picks a tab)
         dcc.Store(id="po-sheet-select-contents-store", data=None),
         dcc.Store(id="po-sheet-select-filename-store", data=None),
@@ -3235,6 +3422,208 @@ def po_validate_db_add_selection(selected_benches, raw_data, opened):
     if duplicates:
         return f"Cannot add duplicate series: {', '.join(duplicates)}", False, True
     return no_update, True, False
+
+
+@callback(
+    Output("po-portfolio-add-modal", "opened", allow_duplicate=True),
+    Output("po-portfolio-add-modal", "title", allow_duplicate=True),
+    Output("po-portfolio-add-mode-store", "data", allow_duplicate=True),
+    Output("po-portfolio-add-series-select", "data", allow_duplicate=True),
+    Output("po-portfolio-add-series-select", "value", allow_duplicate=True),
+    Output("po-portfolio-add-type-select", "data", allow_duplicate=True),
+    Output("po-portfolio-add-type-select", "value", allow_duplicate=True),
+    Output("po-portfolio-add-benchmark-type-select", "data", allow_duplicate=True),
+    Output("po-portfolio-add-benchmark-type-select", "value", allow_duplicate=True),
+    Output("po-portfolio-add-include-benchmark", "checked", allow_duplicate=True),
+    Output("po-portfolio-add-benchmark-type-select", "disabled", allow_duplicate=True),
+    Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("po-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("po-menu-add-portfolios-peer", "n_clicks"),
+    Input("po-menu-add-portfolios-index", "n_clicks"),
+    Input("po-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("po-welcome-add-portfolios-index-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_open_portfolio_add_modal(peer_clicks, index_clicks, welcome_peer_clicks, welcome_index_clicks):
+    if not peer_clicks and not index_clicks and not welcome_peer_clicks and not welcome_index_clicks:
+        raise PreventUpdate
+
+    triggered_id = callback_context.triggered_id
+    mode = "index" if triggered_id in {"po-menu-add-portfolios-index", "po-welcome-add-portfolios-index-btn"} else "peer"
+    modal_title = f"Add portfolios ({mode})"
+    series_options = get_portfolio_options(DB_ENGINE, mode)
+    type_options, bm_type_options = _portfolio_type_options(mode)
+    type_value = type_options[0]["value"] if type_options else None
+    bm_value = bm_type_options[0]["value"] if bm_type_options else None
+
+    return (
+        True,
+        modal_title,
+        mode,
+        series_options,
+        None,
+        type_options,
+        type_value,
+        bm_type_options,
+        bm_value,
+        False,
+        True,
+        [],
+        [],
+        True,
+    )
+
+
+clientside_callback(
+    """
+    function(checked, options, currentValue) {
+        if (!checked) {
+            return [true, null];
+        }
+        var values = (options || [])
+            .filter(function(opt) { return opt && opt.value !== null && opt.value !== undefined; })
+            .map(function(opt) { return opt.value; });
+        if (values.indexOf(currentValue) >= 0) {
+            return [false, currentValue];
+        }
+        return [false, values.length ? values[0] : null];
+    }
+    """,
+    Output("po-portfolio-add-benchmark-type-select", "disabled", allow_duplicate=True),
+    Output("po-portfolio-add-benchmark-type-select", "value", allow_duplicate=True),
+    Input("po-portfolio-add-include-benchmark", "checked"),
+    State("po-portfolio-add-benchmark-type-select", "data"),
+    State("po-portfolio-add-benchmark-type-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(
+        nAdd,
+        nDelete,
+        nClear,
+        stagedRows,
+        selectedRows,
+        selectedPortfolio,
+        selectedType,
+        includeBenchmark,
+        benchmarkType
+    ) {
+        var ctx = dash_clientside.callback_context;
+        var triggered = null;
+        if (ctx && ctx.triggered && ctx.triggered.length) {
+            triggered = (ctx.triggered[0].prop_id || "").split(".")[0];
+        }
+
+        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
+        var noUpdate = window.dash_clientside.no_update;
+
+        if (triggered === "po-portfolio-clear-rows-btn") {
+            return [[], [], noUpdate, true];
+        }
+
+        if (triggered === "po-portfolio-delete-row-btn") {
+            if (!selectedRows || !selectedRows.length) {
+                return [rows, rows, "Select one staged row to delete.", false];
+            }
+            var selectedKey = String((selectedRows[0] || {}).Portfolio || "").trim();
+            var kept = rows.filter(function(r) {
+                return String((r && r.Portfolio) || "").trim() !== selectedKey;
+            });
+            return [kept, kept, noUpdate, true];
+        }
+
+        if (triggered !== "po-portfolio-add-row-btn" || !nAdd) {
+            return [noUpdate, noUpdate, noUpdate, noUpdate];
+        }
+
+        var portfolio = String(selectedPortfolio || "").trim();
+        var retType = String(selectedType || "").trim();
+        var bmType = String(benchmarkType || "").trim();
+        var includeBm = !!includeBenchmark;
+
+        if (!portfolio) {
+            return [rows, rows, "Select a portfolio series.", false];
+        }
+        if (!retType) {
+            return [rows, rows, "Select a portfolio type.", false];
+        }
+        if (includeBm && !bmType) {
+            return [rows, rows, "Select a benchmark type when benchmark is included.", false];
+        }
+
+        var exists = rows.some(function(r) {
+            var key = "";
+            if (r && r.portfolio !== undefined && r.portfolio !== null) {
+                key = String(r.portfolio).trim();
+            } else if (r && r.Portfolio !== undefined && r.Portfolio !== null) {
+                key = String(r.Portfolio).trim();
+            }
+            return key === portfolio;
+        });
+        if (exists) {
+            return [rows, rows, "Portfolio `" + portfolio + "` is already staged.", false];
+        }
+
+        rows.push({
+            "Portfolio": portfolio,
+            "Type": retType,
+            "Include Benchmark": includeBm ? "Yes" : "No",
+            "Benchmark Type": includeBm ? bmType : "",
+            "portfolio": portfolio,
+            "type": retType,
+            "include_benchmark": includeBm,
+            "benchmark_type": includeBm ? bmType : ""
+        });
+        return [rows, rows, noUpdate, true];
+    }
+    """,
+    Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("po-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("po-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("po-portfolio-add-row-btn", "n_clicks"),
+    Input("po-portfolio-delete-row-btn", "n_clicks"),
+    Input("po-portfolio-clear-rows-btn", "n_clicks"),
+    State("po-portfolio-add-rows-store", "data"),
+    State("po-portfolio-add-grid", "selectedRows"),
+    State("po-portfolio-add-series-select", "value"),
+    State("po-portfolio-add-type-select", "value"),
+    State("po-portfolio-add-include-benchmark", "checked"),
+    State("po-portfolio-add-benchmark-type-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("po-portfolio-add-modal", "opened", allow_duplicate=True),
+    Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Input("po-portfolio-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def po_close_portfolio_add_modal(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False, [], []
+
+
+clientside_callback(
+    """
+    function(rows, opened) {
+        if (!opened) {
+            return true;
+        }
+        return !(rows && rows.length);
+    }
+    """,
+    Output("po-portfolio-add-ok-button", "disabled"),
+    Input("po-portfolio-add-rows-store", "data"),
+    Input("po-portfolio-add-modal", "opened"),
+)
 
 # Trigger upload from menu
 clientside_callback(
@@ -5086,6 +5475,167 @@ def po_add_series_from_database(
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no, n_no, n_no, n_no,
             True, n_no,
+        )
+
+
+@callback(
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("po-periodicity-select", "data", allow_duplicate=True),
+    Output("po-periodicity-select", "value", allow_duplicate=True),
+    Output("po-periodicity-select", "disabled", allow_duplicate=True),
+    Output("po-temp-series-select", "data", allow_duplicate=True),
+    Output("po-alert-message", "children", allow_duplicate=True),
+    Output("po-alert-message", "color", allow_duplicate=True),
+    Output("po-alert-message", "hide", allow_duplicate=True),
+    Output("po-periodicity-value-store", "data", allow_duplicate=True),
+    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-long-short-store", "data", allow_duplicate=True),
+    Output("po-temp-series-order-store", "data", allow_duplicate=True),
+    Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("po-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("po-temp-min-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-max-wt-store", "data", allow_duplicate=True),
+    Output("po-temp-force-max-store", "data", allow_duplicate=True),
+    Output("po-portfolio-add-modal", "opened", allow_duplicate=True),
+    Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Input("po-portfolio-add-ok-button", "n_clicks"),
+    State("po-portfolio-add-mode-store", "data"),
+    State("po-portfolio-add-rows-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("po-series-select", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-series-order-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-min-wt-store", "data"),
+    State("po-max-wt-store", "data"),
+    State("po-force-max-store", "data"),
+    prevent_initial_call=True,
+)
+def po_add_portfolios_from_database(
+    n_clicks,
+    mode,
+    staged_rows,
+    existing_data,
+    existing_periodicity,
+    current_selection,
+    current_bench,
+    current_cmabench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
+    current_min_wt,
+    current_max_wt,
+    current_force_max,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    n_no = no_update
+    rows = [r for r in (staged_rows or []) if isinstance(r, dict)]
+    if mode not in {"peer", "index"} or not rows:
+        return (
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            "Stage at least one portfolio row before importing.",
+            "orange",
+            False,
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no,
+            True,
+            rows,
+            rows,
+        )
+
+    try:
+        load_result = load_portfolio_series(DB_ENGINE, mode, rows)
+        new_df = load_result.returns_df
+        if new_df.empty:
+            raise ValueError("No rows returned for staged portfolio requests.")
+
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [s for s in new_df.columns if s in existing_cols]
+            if duplicates:
+                return (
+                    n_no, n_no, n_no, n_no, n_no, n_no,
+                    f"Cannot add duplicate series: {', '.join(duplicates)}",
+                    "red",
+                    False,
+                    n_no, n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no, n_no, n_no,
+                    True,
+                    rows,
+                    rows,
+                )
+
+        new_periodicity = load_result.periodicity or "monthly"
+        if existing_data is not None:
+            existing_df = json_to_df(existing_data)
+            if existing_periodicity == "monthly" and new_periodicity == "daily":
+                new_df = resample_returns(new_df, "monthly")
+                combined_periodicity = "monthly"
+            elif new_periodicity == "monthly" and existing_periodicity == "daily":
+                existing_df = resample_returns(existing_df, "monthly")
+                combined_periodicity = "monthly"
+            else:
+                combined_periodicity = existing_periodicity
+            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
+            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
+            merged_df = merge_returns(existing_df, new_df)
+        else:
+            merged_df = _normalize_monthly_df_if_needed(new_df, new_periodicity)
+            combined_periodicity = new_periodicity
+
+        periodicity_options = get_available_periodicities(combined_periodicity)
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        updated_selection = (current_selection or []) + new_series
+
+        updated_bench = dict(current_bench or {})
+        updated_bench.update(load_result.benchmark_assignments or {})
+
+        return (
+            df_to_json(merged_df),
+            combined_periodicity,
+            periodicity_options,
+            default_periodicity,
+            False,
+            updated_selection,
+            f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {mode} portfolios.",
+            "green",
+            False,
+            default_periodicity,
+            True,
+            updated_bench,
+            current_cmabench or {},
+            current_ls or {},
+            current_order or [],
+            [],
+            current_vol_scaling or {},
+            current_min_wt or {},
+            current_max_wt or {},
+            current_force_max or {},
+            False,
+            [],
+            [],
+        )
+    except Exception as e:
+        return (
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            f"Error loading portfolio series: {str(e)}",
+            "red",
+            False,
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no,
+            True,
+            rows,
+            rows,
         )
 
 
