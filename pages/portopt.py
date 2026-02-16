@@ -3636,6 +3636,35 @@ clientside_callback(
     Input("po-portfolio-add-modal", "opened"),
 )
 
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            return true;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-portfolio-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(opened, errorHidden) {
+        if (opened === false || errorHidden === false) {
+            return false;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-portfolio-add-modal", "opened"),
+    Input("po-portfolio-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
 # Trigger upload from menu
 clientside_callback(
     """

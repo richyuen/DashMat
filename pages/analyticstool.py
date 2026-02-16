@@ -727,6 +727,35 @@ clientside_callback(
     Input("at-portfolio-add-modal", "opened"),
 )
 
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            return true;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-portfolio-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(opened, errorHidden) {
+        if (opened === false || errorHidden === false) {
+            return false;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-portfolio-add-modal", "opened"),
+    Input("at-portfolio-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
                       active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
