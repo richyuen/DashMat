@@ -129,7 +129,7 @@ def get_portfolio_options(engine: Engine, mode: PortfolioMode) -> list[dict]:
         )
         order_clause = "p.PortfolioName, p.Portfolio"
     else:
-        where_clause = "COALESCE(s.IndexMonthlyOrder, 0) > 0"
+        where_clause = "COALESCE(s.IndexDailyOrder, 0) > 0 AND COALESCE(p.PortfolioSuite, '') <> 'IndNoAttr'"
         order_clause = "p.PortfolioName, p.Portfolio"
 
     if mode in {"peer", "index"}:

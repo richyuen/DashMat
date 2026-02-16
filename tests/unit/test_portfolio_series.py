@@ -20,7 +20,7 @@ def _seed_db():
                 "SuiteID INTEGER PRIMARY KEY, "
                 "SuiteShort TEXT UNIQUE NOT NULL, "
                 "SuiteLong TEXT NOT NULL, "
-                "IndexMonthlyOrder INTEGER, "
+                "IndexDailyOrder INTEGER, "
                 "PeerTDOrder INTEGER, "
                 "PeerModelOrder INTEGER, "
                 "PeerAllocOrder INTEGER, "
@@ -98,7 +98,7 @@ def _seed_db():
         conn.execute(
             text(
                 "INSERT INTO Suites "
-                "(SuiteID, SuiteShort, SuiteLong, IndexMonthlyOrder, PeerTDOrder, PeerModelOrder, PeerAllocOrder, Peer529Order) "
+                "(SuiteID, SuiteShort, SuiteLong, IndexDailyOrder, PeerTDOrder, PeerModelOrder, PeerAllocOrder, Peer529Order) "
                 "VALUES "
                 "(1, 'TD', 'Target Date', NULL, 1, NULL, NULL, NULL), "
                 "(2, 'RISK', 'Risk Based', 1, NULL, NULL, NULL, NULL), "
@@ -261,6 +261,21 @@ def test_get_portfolio_options_labels_and_mode_filters():
     assert {"value": "PERFTRN", "label": "Performance Trend [PERFTRN]"} in other_options
     assert not any(opt["value"] == "Risk60" for opt in other_options)
     assert {"value": "PERFNOBM", "label": "Performance No Benchmark [PERFNOBM]"} in other_options
+
+
+def test_get_portfolio_options_index_excludes_indnoattr_even_if_suite_flagged():
+    engine = _seed_db()
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE Suites SET IndexDailyOrder = 1 WHERE SuiteShort = 'IndNoAttr'")
+        )
+
+    index_options = get_portfolio_options(engine, "index")
+    index_values = {opt["value"] for opt in index_options}
+    assert "Risk60" in index_values
+    assert "ALTTRN" not in index_values
+    assert "ALTMAC" not in index_values
+    assert "PERFTRN" not in index_values
 
 
 def test_index_benchmark_options_include_calculated():
