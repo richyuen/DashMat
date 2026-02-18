@@ -19,7 +19,7 @@ from dash.exceptions import PreventUpdate
 
 import cache_config
 from utils.parsing import get_sheet_names
-from utils.add_series_flow import find_duplicate_series, import_selected_disabled
+from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
     compute_date_range_candidates,
     resolve_button_range,
@@ -58,24 +58,37 @@ from utils.statistics import (
     annualized_return_calendar_days,
 )
 from utils.charting import apply_chart_theme
-from utils.constants import (
-    INDEX_BENCHMARK_TYPE_OPTIONS,
-    INDEX_PORTFOLIO_TYPE_OPTIONS,
-    OTHER_BENCHMARK_TYPE_OPTIONS,
-    OTHER_PORTFOLIO_TYPE_OPTIONS,
-    PEER_BENCHMARK_TYPE_OPTIONS,
-    PEER_PORTFOLIO_TYPE_OPTIONS,
-)
 from utils.sample_data import get_sample_file_path
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
     get_cmabench_map_for_fofbench,
-    get_core_category_options_cached,
     get_unique_cmabench_values_cached,
     load_cma_returns_for_benches_with_meta,
 )
-from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark, load_portfolio_series
+from utils.dashmat_welcome_modal import (
+    PagePrefixConfig,
+    build_db_add_modal,
+    build_portfolio_add_modal,
+    build_series_selection_modal,
+    build_sheet_select_modal,
+    build_welcome_screen as build_shared_welcome_screen,
+    compute_close_db_add_modal,
+    compute_close_portfolio_add_modal,
+    compute_open_db_add_modal,
+    compute_open_portfolio_add_modal,
+    compute_sync_include_benchmark_enabled,
+    compute_validate_db_add_selection,
+    js_portfolio_add_row,
+    js_portfolio_benchmark_toggle,
+    js_portfolio_clear_rows,
+    js_portfolio_delete_row,
+    js_portfolio_ok_disabled,
+    js_release_ui_blocker_on_modal_state,
+    js_set_ui_blocker_true,
+    js_trigger_upload_with_cancel,
+)
+from utils.portfolio_series import load_portfolio_series
 from dbengine import (
     AG_GRID_LICENSE_KEY,
     engine as DB_ENGINE,
@@ -84,6 +97,16 @@ from dbengine import (
 )
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
+
+PO_WELCOME_MODAL_CONFIG = PagePrefixConfig(
+    prefix="po",
+    page_icon="grommet-icons:optimize",
+    page_title="Portfolio Optimization",
+    page_subtitle="Choose a source to load data and start optimization.",
+    series_modal_size="84vw",
+    series_modal_max_width="1450px",
+    series_modal_transition_ms=200,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,18 +118,6 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
-
-
-def _db_options(options: list[dict]) -> list[dict]:
-    return [{"value": str(o["db_value"]), "label": str(o["label"])} for o in options if "db_value" in o and "label" in o]
-
-
-def _portfolio_type_options(mode: str) -> tuple[list[dict], list[dict]]:
-    if mode == "index":
-        return _db_options(INDEX_PORTFOLIO_TYPE_OPTIONS), _db_options(INDEX_BENCHMARK_TYPE_OPTIONS)
-    if mode == "other":
-        return _db_options(OTHER_PORTFOLIO_TYPE_OPTIONS), _db_options(OTHER_BENCHMARK_TYPE_OPTIONS)
-    return _db_options(PEER_PORTFOLIO_TYPE_OPTIONS), _db_options(PEER_BENCHMARK_TYPE_OPTIONS)
 
 
 @dataclass(frozen=True)
@@ -1282,213 +1293,7 @@ def _effective_cmabench_assignments(selected_series: list[str] | None, cmabench_
 # ---------------------------------------------------------------------------
 
 def build_po_welcome_screen():
-    return dmc.Stack(
-        align="center",
-        justify="center",
-        gap="lg",
-        style={"width": "100%", "maxWidth": "1160px", "margin": "0 auto", "padding": "4px 8px 12px"},
-        children=[
-            dmc.Stack(
-                align="center",
-                gap=2,
-                children=[
-                    DashIconify(icon="grommet-icons:optimize", width=54, color="#8b95a1"),
-                    dmc.Text("Portfolio Optimization", size="xl", fw=600, mt=2),
-                    dmc.Text("Choose a source to load data and start optimization.", size="sm", c="dimmed"),
-                ],
-            ),
-            html.Div(
-                className="dashmat-welcome-sections-grid",
-                children=[
-                    dmc.Paper(
-                        withBorder=True,
-                        radius="md",
-                        p="md",
-                        className="dashmat-welcome-section-card",
-                        children=dmc.Stack(
-                            gap="sm",
-                            children=[
-                                dmc.Group(
-                                    gap="xs",
-                                    className="dashmat-welcome-section-header",
-                                    children=[
-                                        dmc.ThemeIcon(
-                                            DashIconify(icon="tabler:database"),
-                                            size="md",
-                                            radius="xl",
-                                            variant="light",
-                                            color="indigo",
-                                        ),
-                                        dmc.Stack(
-                                            gap=0,
-                                            children=[
-                                                dmc.Text(
-                                                    "Load from Database: Index Data",
-                                                    className="dashmat-welcome-section-title",
-                                                ),
-                                                dmc.Text(
-                                                    "Import AA Tool market indices",
-                                                    className="dashmat-welcome-section-subtitle",
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                                dmc.Stack(
-                                    gap="xs",
-                                    className="dashmat-welcome-section-actions",
-                                    children=[
-                                        dmc.Button(
-                                            "AA Tool indices",
-                                            leftSection=DashIconify(icon="tabler:database"),
-                                            variant="outline",
-                                            size="sm",
-                                            fullWidth=True,
-                                            id="po-welcome-add-db-btn",
-                                        ),
-                                    ],
-                                ),
-                            ],
-                        ),
-                    ),
-                    dmc.Paper(
-                        withBorder=True,
-                        radius="md",
-                        p="md",
-                        className="dashmat-welcome-section-card",
-                        children=dmc.Stack(
-                            gap="sm",
-                            children=[
-                                dmc.Group(
-                                    gap="xs",
-                                    className="dashmat-welcome-section-header",
-                                    children=[
-                                        dmc.ThemeIcon(
-                                            DashIconify(icon="tabler:briefcase"),
-                                            size="md",
-                                            radius="xl",
-                                            variant="light",
-                                            color="blue",
-                                        ),
-                                        dmc.Stack(
-                                            gap=0,
-                                            children=[
-                                                dmc.Text(
-                                                    "Load from Database: Portfolio Data",
-                                                    className="dashmat-welcome-section-title",
-                                                ),
-                                                dmc.Text(
-                                                    "Import relative portfolio return streams",
-                                                    className="dashmat-welcome-section-subtitle",
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                                dmc.Stack(
-                                    gap="xs",
-                                    className="dashmat-welcome-section-actions",
-                                    children=[
-                                        dmc.Button(
-                                            "Peer-relative",
-                                            leftSection=DashIconify(icon="tabler:users"),
-                                            variant="outline",
-                                            size="sm",
-                                            fullWidth=True,
-                                            id="po-welcome-add-portfolios-peer-btn",
-                                        ),
-                                        dmc.Button(
-                                            "Index-relative",
-                                            leftSection=DashIconify(icon="tabler:chart-line"),
-                                            variant="outline",
-                                            size="sm",
-                                            fullWidth=True,
-                                            id="po-welcome-add-portfolios-index-btn",
-                                        ),
-                                        dmc.Button(
-                                            "Alternatives",
-                                            leftSection=DashIconify(icon="tabler:stack"),
-                                            variant="outline",
-                                            size="sm",
-                                            fullWidth=True,
-                                            id="po-welcome-add-portfolios-other-btn",
-                                        ),
-                                    ],
-                                ),
-                            ],
-                        ),
-                    ),
-                    dmc.Paper(
-                        withBorder=True,
-                        radius="md",
-                        p="md",
-                        className="dashmat-welcome-section-card",
-                        children=dmc.Stack(
-                            gap="sm",
-                            children=[
-                                dmc.Group(
-                                    gap="xs",
-                                    className="dashmat-welcome-section-header",
-                                    children=[
-                                        dmc.ThemeIcon(
-                                            DashIconify(icon="tabler:file-import"),
-                                            size="md",
-                                            radius="xl",
-                                            variant="light",
-                                            color="teal",
-                                        ),
-                                        dmc.Stack(
-                                            gap=0,
-                                            children=[
-                                                dmc.Text(
-                                                    "Load from File",
-                                                    className="dashmat-welcome-section-title",
-                                                ),
-                                                dmc.Text(
-                                                    "Upload returns or use sample files",
-                                                    className="dashmat-welcome-section-subtitle",
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                                dmc.Stack(
-                                    gap="xs",
-                                    className="dashmat-welcome-section-actions",
-                                    children=[
-                                        dmc.Button(
-                                            "Add series from file",
-                                            leftSection=DashIconify(icon="tabler:upload"),
-                                            variant="outline",
-                                            size="sm",
-                                            fullWidth=True,
-                                            id="po-welcome-add-series-btn",
-                                        ),
-                                        dmc.Button(
-                                            "Sample daily file",
-                                            leftSection=DashIconify(icon="tabler:download"),
-                                            id="po-download-sample-daily-btn",
-                                            size="sm",
-                                            variant="light",
-                                            fullWidth=True,
-                                        ),
-                                        dmc.Button(
-                                            "Sample monthly file",
-                                            leftSection=DashIconify(icon="tabler:download"),
-                                            id="po-download-sample-monthly-btn",
-                                            size="sm",
-                                            variant="light",
-                                            fullWidth=True,
-                                        ),
-                                    ],
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
-            ),
-        ],
-    )
+    return build_shared_welcome_screen(PO_WELCOME_MODAL_CONFIG)
 
 
 def build_po_main_layout():
@@ -2629,88 +2434,9 @@ layout = dmc.Container(
             style={"display": "none"},
         ),
 
-        # Series selection modal
-        dmc.Modal(
-            id="po-series-selection-modal",
-            title=dmc.Group(
-                gap="xs",
-                children=[
-                    dmc.ThemeIcon(DashIconify(icon="tabler:list-check"), color="blue", variant="light", size="sm"),
-                    dmc.Text("Select Series", fw=600, size="sm"),
-                ],
-            ),
-            size="84vw",
-            styles={"content": {"maxWidth": "1450px"}},
-            centered=True,
-            closeOnEscape=False,
-            radius="lg",
-            transitionProps={"transition": "fade", "duration": 200},
-            className='series-modal-dark dashmat-modal',
-            overlayProps={"blur": 2, "opacity": 0.45},
-            children=[
-                dmc.Alert(
-                    id="po-alert-message",
-                    title="Info",
-                    color="blue",
-                    hide=True,
-                    mb="md",
-                    withCloseButton=True,
-                ),
-                html.Div(
-                    id="po-series-selection-container",
-                    children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
-                    style={"maxHeight": "50vh"},
-                ),
-                dmc.Group(
-                    mt="md",
-                    justify="flex-end",
-                    children=[
-                        dmc.Button("Cancel", id="po-modal-cancel-button", variant="outline", color="red"),
-                        dmc.Button("OK", id="po-modal-ok-button", color="blue"),
-                    ],
-                ),
-            ],
-        ),
+        build_series_selection_modal(PO_WELCOME_MODAL_CONFIG),
 
-        # Sheet Selection Modal (for multi-tab Excel files)
-        dmc.Modal(
-            id="po-sheet-select-modal",
-            title=dmc.Group(
-                gap="xs",
-                children=[
-                    dmc.ThemeIcon(DashIconify(icon="tabler:table"), color="teal", variant="light", size="sm"),
-                    dmc.Text("Select Sheets", fw=600, size="sm"),
-                ],
-            ),
-            size="lg",
-            centered=True,
-            closeOnClickOutside=False,
-            radius="lg",
-            className="dashmat-modal",
-            overlayProps={"blur": 2, "opacity": 0.45},
-            transitionProps={"transition": "fade", "duration": 180},
-            children=[
-                dmc.Text("This file contains multiple sheets. Select one or more sheets to import:", size="sm", mb="md"),
-                dmc.MultiSelect(
-                    id="po-sheet-select-dropdown",
-                    data=[],
-                    value=[],
-                    w="100%",
-                    size="sm",
-                    placeholder="Select sheet(s)",
-                ),
-                dmc.Group(
-                    mt="md",
-                    justify="flex-end",
-                    style={"flexWrap": "nowrap"},
-                    children=[
-                        dmc.Button("Cancel", id="po-sheet-select-cancel-button", variant="outline", color="red"),
-                        dmc.Button("Import All Sheets", id="po-sheet-select-import-all-button", variant="light"),
-                        dmc.Button("Import Selected", id="po-sheet-select-ok-button", color="blue"),
-                    ],
-                ),
-            ],
-        ),
+        build_sheet_select_modal("po"),
 
         # Optimization status modal (progress → completion in one modal)
         dmc.Modal(
@@ -2755,191 +2481,8 @@ layout = dmc.Container(
             ],
         ),
 
-        # Add-from-database modal
-        dmc.Modal(
-            id="po-db-add-modal",
-            title=dmc.Group(
-                gap="xs",
-                children=[
-                    dmc.ThemeIcon(DashIconify(icon="tabler:database"), color="indigo", variant="light", size="sm"),
-                    dmc.Text("AA Tool indices", fw=600, size="sm"),
-                ],
-            ),
-            size="md",
-            centered=True,
-            closeOnClickOutside=True,
-            withCloseButton=True,
-            radius="lg",
-            className="dashmat-modal",
-            overlayProps={"blur": 2, "opacity": 0.45},
-            transitionProps={"transition": "fade", "duration": 180},
-            children=[
-                dmc.Alert(
-                    id="po-db-add-error-alert",
-                    title="Cannot add series",
-                    color="red",
-                    hide=True,
-                    mb="sm",
-                ),
-                dmc.MultiSelect(
-                    id="po-db-add-series-select",
-                    label="Select Series",
-                    data=[],
-                    value=[],
-                    searchable=True,
-                    clearSearchOnChange=False,
-                    placeholder="Select one or more series",
-                    nothingFoundMessage="No categories found",
-                    w="100%",
-                ),
-                dmc.Group(
-                    mt="md",
-                    justify="flex-end",
-                    children=[
-                        dmc.Button("Cancel", id="po-db-add-cancel-button", variant="outline", color="red"),
-                        dmc.Button("OK", id="po-db-add-ok-button", color="blue", disabled=True),
-                    ],
-                ),
-            ],
-        ),
-
-        # Add portfolios (peer/index/other) modal
-        dmc.Modal(
-            id="po-portfolio-add-modal",
-            title=dmc.Group(
-                gap="xs",
-                children=[
-                    dmc.ThemeIcon(DashIconify(icon="tabler:briefcase"), color="indigo", variant="light", size="sm"),
-                    dmc.Text("Add portfolios", fw=600, size="sm"),
-                ],
-            ),
-            size="860px",
-            centered=True,
-            closeOnClickOutside=True,
-            withCloseButton=True,
-            radius="lg",
-            className="dashmat-modal",
-            overlayProps={"blur": 2, "opacity": 0.45},
-            transitionProps={"transition": "fade", "duration": 180},
-            children=[
-                dmc.Alert(
-                    id="po-portfolio-add-error-alert",
-                    title="Cannot stage import",
-                    color="red",
-                    hide=True,
-                    mb="sm",
-                ),
-                dmc.Stack(
-                    gap="sm",
-                    children=[
-                        dmc.Select(
-                            id="po-portfolio-add-series-select",
-                            label="Series",
-                            data=[],
-                            value=None,
-                            searchable=True,
-                            clearable=True,
-                            nothingFoundMessage="No portfolios found",
-                        ),
-                        dmc.Group(
-                            gap="sm",
-                            children=[
-                                dmc.Select(
-                                    id="po-portfolio-add-type-select",
-                                    label="Type",
-                                    data=[],
-                                    value=None,
-                                    clearable=False,
-                                    searchable=True,
-                                    w=220,
-                                ),
-                                dmc.Checkbox(
-                                    id="po-portfolio-add-include-benchmark",
-                                    label="Include Benchmark",
-                                    checked=False,
-                                    disabled=True,
-                                    mt=24,
-                                ),
-                                dmc.Select(
-                                    id="po-portfolio-add-benchmark-type-select",
-                                    label="Benchmark Type",
-                                    data=[],
-                                    value=None,
-                                    clearable=False,
-                                    searchable=True,
-                                    w=220,
-                                    disabled=True,
-                                ),
-                            ],
-                        ),
-                        dmc.Group(
-                            gap="xs",
-                            children=[
-                                dmc.Button(
-                                    "Add Series",
-                                    id="po-portfolio-add-row-btn",
-                                    variant="outline",
-                                    size="xs",
-                                    leftSection=DashIconify(icon="tabler:plus"),
-                                ),
-                                dmc.Button(
-                                    "Delete One",
-                                    id="po-portfolio-delete-row-btn",
-                                    variant="outline",
-                                    size="xs",
-                                    color="red",
-                                    leftSection=DashIconify(icon="tabler:row-remove"),
-                                ),
-                                dmc.Button(
-                                    "Clear All",
-                                    id="po-portfolio-clear-rows-btn",
-                                    variant="outline",
-                                    size="xs",
-                                    color="red",
-                                    leftSection=DashIconify(icon="tabler:trash"),
-                                ),
-                            ],
-                        ),
-                        dag.AgGrid(
-                            id="po-portfolio-add-grid",
-                            className="ag-theme-alpine",
-                            enableEnterpriseModules=True,
-                            licenseKey=AG_GRID_LICENSE_KEY,
-                            columnDefs=[
-                                {"field": "Portfolio", "headerName": "Portfolio", "width": 220, "headerClass": "dashmat-center-header"},
-                                {"field": "Type", "headerName": "Type", "width": 160, "headerClass": "dashmat-center-header"},
-                                {"field": "Include Benchmark", "headerName": "Include Benchmark", "width": 180, "headerClass": "dashmat-center-header"},
-                                {"field": "Benchmark Type", "headerName": "Benchmark Type", "width": 180, "headerClass": "dashmat-center-header"},
-                            ],
-                            rowData=[],
-                            defaultColDef={
-                                "resizable": True,
-                                "sortable": False,
-                                "suppressHeaderMenuButton": True,
-                                "cellStyle": {"textAlign": "center"},
-                                "headerClass": "dashmat-center-header",
-                            },
-                            style={"height": "230px"},
-                            dashGridOptions={
-                                "rowSelection": "single",
-                                "suppressRowClickSelection": False,
-                                "animateRows": True,
-                                "suppressExcelExport": True,
-                                "suppressCsvExport": True,
-                            },
-                        ),
-                        dmc.Group(
-                            mt="sm",
-                            justify="flex-end",
-                            children=[
-                                dmc.Button("Cancel", id="po-portfolio-add-cancel-button", variant="outline", color="red"),
-                                dmc.Button("OK", id="po-portfolio-add-ok-button", color="blue", disabled=True),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        ),
+        build_db_add_modal("po"),
+        build_portfolio_add_modal("po", AG_GRID_LICENSE_KEY),
 
         # CMA Load Modal
         dmc.Modal(
@@ -3533,10 +3076,7 @@ def po_clear_server_cache(n_clicks):
     prevent_initial_call=True,
 )
 def po_open_db_add_modal(menu_clicks, welcome_clicks):
-    if not menu_clicks and not welcome_clicks:
-        raise PreventUpdate
-    options = get_core_category_options_cached(DB_ENGINE)
-    return True, options, []
+    return compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
 
 
 @callback(
@@ -3546,9 +3086,7 @@ def po_open_db_add_modal(menu_clicks, welcome_clicks):
     prevent_initial_call=True,
 )
 def po_close_db_add_modal(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    return False, []
+    return compute_close_db_add_modal(n_clicks)
 
 
 @callback(
@@ -3561,16 +3099,7 @@ def po_close_db_add_modal(n_clicks):
     prevent_initial_call=True,
 )
 def po_validate_db_add_selection(selected_benches, raw_data, opened):
-    if not opened:
-        raise PreventUpdate
-
-    if not selected_benches:
-        return no_update, True, True
-
-    duplicates = find_duplicate_series(selected_benches, raw_data)
-    if duplicates:
-        return f"Cannot add duplicate series: {', '.join(duplicates)}", False, True
-    return no_update, True, False
+    return compute_validate_db_add_selection(selected_benches, raw_data, opened)
 
 
 @callback(
@@ -3604,49 +3133,16 @@ def po_open_portfolio_add_modal(
     welcome_index_clicks,
     welcome_other_clicks,
 ):
-    if (
-        not peer_clicks
-        and not index_clicks
-        and not other_clicks
-        and not welcome_peer_clicks
-        and not welcome_index_clicks
-        and not welcome_other_clicks
-    ):
-        raise PreventUpdate
-
-    triggered_id = callback_context.triggered_id
-    if triggered_id in {"po-menu-add-portfolios-index", "po-welcome-add-portfolios-index-btn"}:
-        mode = "index"
-    elif triggered_id in {"po-menu-add-portfolios-other", "po-welcome-add-portfolios-other-btn"}:
-        mode = "other"
-    else:
-        mode = "peer"
-    mode_title_map = {
-        "peer": "Add peer-relative portfolios",
-        "index": "Add index-relative portfolios",
-        "other": "Add alternative portfolios",
-    }
-    modal_title = mode_title_map.get(mode, "Add peer-relative portfolios")
-    series_options = get_portfolio_options(DB_ENGINE, mode)
-    type_options, bm_type_options = _portfolio_type_options(mode)
-    type_value = type_options[0]["value"] if type_options else None
-    bm_value = bm_type_options[0]["value"] if bm_type_options else None
-
-    return (
-        True,
-        modal_title,
-        mode,
-        series_options,
-        None,
-        type_options,
-        type_value,
-        bm_type_options,
-        bm_value,
-        False,
-        True,
-        [],
-        [],
-        True,
+    return compute_open_portfolio_add_modal(
+        prefix="po",
+        triggered_id=callback_context.triggered_id,
+        peer_clicks=peer_clicks,
+        index_clicks=index_clicks,
+        other_clicks=other_clicks,
+        welcome_peer_clicks=welcome_peer_clicks,
+        welcome_index_clicks=welcome_index_clicks,
+        welcome_other_clicks=welcome_other_clicks,
+        db_engine=DB_ENGINE,
     )
 
 
@@ -3659,29 +3155,11 @@ def po_open_portfolio_add_modal(
     prevent_initial_call=True,
 )
 def po_sync_include_benchmark_enabled(mode, selected_portfolio, current_checked):
-    if mode not in {"peer", "index", "other"} or not selected_portfolio:
-        return True, False
-    has_bm = has_portfolio_benchmark(DB_ENGINE, mode, selected_portfolio)
-    if not has_bm:
-        return True, False
-    return False, bool(current_checked)
+    return compute_sync_include_benchmark_enabled(mode, selected_portfolio, current_checked, DB_ENGINE)
 
 
 clientside_callback(
-    """
-    function(checked, options, currentValue) {
-        if (!checked) {
-            return [true, null];
-        }
-        var values = (options || [])
-            .filter(function(opt) { return opt && opt.value !== null && opt.value !== undefined; })
-            .map(function(opt) { return opt.value; });
-        if (values.indexOf(currentValue) >= 0) {
-            return [false, currentValue];
-        }
-        return [false, values.length ? values[0] : null];
-    }
-    """,
+    js_portfolio_benchmark_toggle(),
     Output("po-portfolio-add-benchmark-type-select", "disabled", allow_duplicate=True),
     Output("po-portfolio-add-benchmark-type-select", "value", allow_duplicate=True),
     Input("po-portfolio-add-include-benchmark", "checked"),
@@ -3692,61 +3170,7 @@ clientside_callback(
 
 
 clientside_callback(
-    """
-    function(nAdd, stagedRows, selectedPortfolio, selectedType, includeBenchmark, benchmarkType) {
-        var noUpdate = window.dash_clientside.no_update;
-        if (!nAdd) {
-            return [noUpdate, noUpdate, noUpdate, noUpdate];
-        }
-
-        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
-        var portfolio = String(selectedPortfolio || "").trim();
-        var retType = String(selectedType || "").trim();
-        var bmType = String(benchmarkType || "").trim();
-        var includeBm = !!includeBenchmark;
-
-        if (!portfolio) {
-            return [rows, rows, "Select a portfolio series.", false];
-        }
-        if (!retType) {
-            return [rows, rows, "Select a portfolio type.", false];
-        }
-        if (includeBm && !bmType) {
-            return [rows, rows, "Select a benchmark type when benchmark is included.", false];
-        }
-
-        var exists = rows.some(function(r) {
-            var key = "";
-            var existingType = "";
-            if (r && r.portfolio !== undefined && r.portfolio !== null) {
-                key = String(r.portfolio).trim();
-            } else if (r && r.Portfolio !== undefined && r.Portfolio !== null) {
-                key = String(r.Portfolio).trim();
-            }
-            if (r && r.type !== undefined && r.type !== null) {
-                existingType = String(r.type).trim();
-            } else if (r && r.Type !== undefined && r.Type !== null) {
-                existingType = String(r.Type).trim();
-            }
-            return key === portfolio && existingType === retType;
-        });
-        if (exists) {
-            return [rows, rows, "Portfolio `" + portfolio + "` with type `" + retType + "` is already staged.", false];
-        }
-
-        rows.push({
-            "Portfolio": portfolio,
-            "Type": retType,
-            "Include Benchmark": includeBm ? "Yes" : "No",
-            "Benchmark Type": includeBm ? bmType : "",
-            "portfolio": portfolio,
-            "type": retType,
-            "include_benchmark": includeBm,
-            "benchmark_type": includeBm ? bmType : ""
-        });
-        return [rows, rows, noUpdate, true];
-    }
-    """,
+    js_portfolio_add_row(),
     Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "children", allow_duplicate=True),
@@ -3761,23 +3185,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(nDelete, stagedRows, selectedRows) {
-        var noUpdate = window.dash_clientside.no_update;
-        if (!nDelete) {
-            return [noUpdate, noUpdate, noUpdate, noUpdate];
-        }
-        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
-        if (!selectedRows || !selectedRows.length) {
-            return [rows, rows, "Select one staged row to delete.", false];
-        }
-        var selectedKey = String((selectedRows[0] || {}).Portfolio || "").trim();
-        var kept = rows.filter(function(r) {
-            return String((r && r.Portfolio) || "").trim() !== selectedKey;
-        });
-        return [kept, kept, noUpdate, true];
-    }
-    """,
+    js_portfolio_delete_row(),
     Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "children", allow_duplicate=True),
@@ -3789,15 +3197,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(nClear) {
-        var noUpdate = window.dash_clientside.no_update;
-        if (!nClear) {
-            return [noUpdate, noUpdate, noUpdate, noUpdate];
-        }
-        return [[], [], noUpdate, true];
-    }
-    """,
+    js_portfolio_clear_rows(),
     Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "children", allow_duplicate=True),
@@ -3815,48 +3215,25 @@ clientside_callback(
     prevent_initial_call=True,
 )
 def po_close_portfolio_add_modal(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    return False, [], []
+    return compute_close_portfolio_add_modal(n_clicks)
 
 
 clientside_callback(
-    """
-    function(rows, opened) {
-        if (!opened) {
-            return true;
-        }
-        return !(rows && rows.length);
-    }
-    """,
+    js_portfolio_ok_disabled(),
     Output("po-portfolio-add-ok-button", "disabled"),
     Input("po-portfolio-add-rows-store", "data"),
     Input("po-portfolio-add-modal", "opened"),
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            return true;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    js_set_ui_blocker_true(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-portfolio-add-ok-button", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    """
-    function(opened, errorHidden) {
-        if (opened === false || errorHidden === false) {
-            return false;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    js_release_ui_blocker_on_modal_state(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-portfolio-add-modal", "opened"),
     Input("po-portfolio-add-error-alert", "hide"),
@@ -3865,33 +3242,7 @@ clientside_callback(
 
 # Trigger upload from menu
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            setTimeout(function() {
-                var uploadDiv = document.getElementById('po-upload-data');
-                if (uploadDiv) {
-                    var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) {
-                        // Listen for window focus to detect cancel
-                        var onFocus = function() {
-                            window.removeEventListener('focus', onFocus);
-                            setTimeout(function() {
-                                if (!input.files || input.files.length === 0) {
-                                    window.dash_clientside.set_props('po-ui-blocker-store', {data: false});
-                                }
-                            }, 500);
-                        };
-                        window.addEventListener('focus', onFocus);
-                        input.click();
-                    }
-                }
-            }, 100);
-            return true;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    js_trigger_upload_with_cancel("po"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-series", "n_clicks"),
     prevent_initial_call=True,
@@ -3899,32 +3250,7 @@ clientside_callback(
 
 # Trigger upload from welcome button
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            setTimeout(function() {
-                var uploadDiv = document.getElementById('po-upload-data');
-                if (uploadDiv) {
-                    var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) {
-                        var onFocus = function() {
-                            window.removeEventListener('focus', onFocus);
-                            setTimeout(function() {
-                                if (!input.files || input.files.length === 0) {
-                                    window.dash_clientside.set_props('po-ui-blocker-store', {data: false});
-                                }
-                            }, 500);
-                        };
-                        window.addEventListener('focus', onFocus);
-                        input.click();
-                    }
-                }
-            }, 100);
-            return true;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    js_trigger_upload_with_cancel("po"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
