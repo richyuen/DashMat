@@ -748,13 +748,13 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                     dmc.Stack(
                         gap=4,
                         children=[
-                            dmc.Text("Preview (first 10 rows)", fw=500, size="sm"),
+                            dmc.Text("Preview (first 6 rows, using selected options)", fw=500, size="sm"),
                             dmc.ScrollArea(
                                 h=140,
                                 offsetScrollbars=True,
                                 children=html.Pre(
                                     id=_sid(prefix, "raw-db-preview-lines"),
-                                    children="Add a staged row to preview raw values.",
+                                    children="Select a series to preview option-adjusted results (first 6 rows).",
                                     style={
                                         "margin": 0,
                                         "padding": "8px 10px",
@@ -947,7 +947,7 @@ def compute_open_raw_db_add_modal(
         True,
         [],
         [],
-        "Add a staged row to preview raw values.",
+        "Select a series to preview option-adjusted results (first 6 rows).",
         True,
     )
 
@@ -955,7 +955,7 @@ def compute_open_raw_db_add_modal(
 def compute_close_raw_db_add_modal(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return False, [], [], "Add a staged row to preview raw values."
+    return False, [], [], "Select a series to preview option-adjusted results (first 6 rows)."
 
 
 def js_trigger_upload_with_cancel(prefix: str) -> str:

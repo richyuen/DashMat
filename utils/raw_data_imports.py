@@ -22,6 +22,8 @@ FACTOR_RETURN_DEFAULTS = {
     "GRLocal",
     "PRLocal",
 }
+RAW_PREVIEW_ROWS = 6
+FACTOR_PREVIEW_BASE_ROWS = RAW_PREVIEW_ROWS + 1
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,48 @@ def _format_value(value) -> str:
 
 def factor_defaults_to_returns(factor_name: str | None) -> bool:
     return str(factor_name or "").strip() in FACTOR_RETURN_DEFAULTS
+
+
+def _top_n_query(engine: Engine, base_sql: str, order_sql: str, top_n: int) -> str:
+    if engine.dialect.name == "sqlite":
+        return f"{base_sql} {order_sql} LIMIT {int(top_n)}"
+    return f"{base_sql.replace('SELECT', f'SELECT TOP {int(top_n)}', 1)} {order_sql}"
+
+
+def build_preview_row_from_controls(
+    mode: str | None,
+    series_key: str | None,
+    table_choice: str | None,
+    fee_choice: str | None,
+    include_benchmark: bool | None,
+    convert_to_returns: bool | None,
+    divide_by: float | int | str | None,
+) -> dict | None:
+    mode_key = str(mode or "").strip().lower()
+    key = str(series_key or "").strip()
+    if mode_key not in {"factor", "funds", "performance"} or not key:
+        return None
+
+    row: dict[str, object] = {"mode": mode_key, "series_key": key}
+    if mode_key == "factor":
+        convert = bool(convert_to_returns)
+        row["convert_to_returns"] = convert
+        if convert:
+            row["divide_by"] = 100.0
+        else:
+            div = pd.to_numeric(pd.Series([divide_by]), errors="coerce").iloc[0]
+            row["divide_by"] = float(div) if not pd.isna(div) else divide_by
+        return row
+
+    if mode_key == "funds":
+        row["table_choice"] = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
+        row["fee_choice"] = "net" if str(fee_choice or "").lower().startswith("n") else "gross"
+        return row
+
+    row["table_choice"] = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
+    row["fee_choice"] = "N" if str(fee_choice or "").upper().startswith("N") else "G"
+    row["include_benchmark"] = bool(include_benchmark)
+    return row
 
 
 def _get_factor_option_rows(mrd_engine: Engine) -> list[dict]:
@@ -207,38 +251,65 @@ def get_performance_options_cached(perf_engine: Engine) -> list[dict]:
     return [{"value": key, "label": str(row["label"])} for key, row in ordered]
 
 
-def _top_n_query(engine: Engine, base_sql: str, order_sql: str, top_n: int = 10) -> str:
-    if engine.dialect.name == "sqlite":
-        return f"{base_sql} {order_sql} LIMIT {int(top_n)}"
-    return f"{base_sql.replace('SELECT', f'SELECT TOP {int(top_n)}', 1)} {order_sql}"
+def _series_to_preview_lines(
+    series: pd.Series,
+    benchmark_series: pd.Series | None = None,
+) -> list[str]:
+    if series is None or series.empty:
+        return []
+
+    s = series.copy()
+    s.index = pd.to_datetime(s.index, errors="coerce")
+    s = s.loc[~pd.isna(s.index)]
+    s = s[~s.index.duplicated(keep="last")].sort_index().dropna()
+    if s.empty:
+        return []
+    s = s.iloc[:RAW_PREVIEW_ROWS]
+
+    bm = None
+    if benchmark_series is not None:
+        bm = benchmark_series.copy()
+        bm.index = pd.to_datetime(bm.index, errors="coerce")
+        bm = bm.loc[~pd.isna(bm.index)]
+        bm = bm[~bm.index.duplicated(keep="last")].sort_index()
+        bm = bm.reindex(s.index)
+
+    lines: list[str] = []
+    for dt, value in s.items():
+        dt_str = dt.strftime("%Y-%m-%d")
+        val = _format_value(value)
+        if bm is None:
+            lines.append(f"{dt_str}:{val}")
+        else:
+            lines.append(f"{dt_str}:{val}|{_format_value(bm.loc[dt])}")
+    return lines
 
 
 @cache_config.cache.memoize(timeout=0)
-def get_factor_preview_lines_cached(mrd_engine: Engine, acct_id: str) -> list[str]:
+def _load_factor_preview_points_cached(mrd_engine: Engine, acct_id: int) -> pd.DataFrame:
     factor_table = _mrd_table_name(mrd_engine, "ACCOUNT_FACTOR_DATA")
     sql = _top_n_query(
         mrd_engine,
         f"SELECT REFERENCE_DATE, FACTOR_VALUE FROM {factor_table} WHERE ACCT_ID = :acct_id",
         "ORDER BY REFERENCE_DATE",
-        10,
+        FACTOR_PREVIEW_BASE_ROWS,
     )
     with mrd_engine.connect() as conn:
         rows = conn.execute(text(sql), {"acct_id": int(acct_id)}).fetchall()
-    lines: list[str] = []
-    for ref_date, factor_value in rows:
-        dt = pd.to_datetime(ref_date, errors="coerce")
-        dt_str = dt.strftime("%Y-%m-%d") if not pd.isna(dt) else str(ref_date)
-        lines.append(f"{dt_str}:{_format_value(factor_value)}")
-    return lines
+    if not rows:
+        return pd.DataFrame(columns=["REFERENCE_DATE", "FACTOR_VALUE"])
+    df = pd.DataFrame(rows, columns=["REFERENCE_DATE", "FACTOR_VALUE"])
+    df["REFERENCE_DATE"] = pd.to_datetime(df["REFERENCE_DATE"], errors="coerce")
+    df["FACTOR_VALUE"] = pd.to_numeric(df["FACTOR_VALUE"], errors="coerce")
+    return df.dropna(subset=["REFERENCE_DATE"]).sort_values("REFERENCE_DATE")
 
 
 @cache_config.cache.memoize(timeout=0)
-def get_fund_preview_lines_cached(
+def _load_fund_preview_points_cached(
     mrd_engine: Engine,
-    acct_id: str,
+    acct_id: int,
     table_choice: str,
-    fee_choice: str,
-) -> list[str]:
+) -> pd.DataFrame:
     table_name = "ACCOUNT_RETURNS" if str(table_choice).lower() == "daily" else "ACCOUNT_RETURNS_M"
     returns_table = _mrd_table_name(mrd_engine, table_name)
     sql = _top_n_query(
@@ -247,36 +318,35 @@ def get_fund_preview_lines_cached(
         f"FROM {returns_table} "
         "WHERE ACCT_ID = :acct_id AND SOURCE_SYSTEM = 'MSTAR'",
         "ORDER BY REFERENCE_DATE",
-        10,
+        RAW_PREVIEW_ROWS,
     )
     with mrd_engine.connect() as conn:
         rows = conn.execute(text(sql), {"acct_id": int(acct_id)}).fetchall()
-    value_key = "gross" if str(fee_choice).lower().startswith("g") else "net"
-    lines: list[str] = []
-    for ref_date, gross, net in rows:
-        dt = pd.to_datetime(ref_date, errors="coerce")
-        dt_str = dt.strftime("%Y-%m-%d") if not pd.isna(dt) else str(ref_date)
-        value = gross if value_key == "gross" else net
-        lines.append(f"{dt_str}:{_format_value(value)}")
-    return lines
+    if not rows:
+        return pd.DataFrame(columns=["REFERENCE_DATE", "GROSS", "NET"])
+    df = pd.DataFrame(rows, columns=["REFERENCE_DATE", "GROSS", "NET"])
+    df["REFERENCE_DATE"] = pd.to_datetime(df["REFERENCE_DATE"], errors="coerce")
+    df["GROSS"] = pd.to_numeric(df["GROSS"], errors="coerce")
+    df["NET"] = pd.to_numeric(df["NET"], errors="coerce")
+    return df.dropna(subset=["REFERENCE_DATE"]).sort_values("REFERENCE_DATE")
 
 
 @cache_config.cache.memoize(timeout=0)
-def get_performance_preview_lines_cached(
+def _load_performance_preview_points_cached(
     perf_engine: Engine,
-    acct_id: str,
+    acct_id: int,
     table_choice: str,
     fee_choice: str,
-    include_benchmark: bool,
-) -> list[str]:
-    table_lower = str(table_choice).lower()
+) -> pd.DataFrame:
     fee_type = "G" if str(fee_choice).upper().startswith("G") else "N"
-
     account_benchmark_table = _perf_table_name("ACCOUNT_BENCHMARK")
+    table_lower = str(table_choice).lower()
+
     if table_lower == "monthly":
         returns_table = _perf_table_name("MONTHLY_RETURN")
         base_sql = (
-            f"SELECT dr.Effective_Date, dr.mth1_ror, dr.mth1_ror_index "
+            f"SELECT dr.Effective_Date AS REFERENCE_DATE, "
+            "dr.mth1_ror AS PORT_RET, dr.mth1_ror_index AS BENCH_RET "
             f"FROM {returns_table} dr "
             f"JOIN {account_benchmark_table} ab ON ab.BENCHMARK_ID = dr.BENCHMARK_ACCT_ID "
             "WHERE dr.ACCT_ID = :acct_id "
@@ -288,7 +358,8 @@ def get_performance_preview_lines_cached(
     else:
         returns_table = _perf_table_name("DAILY_RETURN")
         base_sql = (
-            f"SELECT dr.Effective_Date, dr.Daily_ror, dr.Daily_ror_index "
+            f"SELECT dr.Effective_Date AS REFERENCE_DATE, "
+            "dr.Daily_ror AS PORT_RET, dr.Daily_ror_index AS BENCH_RET "
             f"FROM {returns_table} dr "
             f"JOIN {account_benchmark_table} ab ON ab.BENCHMARK_ID = dr.BENCHMARK_ACCT_ID "
             "WHERE dr.ACCT_ID = :acct_id "
@@ -297,24 +368,104 @@ def get_performance_preview_lines_cached(
             "AND ab.PRECEDENCE = 1"
         )
 
-    sql = _top_n_query(perf_engine, base_sql, "ORDER BY dr.Effective_Date", 10)
+    sql = _top_n_query(perf_engine, base_sql, "ORDER BY dr.Effective_Date", RAW_PREVIEW_ROWS)
     with perf_engine.connect() as conn:
-        rows = conn.execute(
-            text(sql),
-            {"acct_id": int(acct_id), "fee_type": fee_type},
-        ).fetchall()
+        rows = conn.execute(text(sql), {"acct_id": int(acct_id), "fee_type": fee_type}).fetchall()
+    if not rows:
+        return pd.DataFrame(columns=["REFERENCE_DATE", "PORT_RET", "BENCH_RET"])
+    df = pd.DataFrame(rows, columns=["REFERENCE_DATE", "PORT_RET", "BENCH_RET"])
+    df["REFERENCE_DATE"] = pd.to_datetime(df["REFERENCE_DATE"], errors="coerce")
+    df["PORT_RET"] = pd.to_numeric(df["PORT_RET"], errors="coerce") / 100.0
+    df["BENCH_RET"] = pd.to_numeric(df["BENCH_RET"], errors="coerce") / 100.0
+    return df.dropna(subset=["REFERENCE_DATE"]).sort_values("REFERENCE_DATE")
 
-    lines: list[str] = []
-    for ref_date, port_ret, bench_ret in rows:
-        dt = pd.to_datetime(ref_date, errors="coerce")
-        dt_str = dt.strftime("%Y-%m-%d") if not pd.isna(dt) else str(ref_date)
-        port_val = _format_value((pd.to_numeric(pd.Series([port_ret]), errors="coerce").iloc[0]) / 100.0)
-        bench_val = _format_value((pd.to_numeric(pd.Series([bench_ret]), errors="coerce").iloc[0]) / 100.0)
-        if include_benchmark:
-            lines.append(f"{dt_str}:{port_val}|{bench_val}")
-        else:
-            lines.append(f"{dt_str}:{port_val}")
-    return lines
+
+@cache_config.cache.memoize(timeout=0)
+def get_factor_preview_lines_cached(
+    mrd_engine: Engine,
+    acct_id: str,
+    convert_to_returns: bool = False,
+    divide_by: float = 100.0,
+) -> list[str]:
+    acct_id_int = int(acct_id)
+    if not bool(convert_to_returns):
+        divide_value = pd.to_numeric(pd.Series([divide_by]), errors="coerce").iloc[0]
+        if pd.isna(divide_value) or float(divide_value) == 0.0:
+            return []
+
+    points = _load_factor_preview_points_cached(mrd_engine, acct_id_int)
+    if points.empty:
+        return []
+
+    series = pd.Series(
+        points["FACTOR_VALUE"].values,
+        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
+        dtype=float,
+    )
+    series = series[~series.index.duplicated(keep="last")].sort_index()
+    if bool(convert_to_returns):
+        series = series.pct_change(fill_method=None).dropna()
+    else:
+        divide_value = pd.to_numeric(pd.Series([divide_by]), errors="coerce").iloc[0]
+        series = (series / float(divide_value)).dropna()
+
+    return _series_to_preview_lines(series)
+
+
+@cache_config.cache.memoize(timeout=0)
+def get_fund_preview_lines_cached(
+    mrd_engine: Engine,
+    acct_id: str,
+    table_choice: str,
+    fee_choice: str,
+) -> list[str]:
+    acct_id_int = int(acct_id)
+    table_key = "monthly" if str(table_choice).lower() == "monthly" else "daily"
+    value_col = "GROSS" if str(fee_choice).lower().startswith("g") else "NET"
+    points = _load_fund_preview_points_cached(mrd_engine, acct_id_int, table_key)
+    if points.empty:
+        return []
+
+    series = pd.Series(
+        points[value_col].values,
+        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
+        dtype=float,
+    )
+    series = series[~series.index.duplicated(keep="last")].sort_index().dropna()
+    return _series_to_preview_lines(series)
+
+
+@cache_config.cache.memoize(timeout=0)
+def get_performance_preview_lines_cached(
+    perf_engine: Engine,
+    acct_id: str,
+    table_choice: str,
+    fee_choice: str,
+    include_benchmark: bool,
+) -> list[str]:
+    acct_id_int = int(acct_id)
+    table_key = "monthly" if str(table_choice).lower() == "monthly" else "daily"
+    fee_key = "G" if str(fee_choice).upper().startswith("G") else "N"
+    points = _load_performance_preview_points_cached(perf_engine, acct_id_int, table_key, fee_key)
+    if points.empty:
+        return []
+
+    port_series = pd.Series(
+        points["PORT_RET"].values,
+        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
+        dtype=float,
+    )
+    port_series = port_series[~port_series.index.duplicated(keep="last")].sort_index().dropna()
+    if not bool(include_benchmark):
+        return _series_to_preview_lines(port_series)
+
+    bench_series = pd.Series(
+        points["BENCH_RET"].values,
+        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
+        dtype=float,
+    )
+    bench_series = bench_series[~bench_series.index.duplicated(keep="last")].sort_index()
+    return _series_to_preview_lines(port_series, bench_series)
 
 
 def get_preview_lines_for_row(
@@ -328,7 +479,16 @@ def get_preview_lines_for_row(
         return []
 
     if mode == "factor":
-        return get_factor_preview_lines_cached(mrd_engine, series_key)
+        convert_to_returns = bool((row or {}).get("convert_to_returns", False))
+        divide_by = 100.0
+        if not convert_to_returns:
+            divide_by = pd.to_numeric(pd.Series([(row or {}).get("divide_by", 100)]), errors="coerce").iloc[0]
+        return get_factor_preview_lines_cached(
+            mrd_engine,
+            series_key,
+            convert_to_returns,
+            divide_by,
+        )
     if mode == "funds":
         return get_fund_preview_lines_cached(
             mrd_engine,

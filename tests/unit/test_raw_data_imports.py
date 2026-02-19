@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import create_engine, text
 
 from utils.raw_data_imports import (
+    build_preview_row_from_controls,
     factor_defaults_to_returns,
     get_factor_options_cached,
     get_factor_preview_lines_cached,
@@ -76,11 +77,11 @@ def _seed_mrd_engine():
             )
         )
 
-        factor_dates = [date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 3)]
-        factor_values_1 = [100.0, 101.0, 103.0]
-        factor_values_2 = [5.0, 5.2, 5.4]
-        factor_values_3 = [50.0, 52.0, 54.0]
-        for dt, v1, v2, v3 in zip(factor_dates, factor_values_1, factor_values_2, factor_values_3):
+        factor_dates = [date(2020, 1, 1) + timedelta(days=i) for i in range(8)]
+        for i, dt in enumerate(factor_dates):
+            v1 = 100.0 + i
+            v2 = 5.0 + (i * 0.2)
+            v3 = 50.0 + (i * 2.0)
             conn.execute(
                 text(
                     "INSERT INTO [CORE_DATA.ACCOUNT_FACTOR_DATA] "
@@ -106,7 +107,7 @@ def _seed_mrd_engine():
                 {"acct_id": 3, "dt": dt, "value": v3, "source": "PERF"},
             )
 
-        daily_dates = [date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 3)]
+        daily_dates = [date(2020, 1, 1) + timedelta(days=i) for i in range(8)]
         for dt in daily_dates:
             conn.execute(
                 text(
@@ -212,7 +213,7 @@ def _seed_perf_engine():
             )
         )
 
-        for dt in [date(2020, 1, 1), date(2020, 1, 2)]:
+        for dt in [date(2020, 1, 1) + timedelta(days=i) for i in range(8)]:
             conn.execute(
                 text(
                     "INSERT INTO [DAILY_RETURN] "
@@ -248,6 +249,25 @@ def test_factor_defaults():
     assert factor_defaults_to_returns("Yield") is False
 
 
+def test_build_preview_row_from_controls_normalizes():
+    assert build_preview_row_from_controls("factor", None, None, None, None, True, 100) is None
+
+    factor_row = build_preview_row_from_controls("factor", "1", None, None, None, True, None)
+    assert factor_row == {"mode": "factor", "series_key": "1", "convert_to_returns": True, "divide_by": 100.0}
+
+    funds_row = build_preview_row_from_controls("funds", "10", "monthly", "N", None, None, None)
+    assert funds_row == {"mode": "funds", "series_key": "10", "table_choice": "monthly", "fee_choice": "net"}
+
+    perf_row = build_preview_row_from_controls("performance", "100", "monthly", "n", True, None, None)
+    assert perf_row == {
+        "mode": "performance",
+        "series_key": "100",
+        "table_choice": "monthly",
+        "fee_choice": "N",
+        "include_benchmark": True,
+    }
+
+
 def test_factor_options_preview_and_load():
     mrd = _seed_mrd_engine()
     options = get_factor_options_cached(mrd)
@@ -256,8 +276,13 @@ def test_factor_options_preview_and_load():
     assert "UST10Y_Yield [BB: USGG10YR Index]" in labels
     assert all("PERF_EXCL_TRIndex" not in label for label in labels)
 
-    lines = get_factor_preview_lines_cached(mrd, "1")
-    assert lines[0] == "2020-01-01:100"
+    level_lines = get_factor_preview_lines_cached(mrd, "1", False, 100)
+    return_lines = get_factor_preview_lines_cached(mrd, "1", True, 100)
+    assert len(level_lines) == 6
+    assert len(return_lines) == 6
+    assert level_lines[0] == "2020-01-01:1"
+    assert return_lines[0] == "2020-01-02:0.01"
+    assert get_factor_preview_lines_cached(mrd, "1", False, 0) == []
 
     result = load_factor_series(
         mrd,
@@ -295,6 +320,7 @@ def test_funds_options_preview_and_load():
 
     lines = get_fund_preview_lines_cached(mrd, "10", "daily", "gross")
     assert lines[0] == "2020-01-01:0.01"
+    assert len(lines) == 6
 
     result = load_fund_series(
         mrd,
@@ -329,6 +355,9 @@ def test_performance_options_preview_and_load_filters():
 
     lines = get_performance_preview_lines_cached(perf, "100", "daily", "N", True)
     assert lines[0] == "2020-01-01:0.013|0.01"
+    assert len(lines) == 6
+    no_bm_lines = get_performance_preview_lines_cached(perf, "100", "daily", "N", False)
+    assert no_bm_lines[0] == "2020-01-01:0.013"
 
     daily_result = load_performance_series(
         perf,

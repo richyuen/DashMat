@@ -99,6 +99,7 @@ from dbengine import (
     engine_PERFORMANCE as PERF_ENGINE,
 )
 from utils.raw_data_imports import (
+    build_preview_row_from_controls,
     factor_defaults_to_returns,
     get_factor_option_meta_cached,
     get_fund_option_meta_cached,
@@ -3456,30 +3457,43 @@ clientside_callback(
 
 @callback(
     Output("po-raw-db-preview-lines", "children", allow_duplicate=True),
-    Input("po-raw-db-add-rows-store", "data"),
-    Input("po-raw-db-add-grid", "selectedRows"),
     Input("po-raw-db-add-modal", "opened"),
+    Input("po-raw-db-add-mode-store", "data"),
+    Input("po-raw-db-add-series-select", "value"),
+    Input("po-raw-db-add-table-select", "value"),
+    Input("po-raw-db-add-fee-select", "value"),
+    Input("po-raw-db-add-include-benchmark", "checked"),
+    Input("po-raw-db-add-convert-returns", "checked"),
+    Input("po-raw-db-add-divide-by", "value"),
     prevent_initial_call=True,
 )
-def po_update_raw_db_preview(staged_rows, selected_rows, opened):
+def po_update_raw_db_preview(
+    opened,
+    mode,
+    series_key,
+    table_choice,
+    fee_choice,
+    include_benchmark,
+    convert_to_returns,
+    divide_by,
+):
     if not opened:
         raise PreventUpdate
-    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
-    if not rows:
-        return "Add a staged row to preview raw values."
+    preview_row = build_preview_row_from_controls(
+        mode=mode,
+        series_key=series_key,
+        table_choice=table_choice,
+        fee_choice=fee_choice,
+        include_benchmark=include_benchmark,
+        convert_to_returns=convert_to_returns,
+        divide_by=divide_by,
+    )
+    if not preview_row:
+        return "Select a series to preview option-adjusted results (first 6 rows)."
 
-    target = rows[-1]
-    if selected_rows:
-        selected_id = str((selected_rows[0] or {}).get("row_id", "")).strip()
-        if selected_id:
-            for row in rows:
-                if str(row.get("row_id", "")).strip() == selected_id:
-                    target = row
-                    break
-
-    lines = get_preview_lines_for_row(target, MRD_ENGINE, PERF_ENGINE)
+    lines = get_preview_lines_for_row(preview_row, MRD_ENGINE, PERF_ENGINE)
     if not lines:
-        return "No rows returned for preview."
+        return "No rows returned for the selected options."
     return "\n".join(lines)
 
 
@@ -5512,7 +5526,7 @@ def po_add_raw_series_from_database(
             rows,
             "Stage at least one row before importing.",
             False,
-            "Add a staged row to preview raw values.",
+            "Select a series to preview option-adjusted results (first 6 rows).",
         )
 
     try:
@@ -5597,7 +5611,7 @@ def po_add_raw_series_from_database(
             [],
             no_update,
             True,
-            "Add a staged row to preview raw values.",
+            "Select a series to preview option-adjusted results (first 6 rows).",
         )
     except Exception as e:
         return (
