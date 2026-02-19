@@ -400,6 +400,7 @@ def build_db_add_modal(prefix: str):
                 placeholder="Select one or more series",
                 nothingFoundMessage="No categories found",
                 withScrollArea=False,
+                maxDropdownHeight=320,
                 w="100%",
             ),
             dmc.Group(
@@ -452,6 +453,7 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                         clearable=True,
                         nothingFoundMessage="No portfolios found",
                         withScrollArea=False,
+                        maxDropdownHeight=320,
                     ),
                     dmc.Group(
                         gap="sm",
@@ -464,6 +466,7 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                                 clearable=False,
                                 searchable=True,
                                 withScrollArea=False,
+                                maxDropdownHeight=320,
                                 w=220,
                             ),
                             dmc.Checkbox(
@@ -481,6 +484,7 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                                 clearable=False,
                                 searchable=True,
                                 withScrollArea=False,
+                                maxDropdownHeight=320,
                                 w=220,
                                 disabled=True,
                             ),
@@ -583,6 +587,7 @@ def build_sheet_select_modal(prefix: str):
                 size="sm",
                 placeholder="Select sheet(s)",
                 withScrollArea=False,
+                maxDropdownHeight=320,
             ),
             dmc.Group(
                 mt="md",
@@ -636,6 +641,7 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                         clearable=True,
                         nothingFoundMessage="No series found",
                         withScrollArea=False,
+                        maxDropdownHeight=320,
                     ),
                     dmc.Group(
                         gap="sm",
@@ -651,6 +657,7 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                                 clearable=False,
                                 searchable=False,
                                 withScrollArea=False,
+                                maxDropdownHeight=320,
                                 w=200,
                             ),
                             dmc.Select(
@@ -664,6 +671,7 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                                 clearable=False,
                                 searchable=False,
                                 withScrollArea=False,
+                                maxDropdownHeight=320,
                                 w=200,
                             ),
                             dmc.Checkbox(
