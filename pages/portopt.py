@@ -7673,7 +7673,7 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
-    State("theme-store", "data"),
+    State("mantine-provider", "forceColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme):
@@ -7739,7 +7739,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     Input("po-growth-portfolio-multiselect", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    State("theme-store", "data"),
+    State("mantine-provider", "forceColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
@@ -7795,7 +7795,7 @@ def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("theme-store", "data"),
+    State("mantine-provider", "forceColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value,
@@ -8482,7 +8482,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
-    State("theme-store", "data"),
+    State("mantine-provider", "forceColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
@@ -8645,7 +8645,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
-    State("theme-store", "data"),
+    State("mantine-provider", "forceColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
@@ -8832,7 +8832,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-cmabench-assignments-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-series-select", "data"),
-    State("theme-store", "data"),
+    State("mantine-provider", "forceColorScheme"),
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
