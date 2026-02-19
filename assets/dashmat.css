@@ -85,14 +85,6 @@
     padding: 16px 18px 18px;
 }
 
-/* Native dropdown scrolling inside DashMat modals */
-.dashmat-modal .mantine-Combobox-dropdown,
-.dashmat-modal .mantine-Select-dropdown,
-.dashmat-modal .mantine-MultiSelect-dropdown {
-    max-height: 480px;
-    overflow-y: auto;
-}
-
 [data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Modal-content {
     border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
