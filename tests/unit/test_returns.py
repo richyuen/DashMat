@@ -13,6 +13,7 @@ from utils.returns import (
     calculate_excess_returns,
     df_to_json,
     fill_calendar_gaps,
+    filter_to_trading_days,
     get_available_periodicities,
     get_working_returns,
     merge_returns,
@@ -30,6 +31,31 @@ def test_fill_calendar_gaps_fills_internal_missing_days_with_zero():
 
     assert pd.Timestamp("2024-01-02") in filled.index
     assert filled.loc[pd.Timestamp("2024-01-02"), "A"] == pytest.approx(0.0)
+
+
+def test_filter_to_trading_days_fills_internal_missing_trading_days_with_zero():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29"])
+    df = pd.DataFrame({"A": [0.01, 0.02]}, index=idx)
+    df.index.name = "Date"
+
+    trading = filter_to_trading_days(df)
+
+    assert pd.Timestamp("2024-02-01") in trading.index
+    assert trading.loc[pd.Timestamp("2024-02-01"), "A"] == pytest.approx(0.0)
+    assert trading.loc[pd.Timestamp("2024-01-31"), "A"] == pytest.approx(0.01)
+    assert trading.loc[pd.Timestamp("2024-02-29"), "A"] == pytest.approx(0.02)
+
+
+def test_filter_to_trading_days_compounds_weekend_returns_into_next_trading_day():
+    idx = pd.to_datetime(["2024-01-05", "2024-01-06", "2024-01-08"])  # Fri, Sat, Mon
+    df = pd.DataFrame({"A": [0.01, 0.02, 0.03]}, index=idx)
+    df.index.name = "Date"
+
+    trading = filter_to_trading_days(df)
+
+    assert trading.loc[pd.Timestamp("2024-01-05"), "A"] == pytest.approx(0.01)
+    expected_mon = (1.02 * 1.03) - 1.0
+    assert trading.loc[pd.Timestamp("2024-01-08"), "A"] == pytest.approx(expected_mon)
 
 
 def test_resample_returns_monthly_compounds_returns():

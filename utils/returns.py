@@ -74,9 +74,12 @@ def filter_to_trading_days(df: pd.DataFrame) -> pd.DataFrame:
     valid_days = valid_days.tz_localize(None)
     td_arr = valid_days.values
 
-    # Fast path: every row is already a trading day — just filter
+    # Fast path: every row is already a trading day.
+    # Still fill missing internal trading days with zero so sparse daily
+    # sources behave consistently with Daily (Original) gap filling.
     if df.index.isin(valid_days).all():
-        return df[df.index.isin(valid_days)]
+        base = df[df.index.isin(valid_days)]
+        return fill_trading_gaps(base, valid_days)
 
     # Map each date to its next trading day via searchsorted
     indices = np.searchsorted(td_arr, df.index.values, side="left")
@@ -86,7 +89,7 @@ def filter_to_trading_days(df: pd.DataFrame) -> pd.DataFrame:
     # Compound: (1+r).prod() - 1  per trading-day group, skipping NaN
     result = (1 + df).groupby(assigned).prod(min_count=1) - 1
     result.index.name = df.index.name
-    return result
+    return fill_trading_gaps(result, valid_days)
 
 
 def fill_calendar_gaps(df: pd.DataFrame) -> pd.DataFrame:
@@ -100,6 +103,38 @@ def fill_calendar_gaps(df: pd.DataFrame) -> pd.DataFrame:
         return df
     full_range = pd.date_range(df.index.min(), df.index.max(), freq="D")
     result = df.reindex(full_range)
+    for col in result.columns:
+        first = result[col].first_valid_index()
+        last = result[col].last_valid_index()
+        if first is not None:
+            mask = (result.index >= first) & (result.index <= last)
+            result.loc[mask, col] = result.loc[mask, col].fillna(0)
+    result.index.name = df.index.name
+    return result
+
+
+def fill_trading_gaps(df: pd.DataFrame, trading_days: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+    """Reindex to NYSE trading days and fill interior gaps with zero."""
+    if df.empty:
+        return df
+
+    if trading_days is None:
+        nyse = mcal.get_calendar("NYSE")
+        valid_days = nyse.valid_days(
+            start_date=df.index.min(),
+            end_date=df.index.max(),
+        )
+        trading_days = pd.DatetimeIndex(valid_days).tz_localize(None)
+    else:
+        trading_days = pd.DatetimeIndex(trading_days)
+        if trading_days.tz is not None:
+            trading_days = trading_days.tz_localize(None)
+
+    td = trading_days[(trading_days >= df.index.min()) & (trading_days <= df.index.max())]
+    if len(td) == 0:
+        return df
+
+    result = df.reindex(td)
     for col in result.columns:
         first = result[col].first_valid_index()
         last = result[col].last_valid_index()
