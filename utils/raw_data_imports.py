@@ -23,7 +23,8 @@ FACTOR_RETURN_DEFAULTS = {
     "PRLocal",
 }
 RAW_PREVIEW_ROWS = 6
-FACTOR_PREVIEW_BASE_ROWS = RAW_PREVIEW_ROWS + 1
+RAW_PREVIEW_QUERY_ROWS = 64
+FACTOR_PREVIEW_BASE_ROWS = RAW_PREVIEW_QUERY_ROWS + 1
 
 
 @dataclass(frozen=True)
@@ -318,7 +319,7 @@ def _load_fund_preview_points_cached(
         f"FROM {returns_table} "
         "WHERE ACCT_ID = :acct_id AND SOURCE_SYSTEM = 'MSTAR'",
         "ORDER BY REFERENCE_DATE",
-        RAW_PREVIEW_ROWS,
+        RAW_PREVIEW_QUERY_ROWS,
     )
     with mrd_engine.connect() as conn:
         rows = conn.execute(text(sql), {"acct_id": int(acct_id)}).fetchall()
@@ -368,7 +369,7 @@ def _load_performance_preview_points_cached(
             "AND ab.PRECEDENCE = 1"
         )
 
-    sql = _top_n_query(perf_engine, base_sql, "ORDER BY dr.Effective_Date", RAW_PREVIEW_ROWS)
+    sql = _top_n_query(perf_engine, base_sql, "ORDER BY dr.Effective_Date", RAW_PREVIEW_QUERY_ROWS)
     with perf_engine.connect() as conn:
         rows = conn.execute(text(sql), {"acct_id": int(acct_id), "fee_type": fee_type}).fetchall()
     if not rows:
@@ -393,22 +394,32 @@ def get_factor_preview_lines_cached(
         if pd.isna(divide_value) or float(divide_value) == 0.0:
             return []
 
-    points = _load_factor_preview_points_cached(mrd_engine, acct_id_int)
-    if points.empty:
-        return []
-
-    series = pd.Series(
-        points["FACTOR_VALUE"].values,
-        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
-        dtype=float,
-    )
-    series = series[~series.index.duplicated(keep="last")].sort_index()
-    if bool(convert_to_returns):
-        series = series.pct_change(fill_method=None).dropna()
-    else:
+    def _build_factor_series(points_df: pd.DataFrame) -> pd.Series:
+        if points_df.empty:
+            return pd.Series(dtype=float)
+        subset = points_df
+        if "ACCT_ID" in subset.columns:
+            subset = subset.loc[subset["ACCT_ID"] == acct_id_int, ["REFERENCE_DATE", "FACTOR_VALUE"]].copy()
+        else:
+            subset = subset.loc[:, ["REFERENCE_DATE", "FACTOR_VALUE"]].copy()
+        if subset.empty:
+            return pd.Series(dtype=float)
+        series = pd.Series(
+            subset["FACTOR_VALUE"].values,
+            index=pd.DatetimeIndex(subset["REFERENCE_DATE"]),
+            dtype=float,
+        )
+        series = series[~series.index.duplicated(keep="last")].sort_index()
+        if bool(convert_to_returns):
+            return series.pct_change(fill_method=None).dropna()
         divide_value = pd.to_numeric(pd.Series([divide_by]), errors="coerce").iloc[0]
-        series = (series / float(divide_value)).dropna()
+        return (series / float(divide_value)).dropna()
 
+    series = _build_factor_series(_load_factor_preview_points_cached(mrd_engine, acct_id_int))
+    if len(series) < RAW_PREVIEW_ROWS:
+        full_points = _load_factor_points_cached(mrd_engine, (acct_id_int,))
+        if not full_points.empty:
+            series = _build_factor_series(full_points)
     return _series_to_preview_lines(series)
 
 
@@ -422,16 +433,28 @@ def get_fund_preview_lines_cached(
     acct_id_int = int(acct_id)
     table_key = "monthly" if str(table_choice).lower() == "monthly" else "daily"
     value_col = "GROSS" if str(fee_choice).lower().startswith("g") else "NET"
-    points = _load_fund_preview_points_cached(mrd_engine, acct_id_int, table_key)
-    if points.empty:
-        return []
+    def _build_fund_series(points_df: pd.DataFrame) -> pd.Series:
+        if points_df.empty:
+            return pd.Series(dtype=float)
+        subset = points_df
+        if "ACCT_ID" in subset.columns:
+            subset = subset.loc[subset["ACCT_ID"] == acct_id_int, ["REFERENCE_DATE", value_col]].copy()
+        else:
+            subset = subset.loc[:, ["REFERENCE_DATE", value_col]].copy()
+        if subset.empty:
+            return pd.Series(dtype=float)
+        series = pd.Series(
+            subset[value_col].values,
+            index=pd.DatetimeIndex(subset["REFERENCE_DATE"]),
+            dtype=float,
+        )
+        return series[~series.index.duplicated(keep="last")].sort_index().dropna()
 
-    series = pd.Series(
-        points[value_col].values,
-        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
-        dtype=float,
-    )
-    series = series[~series.index.duplicated(keep="last")].sort_index().dropna()
+    series = _build_fund_series(_load_fund_preview_points_cached(mrd_engine, acct_id_int, table_key))
+    if len(series) < RAW_PREVIEW_ROWS:
+        full_points = _load_fund_points_cached(mrd_engine, (acct_id_int,), table_key)
+        if not full_points.empty:
+            series = _build_fund_series(full_points)
     return _series_to_preview_lines(series)
 
 
@@ -446,25 +469,40 @@ def get_performance_preview_lines_cached(
     acct_id_int = int(acct_id)
     table_key = "monthly" if str(table_choice).lower() == "monthly" else "daily"
     fee_key = "G" if str(fee_choice).upper().startswith("G") else "N"
-    points = _load_performance_preview_points_cached(perf_engine, acct_id_int, table_key, fee_key)
-    if points.empty:
-        return []
+    def _build_performance_series(points_df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+        if points_df.empty:
+            return pd.Series(dtype=float), pd.Series(dtype=float)
+        subset = points_df
+        if "ACCT_ID" in subset.columns:
+            subset = subset.loc[subset["ACCT_ID"] == acct_id_int, ["REFERENCE_DATE", "PORT_RET", "BENCH_RET"]].copy()
+        else:
+            subset = subset.loc[:, ["REFERENCE_DATE", "PORT_RET", "BENCH_RET"]].copy()
+        if subset.empty:
+            return pd.Series(dtype=float), pd.Series(dtype=float)
+        port = pd.Series(
+            subset["PORT_RET"].values,
+            index=pd.DatetimeIndex(subset["REFERENCE_DATE"]),
+            dtype=float,
+        )
+        port = port[~port.index.duplicated(keep="last")].sort_index().dropna()
+        bench = pd.Series(
+            subset["BENCH_RET"].values,
+            index=pd.DatetimeIndex(subset["REFERENCE_DATE"]),
+            dtype=float,
+        )
+        bench = bench[~bench.index.duplicated(keep="last")].sort_index()
+        return port, bench
 
-    port_series = pd.Series(
-        points["PORT_RET"].values,
-        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
-        dtype=float,
+    port_series, bench_series = _build_performance_series(
+        _load_performance_preview_points_cached(perf_engine, acct_id_int, table_key, fee_key)
     )
-    port_series = port_series[~port_series.index.duplicated(keep="last")].sort_index().dropna()
+    if len(port_series) < RAW_PREVIEW_ROWS:
+        full_points = _load_performance_points_cached(perf_engine, (acct_id_int,), table_key, fee_key)
+        if not full_points.empty:
+            port_series, bench_series = _build_performance_series(full_points)
     if not bool(include_benchmark):
         return _series_to_preview_lines(port_series)
 
-    bench_series = pd.Series(
-        points["BENCH_RET"].values,
-        index=pd.DatetimeIndex(points["REFERENCE_DATE"]),
-        dtype=float,
-    )
-    bench_series = bench_series[~bench_series.index.duplicated(keep="last")].sort_index()
     return _series_to_preview_lines(port_series, bench_series)
 
 

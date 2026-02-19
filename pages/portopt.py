@@ -3196,40 +3196,52 @@ def po_close_raw_db_add_modal(n_clicks):
     Input("po-raw-db-add-mode-store", "data"),
     Input("po-raw-db-add-series-select", "value"),
     Input("po-raw-db-add-modal", "opened"),
+    State("po-raw-db-add-fee-select", "value"),
+    State("po-raw-db-add-include-benchmark", "checked"),
+    State("po-raw-db-add-convert-returns", "checked"),
     prevent_initial_call=True,
 )
-def po_sync_raw_modal_controls(mode, series_key, opened):
+def po_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_include_benchmark, current_convert):
     if not opened:
         raise PreventUpdate
 
+    triggered_id = callback_context.triggered_id
+    preserve_series_selection_state = triggered_id == "po-raw-db-add-series-select"
     mode_key = str(mode or "").strip().lower()
     if mode_key == "factor":
         default_convert = False
         if series_key:
             meta = get_factor_option_meta_cached(MRD_ENGINE).get(str(series_key), {})
             default_convert = factor_defaults_to_returns(meta.get("factor_name"))
+        convert_value = bool(current_convert) if preserve_series_selection_state and current_convert is not None else default_convert
+        fee_options = [
+            {"value": "gross", "label": "Gross"},
+            {"value": "net", "label": "Net"},
+        ]
+        fee_values = {str(opt["value"]) for opt in fee_options}
+        fee_value = str(current_fee) if preserve_series_selection_state and str(current_fee) in fee_values else "net"
         return (
             True,
-            [
-                {"value": "gross", "label": "Gross"},
-                {"value": "net", "label": "Net"},
-            ],
-            "net",
+            fee_options,
+            fee_value,
             True,
             True,
             False,
             {},
-            default_convert,
+            convert_value,
         )
 
     if mode_key == "funds":
+        fee_options = [
+            {"value": "gross", "label": "Gross"},
+            {"value": "net", "label": "Net"},
+        ]
+        fee_values = {str(opt["value"]) for opt in fee_options}
+        fee_value = str(current_fee) if str(current_fee) in fee_values else "net"
         return (
             False,
-            [
-                {"value": "gross", "label": "Gross"},
-                {"value": "net", "label": "Net"},
-            ],
-            "net",
+            fee_options,
+            fee_value,
             False,
             True,
             False,
@@ -3237,16 +3249,20 @@ def po_sync_raw_modal_controls(mode, series_key, opened):
             False,
         )
 
+    fee_options = [
+        {"value": "G", "label": "Gross"},
+        {"value": "N", "label": "Net"},
+    ]
+    fee_values = {str(opt["value"]) for opt in fee_options}
+    fee_value = str(current_fee) if str(current_fee) in fee_values else "N"
+    include_value = bool(current_include_benchmark) if current_include_benchmark is not None else False
     return (
         False,
-        [
-            {"value": "G", "label": "Gross"},
-            {"value": "N", "label": "Net"},
-        ],
-        "N",
+        fee_options,
+        fee_value,
         False,
         False,
-        False,
+        include_value,
         {"display": "none"},
         False,
     )
