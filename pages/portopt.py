@@ -3213,7 +3213,8 @@ def po_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_in
         if series_key:
             meta = get_factor_option_meta_cached(MRD_ENGINE).get(str(series_key), {})
             default_convert = factor_defaults_to_returns(meta.get("factor_name"))
-        convert_value = bool(current_convert) if preserve_series_selection_state and current_convert is not None else default_convert
+        # Factor series selection should always apply its default conversion rule.
+        convert_value = default_convert
         fee_options = [
             {"value": "gross", "label": "Gross"},
             {"value": "net", "label": "Net"},

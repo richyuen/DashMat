@@ -24,7 +24,14 @@ HAS_PRE_RENDER_COLOR_SCHEME = hasattr(dmc, "pre_render_color_scheme")
 
 def _build_theme_toggle(toggle_id: str):
     if HAS_COLOR_SCHEME_TOGGLE:
-        return dmc.ColorSchemeToggle(id=toggle_id)
+        return dmc.ColorSchemeToggle(
+            id=toggle_id,
+            lightIcon=DashIconify(icon="tabler:sun", width=18),
+            darkIcon=DashIconify(icon="tabler:moon", width=18),
+            variant="outline",
+            size="lg",
+            color="gray",
+        )
     return dmc.ActionIcon(
         DashIconify(icon="tabler:moon", width=20),
         id=toggle_id,
@@ -86,83 +93,84 @@ PORTOPT_PATH = _registry_path("pages.portopt", "/portopt")
 
 # Layout wraps page content with MantineProvider
 # Shared stores are defined here so they are accessible across all pages
-app.layout = dmc.MantineProvider(
-    id="mantine-provider",
-    forceColorScheme="light",
-    children=[
-        PRE_RENDER_COLOR_SCHEME,
-        dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
-        dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
-        dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
-        dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
-        dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
-        dcc.Store(id="theme-store", data="light", storage_type="local"),
-        dmc.AppShell(
-            header={"height": 45},
-            padding=0,
-            children=[
-                dmc.AppShellHeader(
-                    dmc.Group(
-                        justify="space-between",
-                        px="md",
-                        h="100%",
-                        children=[
-                            dmc.Text("DashMat", fw=700),
-                            dmc.Group(
-                                gap="xs",
-                                children=[
-                                    _build_theme_toggle("app-theme-toggle"),
-                                    dmc.Menu(
-                                        trigger="hover",
-                                        openDelay=100,
-                                        closeDelay=200,
-                                        position="bottom-end",
-                                        shadow="md",
-                                        offset=6,
-                                        children=[
-                                            dmc.MenuTarget(
-                                                dmc.Button(
-                                                    "Menu",
-                                                    size="sm",
-                                                    variant="subtle",
-                                                    color="gray",
-                                                    radius="sm",
+_provider_kwargs = {"id": "mantine-provider", "children": [
+    PRE_RENDER_COLOR_SCHEME,
+    dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
+    dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
+    dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
+    dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
+    dcc.Store(id="theme-store", data="light", storage_type="local"),
+    dmc.AppShell(
+        header={"height": 45},
+        padding=0,
+        children=[
+            dmc.AppShellHeader(
+                dmc.Group(
+                    justify="space-between",
+                    px="md",
+                    h="100%",
+                    children=[
+                        dmc.Text("DashMat", fw=700),
+                        dmc.Group(
+                            gap="xs",
+                            children=[
+                                _build_theme_toggle("app-theme-toggle"),
+                                dmc.Menu(
+                                    trigger="hover",
+                                    openDelay=100,
+                                    closeDelay=200,
+                                    position="bottom-end",
+                                    shadow="md",
+                                    offset=6,
+                                    children=[
+                                        dmc.MenuTarget(
+                                            dmc.Button(
+                                                "Menu",
+                                                size="sm",
+                                                variant="subtle",
+                                                color="gray",
+                                                radius="sm",
+                                            ),
+                                        ),
+                                        dmc.MenuDropdown(
+                                            children=[
+                                                dmc.MenuItem(
+                                                    "Home",
+                                                    id="app-nav-home",
+                                                    href=HOME_PATH,
                                                 ),
-                                            ),
-                                            dmc.MenuDropdown(
-                                                children=[
-                                                    dmc.MenuItem(
-                                                        "Home",
-                                                        id="app-nav-home",
-                                                        href=HOME_PATH,
-                                                    ),
-                                                    dmc.MenuItem(
-                                                        "Analytics Tool",
-                                                        id="app-nav-analytics",
-                                                        href=ANALYTICS_PATH,
-                                                    ),
-                                                    dmc.MenuItem(
-                                                        "Portfolio Optimization",
-                                                        id="app-nav-portopt",
-                                                        href=PORTOPT_PATH,
-                                                    ),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
+                                                dmc.MenuItem(
+                                                    "Analytics Tool",
+                                                    id="app-nav-analytics",
+                                                    href=ANALYTICS_PATH,
+                                                ),
+                                                dmc.MenuItem(
+                                                    "Portfolio Optimization",
+                                                    id="app-nav-portopt",
+                                                    href=PORTOPT_PATH,
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
                 ),
-                dmc.AppShellMain(
-                    page_container,
-                    style={"paddingTop": "53px"},
-                ),
-            ],
-        ),
-    ]
-)
+            ),
+            dmc.AppShellMain(
+                page_container,
+                style={"paddingTop": "53px"},
+            ),
+        ],
+    ),
+]}
+if HAS_COLOR_SCHEME_TOGGLE:
+    _provider_kwargs["defaultColorScheme"] = "light"
+else:
+    _provider_kwargs["forceColorScheme"] = "light"
+app.layout = dmc.MantineProvider(**_provider_kwargs)
 
 
 @app.callback(
@@ -204,8 +212,8 @@ if HAS_COLOR_SCHEME_TOGGLE:
     # Keep existing chart callbacks compatible while ColorSchemeToggle drives MantineProvider.
     app.clientside_callback(
         "function(scheme) { return (scheme === 'dark' || scheme === 'light') ? scheme : window.dash_clientside.no_update; }",
-        Output("theme-store", "data", allow_duplicate=True),
-        Input("mantine-provider", "forceColorScheme"),
+        Output("theme-store", "data"),
+        Input("app-theme-toggle", "computedColorScheme"),
     )
 else:
     # Legacy fallback for DMC versions before ColorSchemeToggle.

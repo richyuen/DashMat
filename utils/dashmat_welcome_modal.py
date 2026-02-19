@@ -760,19 +760,17 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                             dmc.ScrollArea(
                                 h=140,
                                 offsetScrollbars=True,
-                                children=html.Pre(
+                                children=dmc.Code(
                                     id=_sid(prefix, "raw-db-preview-lines"),
+                                    block=True,
                                     children="Select a series to preview option-adjusted results (first 6 rows).",
                                     style={
-                                        "margin": 0,
+                                        "display": "block",
                                         "padding": "8px 10px",
                                         "fontFamily": "Consolas, monospace",
                                         "fontSize": "12px",
                                         "lineHeight": "1.4",
                                         "whiteSpace": "pre-wrap",
-                                        "border": "1px solid rgba(0,0,0,0.12)",
-                                        "borderRadius": "6px",
-                                        "background": "rgba(0,0,0,0.02)",
                                     },
                                 ),
                             ),
