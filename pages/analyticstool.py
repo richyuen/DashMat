@@ -430,7 +430,7 @@ def at_sync_raw_modal_controls(mode, series_key, opened):
                 {"value": "gross", "label": "Gross"},
                 {"value": "net", "label": "Net"},
             ],
-            "gross",
+            "net",
             True,
             True,
             False,
@@ -445,7 +445,7 @@ def at_sync_raw_modal_controls(mode, series_key, opened):
                 {"value": "gross", "label": "Gross"},
                 {"value": "net", "label": "Net"},
             ],
-            "gross",
+            "net",
             False,
             True,
             False,
@@ -459,7 +459,7 @@ def at_sync_raw_modal_controls(mode, series_key, opened):
             {"value": "G", "label": "Gross"},
             {"value": "N", "label": "Net"},
         ],
-        "G",
+        "N",
         False,
         False,
         False,
@@ -554,21 +554,29 @@ def at_stage_raw_db_row(
         meta = get_fund_option_meta_cached(MRD_ENGINE).get(key)
         if not meta:
             return rows, rows, "Selected fund series is unavailable.", False
-        import_name = str(meta.get("import_name", "")).strip()
-        if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
-            return rows, rows, f"Series `{import_name}` is already staged.", False
+        base_name = str(meta.get("import_name", "")).strip()
         table_key = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
         fee_key = "net" if str(fee_choice or "").lower().startswith("n") else "gross"
+        if table_key == "daily" and fee_key == "net":
+            import_name = base_name
+        elif table_key == "monthly" and fee_key == "net":
+            import_name = f"{base_name}_M"
+        elif table_key == "daily" and fee_key == "gross":
+            import_name = f"{base_name}_G"
+        else:
+            import_name = f"{base_name}_GM"
+        if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+            return rows, rows, f"Series `{import_name}` is already staged.", False
         row_id = f"funds:{key}:{table_key}:{fee_key}"
         row = {
             "row_id": row_id,
             "mode": "funds",
             "series_key": key,
-            "series_label": str(meta.get("label", import_name)),
+            "series_label": str(meta.get("label", base_name)),
             "import_name": import_name,
             "table_choice": table_key,
             "fee_choice": fee_key,
-            "Series": str(meta.get("label", import_name)),
+            "Series": import_name,
             "Table": "Monthly" if table_key == "monthly" else "Daily",
             "Fee": "Net" if fee_key == "net" else "Gross",
             "Include Benchmark": "",
@@ -581,23 +589,31 @@ def at_stage_raw_db_row(
     meta = get_performance_option_meta_cached(PERF_ENGINE).get(key)
     if not meta:
         return rows, rows, "Selected performance series is unavailable.", False
-    import_name = str(meta.get("import_name", "")).strip()
-    if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
-        return rows, rows, f"Series `{import_name}` is already staged.", False
+    base_name = str(meta.get("import_name", "")).strip()
     table_key = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
     fee_key = "N" if str(fee_choice or "").upper().startswith("N") else "G"
+    if table_key == "daily" and fee_key == "N":
+        import_name = base_name
+    elif table_key == "monthly" and fee_key == "N":
+        import_name = f"{base_name}_M"
+    elif table_key == "daily" and fee_key == "G":
+        import_name = f"{base_name}_G"
+    else:
+        import_name = f"{base_name}_GM"
+    if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+        return rows, rows, f"Series `{import_name}` is already staged.", False
     include_bm = bool(include_benchmark)
     row_id = f"performance:{key}:{table_key}:{fee_key}:{1 if include_bm else 0}"
     row = {
         "row_id": row_id,
         "mode": "performance",
         "series_key": key,
-        "series_label": str(meta.get("label", import_name)),
+        "series_label": str(meta.get("label", base_name)),
         "import_name": import_name,
         "table_choice": table_key,
         "fee_choice": fee_key,
         "include_benchmark": include_bm,
-        "Series": str(meta.get("label", import_name)),
+        "Series": import_name,
         "Table": "Monthly" if table_key == "monthly" else "Daily",
         "Fee": "Net" if fee_key == "N" else "Gross",
         "Include Benchmark": "Yes" if include_bm else "No",
