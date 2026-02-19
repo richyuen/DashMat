@@ -4,6 +4,7 @@ import dash
 import dash_mantine_components as dmc
 from dash import Dash, Input, Output, State, dcc, page_container
 from dash.exceptions import PreventUpdate
+from dash_iconify import DashIconify
 from cache_config import init_cache
 
 # Initialize the app with multi-page support
@@ -17,6 +18,48 @@ app = Dash(
 cache = init_cache(app.server)
 
 USERINFO_DATA = {"role": "Admin"}
+HAS_COLOR_SCHEME_TOGGLE = hasattr(dmc, "ColorSchemeToggle")
+HAS_PRE_RENDER_COLOR_SCHEME = hasattr(dmc, "pre_render_color_scheme")
+
+
+def _build_theme_toggle(toggle_id: str):
+    if HAS_COLOR_SCHEME_TOGGLE:
+        return dmc.ColorSchemeToggle(id=toggle_id)
+    return dmc.ActionIcon(
+        DashIconify(icon="tabler:moon", width=20),
+        id=toggle_id,
+        variant="outline",
+        size="lg",
+        color="blue",
+    )
+
+
+def _init_pre_render_color_scheme_helper():
+    if not HAS_PRE_RENDER_COLOR_SCHEME:
+        return None
+
+    attempts = (
+        lambda: dmc.pre_render_color_scheme(
+            mantine_provider_id="mantine-provider",
+            toggle_id="app-theme-toggle",
+        ),
+        lambda: dmc.pre_render_color_scheme(mantine_provider_id="mantine-provider"),
+        lambda: dmc.pre_render_color_scheme("mantine-provider", "app-theme-toggle"),
+        lambda: dmc.pre_render_color_scheme("mantine-provider"),
+        lambda: dmc.pre_render_color_scheme(),
+    )
+
+    for attempt in attempts:
+        try:
+            return attempt()
+        except TypeError:
+            continue
+        except Exception:
+            return None
+    return None
+
+
+PRE_RENDER_COLOR_SCHEME = _init_pre_render_color_scheme_helper()
 
 
 def _registry_path(page_key: str, fallback: str) -> str:
@@ -45,7 +88,9 @@ PORTOPT_PATH = _registry_path("pages.portopt", "/portopt")
 # Shared stores are defined here so they are accessible across all pages
 app.layout = dmc.MantineProvider(
     id="mantine-provider",
+    forceColorScheme="light",
     children=[
+        PRE_RENDER_COLOR_SCHEME,
         dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
         dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
         dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
@@ -63,44 +108,45 @@ app.layout = dmc.MantineProvider(
                         h="100%",
                         children=[
                             dmc.Text("DashMat", fw=700),
-                            dmc.Menu(
-                                trigger="hover",
-                                openDelay=100,
-                                closeDelay=200,
-                                position="bottom-end",
-                                shadow="md",
-                                offset=6,
+                            dmc.Group(
+                                gap="xs",
                                 children=[
-                                    dmc.MenuTarget(
-                                        dmc.Button(
-                                            "Menu",
-                                            size="sm",
-                                            variant="subtle",
-                                            color="gray",
-                                            radius="sm",
-                                        ),
-                                    ),
-                                    dmc.MenuDropdown(
+                                    _build_theme_toggle("app-theme-toggle"),
+                                    dmc.Menu(
+                                        trigger="hover",
+                                        openDelay=100,
+                                        closeDelay=200,
+                                        position="bottom-end",
+                                        shadow="md",
+                                        offset=6,
                                         children=[
-                                            dmc.MenuItem(
-                                                "Home",
-                                                id="app-nav-home",
-                                                href=HOME_PATH,
+                                            dmc.MenuTarget(
+                                                dmc.Button(
+                                                    "Menu",
+                                                    size="sm",
+                                                    variant="subtle",
+                                                    color="gray",
+                                                    radius="sm",
+                                                ),
                                             ),
-                                            dmc.MenuItem(
-                                                "Analytics Tool",
-                                                id="app-nav-analytics",
-                                                href=ANALYTICS_PATH,
-                                            ),
-                                            dmc.MenuItem(
-                                                "Portfolio Optimization",
-                                                id="app-nav-portopt",
-                                                href=PORTOPT_PATH,
-                                            ),
-                                            dmc.MenuDivider(),
-                                            dmc.MenuItem(
-                                                "Toggle Dark Mode",
-                                                id="app-menu-theme-toggle",
+                                            dmc.MenuDropdown(
+                                                children=[
+                                                    dmc.MenuItem(
+                                                        "Home",
+                                                        id="app-nav-home",
+                                                        href=HOME_PATH,
+                                                    ),
+                                                    dmc.MenuItem(
+                                                        "Analytics Tool",
+                                                        id="app-nav-analytics",
+                                                        href=ANALYTICS_PATH,
+                                                    ),
+                                                    dmc.MenuItem(
+                                                        "Portfolio Optimization",
+                                                        id="app-nav-portopt",
+                                                        href=PORTOPT_PATH,
+                                                    ),
+                                                ],
                                             ),
                                         ],
                                     ),
@@ -154,29 +200,45 @@ def guard_protected_pages(pathname, userinfo):
     return restricted_href
 
 
-# Apply theme to MantineProvider
-app.clientside_callback(
-    "function(theme) { return theme || 'light'; }",
-    Output("mantine-provider", "forceColorScheme"),
-    Input("theme-store", "data"),
-)
+if HAS_COLOR_SCHEME_TOGGLE:
+    # Keep existing chart callbacks compatible while ColorSchemeToggle drives MantineProvider.
+    app.clientside_callback(
+        "function(scheme) { return (scheme === 'dark' || scheme === 'light') ? scheme : window.dash_clientside.no_update; }",
+        Output("theme-store", "data", allow_duplicate=True),
+        Input("mantine-provider", "forceColorScheme"),
+    )
+else:
+    # Legacy fallback for DMC versions before ColorSchemeToggle.
+    app.clientside_callback(
+        "function(theme) { return theme || 'light'; }",
+        Output("mantine-provider", "forceColorScheme"),
+        Input("theme-store", "data"),
+    )
 
-app.clientside_callback(
-    """
-    function(n_clicks, current_theme) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        return current_theme === "dark" ? "light" : "dark";
-    }
-    """,
-    Output("theme-store", "data", allow_duplicate=True),
-    Input("app-menu-theme-toggle", "n_clicks"),
-    State("theme-store", "data"),
-    prevent_initial_call=True,
-)
+    app.clientside_callback(
+        """
+        function(n_clicks, current_theme) {
+            if (!n_clicks) return window.dash_clientside.no_update;
+            return current_theme === "dark" ? "light" : "dark";
+        }
+        """,
+        Output("theme-store", "data", allow_duplicate=True),
+        Input("app-theme-toggle", "n_clicks"),
+        State("theme-store", "data"),
+        prevent_initial_call=True,
+    )
 
-# Dark mode toggle callbacks are defined in each page module
-# (analyticstool.py and portopt.py) to avoid referencing cross-page
-# component IDs that don't exist when the other page is rendered.
+    @app.callback(
+        Output("app-theme-toggle", "children"),
+        Output("app-theme-toggle", "color"),
+        Input("theme-store", "data"),
+    )
+    def _update_fallback_theme_icon(theme):
+        if theme == "dark":
+            return DashIconify(icon="tabler:sun", width=20), "yellow"
+        return DashIconify(icon="tabler:moon", width=20), "blue"
+
+# Theme consumer callbacks are defined in page modules for charts.
 
 if __name__ == "__main__":
     import sys
