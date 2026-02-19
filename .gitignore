@@ -47,6 +47,9 @@ nul
 *.csv
 data/
 *.db
+!tools/data/
+!tools/data/__init__.py
+!tools/data/generate_test_data.py
 
 # Testing artifacts
 .coverage

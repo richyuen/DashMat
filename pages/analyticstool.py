@@ -64,13 +64,16 @@ from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
     build_portfolio_add_modal,
+    build_raw_db_add_modal,
     build_series_selection_modal,
     build_sheet_select_modal,
     build_welcome_screen as build_shared_welcome_screen,
     compute_close_db_add_modal,
     compute_close_portfolio_add_modal,
+    compute_close_raw_db_add_modal,
     compute_open_db_add_modal,
     compute_open_portfolio_add_modal,
+    compute_open_raw_db_add_modal,
     compute_sync_include_benchmark_enabled,
     compute_validate_db_add_selection,
     js_portfolio_add_row,
@@ -94,6 +97,16 @@ from utils.core_categories import (
     load_cma_returns_for_benches_with_meta,
 )
 from utils.portfolio_series import load_portfolio_series
+from utils.raw_data_imports import (
+    factor_defaults_to_returns,
+    get_factor_option_meta_cached,
+    get_fund_option_meta_cached,
+    get_performance_option_meta_cached,
+    get_preview_lines_for_row,
+    load_factor_series,
+    load_fund_series,
+    load_performance_series,
+)
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -323,6 +336,352 @@ def open_db_add_modal(menu_clicks, welcome_clicks):
 )
 def close_db_add_modal(n_clicks):
     return compute_close_db_add_modal(n_clicks)
+
+
+@callback(
+    Output("at-raw-db-add-modal", "opened", allow_duplicate=True),
+    Output("at-raw-db-add-modal", "title", allow_duplicate=True),
+    Output("at-raw-db-add-mode-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-series-select", "data", allow_duplicate=True),
+    Output("at-raw-db-add-series-select", "value", allow_duplicate=True),
+    Output("at-raw-db-add-table-select", "value", allow_duplicate=True),
+    Output("at-raw-db-add-fee-select", "value", allow_duplicate=True),
+    Output("at-raw-db-add-include-benchmark", "checked", allow_duplicate=True),
+    Output("at-raw-db-add-convert-returns", "checked", allow_duplicate=True),
+    Output("at-raw-db-add-divide-by", "value", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("at-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Input("at-menu-add-raw-factor", "n_clicks"),
+    Input("at-menu-add-raw-funds", "n_clicks"),
+    Input("at-menu-add-raw-performance", "n_clicks"),
+    Input("at-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("at-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("at-welcome-add-raw-performance-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def at_open_raw_db_add_modal(
+    factor_clicks,
+    funds_clicks,
+    performance_clicks,
+    welcome_factor_clicks,
+    welcome_funds_clicks,
+    welcome_performance_clicks,
+):
+    return compute_open_raw_db_add_modal(
+        prefix="at",
+        triggered_id=callback_context.triggered_id,
+        factor_clicks=factor_clicks,
+        funds_clicks=funds_clicks,
+        performance_clicks=performance_clicks,
+        welcome_factor_clicks=welcome_factor_clicks,
+        welcome_funds_clicks=welcome_funds_clicks,
+        welcome_performance_clicks=welcome_performance_clicks,
+        mrd_engine=MRD_ENGINE,
+        perf_engine=PERF_ENGINE,
+    )
+
+
+@callback(
+    Output("at-raw-db-add-modal", "opened", allow_duplicate=True),
+    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("at-raw-db-add-series-select", "value", allow_duplicate=True),
+    Input("at-raw-db-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def at_close_raw_db_add_modal(n_clicks):
+    opened, rows, grid_rows, preview = compute_close_raw_db_add_modal(n_clicks)
+    return opened, rows, grid_rows, preview, True, True, None
+
+
+@callback(
+    Output("at-raw-db-add-table-select", "disabled"),
+    Output("at-raw-db-add-fee-select", "data"),
+    Output("at-raw-db-add-fee-select", "value"),
+    Output("at-raw-db-add-fee-select", "disabled"),
+    Output("at-raw-db-add-include-benchmark", "disabled"),
+    Output("at-raw-db-add-include-benchmark", "checked", allow_duplicate=True),
+    Output("at-raw-db-factor-controls", "style"),
+    Output("at-raw-db-add-convert-returns", "checked", allow_duplicate=True),
+    Input("at-raw-db-add-mode-store", "data"),
+    Input("at-raw-db-add-series-select", "value"),
+    Input("at-raw-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+def at_sync_raw_modal_controls(mode, series_key, opened):
+    if not opened:
+        raise PreventUpdate
+
+    mode_key = str(mode or "").strip().lower()
+    if mode_key == "factor":
+        default_convert = False
+        if series_key:
+            meta = get_factor_option_meta_cached(MRD_ENGINE).get(str(series_key), {})
+            default_convert = factor_defaults_to_returns(meta.get("factor_name"))
+        return (
+            True,
+            [
+                {"value": "gross", "label": "Gross"},
+                {"value": "net", "label": "Net"},
+            ],
+            "gross",
+            True,
+            True,
+            False,
+            {},
+            default_convert,
+        )
+
+    if mode_key == "funds":
+        return (
+            False,
+            [
+                {"value": "gross", "label": "Gross"},
+                {"value": "net", "label": "Net"},
+            ],
+            "gross",
+            False,
+            True,
+            False,
+            {"display": "none"},
+            False,
+        )
+
+    return (
+        False,
+        [
+            {"value": "G", "label": "Gross"},
+            {"value": "N", "label": "Net"},
+        ],
+        "G",
+        False,
+        False,
+        False,
+        {"display": "none"},
+        False,
+    )
+
+
+@callback(
+    Output("at-raw-db-add-divide-by", "disabled"),
+    Input("at-raw-db-add-mode-store", "data"),
+    Input("at-raw-db-add-convert-returns", "checked"),
+    Input("at-raw-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+def at_toggle_raw_divide_by(mode, convert_to_returns, opened):
+    if not opened:
+        raise PreventUpdate
+    return not (str(mode or "").strip().lower() == "factor" and not bool(convert_to_returns))
+
+
+@callback(
+    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-raw-db-add-row-btn", "n_clicks"),
+    State("at-raw-db-add-rows-store", "data"),
+    State("at-raw-db-add-mode-store", "data"),
+    State("at-raw-db-add-series-select", "value"),
+    State("at-raw-db-add-table-select", "value"),
+    State("at-raw-db-add-fee-select", "value"),
+    State("at-raw-db-add-include-benchmark", "checked"),
+    State("at-raw-db-add-convert-returns", "checked"),
+    State("at-raw-db-add-divide-by", "value"),
+    prevent_initial_call=True,
+)
+def at_stage_raw_db_row(
+    n_add,
+    staged_rows,
+    mode,
+    series_key,
+    table_choice,
+    fee_choice,
+    include_benchmark,
+    convert_to_returns,
+    divide_by,
+):
+    n_no = no_update
+    if not n_add:
+        raise PreventUpdate
+
+    mode_key = str(mode or "").strip().lower()
+    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+    key = str(series_key or "").strip()
+    if mode_key not in {"factor", "funds", "performance"}:
+        return rows, rows, "Select a raw import type first.", False
+    if not key:
+        return rows, rows, "Select a series to add.", False
+
+    if mode_key == "factor":
+        meta = get_factor_option_meta_cached(MRD_ENGINE).get(key)
+        if not meta:
+            return rows, rows, "Selected factor series is unavailable.", False
+        import_name = str(meta.get("import_name", "")).strip()
+        if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+            return rows, rows, f"Series `{import_name}` is already staged.", False
+        convert = bool(convert_to_returns)
+        div_value = pd.to_numeric(pd.Series([divide_by]), errors="coerce").iloc[0]
+        if not convert and (pd.isna(div_value) or float(div_value) == 0.0):
+            return rows, rows, "Divide by must be a non-zero number when convert-to-returns is unchecked.", False
+        row_id = f"factor:{key}"
+        row = {
+            "row_id": row_id,
+            "mode": "factor",
+            "series_key": key,
+            "series_label": str(meta.get("label", import_name)),
+            "import_name": import_name,
+            "convert_to_returns": convert,
+            "divide_by": float(div_value) if not convert else 100.0,
+            "Series": str(meta.get("label", import_name)),
+            "Table": "",
+            "Fee": "",
+            "Include Benchmark": "",
+            "Convert to Returns": "Yes" if convert else "No",
+            "Divide By": "" if convert else float(div_value),
+        }
+        rows.append(row)
+        return rows, rows, n_no, True
+
+    if mode_key == "funds":
+        meta = get_fund_option_meta_cached(MRD_ENGINE).get(key)
+        if not meta:
+            return rows, rows, "Selected fund series is unavailable.", False
+        import_name = str(meta.get("import_name", "")).strip()
+        if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+            return rows, rows, f"Series `{import_name}` is already staged.", False
+        table_key = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
+        fee_key = "net" if str(fee_choice or "").lower().startswith("n") else "gross"
+        row_id = f"funds:{key}:{table_key}:{fee_key}"
+        row = {
+            "row_id": row_id,
+            "mode": "funds",
+            "series_key": key,
+            "series_label": str(meta.get("label", import_name)),
+            "import_name": import_name,
+            "table_choice": table_key,
+            "fee_choice": fee_key,
+            "Series": str(meta.get("label", import_name)),
+            "Table": "Monthly" if table_key == "monthly" else "Daily",
+            "Fee": "Net" if fee_key == "net" else "Gross",
+            "Include Benchmark": "",
+            "Convert to Returns": "",
+            "Divide By": "",
+        }
+        rows.append(row)
+        return rows, rows, n_no, True
+
+    meta = get_performance_option_meta_cached(PERF_ENGINE).get(key)
+    if not meta:
+        return rows, rows, "Selected performance series is unavailable.", False
+    import_name = str(meta.get("import_name", "")).strip()
+    if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+        return rows, rows, f"Series `{import_name}` is already staged.", False
+    table_key = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
+    fee_key = "N" if str(fee_choice or "").upper().startswith("N") else "G"
+    include_bm = bool(include_benchmark)
+    row_id = f"performance:{key}:{table_key}:{fee_key}:{1 if include_bm else 0}"
+    row = {
+        "row_id": row_id,
+        "mode": "performance",
+        "series_key": key,
+        "series_label": str(meta.get("label", import_name)),
+        "import_name": import_name,
+        "table_choice": table_key,
+        "fee_choice": fee_key,
+        "include_benchmark": include_bm,
+        "Series": str(meta.get("label", import_name)),
+        "Table": "Monthly" if table_key == "monthly" else "Daily",
+        "Fee": "Net" if fee_key == "N" else "Gross",
+        "Include Benchmark": "Yes" if include_bm else "No",
+        "Convert to Returns": "",
+        "Divide By": "",
+    }
+    rows.append(row)
+    return rows, rows, n_no, True
+
+
+@callback(
+    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-raw-db-delete-row-btn", "n_clicks"),
+    State("at-raw-db-add-rows-store", "data"),
+    State("at-raw-db-add-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def at_delete_raw_db_row(n_delete, staged_rows, selected_rows):
+    n_no = no_update
+    if not n_delete:
+        raise PreventUpdate
+    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+    if not selected_rows:
+        return rows, rows, "Select one staged row to delete.", False
+    selected_id = str((selected_rows[0] or {}).get("row_id", "")).strip()
+    if not selected_id:
+        return rows, rows, "Select one staged row to delete.", False
+    kept = [r for r in rows if str(r.get("row_id", "")).strip() != selected_id]
+    return kept, kept, n_no, True
+
+
+@callback(
+    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-raw-db-clear-rows-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def at_clear_raw_db_rows(n_clear):
+    if not n_clear:
+        raise PreventUpdate
+    return [], [], no_update, True
+
+
+clientside_callback(
+    js_portfolio_ok_disabled(),
+    Output("at-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Input("at-raw-db-add-rows-store", "data"),
+    Input("at-raw-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
+    Input("at-raw-db-add-rows-store", "data"),
+    Input("at-raw-db-add-grid", "selectedRows"),
+    Input("at-raw-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+def at_update_raw_db_preview(staged_rows, selected_rows, opened):
+    if not opened:
+        raise PreventUpdate
+    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+    if not rows:
+        return "Add a staged row to preview raw values."
+
+    target = rows[-1]
+    if selected_rows:
+        selected_id = str((selected_rows[0] or {}).get("row_id", "")).strip()
+        if selected_id:
+            for row in rows:
+                if str(row.get("row_id", "")).strip() == selected_id:
+                    target = row
+                    break
+
+    lines = get_preview_lines_for_row(target, MRD_ENGINE, PERF_ENGINE)
+    if not lines:
+        return "No rows returned for preview."
+    return "\n".join(lines)
 
 
 @callback(
@@ -1229,6 +1588,22 @@ layout = dmc.Container(
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
+                                            "Add raw factor data...",
+                                            id="at-menu-add-raw-factor",
+                                            leftSection=DashIconify(icon="tabler:chart-dots", width=14),
+                                        ),
+                                        dmc.MenuItem(
+                                            "Add raw funds...",
+                                            id="at-menu-add-raw-funds",
+                                            leftSection=DashIconify(icon="tabler:building-bank", width=14),
+                                        ),
+                                        dmc.MenuItem(
+                                            "Add raw performance...",
+                                            id="at-menu-add-raw-performance",
+                                            leftSection=DashIconify(icon="tabler:activity-heartbeat", width=14),
+                                        ),
+                                        dmc.MenuDivider(),
+                                        dmc.MenuItem(
                                             "Add series from file...",
                                             id="at-menu-add-series",
                                             leftSection=DashIconify(icon="tabler:upload", width=14),
@@ -1285,6 +1660,7 @@ layout = dmc.Container(
         build_series_selection_modal(AT_WELCOME_MODAL_CONFIG),
         build_db_add_modal("at"),
         build_portfolio_add_modal("at", AG_GRID_LICENSE_KEY),
+        build_raw_db_add_modal("at", AG_GRID_LICENSE_KEY),
         build_sheet_select_modal("at"),
 
         # Help Modal
@@ -1683,6 +2059,8 @@ layout = dmc.Container(
         dcc.Store(id="at-temp-deleted-series-store", data=[]),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
+        dcc.Store(id="at-raw-db-add-mode-store", data=None),
+        dcc.Store(id="at-raw-db-add-rows-store", data=[]),
         # Temp stores for sheet selection (stash upload while user picks a tab)
         dcc.Store(id="at-sheet-select-contents-store", data=None),
         dcc.Store(id="at-sheet-select-filename-store", data=None),
@@ -2561,6 +2939,172 @@ def add_series_from_database(
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
             True, n_no,
+        )
+
+
+@callback(
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "value", allow_duplicate=True),
+    Output("at-periodicity-select", "disabled", allow_duplicate=True),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-alert-message", "children", allow_duplicate=True),
+    Output("at-alert-message", "color", allow_duplicate=True),
+    Output("at-alert-message", "hide", allow_duplicate=True),
+    Output("at-periodicity-value-store", "data", allow_duplicate=True),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-long-short-store", "data", allow_duplicate=True),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-first-load-store", "data", allow_duplicate=True),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-modal", "opened", allow_duplicate=True),
+    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
+    Input("at-raw-db-add-ok-button", "n_clicks"),
+    State("at-raw-db-add-mode-store", "data"),
+    State("at-raw-db-add-rows-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-first-load-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+def at_add_raw_series_from_database(
+    n_clicks,
+    mode,
+    staged_rows,
+    existing_data,
+    existing_periodicity,
+    current_selection,
+    current_bench,
+    current_ls,
+    current_order,
+    first_load,
+    current_vol_scaling,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    n_no = no_update
+    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+    mode_key = str(mode or "").strip().lower()
+    if mode_key not in {"factor", "funds", "performance"} or not rows:
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            True,
+            rows,
+            rows,
+            "Stage at least one row before importing.",
+            False,
+            "Add a staged row to preview raw values.",
+        )
+
+    try:
+        if mode_key == "factor":
+            load_result = load_factor_series(MRD_ENGINE, rows)
+        elif mode_key == "funds":
+            load_result = load_fund_series(MRD_ENGINE, rows)
+        else:
+            load_result = load_performance_series(PERF_ENGINE, rows)
+        new_df = load_result.returns_df
+        if new_df.empty:
+            raise ValueError("No rows returned for staged raw-data requests.")
+
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [s for s in new_df.columns if s in existing_cols]
+            if duplicates:
+                return (
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no,
+                    True,
+                    rows,
+                    rows,
+                    f"Cannot add duplicate series: {', '.join(duplicates)}",
+                    False,
+                    n_no,
+                )
+
+        new_periodicity = load_result.periodicity
+        if existing_data is not None:
+            existing_df = json_to_df(existing_data)
+            if existing_periodicity == "monthly" and new_periodicity == "daily":
+                new_df = resample_returns(new_df, "monthly")
+                combined_periodicity = "monthly"
+            elif new_periodicity == "monthly" and existing_periodicity == "daily":
+                existing_df = resample_returns(existing_df, "monthly")
+                combined_periodicity = "monthly"
+            else:
+                combined_periodicity = existing_periodicity
+            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
+            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
+            merged_df = merge_returns(existing_df, new_df)
+        else:
+            merged_df = new_df
+            combined_periodicity = new_periodicity
+            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
+
+        periodicity_options = get_available_periodicities(combined_periodicity)
+        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+
+        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
+        updated_selection = (current_selection or []) + new_series
+
+        updated_bench = dict(current_bench or {})
+        updated_bench.update(load_result.benchmark_assignments or {})
+
+        return (
+            df_to_json(merged_df),
+            combined_periodicity,
+            periodicity_options,
+            default_periodicity,
+            False,
+            updated_selection,
+            f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from raw database import",
+            "green",
+            False,
+            default_periodicity,
+            True,
+            updated_bench,
+            current_ls or {},
+            current_order or [],
+            True if first_load is not None else True,
+            [],
+            current_vol_scaling or {},
+            False,
+            [],
+            [],
+            no_update,
+            True,
+            "Add a staged row to preview raw values.",
+        )
+    except Exception as e:
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            True,
+            rows,
+            rows,
+            f"Error loading raw database series: {str(e)}",
+            False,
+            n_no,
         )
 
 

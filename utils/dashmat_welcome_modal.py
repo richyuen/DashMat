@@ -21,6 +21,11 @@ from utils.constants import (
 )
 from utils.core_categories import get_core_category_options_cached
 from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark
+from utils.raw_data_imports import (
+    get_factor_options_cached,
+    get_fund_options_cached,
+    get_performance_options_cached,
+)
 
 
 def _sid(prefix: str, suffix: str) -> str:
@@ -169,6 +174,73 @@ def build_welcome_screen(cfg: PagePrefixConfig):
                                             size="sm",
                                             fullWidth=True,
                                             id=_sid(cfg.prefix, "welcome-add-portfolios-other-btn"),
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ),
+                    dmc.Paper(
+                        withBorder=True,
+                        radius="md",
+                        p="md",
+                        className="dashmat-welcome-section-card",
+                        children=dmc.Stack(
+                            gap="sm",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-header",
+                                    children=[
+                                        dmc.ThemeIcon(
+                                            DashIconify(icon="tabler:database-import"),
+                                            size="md",
+                                            radius="xl",
+                                            variant="light",
+                                            color="grape",
+                                        ),
+                                        dmc.Stack(
+                                            gap=0,
+                                            children=[
+                                                dmc.Text(
+                                                    "Load from Database: Raw Data",
+                                                    className="dashmat-welcome-section-title",
+                                                ),
+                                                dmc.Text(
+                                                    "Import factor, funds, or performance return streams",
+                                                    className="dashmat-welcome-section-subtitle",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                dmc.Stack(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-actions",
+                                    children=[
+                                        dmc.Button(
+                                            "Factor data",
+                                            leftSection=DashIconify(icon="tabler:chart-dots"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id=_sid(cfg.prefix, "welcome-add-raw-factor-btn"),
+                                        ),
+                                        dmc.Button(
+                                            "Funds",
+                                            leftSection=DashIconify(icon="tabler:building-bank"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id=_sid(cfg.prefix, "welcome-add-raw-funds-btn"),
+                                        ),
+                                        dmc.Button(
+                                            "Performance",
+                                            leftSection=DashIconify(icon="tabler:activity-heartbeat"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id=_sid(cfg.prefix, "welcome-add-raw-performance-btn"),
                                         ),
                                     ],
                                 ),
@@ -521,6 +593,197 @@ def build_sheet_select_modal(prefix: str):
     )
 
 
+def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
+    return dmc.Modal(
+        id=_sid(prefix, "raw-db-add-modal"),
+        title=dmc.Group(
+            gap="xs",
+            children=[
+                dmc.ThemeIcon(DashIconify(icon="tabler:database-import"), color="grape", variant="light", size="sm"),
+                dmc.Text("Add raw database series", fw=600, size="sm"),
+            ],
+        ),
+        size="980px",
+        centered=True,
+        closeOnClickOutside=True,
+        withCloseButton=True,
+        radius="lg",
+        className="dashmat-modal",
+        overlayProps={"blur": 2, "opacity": 0.45},
+        transitionProps={"transition": "fade", "duration": 180},
+        children=[
+            dmc.Alert(
+                id=_sid(prefix, "raw-db-add-error-alert"),
+                title="Cannot stage import",
+                color="red",
+                hide=True,
+                mb="sm",
+            ),
+            dmc.Stack(
+                gap="sm",
+                children=[
+                    dmc.Select(
+                        id=_sid(prefix, "raw-db-add-series-select"),
+                        label="Series",
+                        data=[],
+                        value=None,
+                        searchable=True,
+                        clearable=True,
+                        nothingFoundMessage="No series found",
+                    ),
+                    dmc.Group(
+                        gap="sm",
+                        children=[
+                            dmc.Select(
+                                id=_sid(prefix, "raw-db-add-table-select"),
+                                label="Table",
+                                data=[
+                                    {"value": "daily", "label": "Daily"},
+                                    {"value": "monthly", "label": "Monthly"},
+                                ],
+                                value="daily",
+                                clearable=False,
+                                searchable=False,
+                                w=200,
+                            ),
+                            dmc.Select(
+                                id=_sid(prefix, "raw-db-add-fee-select"),
+                                label="Gross/Net",
+                                data=[
+                                    {"value": "gross", "label": "Gross"},
+                                    {"value": "net", "label": "Net"},
+                                ],
+                                value="gross",
+                                clearable=False,
+                                searchable=False,
+                                w=200,
+                            ),
+                            dmc.Checkbox(
+                                id=_sid(prefix, "raw-db-add-include-benchmark"),
+                                label="Include Benchmark",
+                                checked=False,
+                                mt=24,
+                            ),
+                        ],
+                    ),
+                    dmc.Group(
+                        id=_sid(prefix, "raw-db-factor-controls"),
+                        gap="sm",
+                        children=[
+                            dmc.Checkbox(
+                                id=_sid(prefix, "raw-db-add-convert-returns"),
+                                label="Convert to returns",
+                                checked=False,
+                                mt=5,
+                            ),
+                            dmc.NumberInput(
+                                id=_sid(prefix, "raw-db-add-divide-by"),
+                                label="Divide by",
+                                value=100,
+                                min=0,
+                                step=1,
+                                w=180,
+                                disabled=True,
+                            ),
+                        ],
+                    ),
+                    dmc.Group(
+                        gap="xs",
+                        children=[
+                            dmc.Button(
+                                "Add Series",
+                                id=_sid(prefix, "raw-db-add-row-btn"),
+                                variant="outline",
+                                size="xs",
+                                leftSection=DashIconify(icon="tabler:plus"),
+                            ),
+                            dmc.Button(
+                                "Delete One",
+                                id=_sid(prefix, "raw-db-delete-row-btn"),
+                                variant="outline",
+                                size="xs",
+                                color="red",
+                                leftSection=DashIconify(icon="tabler:row-remove"),
+                            ),
+                            dmc.Button(
+                                "Clear All",
+                                id=_sid(prefix, "raw-db-clear-rows-btn"),
+                                variant="outline",
+                                size="xs",
+                                color="red",
+                                leftSection=DashIconify(icon="tabler:trash"),
+                            ),
+                        ],
+                    ),
+                    dag.AgGrid(
+                        id=_sid(prefix, "raw-db-add-grid"),
+                        className="ag-theme-alpine",
+                        enableEnterpriseModules=True,
+                        licenseKey=ag_grid_license_key,
+                        columnDefs=[
+                            {"field": "Series", "headerName": "Series", "minWidth": 260, "flex": 2, "headerClass": "dashmat-center-header"},
+                            {"field": "Table", "headerName": "Table", "width": 110, "headerClass": "dashmat-center-header"},
+                            {"field": "Fee", "headerName": "Fee", "width": 110, "headerClass": "dashmat-center-header"},
+                            {"field": "Include Benchmark", "headerName": "Include Benchmark", "width": 170, "headerClass": "dashmat-center-header"},
+                            {"field": "Convert to Returns", "headerName": "Convert", "width": 110, "headerClass": "dashmat-center-header"},
+                            {"field": "Divide By", "headerName": "Divide By", "width": 110, "headerClass": "dashmat-center-header"},
+                        ],
+                        rowData=[],
+                        defaultColDef={
+                            "resizable": True,
+                            "sortable": False,
+                            "suppressHeaderMenuButton": True,
+                            "cellStyle": {"textAlign": "center"},
+                            "headerClass": "dashmat-center-header",
+                        },
+                        style={"height": "220px"},
+                        dashGridOptions={
+                            "rowSelection": "single",
+                            "suppressRowClickSelection": False,
+                            "animateRows": True,
+                            "suppressExcelExport": True,
+                            "suppressCsvExport": True,
+                        },
+                    ),
+                    dmc.Stack(
+                        gap=4,
+                        children=[
+                            dmc.Text("Preview (first 10 rows)", fw=500, size="sm"),
+                            dmc.ScrollArea(
+                                h=140,
+                                offsetScrollbars=True,
+                                children=html.Pre(
+                                    id=_sid(prefix, "raw-db-preview-lines"),
+                                    children="Add a staged row to preview raw values.",
+                                    style={
+                                        "margin": 0,
+                                        "padding": "8px 10px",
+                                        "fontFamily": "Consolas, monospace",
+                                        "fontSize": "12px",
+                                        "lineHeight": "1.4",
+                                        "whiteSpace": "pre-wrap",
+                                        "border": "1px solid rgba(0,0,0,0.12)",
+                                        "borderRadius": "6px",
+                                        "background": "rgba(0,0,0,0.02)",
+                                    },
+                                ),
+                            ),
+                        ],
+                    ),
+                    dmc.Group(
+                        mt="sm",
+                        justify="flex-end",
+                        children=[
+                            dmc.Button("Cancel", id=_sid(prefix, "raw-db-add-cancel-button"), variant="outline", color="red"),
+                            dmc.Button("OK", id=_sid(prefix, "raw-db-add-ok-button"), color="blue", disabled=True),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
 def _db_options(options: list[dict]) -> list[dict]:
     return [{"value": str(o["db_value"]), "label": str(o["label"])} for o in options if "db_value" in o and "label" in o]
 
@@ -629,6 +892,70 @@ def compute_close_portfolio_add_modal(n_clicks):
     if not n_clicks:
         raise PreventUpdate
     return False, [], []
+
+
+def compute_open_raw_db_add_modal(
+    prefix: str,
+    triggered_id,
+    factor_clicks,
+    funds_clicks,
+    performance_clicks,
+    welcome_factor_clicks,
+    welcome_funds_clicks,
+    welcome_performance_clicks,
+    mrd_engine,
+    perf_engine,
+):
+    if (
+        not factor_clicks
+        and not funds_clicks
+        and not performance_clicks
+        and not welcome_factor_clicks
+        and not welcome_funds_clicks
+        and not welcome_performance_clicks
+    ):
+        raise PreventUpdate
+
+    factor_ids = {_sid(prefix, "menu-add-raw-factor"), _sid(prefix, "welcome-add-raw-factor-btn")}
+    funds_ids = {_sid(prefix, "menu-add-raw-funds"), _sid(prefix, "welcome-add-raw-funds-btn")}
+    performance_ids = {_sid(prefix, "menu-add-raw-performance"), _sid(prefix, "welcome-add-raw-performance-btn")}
+
+    if triggered_id in factor_ids:
+        mode = "factor"
+        title = "Add raw factor data"
+        options = get_factor_options_cached(mrd_engine)
+    elif triggered_id in funds_ids:
+        mode = "funds"
+        title = "Add fund return series"
+        options = get_fund_options_cached(mrd_engine)
+    else:
+        mode = "performance"
+        title = "Add performance return series"
+        options = get_performance_options_cached(perf_engine)
+
+    return (
+        True,
+        title,
+        mode,
+        options,
+        None,
+        "daily",
+        "gross",
+        False,
+        False,
+        100,
+        True,
+        [],
+        [],
+        "Add a staged row to preview raw values.",
+        True,
+    )
+
+
+def compute_close_raw_db_add_modal(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False, [], [], "Add a staged row to preview raw values."
 
 
 def js_trigger_upload_with_cancel(prefix: str) -> str:

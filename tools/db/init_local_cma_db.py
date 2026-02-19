@@ -468,7 +468,7 @@ def _alt_ts_rows(series_map: dict[str, pd.Series]) -> list[dict]:
 
 def _build_perf_seed_rows(
     daily_df: pd.DataFrame,
-) -> tuple[list[dict], list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Build deterministic Performance DB seed rows.
 
     Performance.DAILY_RETURN stores returns in percentage points, not decimals.
@@ -483,7 +483,7 @@ def _build_perf_seed_rows(
     ]
 
     if daily_df.empty:
-        return account_rows, benchmark_rows, []
+        return account_rows, benchmark_rows, [], []
 
     idx = pd.DatetimeIndex(daily_df.index).sort_values()
     source_df = daily_df.reindex(idx)
@@ -521,8 +521,8 @@ def _build_perf_seed_rows(
         daily_rows.append(
             {
                 "Effective_Date": d,
-                "Daily_ror": trend_ret * 96.0,
-                "Daily_ror_index": trend_bm_ret * 96.0,
+                "Daily_ror": (trend_ret - 0.00009) * 100.0,
+                "Daily_ror_index": (trend_bm_ret - 0.00007) * 100.0,
                 "ACCT_ID": 9001,
                 "BENCHMARK_ACCT_ID": 9101,
                 "FEE_TYPE": "N",
@@ -562,8 +562,118 @@ def _build_perf_seed_rows(
                 "IS_LATEST": 1,
             }
         )
+        daily_rows.append(
+            {
+                "Effective_Date": d,
+                "Daily_ror": (no_bm_ret - 0.00005) * 100.0,
+                "Daily_ror_index": (no_bm_bm_ret - 0.00004) * 100.0,
+                "ACCT_ID": 9002,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "N",
+                "IS_LATEST": 1,
+            }
+        )
 
-    return account_rows, benchmark_rows, daily_rows
+    trend_monthly = pd.Series(perf_trend, index=idx, dtype=float).resample("ME").apply(lambda xvals: (1.0 + xvals).prod() - 1.0)
+    trend_monthly_bm = pd.Series(perf_trend_bm, index=idx, dtype=float).resample("ME").apply(lambda xvals: (1.0 + xvals).prod() - 1.0)
+    no_bm_monthly = pd.Series(perf_no_bm, index=idx, dtype=float).resample("ME").apply(lambda xvals: (1.0 + xvals).prod() - 1.0)
+    no_bm_monthly_idx = pd.Series(perf_no_bm_idx, index=idx, dtype=float).resample("ME").apply(lambda xvals: (1.0 + xvals).prod() - 1.0)
+
+    monthly_rows: list[dict] = []
+    for dt in trend_monthly.index:
+        d = date(dt.year, dt.month, dt.day)
+        t_val = float(trend_monthly.loc[dt])
+        t_bm_val = float(trend_monthly_bm.loc[dt])
+        n_val = float(no_bm_monthly.loc[dt])
+        n_bm_val = float(no_bm_monthly_idx.loc[dt])
+
+        monthly_rows.append(
+            {
+                "Effective_Date": d,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 1,
+                "Return_Type": "Ann",
+                "mth1_ror": t_val * 100.0,
+                "mth1_ror_index": t_bm_val * 100.0,
+            }
+        )
+        monthly_rows.append(
+            {
+                "Effective_Date": d,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "N",
+                "IS_LATEST": 1,
+                "Return_Type": "Ann",
+                "mth1_ror": (t_val - 0.0007) * 100.0,
+                "mth1_ror_index": (t_bm_val - 0.0005) * 100.0,
+            }
+        )
+        monthly_rows.append(
+            {
+                "Effective_Date": d,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 1,
+                "Return_Type": "Cum",
+                "mth1_ror": t_val * 120.0,
+                "mth1_ror_index": t_bm_val * 120.0,
+            }
+        )
+        monthly_rows.append(
+            {
+                "Effective_Date": d,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9102,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 1,
+                "Return_Type": "Ann",
+                "mth1_ror": t_val * 115.0,
+                "mth1_ror_index": t_bm_val * 115.0,
+            }
+        )
+        monthly_rows.append(
+            {
+                "Effective_Date": d,
+                "ACCT_ID": 9001,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 0,
+                "Return_Type": "Ann",
+                "mth1_ror": t_val * 108.0,
+                "mth1_ror_index": t_bm_val * 108.0,
+            }
+        )
+
+        monthly_rows.append(
+            {
+                "Effective_Date": d,
+                "ACCT_ID": 9002,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "G",
+                "IS_LATEST": 1,
+                "Return_Type": "Ann",
+                "mth1_ror": n_val * 100.0,
+                "mth1_ror_index": n_bm_val * 100.0,
+            }
+        )
+        monthly_rows.append(
+            {
+                "Effective_Date": d,
+                "ACCT_ID": 9002,
+                "BENCHMARK_ACCT_ID": 9101,
+                "FEE_TYPE": "N",
+                "IS_LATEST": 1,
+                "Return_Type": "Ann",
+                "mth1_ror": (n_val - 0.0004) * 100.0,
+                "mth1_ror_index": (n_bm_val - 0.0003) * 100.0,
+            }
+        )
+
+    return account_rows, benchmark_rows, daily_rows, monthly_rows
 
 
 def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table]:
@@ -657,7 +767,7 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
     return cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts, alt_ts
 
 
-def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table]:
+def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table]:
     account = Table(
         "CORE_DATA.ACCOUNT",
         metadata,
@@ -666,6 +776,7 @@ def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table]:
         Column("ACCT_CD", String(128), nullable=False),
         Column("ACCT_TYPE_CD", String(32), nullable=False),
         Column("FACTOR_NAME", String(32), nullable=False),
+        Column("SOURCE_SYSTEM", String(16), nullable=False),
     )
     factor_data = Table(
         "CORE_DATA.ACCOUNT_FACTOR_DATA",
@@ -675,10 +786,28 @@ def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table]:
         Column("FACTOR_VALUE", Float, nullable=False),
         Column("SOURCE_SYSTEM", String(16), nullable=False),
     )
-    return account, factor_data
+    account_returns = Table(
+        "CORE_DATA.ACCOUNT_RETURNS",
+        metadata,
+        Column("ACCT_ID", Integer, primary_key=True),
+        Column("REFERENCE_DATE", Date, primary_key=True),
+        Column("GROSS", Float, nullable=False),
+        Column("NET", Float, nullable=False),
+        Column("SOURCE_SYSTEM", String(16), nullable=False),
+    )
+    account_returns_m = Table(
+        "CORE_DATA.ACCOUNT_RETURNS_M",
+        metadata,
+        Column("ACCT_ID", Integer, primary_key=True),
+        Column("REFERENCE_DATE", Date, primary_key=True),
+        Column("GROSS", Float, nullable=False),
+        Column("NET", Float, nullable=False),
+        Column("SOURCE_SYSTEM", String(16), nullable=False),
+    )
+    return account, factor_data, account_returns, account_returns_m
 
 
-def _build_performance_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
+def _build_performance_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table]:
     account = Table(
         "ACCOUNT",
         metadata,
@@ -702,7 +831,19 @@ def _build_performance_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
         Column("Daily_ror", Float, nullable=False),
         Column("Daily_ror_index", Float, nullable=False),
     )
-    return account, account_benchmark, daily_return
+    monthly_return = Table(
+        "MONTHLY_RETURN",
+        metadata,
+        Column("Effective_Date", Date, primary_key=True),
+        Column("ACCT_ID", Integer, primary_key=True),
+        Column("BENCHMARK_ACCT_ID", Integer, primary_key=True),
+        Column("FEE_TYPE", String(8), primary_key=True),
+        Column("IS_LATEST", Integer, primary_key=True),
+        Column("Return_Type", String(16), primary_key=True),
+        Column("mth1_ror", Float, nullable=False),
+        Column("mth1_ror_index", Float, nullable=False),
+    )
+    return account, account_benchmark, daily_return, monthly_return
 
 
 def _default_core_category_meta(bench: str) -> dict[str, str]:
@@ -801,8 +942,9 @@ def _mrd_rows(df: pd.DataFrame) -> tuple[list[dict], list[dict]]:
                 "ACCT_ID": acct_id,
                 "ACCT_NAME": str(series_name),
                 "ACCT_CD": f"{series_name}_TRIndex",
-                "ACCT_TYPE_CD": "INDEX",
+                "ACCT_TYPE_CD": "SEC_FACTOR",
                 "FACTOR_NAME": "TRIndex",
+                "SOURCE_SYSTEM": "BB",
             }
         )
         series = df[series_name].dropna()
@@ -819,7 +961,167 @@ def _mrd_rows(df: pd.DataFrame) -> tuple[list[dict], list[dict]]:
                 }
             )
 
+    # Additional factor variations for raw-factor import options.
+    if not df.empty:
+        idx = pd.DatetimeIndex(df.index).sort_values()
+        source_df = df.reindex(idx)
+        spx = _pick_seed_column(source_df, "SPX", 0)
+        agg = _pick_seed_column(source_df, "BCAgg", 1)
+        x = np.arange(len(idx), dtype=float)
+
+        extra_specs: list[tuple[str, str, str, str, pd.Series]] = [
+            (
+                "SPX",
+                "SPXGR Index",
+                "SEC_FACTOR",
+                "GRIndex",
+                _returns_to_levels(0.90 * spx + 0.10 * agg + 0.00003 * np.sin(0.05 * x), start_level=100.0),
+            ),
+            (
+                "UST10Y",
+                "USGG10YR Index",
+                "SEC_FACTOR",
+                "Yield",
+                pd.Series(3.2 + 0.45 * np.sin(0.017 * x) + 0.22 * np.cos(0.043 * x), index=idx, dtype=float),
+            ),
+            (
+                "EURUSD",
+                "EURUSD Curncy",
+                "SEC_FACTOR",
+                "Spot",
+                pd.Series(1.12 + 0.06 * np.sin(0.012 * x) + 0.03 * np.cos(0.033 * x), index=idx, dtype=float),
+            ),
+            (
+                "PERF_EXCL",
+                "Perf Excluded Index",
+                "SEC_FACTOR",
+                "TRIndex",
+                _returns_to_levels(0.30 * spx + 0.70 * agg + 0.00004 * np.sin(0.07 * x), start_level=100.0),
+            ),
+        ]
+
+        next_id = len(account_rows) + 1
+        for acct_name, acct_cd, acct_type, factor_name, series in extra_specs:
+            source_system = "PERF" if acct_name == "PERF_EXCL" else "BB"
+            account_rows.append(
+                {
+                    "ACCT_ID": next_id,
+                    "ACCT_NAME": acct_name,
+                    "ACCT_CD": acct_cd,
+                    "ACCT_TYPE_CD": acct_type,
+                    "FACTOR_NAME": factor_name,
+                    "SOURCE_SYSTEM": source_system,
+                }
+            )
+            clean = pd.to_numeric(series, errors="coerce").dropna()
+            for dt, value in clean.items():
+                factor_rows.append(
+                    {
+                        "ACCT_ID": next_id,
+                        "REFERENCE_DATE": date(dt.year, dt.month, dt.day),
+                        "FACTOR_VALUE": float(value),
+                        "SOURCE_SYSTEM": source_system,
+                    }
+                )
+            next_id += 1
+
     return account_rows, factor_rows
+
+
+def _build_fund_seed_rows(daily_df: pd.DataFrame, start_acct_id: int) -> tuple[list[dict], list[dict], list[dict]]:
+    """Build deterministic MSTAR fund account + daily/monthly return rows."""
+    if daily_df.empty:
+        return [], [], []
+
+    idx = pd.DatetimeIndex(daily_df.index).sort_values()
+    source_df = daily_df.reindex(idx)
+    spx = _pick_seed_column(source_df, "SPX", 0)
+    agg = _pick_seed_column(source_df, "BCAgg", 1)
+    em = _pick_seed_column(source_df, "EM", 2)
+    x = np.arange(len(idx), dtype=float)
+
+    specs = [
+        {
+            "name": "MStar Growth Opportunities",
+            "code": "MGROWTH",
+            "acct_type": "OE",
+            "gross": 0.70 * spx + 0.15 * em + 0.15 * agg + 0.00006 * np.sin(0.09 * x),
+            "fee": 0.00008,
+        },
+        {
+            "name": "MStar Defensive Sleeve",
+            "code": "MDEFSLV",
+            "acct_type": "SLEEVE",
+            "gross": 0.25 * spx + 0.05 * em + 0.70 * agg + 0.00004 * np.cos(0.07 * x),
+            "fee": 0.00004,
+        },
+        {
+            "name": "MStar Income Trust",
+            "code": "MINCTRST",
+            "acct_type": "TRUST",
+            "gross": 0.10 * spx + 0.10 * em + 0.80 * agg + 0.00003 * np.sin(0.05 * x),
+            "fee": 0.00002,
+        },
+    ]
+
+    account_rows: list[dict] = []
+    daily_rows: list[dict] = []
+    monthly_rows: list[dict] = []
+
+    for i, spec in enumerate(specs):
+        acct_id = int(start_acct_id + i)
+        account_rows.append(
+            {
+                "ACCT_ID": acct_id,
+                "ACCT_NAME": spec["name"],
+                "ACCT_CD": spec["code"],
+                "ACCT_TYPE_CD": spec["acct_type"],
+                "FACTOR_NAME": "Ret",
+                "SOURCE_SYSTEM": "MSTAR",
+            }
+        )
+
+        gross_series = pd.Series(spec["gross"], index=idx, dtype=float)
+        net_series = gross_series - float(spec["fee"])
+
+        for dt in idx:
+            daily_rows.append(
+                {
+                    "ACCT_ID": acct_id,
+                    "REFERENCE_DATE": date(dt.year, dt.month, dt.day),
+                    "GROSS": float(gross_series.loc[dt]),
+                    "NET": float(net_series.loc[dt]),
+                    "SOURCE_SYSTEM": "MSTAR",
+                }
+            )
+
+        gross_m = gross_series.resample("ME").apply(lambda xvals: (1.0 + xvals).prod() - 1.0)
+        net_m = net_series.resample("ME").apply(lambda xvals: (1.0 + xvals).prod() - 1.0)
+        for dt in gross_m.index:
+            monthly_rows.append(
+                {
+                    "ACCT_ID": acct_id,
+                    "REFERENCE_DATE": date(dt.year, dt.month, dt.day),
+                    "GROSS": float(gross_m.loc[dt]),
+                    "NET": float(net_m.loc[dt]),
+                    "SOURCE_SYSTEM": "MSTAR",
+                }
+            )
+
+    # Negative controls: rows excluded by filters.
+    if account_rows:
+        account_rows.append(
+            {
+                "ACCT_ID": int(start_acct_id + len(specs)),
+                "ACCT_NAME": "Non-MSTAR Excluded Fund",
+                "ACCT_CD": "XNONMSTAR",
+                "ACCT_TYPE_CD": "OE",
+                "FACTOR_NAME": "Ret",
+                "SOURCE_SYSTEM": "OTHER",
+            }
+        )
+
+    return account_rows, daily_rows, monthly_rows
 
 
 def main() -> None:
@@ -834,9 +1136,9 @@ def main() -> None:
     metadata = MetaData()
     cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts, alt_ts = _build_tables(metadata)
     mrd_metadata = MetaData()
-    mrd_account, mrd_factor_data = _build_mrd_tables(mrd_metadata)
+    mrd_account, mrd_factor_data, mrd_account_returns, mrd_account_returns_m = _build_mrd_tables(mrd_metadata)
     perf_metadata = MetaData()
-    perf_account, perf_account_benchmark, perf_daily_return = _build_performance_tables(perf_metadata)
+    perf_account, perf_account_benchmark, perf_daily_return, perf_monthly_return = _build_performance_tables(perf_metadata)
 
     metadata.drop_all(engine, checkfirst=True)
     metadata.create_all(engine)
@@ -846,6 +1148,54 @@ def main() -> None:
     mrd_metadata.create_all(engine_MRD)
     perf_metadata.drop_all(engine_PERFORMANCE, checkfirst=True)
     perf_metadata.create_all(engine_PERFORMANCE)
+
+    # Query-supporting indexes for raw import workflows.
+    if engine_MRD.dialect.name == "sqlite":
+        with engine_MRD.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_core_account_filters "
+                    "ON [CORE_DATA.ACCOUNT] (ACCT_TYPE_CD, SOURCE_SYSTEM, ACCT_NAME, FACTOR_NAME)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_core_factor_acct_date "
+                    "ON [CORE_DATA.ACCOUNT_FACTOR_DATA] (ACCT_ID, REFERENCE_DATE)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_core_returns_acct_date "
+                    "ON [CORE_DATA.ACCOUNT_RETURNS] (ACCT_ID, REFERENCE_DATE, SOURCE_SYSTEM)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_core_returns_m_acct_date "
+                    "ON [CORE_DATA.ACCOUNT_RETURNS_M] (ACCT_ID, REFERENCE_DATE, SOURCE_SYSTEM)"
+                )
+            )
+    if engine_PERFORMANCE.dialect.name == "sqlite":
+        with engine_PERFORMANCE.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_perf_daily_filters "
+                    "ON [DAILY_RETURN] (ACCT_ID, Effective_Date, FEE_TYPE, IS_LATEST, BENCHMARK_ACCT_ID)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_perf_monthly_filters "
+                    "ON [MONTHLY_RETURN] (ACCT_ID, Effective_Date, FEE_TYPE, IS_LATEST, Return_Type, BENCHMARK_ACCT_ID)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_perf_benchmark_precedence "
+                    "ON [ACCOUNT_BENCHMARK] (BENCHMARK_ID, PRECEDENCE)"
+                )
+            )
 
     corr_rows: list[dict] = []
     ret_rows: list[dict] = []
@@ -872,7 +1222,12 @@ def main() -> None:
     index_ts_rows = _portfolio_ts_rows(index_series_map)
     alt_ts_rows = _alt_ts_rows(alt_series_map)
     mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)
-    perf_account_rows, perf_benchmark_rows, perf_daily_rows = _build_perf_seed_rows(daily_df)
+    fund_account_rows, fund_daily_rows, fund_monthly_rows = _build_fund_seed_rows(
+        daily_df,
+        start_acct_id=(max([r["ACCT_ID"] for r in mrd_account_rows], default=0) + 1),
+    )
+    mrd_account_rows.extend(fund_account_rows)
+    perf_account_rows, perf_benchmark_rows, perf_daily_rows, perf_monthly_rows = _build_perf_seed_rows(daily_df)
 
     with engine.begin() as conn:
         conn.execute(cma_corr.insert(), corr_rows)
@@ -896,6 +1251,10 @@ def main() -> None:
             conn.execute(mrd_account.insert(), mrd_account_rows)
         if mrd_factor_rows:
             conn.execute(mrd_factor_data.insert(), mrd_factor_rows)
+        if fund_daily_rows:
+            conn.execute(mrd_account_returns.insert(), fund_daily_rows)
+        if fund_monthly_rows:
+            conn.execute(mrd_account_returns_m.insert(), fund_monthly_rows)
 
     with engine_PERFORMANCE.begin() as conn:
         if perf_account_rows:
@@ -904,6 +1263,8 @@ def main() -> None:
             conn.execute(perf_account_benchmark.insert(), perf_benchmark_rows)
         if perf_daily_rows:
             conn.execute(perf_daily_return.insert(), perf_daily_rows)
+        if perf_monthly_rows:
+            conn.execute(perf_monthly_return.insert(), perf_monthly_rows)
 
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
@@ -918,10 +1279,13 @@ def main() -> None:
     print(f"Initialized MRD database at {MRD_DATABASE_URL}")
     print(f"CORE_DATA.ACCOUNT rows: {len(mrd_account_rows)}")
     print(f"CORE_DATA.ACCOUNT_FACTOR_DATA rows: {len(mrd_factor_rows)}")
+    print(f"CORE_DATA.ACCOUNT_RETURNS rows: {len(fund_daily_rows)}")
+    print(f"CORE_DATA.ACCOUNT_RETURNS_M rows: {len(fund_monthly_rows)}")
     print(f"Initialized Performance database at {PERFORMANCE_DATABASE_URL}")
     print(f"ACCOUNT rows: {len(perf_account_rows)}")
     print(f"ACCOUNT_BENCHMARK rows: {len(perf_benchmark_rows)}")
     print(f"DAILY_RETURN rows: {len(perf_daily_rows)}")
+    print(f"MONTHLY_RETURN rows: {len(perf_monthly_rows)}")
 
 
 if __name__ == "__main__":
