@@ -248,7 +248,61 @@ def _load_daily_returns() -> pd.DataFrame:
     df = pd.read_excel(path, index_col=0)
     df.index = pd.to_datetime(df.index)
     df = df.sort_index()
-    return df
+    return _ensure_business_daily_returns(df)
+
+
+def _ensure_business_daily_returns(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure daily seed returns have business-day frequency.
+
+    If the loaded "daily" sample is actually lower frequency (e.g. month-end),
+    distribute each monthly return evenly across business days in that month.
+    """
+    if df.empty:
+        return df
+
+    out = df.copy()
+    out.index = pd.to_datetime(out.index)
+    out = out.sort_index()
+    out = out.loc[~out.index.duplicated(keep="last")]
+
+    idx = pd.DatetimeIndex(out.index).sort_values().unique()
+    if len(idx) < 2:
+        return out
+
+    min_delta = pd.Series(idx).diff().dropna().min()
+    if min_delta is not None and min_delta <= pd.Timedelta(days=7):
+        return out
+
+    # Convert lower-frequency series to synthetic business-daily returns.
+    bidx = pd.date_range(
+        start=pd.Timestamp(idx.min()).to_period("M").start_time,
+        end=pd.Timestamp(idx.max()),
+        freq="B",
+    )
+    daily = pd.DataFrame(index=bidx, columns=out.columns, dtype=float)
+
+    for col in out.columns:
+        series = pd.to_numeric(out[col], errors="coerce").dropna()
+        if series.empty:
+            continue
+        for dt, val in series.items():
+            dt_ts = pd.Timestamp(dt)
+            month_start = dt_ts.to_period("M").start_time
+            month_end = dt_ts.to_period("M").end_time.normalize()
+            month_days = bidx[(bidx >= month_start) & (bidx <= month_end)]
+            n_days = len(month_days)
+            if n_days == 0:
+                continue
+            v = float(val)
+            if v <= -1.0:
+                daily_ret = np.nan
+            else:
+                daily_ret = (1.0 + v) ** (1.0 / n_days) - 1.0
+            daily.loc[month_days, col] = daily_ret
+
+    daily = daily.dropna(how="all")
+    daily.index.name = out.index.name
+    return daily
 
 
 def _build_bctbill13_proxy_returns(daily_df: pd.DataFrame) -> pd.Series:
@@ -348,6 +402,25 @@ def _pick_seed_column(df: pd.DataFrame, preferred: str, fallback_pos: int) -> pd
     return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
 
+def _seed_daily_index(daily_df: pd.DataFrame) -> pd.DatetimeIndex:
+    """Pick a dense daily index from core benchmark columns."""
+    if daily_df.empty:
+        return pd.DatetimeIndex([])
+
+    preferred_cols = [c for c in ("SPX", "BCAgg", "R2000", "EAFE") if c in daily_df.columns]
+    if not preferred_cols:
+        preferred_cols = [daily_df.columns[0]]
+
+    base = daily_df[preferred_cols]
+    if isinstance(base, pd.Series):
+        base = base.to_frame()
+
+    idx = pd.DatetimeIndex(base.dropna(how="all").index).sort_values().unique()
+    if len(idx) == 0:
+        idx = pd.DatetimeIndex(daily_df.index).sort_values().unique()
+    return idx
+
+
 def _returns_to_levels(series: pd.Series, start_level: float = 100.0) -> pd.Series:
     clean = pd.to_numeric(series, errors="coerce").fillna(0.0)
     levels = (1.0 + clean).cumprod() * float(start_level)
@@ -359,7 +432,9 @@ def _build_portfolio_seed_series(daily_df: pd.DataFrame) -> tuple[dict[str, pd.S
     if daily_df.empty:
         return {}, {}
 
-    idx = pd.DatetimeIndex(daily_df.index).sort_values()
+    idx = _seed_daily_index(daily_df)
+    if len(idx) == 0:
+        return [], [], []
     source_df = daily_df.reindex(idx)
     spx = _pick_seed_column(source_df, "SPX", 0)
     agg = _pick_seed_column(source_df, "BCAgg", 1)
@@ -485,7 +560,9 @@ def _build_perf_seed_rows(
     if daily_df.empty:
         return account_rows, benchmark_rows, [], []
 
-    idx = pd.DatetimeIndex(daily_df.index).sort_values()
+    idx = _seed_daily_index(daily_df)
+    if len(idx) == 0:
+        return account_rows, benchmark_rows, [], []
     source_df = daily_df.reindex(idx)
     spx = _pick_seed_column(source_df, "SPX", 0)
     agg = _pick_seed_column(source_df, "BCAgg", 1)
@@ -1033,7 +1110,9 @@ def _build_fund_seed_rows(daily_df: pd.DataFrame, start_acct_id: int) -> tuple[l
     if daily_df.empty:
         return [], [], []
 
-    idx = pd.DatetimeIndex(daily_df.index).sort_values()
+    idx = _seed_daily_index(daily_df)
+    if len(idx) == 0:
+        return [], [], []
     source_df = daily_df.reindex(idx)
     spx = _pick_seed_column(source_df, "SPX", 0)
     agg = _pick_seed_column(source_df, "BCAgg", 1)
