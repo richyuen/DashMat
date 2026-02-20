@@ -7,6 +7,7 @@ import pandas as pd
 from scipy import stats
 
 import cache_config
+from utils.exponential_weighting import resolve_ewm_params
 from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns, annualization_factor, is_daily
 from utils.serialization import (
     date_range_payload_for_cache,
@@ -802,7 +803,8 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
 @cache_config.cache.memoize(timeout=0)
 def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
                                 returns_type: str, benchmark_assignments: str, long_short_assignments: str,
-                                date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+                                date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "",
+                                exp_weighted: bool = False, decay_value: float = 63.0):
     """Generate correlogram with caching."""
     display_df = calculate_excess_returns(
         json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str,
@@ -815,12 +817,32 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
     available_series = list(display_df.columns)
     n = len(available_series)
 
-    # Calculate correlation matrix
+    # Calculate correlation/covariance matrices
     corr_matrix = display_df.corr()
+    cov_matrix = display_df.cov()
+
+    if exp_weighted:
+        ewm_cov = display_df.ewm(**resolve_ewm_params(decay_value)).cov().iloc[-n:]
+        if isinstance(ewm_cov.index, pd.MultiIndex):
+            ewm_cov.index = ewm_cov.index.get_level_values(-1)
+        cov_matrix = ewm_cov.reindex(index=available_series, columns=available_series)
+
+        cov_values = cov_matrix.to_numpy(dtype=float, copy=False)
+        std = np.sqrt(np.clip(np.diag(cov_values), a_min=0.0, a_max=None))
+        denom = np.outer(std, std)
+        corr_values = np.divide(
+            cov_values,
+            denom,
+            out=np.full_like(cov_values, np.nan, dtype=float),
+            where=denom > 0,
+        )
+        np.fill_diagonal(corr_values, 1.0)
+        corr_matrix = pd.DataFrame(corr_values, index=available_series, columns=available_series)
 
     return {
         'display_df': display_df,
         'corr_matrix': corr_matrix,
+        'cov_matrix': cov_matrix,
         'available_series': available_series,
         'n': n
     }

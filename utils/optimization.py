@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import riskfolio as rp
+from utils.exponential_weighting import normalize_decay_input, resolve_ewm_params
 
 # Suppress cvxpy deprecation warning from riskfolio-lib internals
 warnings.filterwarnings("ignore", category=UserWarning, module="cvxpy")
@@ -459,7 +460,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
         if exp_wt_cov:
             # Estimate using exponential weighting
             n_assets = len(asset_names)
-            cov_df = clean_data.ewm(halflife=halflife).cov().iloc[-n_assets:]
+            cov_df = clean_data.ewm(**resolve_ewm_params(halflife)).cov().iloc[-n_assets:]
         else:
             cov_df = clean_data.cov()
     else:
@@ -609,7 +610,7 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
     port.assets_stats(method_mu="hist", method_cov="hist")
 
     if exp_wt_cov:
-        port.cov = port_data.ewm(halflife=halflife).cov().iloc[-n_assets:]
+        port.cov = port_data.ewm(**resolve_ewm_params(halflife)).cov().iloc[-n_assets:]
 
     # Build P (views matrix) and Q (views vector)
     n_views = len(bl_views)
@@ -824,9 +825,9 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
 
     # Override covariance if exponentially weighted
     if exp_wt_cov:
-        port.cov = port_data.ewm(halflife=halflife).cov().iloc[-len(asset_names):]
+        port.cov = port_data.ewm(**resolve_ewm_params(halflife)).cov().iloc[-len(asset_names):]
         # Also override mu with exponentially weighted mean
-        port.mu = port_data.ewm(halflife=halflife).mean().iloc[-1:].T
+        port.mu = port_data.ewm(**resolve_ewm_params(halflife)).mean().iloc[-1:].T
         port.mu.columns = ["mu"]
 
     # Build bounds arrays (ordered by asset_names)
@@ -972,7 +973,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     opt_step = config.get("opt_step", 252)
     opt_step_unit = config.get("opt_step_unit", "periods")
     exp_wt_cov = config.get("exp_wt_cov", False)
-    halflife = config.get("halflife", 63)
+    halflife = normalize_decay_input(config.get("halflife", 63), 63.0)
     missing_data = config.get("missing_data", "fill_na")
     fill_in_sample = config.get("fill_in_sample", False)
     selected_series = config.get("selected_series", list(returns_df.columns))

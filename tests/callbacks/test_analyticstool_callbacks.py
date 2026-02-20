@@ -235,6 +235,73 @@ def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules)
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "correlogram") == {"num_series": 2}
 
 
+def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules):
+    analyticstool, _ = page_modules
+    date_range = {"start": "2024-01-01", "end": "2024-12-31"}
+
+    key_unweighted = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "correlation",
+        False,
+        63,
+        120,
+        None,
+    )
+    key_weighted = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "correlation",
+        True,
+        0.94,
+        120,
+        None,
+    )
+
+    assert isinstance(key_unweighted, str)
+    assert isinstance(key_weighted, str)
+    assert key_unweighted != key_weighted
+    assert (
+        analyticstool.update_correlogram_target_key(
+            "correlogram",
+            None,
+            "daily",
+            ["Asset_A", "Asset_B"],
+            "total",
+            {},
+            {},
+            date_range,
+            True,
+            0,
+            {},
+            "correlation",
+            True,
+            0.94,
+            120,
+            key_weighted,
+        )
+        is no_update
+    )
+
+
 def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_json):
     analyticstool, _ = page_modules
 

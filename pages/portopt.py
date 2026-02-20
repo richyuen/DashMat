@@ -44,6 +44,8 @@ from utils.returns import (
     annualization_factor,
     is_daily,
 )
+from utils.exponential_weighting import decay_input_mode, normalize_decay_input, resolve_ewm_params
+from utils.excel_export import format_excel_dates, format_mdy_date, write_excel_with_autofit
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
 from utils.perf_timing import timed_block
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
@@ -701,7 +703,7 @@ def _validate_optimization_inputs(
     if exp_wt_cov:
         hl = _coerce_float(halflife)
         if hl is None or hl <= 0:
-            return "Halflife must be greater than 0 when exponential weighting is enabled."
+            return "Decay input must be greater than 0 when exponential weighting is enabled."
 
     min_map = min_wt or {}
     max_map = max_wt or {}
@@ -829,8 +831,8 @@ def _build_black_litterman_mu_cov(est_data, config, asset_cols):
     port.assets_stats(method_mu="hist", method_cov="hist")
 
     if config.get("exp_wt_cov", False):
-        hl = int(config.get("halflife", 63) or 63)
-        ewm_cov = est_data.ewm(halflife=hl).cov().iloc[-len(asset_cols):]
+        decay_value = normalize_decay_input(config.get("halflife", 63), 63.0)
+        ewm_cov = est_data.ewm(**resolve_ewm_params(decay_value)).cov().iloc[-len(asset_cols):]
         if isinstance(ewm_cov.index, pd.MultiIndex):
             ewm_cov.index = ewm_cov.index.get_level_values(-1)
         ewm_cov = ewm_cov.reindex(index=asset_cols, columns=asset_cols)
@@ -1588,15 +1590,21 @@ def build_po_main_layout():
                                         ]),
                                         html.Div([
                                             dmc.Text("Half-Life", size="sm", fw=500, mb=3),
-                                            dmc.NumberInput(
-                                                id="po-halflife-input",
-                                                value=63,
-                                                min=1,
-                                                step=1,
-                                                w=90,
-                                                size="sm",
-                                                disabled=True,
-                                                style={"whiteSpace": "nowrap"},
+                                            dmc.Tooltip(
+                                                label="If value is < 1, it is interpreted as lambda. If value is >= 1, it is interpreted as half-life in periods.",
+                                                multiline=True,
+                                                w=300,
+                                                withArrow=True,
+                                                children=dmc.NumberInput(
+                                                    id="po-halflife-input",
+                                                    value=63,
+                                                    min=0.001,
+                                                    step=0.01,
+                                                    w=90,
+                                                    size="sm",
+                                                    disabled=True,
+                                                    style={"whiteSpace": "nowrap"},
+                                                ),
                                             ),
                                         ]),
                                     ],
@@ -2693,7 +2701,8 @@ layout = dmc.Container(
                                                         dmc.Text("Portfolio Name is the key used to store and select results.", size="sm"),
                                                         dmc.Text("Model chooses risk-based, mean-variance, ex-ante, or Black-Litterman optimization.", size="sm"),
                                                         dmc.Text("Exp Wt enables exponential weighting for historical parameter estimates.", size="sm"),
-                                                        dmc.Text("Half-Life controls recency emphasis when Exp Wt is on (smaller means faster decay).", size="sm"),
+                                                        dmc.Text("Decay input behavior: values >= 1 are half-life periods; values < 1 are lambda (for example 0.94).", size="sm"),
+                                                        dmc.Text("Smaller half-life or lambda further from 1.0 puts more emphasis on recent data.", size="sm"),
                                                         dmc.Text("Window options: Expanding, Rolling, or Full.", size="sm"),
                                                         dmc.Text("Window Size sets lookback periods used for each optimization step.", size="sm"),
                                                         dmc.Text("Opt Step + Unit sets rebalance frequency; Months aligns to month-end, Periods uses row counts.", size="sm"),
@@ -2816,7 +2825,7 @@ layout = dmc.Container(
                                                         dmc.Text("Portfolio dropdown selects the active stored result; compare control overlays portfolios where supported.", size="sm"),
                                                         dmc.Text("Delete icon removes selected result. Use unique names to keep scenario history.", size="sm"),
                                                         dmc.Text("File > Save session exports JSON state; Load session restores it.", size="sm"),
-                                                        dmc.Text("File > Download Excel exports portfolio outputs for external analysis.", size="sm"),
+                                                        dmc.Text("File > Download Excel exports portfolio outputs plus a Settings sheet that records Exp Wt decay input and interpretation mode.", size="sm"),
                                                         dmc.Text("Run disabled: load data and select at least one series.", size="sm"),
                                                         dmc.Text("Optimization fails: review bounds, force-max flags, and linear constraints first.", size="sm"),
                                                         dmc.Text("Turnover missing: Full window mode does not generate multiple rebalance events.", size="sm"),
@@ -4304,21 +4313,31 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
         sub_df = df[valid_series].dropna()
         
         if is_corr:
-            est_df = sub_df.corr()
-        else:
-            # Annualize covariance based on selected periodicity
-            p = periodicity or "daily"
-            if p.startswith("weekly"):
-                ann = 52
-            elif p == "monthly":
-                ann = 12
-            else:
-                ann = 252
-            
             if exp_wt_cov:
                 n_assets = len(valid_series)
-                hl = halflife or 63
-                est_df = sub_df.ewm(halflife=hl).cov().iloc[-n_assets:]
+                decay_value = normalize_decay_input(halflife, 63.0)
+                cov_df = sub_df.ewm(**resolve_ewm_params(decay_value)).cov().iloc[-n_assets:]
+                cov_df.index = valid_series
+                cov_df = cov_df.reindex(index=valid_series, columns=valid_series)
+                cov_values = cov_df.to_numpy(dtype=float, copy=False)
+                std = np.sqrt(np.clip(np.diag(cov_values), a_min=0.0, a_max=None))
+                denom = np.outer(std, std)
+                corr_values = np.divide(
+                    cov_values,
+                    denom,
+                    out=np.full_like(cov_values, np.nan, dtype=float),
+                    where=denom > 0,
+                )
+                np.fill_diagonal(corr_values, 1.0)
+                est_df = pd.DataFrame(corr_values, index=valid_series, columns=valid_series)
+            else:
+                est_df = sub_df.corr()
+        else:
+            ann = _annualization_for_periodicity(periodicity)
+            if exp_wt_cov:
+                n_assets = len(valid_series)
+                decay_value = normalize_decay_input(halflife, 63.0)
+                est_df = sub_df.ewm(**resolve_ewm_params(decay_value)).cov().iloc[-n_assets:]
                 est_df.index = valid_series  # Reset MultiIndex to simple asset names
                 est_df = est_df * ann
             else:
@@ -4382,8 +4401,8 @@ def po_estimate_returns_from_data(n_clicks, data, selected_series, periodicity, 
             ann = 252
 
         if exp_wt:
-            hl = halflife or 63
-            mean_returns = sub_df.ewm(halflife=hl).mean().iloc[-1] * ann
+            decay_value = normalize_decay_input(halflife, 63.0)
+            mean_returns = sub_df.ewm(**resolve_ewm_params(decay_value)).mean().iloc[-1] * ann
         else:
             mean_returns = sub_df.mean() * ann
 
@@ -7279,7 +7298,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "opt_step": int(_coerce_float(opt_step) or 252),
             "opt_step_unit": opt_step_unit_value or "months",
             "exp_wt_cov": bool(exp_wt_cov),
-            "halflife": int(_coerce_float(halflife) or 63),
+            "halflife": normalize_decay_input(halflife, 63.0),
             "missing_data": missing_data or "fill_na",
             "fill_in_sample": fill_in_sample_value == "on",
             "selected_series": opt_cols,
@@ -8203,6 +8222,32 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         portfolio_names = list(all_returns.keys())
 
         # ------------------------------------------------------------------
+        # Settings tab
+        # ------------------------------------------------------------------
+        settings_rows = []
+        for pname, pdata in results.items():
+            cfg = pdata.get("config", {}) or {}
+            exp_weighted = bool(cfg.get("exp_wt_cov", False))
+            decay_value = normalize_decay_input(cfg.get("halflife", 63), 63.0)
+            settings_rows.append(
+                {
+                    "Portfolio": pname,
+                    "Model": cfg.get("model", ""),
+                    "Window Type": cfg.get("window_type", ""),
+                    "Window Size": cfg.get("window_size"),
+                    "Opt Step": cfg.get("opt_step"),
+                    "Opt Step Unit": cfg.get("opt_step_unit"),
+                    "Missing Data": cfg.get("missing_data", ""),
+                    "Fill In-Sample": bool(cfg.get("fill_in_sample", False)),
+                    "Exp Wt": exp_weighted,
+                    "Decay Input": float(decay_value),
+                    "Decay Mode": decay_input_mode(decay_value, 63.0),
+                    "Periodicity": cfg.get("periodicity", periodicity or "daily"),
+                }
+            )
+        settings_df = pd.DataFrame(settings_rows)
+
+        # ------------------------------------------------------------------
         # Weights tab
         # ------------------------------------------------------------------
         weight_rows = []
@@ -8211,8 +8256,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
             for ww in pdata.get("window_weights", []) or []:
                 row = {
                     "Portfolio": pname,
-                    "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
-                    "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
+                    "Apply Start": format_mdy_date(pd.Timestamp(ww["apply_start"])),
+                    "Apply End": format_mdy_date(pd.Timestamp(ww["apply_end"])),
                 }
                 for asset, weight in (ww.get("weights", {}) or {}).items():
                     col = f"Wt_{asset}"
@@ -8246,7 +8291,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 turnover = sum(abs(curr_w.get(a, 0) - prev_w.get(a, 0)) for a in all_assets) / 2
                 row = {
                     "Portfolio": pname,
-                    "Rebalance Date": pd.Timestamp(window_weights[i]["apply_start"]).strftime("%Y-%m-%d"),
+                    "Rebalance Date": format_mdy_date(pd.Timestamp(window_weights[i]["apply_start"])),
                     "Turnover": float(turnover),
                 }
                 for asset in all_assets:
@@ -8295,7 +8340,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         returns_df = combined_df.reset_index()
         returns_date_col = returns_df.columns[0]
         returns_df = returns_df.rename(columns={returns_date_col: "Date"})
-        returns_df["Date"] = returns_df["Date"].dt.strftime("%Y-%m-%d")
+        returns_df["Date"] = returns_df["Date"].map(format_mdy_date)
 
         # ------------------------------------------------------------------
         # Growth tab
@@ -8304,7 +8349,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         growth_df = pd.DataFrame(growth_data).sort_index().reset_index()
         growth_date_col = growth_df.columns[0]
         growth_df = growth_df.rename(columns={growth_date_col: "Date"})
-        growth_df["Date"] = growth_df["Date"].dt.strftime("%Y-%m-%d")
+        growth_df["Date"] = growth_df["Date"].map(format_mdy_date)
 
         # ------------------------------------------------------------------
         # Attribution tab
@@ -8343,7 +8388,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 frame = attribution_monthly.reset_index()
                 date_col = frame.columns[0]
                 frame = frame.rename(columns={date_col: "Date"})
-                frame["Date"] = pd.to_datetime(frame["Date"]).dt.strftime("%Y-%m-%d")
+                frame["Date"] = pd.to_datetime(frame["Date"]).map(format_mdy_date)
                 frame.insert(0, "Portfolio", pname)
                 attribution_frames.append(frame)
         if attribution_frames:
@@ -8374,8 +8419,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
             for rr in _compute_window_risk_contributions(working_df, opt_series, window_weights):
                 row = {
                     "Portfolio": pname,
-                    "Window Start": rr["apply_start"].strftime("%Y-%m-%d"),
-                    "Window End": rr["apply_end"].strftime("%Y-%m-%d"),
+                    "Window Start": format_mdy_date(rr["apply_start"]),
+                    "Window End": format_mdy_date(rr["apply_end"]),
                 }
                 for asset, value in (rr.get("risk_contributions", {}) or {}).items():
                     row[asset] = float(value)
@@ -8425,7 +8470,9 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                             cmabench_assignments=cmabench,
                         )
 
-                    window_label = f"{snapshot.get('window_est_start')} - {snapshot.get('window_est_end')}"
+                    window_start = format_mdy_date(snapshot.get("window_est_start"))
+                    window_end = format_mdy_date(snapshot.get("window_est_end"))
+                    window_label = f"{window_start} - {window_end}"
                     for row in _build_frontier_table_rows(snapshot):
                         out_row = {"Portfolio": pname, "Window": window_label, **row}
                         frontier_rows.append(out_row)
@@ -8443,17 +8490,28 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
             frontier_df = pd.DataFrame(columns=frontier_base_cols)
 
         output = BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            # Keep exact tab order: Weights, Turnover, Statistics, Returns,
-            # Growth, Attribution, Risk, Frontier.
-            weights_df.to_excel(writer, sheet_name="Weights", index=False)
-            turnover_df.to_excel(writer, sheet_name="Turnover", index=False)
-            stats_df.to_excel(writer, sheet_name="Statistics", index=False)
-            returns_df.to_excel(writer, sheet_name="Returns", index=False)
-            growth_df.to_excel(writer, sheet_name="Growth of $1", index=False)
-            attribution_df.to_excel(writer, sheet_name="Attribution", index=False)
-            risk_df.to_excel(writer, sheet_name="Risk", index=False)
-            frontier_df.to_excel(writer, sheet_name="Frontier", index=False)
+        settings_df = format_excel_dates(settings_df)
+        weights_df = format_excel_dates(weights_df)
+        turnover_df = format_excel_dates(turnover_df)
+        stats_df = format_excel_dates(stats_df)
+        returns_df = format_excel_dates(returns_df)
+        growth_df = format_excel_dates(growth_df)
+        attribution_df = format_excel_dates(attribution_df)
+        risk_df = format_excel_dates(risk_df)
+        frontier_df = format_excel_dates(frontier_df)
+
+        with pd.ExcelWriter(output, engine="xlsxwriter", date_format="m/d/yyyy", datetime_format="m/d/yyyy") as writer:
+            # Keep exact tab order: Settings, Weights, Turnover, Statistics,
+            # Returns, Growth, Attribution, Risk, Frontier.
+            write_excel_with_autofit(writer, settings_df, "Settings", index=False)
+            write_excel_with_autofit(writer, weights_df, "Weights", index=False)
+            write_excel_with_autofit(writer, turnover_df, "Turnover", index=False)
+            write_excel_with_autofit(writer, stats_df, "Statistics", index=False)
+            write_excel_with_autofit(writer, returns_df, "Returns", index=False)
+            write_excel_with_autofit(writer, growth_df, "Growth of $1", index=False)
+            write_excel_with_autofit(writer, attribution_df, "Attribution", index=False)
+            write_excel_with_autofit(writer, risk_df, "Risk", index=False)
+            write_excel_with_autofit(writer, frontier_df, "Frontier", index=False)
 
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), "portfolio_optimization.xlsx")

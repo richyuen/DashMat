@@ -50,7 +50,9 @@ from utils.statistics import (
     calculate_statistics_cached,
     generate_correlogram_cached,
 )
+from utils.exponential_weighting import normalize_decay_input
 from utils.charting import apply_chart_theme
+from utils.excel_export import format_excel_dates, write_excel_with_autofit
 from utils.perf_timing import timed_block
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.shared_metrics import (
@@ -157,6 +159,8 @@ def _correlogram_request_key(
     vol_scaling_assignments,
     correlation_view,
     block_width,
+    exp_weighted,
+    decay_value,
 ):
     payload = "|".join(
         [
@@ -171,6 +175,8 @@ def _correlogram_request_key(
             _mapping_payload(vol_scaling_assignments),
             str(correlation_view or "correlogram"),
             str(block_width if block_width is not None else ""),
+            str(bool(exp_weighted)),
+            str(normalize_decay_input(decay_value, 63.0)),
         ]
     )
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
@@ -1362,26 +1368,71 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     children=[
                         dmc.Group(
                             mb="md",
+                            gap="md",
+                            align="flex-end",
                             children=[
-                                dmc.SegmentedControl(
-                                    id="at-correlation-view-switch",
-                                    data=[
-                                        {"value": "correlation", "label": "Correlation"},
-                                        {"value": "correlogram", "label": "Correlogram"},
-                                    ],
-                                    value="correlogram",
-                                    size="sm",
-                                ),
-                                dmc.NumberInput(
-                                    id="at-correlogram-block-width",
-                                    label=None,
-                                    value=None,
-                                    min=50,
-                                    step=50,
-                                    suffix="px",
-                                    w=100,
-                                    size="sm",
-                                ),
+                                html.Div([
+                                    dmc.Text("View", size="sm", fw=500, mb=3),
+                                    html.Div(
+                                        dmc.SegmentedControl(
+                                            id="at-correlation-view-switch",
+                                            data=[
+                                                {"value": "correlation", "label": "Correlation"},
+                                                {"value": "covariance", "label": "Covariance"},
+                                                {"value": "correlogram", "label": "Correlogram"},
+                                            ],
+                                            value="correlogram",
+                                            size="sm",
+                                        ),
+                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                    ),
+                                ]),
+                                html.Div([
+                                    dmc.Text("Exp Wt", size="sm", fw=500, mb=3),
+                                    html.Div(
+                                        dmc.Switch(
+                                            id="at-correlation-exp-wt-switch",
+                                            checked=False,
+                                            size="sm",
+                                        ),
+                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                    ),
+                                ]),
+                                html.Div([
+                                    dmc.Text("Half-Life", size="sm", fw=500, mb=3),
+                                    html.Div(
+                                        dmc.Tooltip(
+                                            label="If value is < 1, it is interpreted as lambda. If value is >= 1, it is interpreted as half-life in periods.",
+                                            multiline=True,
+                                            w=300,
+                                            withArrow=True,
+                                            children=dmc.NumberInput(
+                                                id="at-correlation-halflife-input",
+                                                label=None,
+                                                value=63,
+                                                min=0.001,
+                                                step=0.01,
+                                                w=100,
+                                                size="sm",
+                                                disabled=True,
+                                            ),
+                                        ),
+                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                    ),
+                                ]),
+                                html.Div([
+                                    dmc.Text("Block Size", size="sm", fw=500, mb=3),
+                                    dmc.NumberInput(
+                                        id="at-correlogram-block-width",
+                                        label=None,
+                                        value=None,
+                                        min=50,
+                                        step=50,
+                                        suffix="px",
+                                        w=110,
+                                        size="sm",
+                                    ),
+                                ]),
                             ],
                         ),
                         dcc.Loading(
@@ -2015,7 +2066,11 @@ layout = dmc.Container(
                                         size="sm",
                                     ),
                                     dmc.Text(
-                                        "Heatmap view shows the full correlation matrix with values from -1 to 1.",
+                                        "Heatmap view supports Correlation and Covariance matrix displays for the selected return stream.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Exp Wt applies exponential weighting to matrix estimates. Decay input >= 1 is half-life in periods; < 1 is lambda.",
                                         size="sm",
                                     ),
                                     dmc.Text(
@@ -2032,7 +2087,7 @@ layout = dmc.Container(
                                 dmc.AccordionControl("Export"),
                                 dmc.AccordionPanel(dmc.Text(
                                     "Download all tabs as a multi-sheet Excel workbook via File > Download Excel. "
-                                    "The export includes Statistics, Returns, Rolling, Calendar Year, Growth of $1, Drawdown, and Correlation sheets.",
+                                    "The export includes Statistics, Returns, Rolling, Calendar Year, Growth of $1, Drawdown, Correlation, and Covariance sheets.",
                                     size="sm",
                                 )),
                             ],
@@ -4770,6 +4825,22 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
         return [], [], True
 
 
+clientside_callback(
+    "function(checked) { return !checked; }",
+    Output("at-correlation-halflife-input", "disabled"),
+    Input("at-correlation-exp-wt-switch", "checked"),
+    prevent_initial_call=False,
+)
+
+
+clientside_callback(
+    "function(view) { return view !== 'correlogram'; }",
+    Output("at-correlogram-block-width", "disabled"),
+    Input("at-correlation-view-switch", "value"),
+    prevent_initial_call=False,
+)
+
+
 @callback(
     Output("at-correlogram-meta-store", "data"),
     Input("at-series-select", "data"),
@@ -4796,6 +4867,8 @@ def update_correlogram_meta(selected_series, active_tab):
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     Input("at-correlation-view-switch", "value"),
+    Input("at-correlation-exp-wt-switch", "checked"),
+    Input("at-correlation-halflife-input", "value"),
     Input("at-correlogram-block-width", "value"),
     State("at-correlogram-target-key-store", "data"),
     prevent_initial_call=True,
@@ -4813,6 +4886,8 @@ def update_correlogram_target_key(
     vol_scaler,
     vol_scaling_assignments,
     correlation_view,
+    exp_weighted,
+    decay_value,
     block_width,
     current_target_key,
 ):
@@ -4837,6 +4912,9 @@ def update_correlogram_target_key(
     if not _has_complete_date_range(effective_date_range):
         return no_update
 
+    use_weighted_matrix = bool(
+        exp_weighted and correlation_view in {"correlation", "covariance"}
+    )
     next_key = _correlogram_request_key(
         raw_data,
         periodicity,
@@ -4849,6 +4927,8 @@ def update_correlogram_target_key(
         vol_scaling_assignments,
         correlation_view,
         block_width,
+        use_weighted_matrix,
+        decay_value if use_weighted_matrix else 63.0,
     )
     if next_key == current_target_key:
         return no_update
@@ -4921,12 +5001,14 @@ clientside_callback(
     State("at-state-ready-store", "data"),
     State("at-vol-scaler-value-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("at-correlation-exp-wt-switch", "checked"),
+    State("at-correlation-halflife-input", "value"),
     State("at-correlation-view-switch", "value"),
     State("at-correlogram-block-width", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
+def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, correlation_view, block_width, theme):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -4957,6 +5039,9 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
     if raw_data is None or not selected_series or len(selected_series) < 2:
         return empty_graph, request_key
 
+    use_weighted_matrix = bool(
+        exp_weighted and correlation_view in {"correlation", "covariance"}
+    )
     try:
         result = generate_correlogram_cached(
             raw_data,
@@ -4967,7 +5052,9 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
             _mapping_payload(long_short_assignments),
             _date_range_payload(date_range),
             vol_scaler or 0,
-            _mapping_payload(vol_scaling_assignments)
+            _mapping_payload(vol_scaling_assignments),
+            use_weighted_matrix,
+            normalize_decay_input(decay_value, 63.0),
         )
 
         if result is None:
@@ -4975,27 +5062,39 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
 
         available_series = result['available_series']
         corr_matrix = result['corr_matrix']
+        cov_matrix = result['cov_matrix']
 
-        # 1. Correlation Matrix (Heatmap)
-        if correlation_view == "correlation":
-            # Create a simple heatmap for correlation matrix
-            heatmap_fig = go.Figure(data=go.Heatmap(
-                z=corr_matrix.values,
-                x=available_series,
-                y=available_series,
-                colorscale='RdBu_r',
-                zmid=0,
-                zmin=-1,
-                zmax=1,
-                text=corr_matrix.values.round(2),
-                texttemplate='%{text}',
-                textfont={"size": 10},
-                hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>',
-            ))
+        # 1. Correlation/Covariance Matrix (Heatmap)
+        if correlation_view in {"correlation", "covariance"}:
+            is_covariance = correlation_view == "covariance"
+            matrix_df = cov_matrix if is_covariance else corr_matrix
+            matrix_label = "Covariance" if is_covariance else "Correlation"
+            weighted_suffix = " (Exp Weighted)" if use_weighted_matrix else ""
+
+            heatmap_kwargs = {
+                "z": matrix_df.values,
+                "x": available_series,
+                "y": available_series,
+                "colorscale": "RdBu_r",
+                "zmid": 0,
+                "text": matrix_df.values.round(4 if is_covariance else 2),
+                "texttemplate": "%{text}",
+                "textfont": {"size": 10},
+                "hovertemplate": (
+                    f"%{{x}} vs %{{y}}<br>{matrix_label}: %{{z:.6f}}<extra></extra>"
+                    if is_covariance
+                    else "%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>"
+                ),
+            }
+            if not is_covariance:
+                heatmap_kwargs["zmin"] = -1
+                heatmap_kwargs["zmax"] = 1
+
+            heatmap_fig = go.Figure(data=go.Heatmap(**heatmap_kwargs))
 
             height = max(500, 30 * len(available_series) + 150)
             heatmap_fig.update_layout(
-                title=f"Correlation Matrix ({returns_type.title()} Returns)",
+                title=f"{matrix_label} Matrix{weighted_suffix} ({returns_type.title()} Returns)",
                 xaxis=dict(tickangle=45),
                 yaxis=dict(autorange='reversed'),
                 template="plotly_white",
@@ -5010,7 +5109,7 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
             n = result['n']
 
             if n < 2:
-                return empty_graph
+                return empty_graph, request_key
 
             # Create subplots
             fig = make_subplots(
@@ -5582,11 +5681,13 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-monthly-series-store", "data"),
     State("at-vol-scaler-value-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("at-correlation-exp-wt-switch", "checked"),
+    State("at-correlation-halflife-input", "value"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, saved_series_store):
-    """Generate Excel file with Statistics, Returns, Rolling, Calendar Year, Growth, Drawdown, and Correlogram sheets."""
+def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, correlation_exp_wt, correlation_halflife, saved_series_store):
+    """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
 
@@ -5645,19 +5746,48 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
             stats_data[series_name] = [series_stats.get(stat_name) for stat_name, _ in STATS_CONFIG]
         stats_df = pd.DataFrame(stats_data)
 
-        # Prepare correlogram data (correlation matrix)
-        corr_df = returns_df.corr()
+        # Prepare correlation/covariance data (supports optional exponential weighting)
+        matrix_result = generate_correlogram_cached(
+            bundle.raw_data,
+            bundle.periodicity,
+            bundle.selected_series,
+            returns_type,
+            bundle.benchmark_payload,
+            bundle.long_short_payload,
+            bundle.date_range_payload,
+            bundle.vol_scaler,
+            bundle.vol_scaling_payload,
+            bool(correlation_exp_wt),
+            normalize_decay_input(correlation_halflife, 63.0),
+        )
+        if matrix_result is not None:
+            corr_df = matrix_result["corr_matrix"]
+            cov_df = matrix_result["cov_matrix"]
+        else:
+            corr_df = returns_df.corr()
+            cov_df = returns_df.cov()
         corr_df.index.name = "Series"
+        cov_df.index.name = "Series"
 
         # Create Excel file in memory with multiple sheets
         output = BytesIO()
         with timed_block("analyticstool.download_excel.workbook"):
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            with pd.ExcelWriter(output, engine="xlsxwriter", date_format="m/d/yyyy", datetime_format="m/d/yyyy") as writer:
                 # Sheet 1: Statistics (moved to first position)
-                stats_df.to_excel(writer, sheet_name="Statistics", index=False)
+                write_excel_with_autofit(
+                    writer,
+                    format_excel_dates(stats_df),
+                    "Statistics",
+                    index=False,
+                )
 
                 # Sheet 2: Returns
-                returns_df.to_excel(writer, sheet_name="Returns")
+                write_excel_with_autofit(
+                    writer,
+                    format_excel_dates(returns_df, format_index=True),
+                    "Returns",
+                    index=True,
+                )
 
                 # Sheet 3: Rolling (use current settings)
                 try:
@@ -5693,7 +5823,12 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                             window_label = window_label_map.get(window, "1Y")
                             type_label = "Ann" if return_type == "annualized" else "Cum"
                             sheet_name = f"Rolling ({window_label} {type_label})"
-                            rolling_df.to_excel(writer, sheet_name=sheet_name)
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(rolling_df, format_index=True),
+                                sheet_name,
+                                index=True,
+                            )
                 except Exception:
                     pass  # Skip if rolling calculation fails
 
@@ -5723,7 +5858,12 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                                     calendar_df = pd.DataFrame(row_data)
                                     calendar_df = calendar_df.set_index('Year_Label')
                                     calendar_df.index.name = 'Year'
-                                    calendar_df.to_excel(writer, sheet_name="Calendar Year")
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(calendar_df, format_index=True),
+                                        "Calendar Year",
+                                        index=True,
+                                    )
                             else:
                                 # Use standard calendar year returns (all series, one row per year)
                                 calendar_df = calculate_calendar_year_returns(
@@ -5739,7 +5879,12 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                                     bundle.vol_scaling_payload,
                                 )
                                 if not calendar_df.empty:
-                                    calendar_df.to_excel(writer, sheet_name="Calendar Year")
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(calendar_df, format_index=True),
+                                        "Calendar Year",
+                                        index=True,
+                                    )
                     except Exception:
                         pass  # Skip if calendar calculation fails
 
@@ -5757,7 +5902,12 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                             bundle.vol_scaling_payload,
                         )
                         if not growth_df.empty:
-                            growth_df.to_excel(writer, sheet_name="Growth of $1")
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(growth_df, format_index=True),
+                                "Growth of $1",
+                                index=True,
+                            )
                 except Exception:
                     pass  # Skip if growth calculation fails
 
@@ -5776,12 +5926,28 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                             bundle.vol_scaling_payload,
                         )
                         if not drawdown_df.empty:
-                            drawdown_df.to_excel(writer, sheet_name="Drawdown")
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(drawdown_df, format_index=True),
+                                "Drawdown",
+                                index=True,
+                            )
                 except Exception:
                     pass  # Skip if drawdown calculation fails
 
-                # Sheet 7: Correlogram
-                corr_df.to_excel(writer, sheet_name="Correlogram")
+                # Sheet 7: Correlation
+                write_excel_with_autofit(
+                    writer,
+                    format_excel_dates(corr_df, format_index=True),
+                    "Correlation",
+                    index=True,
+                )
+                write_excel_with_autofit(
+                    writer,
+                    format_excel_dates(cov_df, format_index=True),
+                    "Covariance",
+                    index=True,
+                )
 
         output.seek(0)
 

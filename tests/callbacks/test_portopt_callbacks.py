@@ -305,6 +305,64 @@ def test_po_toggle_ui_elements_ex_ante_requires_complete_expected_inputs(page_mo
     assert "Missing expected return" in tooltip
 
 
+def test_validate_optimization_inputs_accepts_lambda_decay(page_modules):
+    _, portopt = page_modules
+
+    err = portopt._validate_optimization_inputs(
+        portfolio_name="MyPortfolio",
+        selected_series=["Asset_A", "Asset_B"],
+        opt_model="risk_parity",
+        opt_window="rolling",
+        window_size=252,
+        opt_step=1,
+        opt_step_unit="months",
+        exp_wt_cov=True,
+        halflife=0.94,
+        min_wt={},
+        max_wt={},
+        force_max={},
+        linear_constraints=[],
+        ex_ante_mode="ret_cov",
+        ex_ante_returns={},
+        ex_ante_cov={},
+        ex_ante_vol={},
+        ex_ante_corr={},
+        bl_views=[],
+        bl_tau=0.05,
+    )
+
+    assert err is None
+
+
+def test_validate_optimization_inputs_rejects_non_positive_decay(page_modules):
+    _, portopt = page_modules
+
+    err = portopt._validate_optimization_inputs(
+        portfolio_name="MyPortfolio",
+        selected_series=["Asset_A", "Asset_B"],
+        opt_model="risk_parity",
+        opt_window="rolling",
+        window_size=252,
+        opt_step=1,
+        opt_step_unit="months",
+        exp_wt_cov=True,
+        halflife=0,
+        min_wt={},
+        max_wt={},
+        force_max={},
+        linear_constraints=[],
+        ex_ante_mode="ret_cov",
+        ex_ante_returns={},
+        ex_ante_cov={},
+        ex_ante_vol={},
+        ex_ante_corr={},
+        bl_views=[],
+        bl_tau=0.05,
+    )
+
+    assert err == "Decay input must be greater than 0 when exponential weighting is enabled."
+
+
 def test_po_update_frontier_risk_measure_options_restricts_ex_ante(page_modules):
     _, portopt = page_modules
     results = {"P1": {"config": {"model": "ex_ante_mv"}}}
@@ -614,6 +672,7 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     workbook = BytesIO(payload["content"])
     xl = pd.ExcelFile(workbook)
     assert xl.sheet_names == [
+        "Settings",
         "Weights",
         "Turnover",
         "Statistics",
@@ -623,6 +682,11 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
         "Risk",
         "Frontier",
     ]
+
+    settings_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Settings")
+    assert "Decay Input" in settings_df.columns
+    assert "Decay Mode" in settings_df.columns
+    assert settings_df.loc[0, "Decay Mode"] == "halflife_periods"
 
     frontier_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Frontier")
     assert "Wt_Asset_A" in frontier_df.columns
