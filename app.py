@@ -2,7 +2,8 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import Dash, Input, Output, State, dcc, page_container
+from dash import Dash, Input, Output, dcc, page_container
+from dash_iconify import DashIconify
 from dash.exceptions import PreventUpdate
 from cache_config import init_cache
 
@@ -50,7 +51,6 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
-    dcc.Store(id="theme-store", data="light", storage_type="local"),
     dmc.AppShell(
         header={"height": 45},
         padding=0,
@@ -62,44 +62,55 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
                     h="100%",
                     children=[
                         dmc.Text("DashMat", fw=700),
-                        dmc.Menu(
-                            trigger="hover",
-                            openDelay=100,
-                            closeDelay=200,
-                            position="bottom-end",
-                            shadow="md",
-                            offset=6,
+                        dmc.Group(
+                            gap="xs",
                             children=[
-                                dmc.MenuTarget(
-                                    dmc.Button(
-                                        "Menu",
-                                        size="sm",
-                                        variant="subtle",
-                                        color="gray",
-                                        radius="sm",
-                                    ),
+                                dmc.ColorSchemeToggle(
+                                    id="global-color-scheme-toggle",
+                                    variant="gradient",
+                                    gradient={"from": "orange", "to": "blue", "deg": 135},
+                                    lightIcon=DashIconify(icon="tabler:sun-filled", width=16),
+                                    darkIcon=DashIconify(icon="tabler:moon-stars", width=16),
+                                    autoContrast=True,
+                                    radius="xl",
+                                    size="md",
+                                    style={"boxShadow": "0 1px 3px rgba(0,0,0,0.20)"},
                                 ),
-                                dmc.MenuDropdown(
+                                dmc.Menu(
+                                    trigger="hover",
+                                    openDelay=100,
+                                    closeDelay=200,
+                                    position="bottom-end",
+                                    shadow="md",
+                                    offset=6,
                                     children=[
-                                        dmc.MenuItem(
-                                            "Home",
-                                            id="app-nav-home",
-                                            href=HOME_PATH,
+                                        dmc.MenuTarget(
+                                            dmc.Button(
+                                                "Menu",
+                                                size="sm",
+                                                variant="subtle",
+                                                color="gray",
+                                                radius="sm",
+                                            ),
                                         ),
-                                        dmc.MenuItem(
-                                            "Analytics Tool",
-                                            id="app-nav-analytics",
-                                            href=ANALYTICS_PATH,
-                                        ),
-                                        dmc.MenuItem(
-                                            "Portfolio Optimization",
-                                            id="app-nav-portopt",
-                                            href=PORTOPT_PATH,
-                                        ),
-                                        dmc.MenuDivider(),
-                                        dmc.MenuItem(
-                                            "Toggle Dark Mode",
-                                            id="global-menu-toggle-dark-mode",
+                                        dmc.MenuDropdown(
+                                            children=[
+                                                dmc.MenuItem(
+                                                    "Home",
+                                                    id="app-nav-home",
+                                                    href=HOME_PATH,
+                                                ),
+                                                dmc.MenuItem(
+                                                    "Analytics Tool",
+                                                    id="app-nav-analytics",
+                                                    href=ANALYTICS_PATH,
+                                                ),
+                                                dmc.MenuItem(
+                                                    "Portfolio Optimization",
+                                                    id="app-nav-portopt",
+                                                    href=PORTOPT_PATH,
+                                                ),
+                                            ],
                                         ),
                                     ],
                                 ),
@@ -115,7 +126,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
         ],
     ),
 ]}
-_provider_kwargs["forceColorScheme"] = "light"
+_provider_kwargs["defaultColorScheme"] = "light"
 app.layout = dmc.MantineProvider(**_provider_kwargs)
 
 
@@ -152,26 +163,6 @@ def guard_protected_pages(pathname, userinfo):
     if not restricted_href:
         raise PreventUpdate
     return restricted_href
-
-
-app.clientside_callback(
-    "function(theme) { return theme || 'light'; }",
-    Output("mantine-provider", "forceColorScheme"),
-    Input("theme-store", "data"),
-)
-
-app.clientside_callback(
-    """
-    function(n_clicks, current_theme) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        return current_theme === "dark" ? "light" : "dark";
-    }
-    """,
-    Output("theme-store", "data"),
-    Input("global-menu-toggle-dark-mode", "n_clicks"),
-    State("theme-store", "data"),
-    prevent_initial_call=True,
-)
 
 # Theme consumer callbacks are defined in page modules for charts.
 

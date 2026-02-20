@@ -4369,7 +4369,7 @@ def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, select
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
@@ -4923,7 +4923,7 @@ clientside_callback(
     State("at-vol-scaling-assignments-store", "data"),
     State("at-correlation-view-switch", "value"),
     State("at-correlogram-block-width", "value"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, correlation_view, block_width, theme):
@@ -5140,7 +5140,7 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
@@ -5409,7 +5409,7 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
@@ -5818,5 +5818,3 @@ def download_sample_monthly(n_clicks):
         raise PreventUpdate
 
     return dcc.send_file(str(get_sample_file_path("monthly")))
-
-

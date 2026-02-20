@@ -2468,7 +2468,7 @@ layout = dmc.Container(
 
         build_sheet_select_modal("po"),
 
-        # Optimization status modal (progress → completion in one modal)
+        # Optimization status modal (progress -> completion in one modal)
         dmc.Modal(
             id="po-progress-modal",
             opened=False,
@@ -4232,7 +4232,7 @@ def po_update_matrix_ui(mode):
     prevent_initial_call="initial_duplicate",
 )
 def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
-    """Populate the matrix grid structure. Does NOT auto-estimate — use Estimate from Data button."""
+    """Populate the matrix grid structure. Does NOT auto-estimate - use Estimate from Data button."""
     if not selected_series:
         return [], []
     
@@ -7673,7 +7673,7 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme):
@@ -7739,7 +7739,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     Input("po-growth-portfolio-multiselect", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
@@ -7795,7 +7795,7 @@ def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value,
@@ -8482,7 +8482,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
@@ -8645,7 +8645,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
 def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
@@ -8797,7 +8797,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     if not window_weights:
         return [], None, False
 
-    # Ex ante / BL are single-period — disable window selection
+    # Ex ante / BL are single-period - disable window selection
     is_single_period = model in ("ex_ante_mv", "black_litterman")
 
     options = []
@@ -8832,7 +8832,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-cmabench-assignments-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-series-select", "data"),
-    State("mantine-provider", "forceColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
@@ -9111,5 +9111,3 @@ def po_render_frontier_rf_warning(
     if warning:
         return dmc.Alert(warning, color="orange", variant="light", withCloseButton=False), shown
     return "", hidden
-
-
