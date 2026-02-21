@@ -37,11 +37,14 @@ def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> st
         return "/restricted?target=Analytics%20Tool"
     if pathname in ("/portopt", "/portopt/"):
         return "/restricted?target=Portfolio%20Optimization"
+    if pathname in ("/regression", "/regression/"):
+        return "/restricted?target=Regression"
     return None
 
 HOME_PATH = _registry_path("pages.home", "/")
 ANALYTICS_PATH = _registry_path("pages.analyticstool", "/analyticstool")
 PORTOPT_PATH = _registry_path("pages.portopt", "/portopt")
+REGRESSION_PATH = _registry_path("pages.regression", "/regression")
 
 # Layout wraps page content with MantineProvider
 # Shared stores are defined here so they are accessible across all pages
@@ -110,6 +113,11 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
                                                     id="app-nav-portopt",
                                                     href=PORTOPT_PATH,
                                                 ),
+                                                dmc.MenuItem(
+                                                    "Regression",
+                                                    id="app-nav-regression",
+                                                    href=REGRESSION_PATH,
+                                                ),
                                             ],
                                         ),
                                     ],
@@ -134,6 +142,7 @@ app.layout = dmc.MantineProvider(**_provider_kwargs)
     Output("app-nav-home", "href"),
     Output("app-nav-analytics", "href"),
     Output("app-nav-portopt", "href"),
+    Output("app-nav-regression", "href"),
     Input("userinfo", "data"),
     prevent_initial_call=True,
 )
@@ -141,15 +150,17 @@ def update_app_nav_links(userinfo):
     home_path = _registry_path("pages.home", "/")
     analytics_path = _registry_path("pages.analyticstool", "/analyticstool")
     portopt_path = _registry_path("pages.portopt", "/portopt")
+    regression_path = _registry_path("pages.regression", "/regression")
 
     if (userinfo or {}).get("role") == "Test":
         return (
             home_path,
             "/restricted?target=Analytics%20Tool",
             "/restricted?target=Portfolio%20Optimization",
+            "/restricted?target=Regression",
         )
 
-    return home_path, analytics_path, portopt_path
+    return home_path, analytics_path, portopt_path, regression_path
 
 
 @app.callback(

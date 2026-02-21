@@ -7,19 +7,21 @@ from dash.exceptions import PreventUpdate
 def test_update_app_nav_links_for_test_role():
     import app as app_module
 
-    home_href, analytics_href, portopt_href = app_module.update_app_nav_links({"role": "Test"})
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Test"})
     assert home_href == "/"
     assert analytics_href == "/restricted?target=Analytics%20Tool"
     assert portopt_href == "/restricted?target=Portfolio%20Optimization"
+    assert regression_href == "/restricted?target=Regression"
 
 
 def test_update_app_nav_links_for_non_test_role():
     import app as app_module
 
-    home_href, analytics_href, portopt_href = app_module.update_app_nav_links({"role": "Admin"})
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Admin"})
     assert home_href == "/"
     assert analytics_href == "/analyticstool"
     assert portopt_href == "/portopt"
+    assert regression_href == "/regression"
 
 
 def test_restricted_href_for_path_resolves_for_test_role():

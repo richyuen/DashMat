@@ -11,3 +11,6 @@ pandas_market_calendars>=5.3.0
 riskfolio-lib>=7.2.0
 SQLAlchemy>=2.0.0
 yfinance>=0.2.66
+statsmodels>=0.14.0
+scikit-learn>=1.5.0
+arch>=7.0.0
