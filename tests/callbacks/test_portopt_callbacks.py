@@ -210,6 +210,128 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert row_data[0]["Date"] == "2024-01-01"
 
 
+def test_po_default_name_for_model_uses_short_aliases(page_modules):
+    _, portopt = page_modules
+
+    assert portopt._po_default_name_for_model("risk_parity") == "RP"
+    assert portopt._po_default_name_for_model("factor_risk_parity") == "FRP"
+    assert portopt._po_default_name_for_model("hierarchical_risk_parity") == "HRP"
+    assert portopt._po_default_name_for_model("maximize_sharpe") == "MSR"
+    assert portopt._po_default_name_for_model("minimize_variance") == "MinVar"
+    assert portopt._po_default_name_for_model("minimize_cvar") == "MinCVaR"
+    assert portopt._po_default_name_for_model("equal_weight") == "EW"
+    assert portopt._po_default_name_for_model("ex_ante_mv") == "ExAnteMV"
+    assert portopt._po_default_name_for_model("black_litterman") == "BL"
+    assert portopt._po_default_name_for_model("unknown_model") == "Port"
+
+
+def test_po_sync_name_with_model_uses_aliases(page_modules):
+    _, portopt = page_modules
+
+    assert portopt.po_sync_name_with_model("risk_parity") == "RP"
+    assert portopt.po_sync_name_with_model("black_litterman") == "BL"
+    assert portopt.po_sync_name_with_model("minimize_variance") == "MinVar"
+
+
+def test_po_render_growth_chart_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    display_df = pd.DataFrame(
+        {
+            "P1": [0.01, -0.005, 0.002],
+            "Asset_A": [0.008, -0.004, 0.001],
+        },
+        index=idx,
+    )
+    monkeypatch.setattr(
+        portopt,
+        "_po_build_display_series",
+        lambda *_args, **_kwargs: (display_df, ["P1", "Asset_A"]),
+    )
+
+    grid = portopt.po_render_growth_chart(
+        "P1",
+        {"P1": {"window_weights": _sample_window_weights()}},
+        "growth",
+        "table",
+        "raw-json",
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+        "light",
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert len(getattr(grid, "rowData", [])) == 3
+
+
+def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
+    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+    monkeypatch.setattr(
+        portopt,
+        "calculate_rolling_returns",
+        lambda *_args, **_kwargs: pd.DataFrame({"P1": [0.08]}, index=[pd.Timestamp("2024-01-31")]),
+    )
+
+    grid = portopt.po_render_rolling(
+        {"P1": {}},
+        "rolling",
+        "P1",
+        "daily",
+        "1y",
+        "annualized",
+        "total_return",
+        "table",
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+        "light",
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
+def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
+    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+    monkeypatch.setattr(
+        portopt,
+        "calculate_drawdown",
+        lambda *_args, **_kwargs: pd.DataFrame({"P1": [0.0, -0.02]}, index=[pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-31")]),
+    )
+
+    grid = portopt.po_render_drawdown(
+        {"P1": {}},
+        "drawdown",
+        "P1",
+        "daily",
+        "table",
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+        "light",
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
 def test_po_populate_frontier_windows_disables_for_ex_ante_model(page_modules):
     _, portopt = page_modules
     results = {
@@ -740,6 +862,8 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     settings_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Settings")
     assert "Decay Input" in settings_df.columns
     assert "Decay Mode" in settings_df.columns
+    assert "Selected Series" in settings_df.columns
+    assert "Benchmark Assignments" in settings_df.columns
     assert settings_df.loc[0, "Decay Mode"] == "halflife_periods"
 
     frontier_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Frontier")

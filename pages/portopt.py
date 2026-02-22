@@ -132,6 +132,23 @@ PO_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     ),
 )
 
+_PO_MODEL_DEFAULT_NAME = {
+    "risk_parity": "RP",
+    "factor_risk_parity": "FRP",
+    "hierarchical_risk_parity": "HRP",
+    "hrp": "HRP",
+    "maximize_sharpe": "MSR",
+    "minimize_variance": "MinVar",
+    "minimize_cvar": "MinCVaR",
+    "equal_weight": "EW",
+    "ex_ante_mv": "ExAnteMV",
+    "black_litterman": "BL",
+}
+
+
+def _po_default_name_for_model(model: str) -> str:
+    return _PO_MODEL_DEFAULT_NAME.get(model, "Port")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1628,7 +1645,7 @@ def build_po_main_layout():
                                         dmc.TextInput(
                                             id="po-portfolio-name-input",
                                             label="Portfolio Name",
-                                            value="OptResult",
+                                            value=_po_default_name_for_model("risk_parity"),
                                             w=120,
                                             size="sm",
                                         ),
@@ -2402,6 +2419,20 @@ def build_po_main_layout():
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
                         children=[
+                            dmc.Group(
+                                mb="md",
+                                children=[
+                                    dmc.SegmentedControl(
+                                        id="po-growth-chart-switch",
+                                        data=[
+                                            {"value": "table", "label": "Table"},
+                                            {"value": "chart", "label": "Chart"},
+                                        ],
+                                        value="chart",
+                                        size="sm",
+                                    ),
+                                ],
+                            ),
                             dcc.Loading(
                                 type="default",
                                 children=[html.Div(id="po-growth-chart-container")],
@@ -3269,7 +3300,7 @@ layout = dmc.Container(
         dcc.Store(id="po-opt-step-store", data=1, storage_type="session"),
         dcc.Store(id="po-opt-step-unit-store", data="months", storage_type="session"),
         dcc.Store(id="po-opt-model-store", data="risk_parity", storage_type="session"),
-        dcc.Store(id="po-portfolio-name-store", data="OptResult", storage_type="session"),
+        dcc.Store(id="po-portfolio-name-store", data=_po_default_name_for_model("risk_parity"), storage_type="session"),
         dcc.Store(id="po-exp-wt-cov-store", data=False, storage_type="session"),
         dcc.Store(id="po-halflife-store", data=63, storage_type="session"),
         dcc.Store(id="po-missing-data-store", data="fill_na", storage_type="session"),
@@ -4220,6 +4251,16 @@ clientside_callback(
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
 )
+
+
+@callback(
+    Output("po-portfolio-name-input", "value", allow_duplicate=True),
+    Input("po-opt-model-select", "value"),
+    prevent_initial_call=True,
+)
+def po_sync_name_with_model(model):
+    return _po_default_name_for_model(model)
+
 
 # Store sync: portfolio name
 clientside_callback(
@@ -5532,7 +5573,20 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
 clientside_callback(
     """
     function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, missing, fillIS) {
-        return [optWindow, windowSize, optStep, optStepUnit, model, name || "OptResult",
+        var defaults = {
+            "risk_parity": "RP",
+            "factor_risk_parity": "FRP",
+            "hierarchical_risk_parity": "HRP",
+            "hrp": "HRP",
+            "maximize_sharpe": "MSR",
+            "minimize_variance": "MinVar",
+            "minimize_cvar": "MinCVaR",
+            "equal_weight": "EW",
+            "ex_ante_mv": "ExAnteMV",
+            "black_litterman": "BL",
+        };
+        var defaultName = defaults[model] || "Port";
+        return [optWindow, windowSize, optStep, optStepUnit, model, name || defaultName,
                 expWt || false, halflife, !expWt, missing, fillIS];
     }
     """,
@@ -7831,7 +7885,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         # Determine unique portfolio name
         current_results = current_results or {}
-        final_name = portfolio_name.strip() or "OptResult"
+        final_name = portfolio_name.strip() or _po_default_name_for_model(model_value)
         existing_df = json_to_df(raw_data)
 
         # Avoid collisions with existing columns and existing results
@@ -8166,6 +8220,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
+    Input("po-growth-chart-switch", "value"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -8180,6 +8235,7 @@ def po_render_growth_chart(
     selected_portfolio,
     results,
     active_tab,
+    view_mode,
     raw_data,
     periodicity,
     bench,
@@ -8206,10 +8262,44 @@ def po_render_growth_chart(
     if display_df.empty or not ordered_cols:
         return html.Div()
 
-    fig = go.Figure()
+    growth_df = pd.DataFrame(index=display_df.index)
     for name in ordered_cols:
         returns = display_df[name].dropna()
-        growth = (1 + returns).cumprod()
+        if returns.empty:
+            continue
+        growth_df[name] = (1 + returns).cumprod()
+    if growth_df.empty:
+        return html.Div()
+
+    if (view_mode or "chart") == "table":
+        table_df = growth_df.reset_index()
+        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
+        for c in ordered_cols:
+            if c in table_df.columns:
+                cols.append(
+                    {
+                        "field": c,
+                        "width": 120,
+                        "minWidth": 110,
+                        "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"},
+                    }
+                )
+        return dag.AgGrid(
+            className="ag-theme-alpine",
+            columnDefs=cols,
+            rowData=table_df.to_dict("records"),
+            defaultColDef={"resizable": True, "sortable": True, "suppressHeaderMenuButton": True},
+            style={"height": "460px", "width": "100%"},
+            dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "suppressCsvExport": True},
+        )
+
+    fig = go.Figure()
+    for name in ordered_cols:
+        growth = growth_df[name].dropna() if name in growth_df.columns else pd.Series(dtype=float)
+        if growth.empty:
+            continue
         fig.add_trace(go.Scatter(
             x=growth.index,
             y=growth.values,
@@ -8320,7 +8410,7 @@ def po_render_rolling(
         table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
         table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
         fmt = ".2%" if metric in {"total_return", "volatility"} else ".4f"
-        column_defs = [{"field": "Date", "pinned": "left", "width": 96}]
+        column_defs = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
         for col in ordered_cols:
             if col in table_df.columns:
                 column_defs.append(
@@ -8593,7 +8683,7 @@ def po_render_drawdown(
         table_df = drawdown_df.reset_index()
         table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
         table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
-        column_defs = [{"field": "Date", "pinned": "left", "width": 96}]
+        column_defs = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
         for col in ordered_cols:
             if col in table_df.columns:
                 column_defs.append(
@@ -9104,25 +9194,76 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         # Settings tab
         # ------------------------------------------------------------------
+        def _safe_json_text(value):
+            if value in (None, "", {}, []):
+                return ""
+            try:
+                return json.dumps(value, default=str, sort_keys=True)
+            except Exception:
+                return str(value)
+
+        def _safe_date_text(value):
+            if value in (None, ""):
+                return ""
+            try:
+                return format_mdy_date(pd.Timestamp(value))
+            except Exception:
+                return str(value)
+
         settings_rows = []
         for pname, pdata in active_results.items():
             cfg = pdata.get("config", {}) or {}
+            window_weights = pdata.get("window_weights", []) or []
+            risk_free_meta = pdata.get("risk_free_meta", {}) or {}
+            selected_series = list(cfg.get("selected_series") or [])
+            first_apply_start = _safe_date_text(window_weights[0].get("apply_start")) if window_weights else ""
+            last_apply_end = _safe_date_text(window_weights[-1].get("apply_end")) if window_weights else ""
             exp_weighted = bool(cfg.get("exp_wt_cov", False))
             decay_value = normalize_decay_input(cfg.get("halflife", 63), 63.0)
             settings_rows.append(
                 {
                     "Portfolio": pname,
                     "Model": cfg.get("model", ""),
+                    "Objective": cfg.get("objective", ""),
                     "Window Type": cfg.get("window_type", ""),
                     "Window Size": cfg.get("window_size"),
                     "Opt Step": cfg.get("opt_step"),
                     "Opt Step Unit": cfg.get("opt_step_unit"),
+                    "Window Count": len(window_weights),
+                    "First Apply Start": first_apply_start,
+                    "Last Apply End": last_apply_end,
                     "Missing Data": cfg.get("missing_data", ""),
                     "Fill In-Sample": bool(cfg.get("fill_in_sample", False)),
                     "Exp Wt": exp_weighted,
                     "Decay Input": float(decay_value),
                     "Decay Mode": decay_input_mode(decay_value, 63.0),
                     "Periodicity": cfg.get("periodicity", periodicity or "daily"),
+                    "Selected Series Count": len(selected_series),
+                    "Selected Series": ", ".join(selected_series),
+                    "Date Range Start": (date_range or {}).get("start", ""),
+                    "Date Range End": (date_range or {}).get("end", ""),
+                    "Vol Scaler": float(vol_scaler or 0),
+                    "Benchmark Assignments": _safe_json_text(bench or {}),
+                    "CMA Benchmark Assignments": _safe_json_text(cmabench or {}),
+                    "Long/Short Assignments": _safe_json_text(ls or {}),
+                    "Vol Scaling Assignments": _safe_json_text(vol_scaling or {}),
+                    "Min Wt Constraints": _safe_json_text(cfg.get("min_wt") or {}),
+                    "Max Wt Constraints": _safe_json_text(cfg.get("max_wt") or {}),
+                    "Force Max Flags": _safe_json_text(cfg.get("force_max") or {}),
+                    "Linear Constraints": _safe_json_text(cfg.get("linear_constraints") or []),
+                    "Ex-Ante Mode": cfg.get("ex_ante_mode", ""),
+                    "Ex-Ante Returns": _safe_json_text(cfg.get("ex_ante_returns") or {}),
+                    "Ex-Ante Covariance": _safe_json_text(cfg.get("ex_ante_cov") or {}),
+                    "Ex-Ante Volatility": _safe_json_text(cfg.get("ex_ante_vol") or {}),
+                    "Ex-Ante Correlation": _safe_json_text(cfg.get("ex_ante_corr") or {}),
+                    "BL Tau": cfg.get("bl_tau"),
+                    "BL Views": _safe_json_text(cfg.get("bl_views") or []),
+                    "Risk-Free Source": risk_free_meta.get("source", cfg.get("risk_free_source", "")),
+                    "Risk-Free Annual": risk_free_meta.get("annual", cfg.get("risk_free_annual_default")),
+                    "Risk-Free Warning": risk_free_meta.get("warning", cfg.get("risk_free_warning", "")),
+                    "Rolling Window (Export)": rolling_window or "1y",
+                    "Rolling Return Type (Export)": rolling_return_type or "annualized",
+                    "Rolling Metric (Export)": rolling_metric or "total_return",
                 }
             )
         settings_df = pd.DataFrame(settings_rows)

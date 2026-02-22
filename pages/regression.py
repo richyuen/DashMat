@@ -1377,14 +1377,52 @@ def build_reg_main_layout():
                                     html.Div(id="reg-rolling-returns-content", style={"padding": "8px", "height": "100%"}),
                                 ],
                             ),
-                            dmc.TabsPanel(value="weights", style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-weights-content", style={"padding": "8px"})]),
+                            dmc.TabsPanel(
+                                value="weights",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="reg-weights-chart-switch",
+                                                data=[
+                                                    {"value": "table", "label": "Table"},
+                                                    {"value": "chart", "label": "Chart"},
+                                                ],
+                                                value="chart",
+                                                size="sm",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-weights-content", style={"padding": "8px"}),
+                                ],
+                            ),
                             dmc.TabsPanel(value="statistics", style={"overflow": "auto", "flex": "1"},
                                 children=[html.Div(id="reg-statistics-content", style={"padding": "8px"})]),
                             dmc.TabsPanel(value="returns", style={"overflow": "auto", "flex": "1"},
                                 children=[html.Div(id="reg-returns-content", style={"padding": "8px"})]),
-                            dmc.TabsPanel(value="growth", style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-growth-content", style={"padding": "8px"})]),
+                            dmc.TabsPanel(
+                                value="growth",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="reg-growth-chart-switch",
+                                                data=[
+                                                    {"value": "table", "label": "Table"},
+                                                    {"value": "chart", "label": "Chart"},
+                                                ],
+                                                value="chart",
+                                                size="sm",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-growth-content", style={"padding": "8px"}),
+                                ],
+                            ),
                             dmc.TabsPanel(
                                 value="calendar",
                                 style={"overflow": "auto", "flex": "1"},
@@ -4246,8 +4284,6 @@ def reg_sync_anova_window_options(selected, results, current_window):
         )
 
     latest_val = str(len(wrs) - 1)
-    if current_window is not None and str(current_window) in {o["value"] for o in options}:
-        return options, str(current_window), False
     return options, latest_val, False
 
 
@@ -4593,7 +4629,7 @@ def reg_render_rolling_returns(
         table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
         table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
         fmt = ".2%" if metric in {"total_return", "volatility"} else ".4f"
-        cols = [{"field": "Date", "pinned": "left", "width": 96, "minWidth": 90}]
+        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
         for c in ordered_cols:
             if c in table_df.columns:
                 cols.append(
@@ -4653,10 +4689,11 @@ def reg_render_rolling_returns(
     Output("reg-weights-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("reg-weights-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_weights(selected, results, theme):
+def reg_render_weights(selected, results, view_mode, theme):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -4672,7 +4709,54 @@ def reg_render_weights(selected, results, theme):
                           color="yellow", title="Note", mb="sm")
 
     dates = [pd.Timestamp(wr["apply_start"]) for wr in wrs]
-    coef_keys = list((wrs[0].get("coefficients") or {}).keys())
+    coef_keys = []
+    for wr in wrs:
+        for key in (wr.get("coefficients") or {}).keys():
+            if key not in coef_keys:
+                coef_keys.append(key)
+
+    if (view_mode or "chart") == "table":
+        table_rows = []
+        for idx, wr in enumerate(wrs, start=1):
+            row = {
+                "Window": idx,
+                "Date": str((wr or {}).get("apply_start") or "")[:10],
+            }
+            for key in coef_keys:
+                row[key] = (wr.get("coefficients") or {}).get(key)
+            table_rows.append(row)
+
+        cols = [
+            {"field": "Window", "pinned": "left", "width": 88, "minWidth": 80, "maxWidth": 96},
+            {"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122},
+        ]
+        for key in coef_keys:
+            cols.append(
+                {
+                    "field": key,
+                    "width": 120,
+                    "minWidth": 110,
+                    "valueFormatter": {
+                        "function": "params.value != null ? d3.format('.6f')(params.value) : ''"
+                    },
+                }
+            )
+
+        children = []
+        if alert:
+            children.append(alert)
+        children.append(
+            dag.AgGrid(
+                className="ag-theme-alpine",
+                columnDefs=cols,
+                rowData=table_rows,
+                defaultColDef={"resizable": True, "sortable": True},
+                style={"height": "420px"},
+                dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            )
+        )
+        return dmc.Stack(gap="sm", p="sm", children=children)
+
     fig = go.Figure()
     if len(wrs) > 1 and coef_keys:
         for key in coef_keys:
@@ -4721,7 +4805,7 @@ def reg_render_returns(selected, results, raw_data):
     df_reset = df.reset_index()
     df_reset["Date"] = df_reset["Date"].astype(str).str[:10]
 
-    cols = [{"field": "Date", "pinned": "left", "width": 86, "minWidth": 80, "maxWidth": 96}]
+    cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
     for c in ordered_cols:
         cols.append(
             {
@@ -4757,10 +4841,11 @@ def reg_render_returns(selected, results, raw_data):
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
+    Input("reg-growth-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_growth(selected, results, raw_data, theme):
+def reg_render_growth(selected, results, raw_data, view_mode, theme):
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -4769,16 +4854,48 @@ def reg_render_growth(selected, results, raw_data, theme):
     if display_df.empty:
         return dmc.Text("No growth series available.", size="sm", c="dimmed")
 
-    fig = go.Figure()
+    growth_df = pd.DataFrame(index=display_df.index)
     for label in ordered_cols:
         s = display_df[label].dropna()
         if s.empty:
             continue
-        growth = (1 + s).cumprod()
+        growth_df[label] = (1 + s).cumprod()
+    if growth_df.empty:
+        return dmc.Text("No growth series available.", size="sm", c="dimmed")
+
+    if (view_mode or "chart") == "table":
+        table_df = growth_df.reset_index()
+        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
+        for c in ordered_cols:
+            if c in table_df.columns:
+                cols.append(
+                    {
+                        "field": c,
+                        "width": 120,
+                        "minWidth": 110,
+                        "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"},
+                    }
+                )
+        return dag.AgGrid(
+            className="ag-theme-alpine",
+            columnDefs=cols,
+            rowData=table_df.to_dict("records"),
+            defaultColDef={"resizable": True, "sortable": True},
+            style={"height": "460px"},
+            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        )
+
+    fig = go.Figure()
+    for label in ordered_cols:
+        s = growth_df[label].dropna() if label in growth_df.columns else pd.Series(dtype=float)
+        if s.empty:
+            continue
         fig.add_trace(
             go.Scatter(
-                x=growth.index,
-                y=growth.values,
+                x=s.index,
+                y=s.values,
                 mode="lines",
                 name=label,
                 line={"width": 1.5},
@@ -4945,7 +5062,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
         table_df = drawdown_df.reset_index()
         table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
         table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
-        cols = [{"field": "Date", "pinned": "left", "width": 96, "minWidth": 90}]
+        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
         for c in ordered_cols:
             if c in table_df.columns:
                 cols.append(

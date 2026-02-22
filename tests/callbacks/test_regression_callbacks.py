@@ -710,3 +710,146 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))
     assert settings_map["Result Name"] == "R1"
     assert settings_map["Model"] == "ols"
+
+
+def test_reg_sync_anova_window_options_defaults_to_latest_on_result_change(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    results = {
+        "R1": {
+            "window_results": [
+                {"apply_start": idx[0], "apply_end": idx[0]},
+                {"apply_start": idx[1], "apply_end": idx[1]},
+                {"apply_start": idx[2], "apply_end": idx[2]},
+            ]
+        }
+    }
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-result-select"})())
+
+    options, value, disabled = regression_page.reg_sync_anova_window_options("R1", results, "0")
+
+    assert len(options) == 3
+    assert value == "2"
+    assert disabled is False
+
+
+def test_reg_sync_anova_window_options_defaults_to_latest_on_results_refresh(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    results = {
+        "R1": {
+            "window_results": [
+                {"apply_start": idx[0], "apply_end": idx[0]},
+                {"apply_start": idx[1], "apply_end": idx[1]},
+                {"apply_start": idx[2], "apply_end": idx[2]},
+            ]
+        }
+    }
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-results-store"})())
+
+    _options, value, _disabled = regression_page.reg_sync_anova_window_options("R1", results, "1")
+
+    assert value == "2"
+
+
+def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    predicted = pd.DataFrame({"predicted": [0.01, 0.0, 0.002, -0.001]}, index=idx)
+    residuals = pd.DataFrame({"residuals": [0.0, 0.0, 0.0, 0.0]}, index=idx)
+    results = {
+        "R1": {
+            "periodicity": "daily",
+            "predicted_json": df_to_json(predicted),
+            "residuals_json": df_to_json(residuals),
+        }
+    }
+
+    monkeypatch.setattr(
+        regression_page,
+        "calculate_rolling_returns",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {"Predicted": [0.05], "Actual (Y)": [0.04], "Residual": [0.01]},
+            index=[pd.Timestamp("2024-01-31")],
+        ),
+    )
+    grid = regression_page.reg_render_rolling_returns(
+        "R1",
+        results,
+        None,
+        "1y",
+        "annualized",
+        "total_return",
+        "table",
+        "light",
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
+def test_reg_render_drawdown_table_uses_wide_date_column(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    predicted = pd.DataFrame({"predicted": [0.01, 0.0, 0.002, -0.001]}, index=idx)
+    residuals = pd.DataFrame({"residuals": [0.0, 0.0, 0.0, 0.0]}, index=idx)
+    results = {
+        "R1": {
+            "periodicity": "daily",
+            "predicted_json": df_to_json(predicted),
+            "residuals_json": df_to_json(residuals),
+        }
+    }
+
+    monkeypatch.setattr(
+        regression_page,
+        "calculate_drawdown",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {"Predicted": [0.0, -0.02]},
+            index=[pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-31")],
+        ),
+    )
+    grid = regression_page.reg_render_drawdown("R1", results, None, "table", "light")
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
+def test_reg_render_growth_table_mode_returns_grid_with_wide_date_column(regression_page):
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    predicted = pd.DataFrame({"predicted": [0.01, 0.0, 0.002, -0.001]}, index=idx)
+    residuals = pd.DataFrame({"residuals": [0.0, 0.0, 0.0, 0.0]}, index=idx)
+    results = {
+        "R1": {
+            "periodicity": "daily",
+            "predicted_json": df_to_json(predicted),
+            "residuals_json": df_to_json(residuals),
+        }
+    }
+
+    grid = regression_page.reg_render_growth("R1", results, None, "table", "light")
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert len(getattr(grid, "rowData", [])) == 4
+
+
+def test_reg_render_weights_table_mode_returns_grid_with_wide_date_column(regression_page):
+    results = {
+        "R1": {
+            "config": {"model": "style_analysis"},
+            "window_results": [
+                {
+                    "apply_start": "2024-01-01",
+                    "coefficients": {"Asset_A": 0.6, "Asset_B": 0.4},
+                },
+                {
+                    "apply_start": "2024-02-01",
+                    "coefficients": {"Asset_A": 0.5, "Asset_B": 0.5},
+                },
+            ],
+        }
+    }
+
+    stack = regression_page.reg_render_weights("R1", results, "table", "light")
+    children = list(getattr(stack, "children", []) or [])
+    grid = children[0]
+
+    date_col = next(c for c in getattr(grid, "columnDefs", []) if c.get("field") == "Date")
+    assert date_col["width"] == 112
