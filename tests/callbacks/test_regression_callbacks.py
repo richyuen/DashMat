@@ -7,6 +7,7 @@ from dash import no_update
 
 from utils.regression import RegressionWindowResult
 from utils.returns import df_to_json
+from utils.shared_metrics import STATS_CONFIG
 
 
 @pytest.fixture(scope="module")
@@ -115,6 +116,53 @@ def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(
     assert entry["arima_garch_summary"] == expected_summary
     assert "arima_garch" not in (entry["window_results"][0].get("diagnostics") or {})
     assert "1 window(s)" in status
+
+
+def test_reg_run_regression_persists_stats_inputs(monkeypatch, regression_page):
+    idx = pd.date_range("2020-01-01", periods=6, freq="B")
+    working_df = pd.DataFrame(
+        {
+            "Y": np.linspace(0.01, 0.06, len(idx)),
+            "X1": np.linspace(0.0, 0.05, len(idx)),
+        },
+        index=idx,
+    )
+    monkeypatch.setattr(regression_page, "_reg_get_working_returns", lambda *_args, **_kwargs: working_df)
+
+    wr = RegressionWindowResult(
+        est_start=idx[0],
+        est_end=idx[-1],
+        apply_start=idx[0],
+        apply_end=idx[-1],
+        coefficients={"intercept": 0.1, "X1": 0.3},
+        p_values={"intercept": 0.2, "X1": 0.1},
+        diagnostics={"note": "ok"},
+        n_obs=len(idx),
+    )
+    predicted = pd.Series(np.linspace(0.01, 0.06, len(idx)), index=idx, name="predicted")
+    residuals = pd.Series(np.zeros(len(idx)), index=idx, name="residuals")
+    monkeypatch.setattr(
+        regression_page,
+        "run_regression",
+        lambda *_args, **_kwargs: ([wr], predicted, residuals, None),
+    )
+
+    date_range = {"start": "2020-01-01", "end": "2020-01-08"}
+    new_results, _options, selected, _status = _call_reg_run(
+        regression_page,
+        bench_assign={"Y": "X1"},
+        ls_assign={"Y": False},
+        date_range=date_range,
+        vol_scaler=12,
+        vol_scale_assign={"Y": True, "X1": False},
+    )
+
+    entry = new_results[selected]
+    assert entry["benchmark_assignments"] == {"Y": "X1"}
+    assert entry["long_short_assignments"] == {"Y": False}
+    assert entry["date_range"] == date_range
+    assert entry["vol_scaler"] == 12
+    assert entry["vol_scaling_assignments"] == {"Y": True, "X1": False}
 
 
 def test_reg_run_regression_errors_when_dependent_variable_missing(regression_page):
@@ -355,3 +403,133 @@ def test_reg_help_modal_covers_three_sections_and_model_explainers(regression_pa
     ]
     for phrase in required_phrases:
         assert phrase in text_blob
+
+
+def test_reg_render_statistics_uses_current_stats_signature_and_list_shape(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=4, freq="B")
+    predicted = pd.DataFrame({"Predicted": [0.01, -0.005, 0.003, 0.002]}, index=idx)
+    entry = {"periodicity": "daily", "predicted_json": df_to_json(predicted)}
+    captured = {}
+
+    def _fake_stats(*args, **kwargs):
+        captured["args"] = args
+        return [
+            {
+                "Series": "Predicted",
+                "Cumulative Return": 0.0100,
+                "Annualized Return": 0.0300,
+            }
+        ]
+
+    monkeypatch.setattr(regression_page, "calculate_statistics_cached", _fake_stats)
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry})
+
+    assert captured["args"][5] == "null"
+    assert captured["args"][6] == 0
+    assert getattr(comp, "rowData", None)
+    assert any(row.get("Statistic") == "Cumulative Return" for row in comp.rowData)
+
+
+def test_reg_render_statistics_uses_full_stats_config_rows(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=4, freq="B")
+    predicted = pd.DataFrame({"Predicted": [0.01, -0.005, 0.003, 0.002]}, index=idx)
+    entry = {"periodicity": "daily", "predicted_json": df_to_json(predicted)}
+
+    monkeypatch.setattr(
+        regression_page,
+        "calculate_statistics_cached",
+        lambda *_args, **_kwargs: [{"Series": "Predicted", "Start Date": "2024-01-01", "End Date": "2024-01-04"}],
+    )
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry})
+
+    stat_names = [row.get("Statistic") for row in getattr(comp, "rowData", [])]
+    expected = [name for name, _fmt in STATS_CONFIG]
+    assert stat_names[: len(expected)] == expected
+
+
+def test_reg_render_statistics_includes_actual_predicted_residual_when_available(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=5, freq="B")
+    predicted = pd.DataFrame({"predicted": [0.01, -0.005, 0.003, 0.002, -0.001]}, index=idx)
+    residuals = pd.DataFrame({"residuals": [0.002, -0.001, 0.000, 0.001, -0.002]}, index=idx)
+    entry = {
+        "periodicity": "daily",
+        "predicted_json": df_to_json(predicted),
+        "residuals_json": df_to_json(residuals),
+    }
+
+    def _fake_stats(_json_str, _periodicity, selected_series, *_args, **_kwargs):
+        assert tuple(selected_series) == ("Actual (Y)", "Predicted", "Residual")
+        return [
+            {"Series": "Actual (Y)", "Start Date": "2024-01-01", "End Date": "2024-01-05"},
+            {"Series": "Predicted", "Start Date": "2024-01-01", "End Date": "2024-01-05"},
+            {"Series": "Residual", "Start Date": "2024-01-01", "End Date": "2024-01-05"},
+        ]
+
+    monkeypatch.setattr(regression_page, "calculate_statistics_cached", _fake_stats)
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry})
+
+    col_fields = [c.get("field") for c in getattr(comp, "columnDefs", [])]
+    assert "Actual (Y)" in col_fields
+    assert "Predicted" in col_fields
+    assert "Residual" in col_fields
+
+
+def test_reg_render_statistics_prefers_run_series_stats_when_raw_data_available(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=5, freq="B")
+    raw_df = pd.DataFrame(
+        {
+            "SPX_TRIndex": [0.01, -0.005, 0.003, 0.002, -0.001],
+            "EM_TRIndex": [0.008, -0.004, 0.002, 0.001, -0.002],
+            "EAFE_TRIndex": [0.007, -0.003, 0.001, 0.0005, -0.0015],
+        },
+        index=idx,
+    )
+    entry = {
+        "periodicity": "daily",
+        "dependent_var": "SPX_TRIndex",
+        "independent_vars": ["EM_TRIndex", "EAFE_TRIndex"],
+        "benchmark_assignments": {},
+        "long_short_assignments": {},
+        "date_range": {"start": "2024-01-01", "end": "2024-01-05"},
+        "vol_scaler": 0,
+        "vol_scaling_assignments": {},
+        "predicted_json": df_to_json(pd.DataFrame({"predicted": raw_df["SPX_TRIndex"]}, index=idx)),
+        "residuals_json": df_to_json(pd.DataFrame({"residuals": np.zeros(len(idx))}, index=idx)),
+    }
+    captured = {}
+
+    def _fake_stats(*args, **kwargs):
+        captured["args"] = args
+        return [
+            {
+                "Series": "SPX_TRIndex",
+                "Start Date": "2024-01-01",
+                "End Date": "2024-01-05",
+                "Number of Periods": 5,
+                "Cumulative Return": 0.009,
+            },
+            {
+                "Series": "EM_TRIndex",
+                "Start Date": "2024-01-01",
+                "End Date": "2024-01-05",
+                "Number of Periods": 5,
+                "Cumulative Return": 0.005,
+            },
+            {
+                "Series": "EAFE_TRIndex",
+                "Start Date": "2024-01-01",
+                "End Date": "2024-01-05",
+                "Number of Periods": 5,
+                "Cumulative Return": 0.004,
+            },
+        ]
+
+    monkeypatch.setattr(regression_page, "calculate_statistics_cached", _fake_stats)
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry}, df_to_json(raw_df), {})
+
+    assert captured["args"][2] == ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex")
+    assert "\"start\":\"2024-01-01\"" in captured["args"][5]
+    col_fields = [c.get("field") for c in getattr(comp, "columnDefs", [])]
+    assert "SPX_TRIndex" in col_fields
+    assert "EM_TRIndex" in col_fields
+    assert "EAFE_TRIndex" in col_fields

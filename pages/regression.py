@@ -41,6 +41,7 @@ from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
+from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -3391,6 +3392,11 @@ def reg_run_regression(
         "residuals_json": df_to_json(residuals.to_frame("residuals")),
         "dependent_var": dep_var,
         "independent_vars": x_cols,
+        "benchmark_assignments": bench_assign or {},
+        "long_short_assignments": ls_assign or {},
+        "date_range": date_range,
+        "vol_scaler": vol_scaler or 0,
+        "vol_scaling_assignments": vol_scale_assign or {},
         "config": config,
         "periodicity": periodicity or "daily",
         "arima_garch_summary": _clean_dict(arima_garch_summary),
@@ -3782,13 +3788,127 @@ def reg_render_growth(selected, results, theme):
     Output("reg-statistics-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_statistics(selected, results):
+def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
+
+    fmt_by_stat = {name: fmt for name, fmt in STATS_CONFIG}
+
+    def _normalize_stats_payload(stats_payload):
+        if isinstance(stats_payload, list):
+            return [row for row in stats_payload if isinstance(row, dict) and row.get("Series")]
+        if isinstance(stats_payload, dict):
+            # Backward-compatible path for legacy dict-shaped payloads:
+            # {stat_name: {series_name: value}}
+            series_order = []
+            for values in stats_payload.values():
+                if isinstance(values, dict):
+                    for series_name in values.keys():
+                        if series_name not in series_order:
+                            series_order.append(series_name)
+            rows = []
+            for series_name in series_order:
+                row = {"Series": series_name}
+                for stat_name, values in stats_payload.items():
+                    if isinstance(values, dict):
+                        row[stat_name] = values.get(series_name)
+                rows.append(row)
+            return rows
+        return []
+
+    def _has_non_date_values(stats_rows):
+        metric_keys = [name for name, _ in STATS_CONFIG if name not in {"Start Date", "End Date"}]
+        for row in stats_rows:
+            for key in metric_keys:
+                val = row.get(key)
+                if val is None:
+                    continue
+                if isinstance(val, (float, np.floating)) and not np.isfinite(float(val)):
+                    continue
+                return True
+        return False
+
+    def _build_stats_grid(stats_payload):
+        stats_rows = _normalize_stats_payload(stats_payload)
+        if not stats_rows:
+            return dmc.Text("No statistics available.", size="sm", c="dimmed")
+
+        series_order = [str(row.get("Series")) for row in stats_rows if row.get("Series")]
+        if not series_order:
+            return dmc.Text("No statistics available.", size="sm", c="dimmed")
+
+        metric_keys = [name for name, _ in STATS_CONFIG]
+        for row in stats_rows:
+            for key in row.keys():
+                if key != "Series" and key not in metric_keys:
+                    metric_keys.append(key)
+
+        row_data = []
+        for stat_name in metric_keys:
+            row = {"Statistic": stat_name, "_format": fmt_by_stat.get(stat_name)}
+            for item in stats_rows:
+                series_name = item.get("Series")
+                if not series_name:
+                    continue
+                value = item.get(stat_name)
+                if isinstance(value, (float, np.floating)) and not np.isfinite(float(value)):
+                    value = None
+                row[series_name] = value
+            row_data.append(row)
+
+        return dag.AgGrid(
+            className="ag-theme-alpine",
+            columnDefs=[
+                {"field": "Statistic", "pinned": "left", "minWidth": 210},
+                *[
+                    {
+                        "field": c,
+                        "minWidth": 140,
+                        "valueFormatter": {
+                            "function": "(!params.data._format || params.value == null) ? params.value : d3.format(params.data._format)(params.value)"
+                        },
+                    }
+                    for c in series_order
+                ],
+            ],
+            rowData=row_data,
+            defaultColDef={"resizable": True, "sortable": True},
+            style={"height": "600px"},
+            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        )
+
     entry = results[selected]
     periodicity = entry.get("periodicity", "daily")
+
+    primary_stats = []
+    selected_series = [entry.get("dependent_var")] + list(entry.get("independent_vars") or [])
+    selected_series = [s for s in dict.fromkeys(selected_series) if s]
+
+    if raw_data and selected_series:
+        try:
+            primary_stats = calculate_statistics_cached(
+                raw_data,
+                periodicity,
+                tuple(selected_series),
+                _mapping_payload(entry.get("benchmark_assignments") or {}),
+                _mapping_payload(entry.get("long_short_assignments") or {}),
+                _date_range_payload(entry.get("date_range")),
+                float(entry.get("vol_scaler") or 0),
+                _mapping_payload(entry.get("vol_scaling_assignments") or {}),
+                risk_free_json_from_store(saved_series_store),
+                spx_json_from_store(saved_series_store),
+            )
+        except Exception:
+            primary_stats = []
+
+    normalized_primary_stats = _normalize_stats_payload(primary_stats)
+    if normalized_primary_stats and _has_non_date_values(normalized_primary_stats):
+        return _build_stats_grid(normalized_primary_stats)
+
     try:
         predicted_df = json_to_df(entry["predicted_json"])
     except Exception:
@@ -3797,38 +3917,50 @@ def reg_render_statistics(selected, results):
     if predicted_df.empty:
         return dmc.Text("No predicted series available.", size="sm", c="dimmed")
 
-    series_names = tuple(predicted_df.columns)
+    residuals_df = pd.DataFrame()
+    residuals_json = entry.get("residuals_json")
+    if residuals_json:
+        try:
+            residuals_df = json_to_df(residuals_json)
+        except Exception:
+            residuals_df = pd.DataFrame()
+
+    # Build a richer statistics input so users can compare actual vs predicted behavior.
+    predicted_series = predicted_df.iloc[:, 0].copy()
+    stats_input = pd.DataFrame({"Predicted": predicted_series})
+
+    if not residuals_df.empty:
+        residual_series = residuals_df.iloc[:, 0]
+        pred_aligned, resid_aligned = predicted_series.align(residual_series, join="inner")
+        if not pred_aligned.empty:
+            stats_input = pd.DataFrame(
+                {
+                    "Actual (Y)": pred_aligned + resid_aligned,
+                    "Predicted": pred_aligned,
+                    "Residual": resid_aligned,
+                }
+            )
+
+    series_names = tuple(stats_input.columns)
     try:
         stats = calculate_statistics_cached(
-            df_to_json(predicted_df), periodicity, series_names, "{}", "{}"
+            df_to_json(stats_input),
+            periodicity,
+            series_names,
+            "{}",
+            "{}",
+            "null",
+            0,
+            "{}",
+            risk_free_json_from_store(saved_series_store),
+            spx_json_from_store(saved_series_store),
         )
     except Exception as exc:
         return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")
 
     if not stats:
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
-
-    rows = []
-    for stat_name, series_vals in stats.items():
-        row = {"Statistic": stat_name}
-        for sname, val in series_vals.items():
-            if isinstance(val, float) and not np.isfinite(val):
-                row[sname] = "—"
-            elif isinstance(val, float):
-                row[sname] = f"{val:.4f}"
-            else:
-                row[sname] = str(val) if val is not None else "—"
-        rows.append(row)
-
-    col_names = ["Statistic"] + list(series_names)
-    return dag.AgGrid(
-        className="ag-theme-alpine",
-        columnDefs=[{"field": c, "minWidth": 140} for c in col_names],
-        rowData=rows,
-        defaultColDef={"resizable": True, "sortable": True},
-        style={"height": "600px"},
-        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
-    )
+    return _build_stats_grid(stats)
 
 
 # ---------------------------------------------------------------------------
