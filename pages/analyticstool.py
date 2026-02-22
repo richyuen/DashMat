@@ -5599,43 +5599,36 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
             return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
         long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
-
-        # Create individual drawdown charts for each series
-        charts = []
+        fig = go.Figure()
         for series in drawdown_df.columns:
             drawdown = drawdown_df[series].dropna()
-
             if drawdown.empty:
                 continue
-
-            # Create figure
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=drawdown.index,
-                y=drawdown,
-                mode='lines',
-                name=series,
-                line=dict(width=2),
-                fill='tozeroy',
-                fillcolor='rgba(255, 0, 0, 0.2)',
-            ))
-
-            is_long_short = long_short_dict.get(series, False)
+            is_long_short = bool(long_short_dict.get(series, False))
             suffix = " (Long-Short)" if is_long_short else ""
-            fig.update_layout(
-                title=f"Drawdown: {series}{suffix}",
-                xaxis_title="Date",
-                yaxis_title="Drawdown",
-                yaxis_tickformat=".2%",
-                height=400,
-                hovermode='x unified',
-                template="plotly_white",
+            fig.add_trace(
+                go.Scatter(
+                    x=drawdown.index,
+                    y=drawdown,
+                    mode="lines",
+                    name=f"{series}{suffix}",
+                    line={"width": 2},
+                )
             )
 
-            apply_chart_theme(fig, theme)
-            charts.append(dcc.Graph(figure=fig, style={"marginBottom": "2rem"}))
+        if not fig.data:
+            return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
-        return html.Div(charts)
+        fig.update_layout(
+            title="Drawdown",
+            xaxis_title="Date",
+            yaxis_title="Drawdown",
+            yaxis_tickformat=".2%",
+            height=420,
+            hovermode="x unified",
+        )
+        apply_chart_theme(fig, theme)
+        return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
     except Exception as e:
         return dmc.Text(f"Error generating drawdown charts: {str(e)}", size="sm", c="red")

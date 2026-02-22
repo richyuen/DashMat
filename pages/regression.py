@@ -32,6 +32,7 @@ from utils.upload_flow import (
 from utils.returns import (
     calculate_calendar_year_returns,
     calculate_rolling_returns,
+    create_monthly_view,
     df_to_json,
     get_available_periodicities,
     get_working_returns,
@@ -202,12 +203,20 @@ def _rolling_metric_tickformat(metric: str) -> str:
     return ".2f"
 
 
+def _reg_default_chart_visibility(label: str):
+    if label in {"Predicted", "Actual (Y)"}:
+        return True
+    return "legendonly"
+
+
 def _reg_build_display_series(entry, raw_data):
     """Build canonical series used across Statistics/Returns/Growth/Scatter."""
     entry = entry or {}
     periodicity = entry.get("periodicity", "daily")
     dep_var = entry.get("dependent_var")
     indep_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
+    config = entry.get("config") or {}
+    window_type = str(config.get("window_type") or "full").lower()
 
     predicted = pd.Series(dtype=float)
     residual = pd.Series(dtype=float)
@@ -230,6 +239,17 @@ def _reg_build_display_series(entry, raw_data):
         p_aligned, r_aligned = predicted.align(residual, join="inner")
         if not p_aligned.empty:
             actual = (p_aligned + r_aligned).rename("Actual (Y)")
+
+    # For rolling/expanding models, downstream tabs should respect the model
+    # application window rather than showing full-history X data.
+    model_window_index = pd.DatetimeIndex([])
+    if window_type != "full" and not predicted.empty:
+        model_window_index = pd.DatetimeIndex(predicted.index)
+        predicted = predicted.reindex(model_window_index).dropna()
+        if not residual.empty:
+            residual = residual.reindex(model_window_index).dropna()
+        if not actual.empty:
+            actual = actual.reindex(model_window_index).dropna()
 
     x_df = pd.DataFrame()
     if raw_data and indep_vars:
@@ -254,6 +274,8 @@ def _reg_build_display_series(entry, raw_data):
         x_cols = [x for x in indep_vars if x in working_df.columns]
         if x_cols:
             x_df = working_df[x_cols].copy()
+            if len(model_window_index) > 0:
+                x_df = x_df.reindex(model_window_index)
 
     series_map = {}
     if not predicted.empty:
@@ -1233,12 +1255,12 @@ def build_reg_main_layout():
                             dmc.TabsList([
                                 dmc.TabsTab("ANOVA", value="anova"),
                                 dmc.TabsTab("Rolling Summary", value="rolling"),
-                                dmc.TabsTab("Rolling", value="rolling_returns"),
                                 dmc.TabsTab("Weights", value="weights"),
                                 dmc.TabsTab("Statistics", value="statistics"),
                                 dmc.TabsTab("Returns", value="returns"),
-                                dmc.TabsTab("Growth of $1", value="growth"),
+                                dmc.TabsTab("Rolling", value="rolling_returns"),
                                 dmc.TabsTab("Calendar Year", value="calendar"),
+                                dmc.TabsTab("Growth of $1", value="growth"),
                                 dmc.TabsTab("Drawdown", value="drawdown"),
                                 dmc.TabsTab("Scatter", value="scatter"),
                             ]),
@@ -1357,7 +1379,34 @@ def build_reg_main_layout():
                             dmc.TabsPanel(
                                 value="calendar",
                                 style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-calendar-content", style={"padding": "8px"})],
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        gap="md",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="reg-calendar-view-select",
+                                                data=[
+                                                    {"value": "annual", "label": "Annual"},
+                                                    {"value": "monthly", "label": "Monthly"},
+                                                ],
+                                                value="annual",
+                                                size="sm",
+                                            ),
+                                            dmc.Select(
+                                                id="reg-calendar-series-select",
+                                                data=[],
+                                                value=None,
+                                                w=220,
+                                                size="sm",
+                                                clearable=False,
+                                                disabled=True,
+                                                placeholder="Series (Monthly view)",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-calendar-content", style={"padding": "8px"}),
+                                ],
                             ),
                             dmc.TabsPanel(
                                 value="drawdown",
@@ -2903,6 +2952,9 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     Output("reg-temp-max-beta-store", "data", allow_duplicate=True),
     Output("reg-temp-enable-constraint-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("reg-url-location", "pathname"),
     State("reg-series-select", "data"),
     State("reg-series-order-store", "data"),
     State("reg-benchmark-assignments-store", "data"),
@@ -2915,10 +2967,39 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     State("reg-enable-constraint-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_modal(n_clicks, sel, order, bench, ls, vol_scale, dep_var,
+def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order, bench, ls, vol_scale, dep_var,
                    lag, min_beta, max_beta, enable):
-    if not n_clicks:
+    triggered_id = callback_context.triggered_id
+
+    should_open = False
+    if triggered_id == "reg-open-modal-button":
+        should_open = bool(n_clicks)
+    elif triggered_id == "dashmat-raw-data-store":
+        if raw_data:
+            try:
+                columns = list(json_to_df(raw_data).columns)
+            except Exception:
+                columns = []
+            known_order = list(order or [])
+            new_columns = [c for c in columns if c not in known_order]
+            should_open = bool(new_columns)
+    elif triggered_id == "reg-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+        if page_path == "/regression" and raw_data:
+            try:
+                columns = list(json_to_df(raw_data).columns)
+            except Exception:
+                columns = []
+            selected = set(sel or [])
+            has_selected = bool(selected.intersection(columns))
+            has_dependent = bool(dep_var and dep_var in columns)
+            should_open = bool(columns) and not (has_selected or has_dependent)
+
+    if not should_open:
         raise PreventUpdate
+
     return (True, sel or [], order or [], [],
             bench or {}, ls or {}, vol_scale or {},
             dep_var, lag or {}, min_beta or {}, max_beta or {}, enable or {})
@@ -4179,6 +4260,33 @@ def reg_render_rolling_returns(
     metric = rolling_metric or "total_return"
     window = rolling_window or "1y"
     return_type = rolling_return_type or "annualized"
+    window_label_map = {
+        "3m": "3-Month",
+        "6m": "6-Month",
+        "1y": "1-Year",
+        "3y": "3-Year",
+        "5y": "5-Year",
+        "10y": "10-Year",
+    }
+    window_label = window_label_map.get(window, "1-Year")
+    metric_label_map = {
+        "total_return": "Total Return",
+        "volatility": "Volatility",
+        "sharpe_ratio": "Sharpe Ratio",
+        "sortino_ratio": "Sortino Ratio",
+        "excess_return": "Excess Return",
+        "tracking_error": "Tracking Error",
+        "information_ratio": "Information Ratio",
+        "correlation": "Correlation",
+    }
+    metric_label = metric_label_map.get(metric, "Total Return")
+    return_type_label = "Annualized" if return_type == "annualized" else "Cumulative"
+    if metric in {"total_return", "excess_return"}:
+        title = f"Rolling {window_label} {return_type_label} {metric_label}"
+    elif metric in {"volatility", "tracking_error"}:
+        title = f"Rolling {window_label} Annualized {metric_label}"
+    else:
+        title = f"Rolling {window_label} {metric_label}"
     series_df = display_df[ordered_cols]
     rolling_df = calculate_rolling_returns(
         df_to_json(series_df),
@@ -4231,15 +4339,23 @@ def reg_render_rolling_returns(
         s = rolling_df[c].dropna()
         if s.empty:
             continue
-        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=c))
+        fig.add_trace(
+            go.Scatter(
+                x=s.index,
+                y=s.values,
+                mode="lines",
+                name=c,
+                visible=_reg_default_chart_visibility(c),
+            )
+        )
     if not fig.data:
         return dmc.Text("No rolling values available for selected window.", size="sm", c="dimmed")
     fig.update_layout(
         height=420,
-        title=f"Rolling {_rolling_metric_label(metric)} ({window})",
+        title=title,
         margin={"l": 50, "r": 20, "t": 50, "b": 40},
         xaxis_title="Date",
-        yaxis_title=_rolling_metric_label(metric),
+        yaxis_title=metric_label,
     )
     fig.update_yaxes(tickformat=_rolling_metric_tickformat(metric))
     apply_chart_theme(fig, theme)
@@ -4375,9 +4491,19 @@ def reg_render_growth(selected, results, raw_data, theme):
         if s.empty:
             continue
         growth = (1 + s).cumprod()
-        fig.add_trace(go.Scatter(x=growth.index, y=growth.values, mode="lines", name=label, line={"width": 1.5}))
+        fig.add_trace(
+            go.Scatter(
+                x=growth.index,
+                y=growth.values,
+                mode="lines",
+                name=label,
+                line={"width": 1.5},
+                visible=_reg_default_chart_visibility(label),
+            )
+        )
 
     fig.update_layout(height=400, margin={"l": 50, "r": 20, "t": 30, "b": 50},
+                      title="Growth of $1",
                       xaxis_title="Date", yaxis_title="Growth of $1",
                       legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
     apply_chart_theme(fig, theme)
@@ -4389,13 +4515,41 @@ def reg_render_growth(selected, results, raw_data, theme):
 # ---------------------------------------------------------------------------
 
 @callback(
+    Output("reg-calendar-series-select", "disabled"),
+    Output("reg-calendar-series-select", "data"),
+    Output("reg-calendar-series-select", "value"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-calendar-view-select", "value"),
+    State("reg-calendar-series-select", "value"),
+    prevent_initial_call=False,
+)
+def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, current_series):
+    _name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
+        return True, [], None
+
+    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    options = [{"value": c, "label": c} for c in ordered_cols]
+    if (calendar_view or "annual") != "monthly":
+        return True, options, None
+    if display_df.empty or not ordered_cols:
+        return True, [], None
+    value = current_series if current_series in ordered_cols else ordered_cols[0]
+    return False, options, value
+
+
+@callback(
     Output("reg-calendar-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
+    Input("reg-calendar-view-select", "value"),
+    Input("reg-calendar-series-select", "value"),
     prevent_initial_call=False,
 )
-def reg_render_calendar(selected, results, raw_data):
+def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series):
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -4405,6 +4559,32 @@ def reg_render_calendar(selected, results, raw_data):
         return dmc.Text("No calendar data available.", size="sm", c="dimmed")
 
     periodicity = entry.get("periodicity", "daily")
+    if (calendar_view or "annual") == "monthly":
+        target_series = calendar_series if calendar_series in ordered_cols else ordered_cols[0]
+        monthly_col_defs, monthly_rows = create_monthly_view(
+            df_to_json(display_df[ordered_cols]),
+            target_series,
+            periodicity,
+            periodicity,
+            "total",
+            {},
+            {},
+            tuple(ordered_cols),
+            None,
+            0,
+            {},
+        )
+        if not monthly_rows:
+            return dmc.Text("No complete monthly history available.", size="sm", c="dimmed")
+        return dag.AgGrid(
+            className="ag-theme-alpine",
+            columnDefs=monthly_col_defs,
+            rowData=monthly_rows,
+            defaultColDef={"resizable": True, "sortable": True},
+            style={"height": "460px"},
+            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        )
+
     cal_df = calculate_calendar_year_returns(
         df_to_json(display_df[ordered_cols]),
         periodicity,
@@ -4508,7 +4688,17 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
         s = drawdown_df[c].dropna()
         if s.empty:
             continue
-        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=c, fill="tozeroy", opacity=0.9))
+        fig.add_trace(
+            go.Scatter(
+                x=s.index,
+                y=s.values,
+                mode="lines",
+                name=c,
+                fill="tozeroy",
+                opacity=0.9,
+                visible=_reg_default_chart_visibility(c),
+            )
+        )
     if not fig.data:
         return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
     fig.update_layout(
@@ -4660,79 +4850,38 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
     dependent_var = entry.get("dependent_var")
     independent_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
 
-    primary_stats = []
-    selected_series = [dependent_var] + independent_vars
-    selected_series = [s for s in dict.fromkeys(selected_series) if s]
-
-    if raw_data and selected_series:
-        try:
-            primary_stats = calculate_statistics_cached(
-                raw_data,
-                periodicity,
-                tuple(selected_series),
-                _mapping_payload(entry.get("benchmark_assignments") or {}),
-                _mapping_payload(entry.get("long_short_assignments") or {}),
-                _date_range_payload(entry.get("date_range")),
-                float(entry.get("vol_scaler") or 0),
-                _mapping_payload(entry.get("vol_scaling_assignments") or {}),
-                risk_free_json_from_store(saved_series_store),
-                spx_json_from_store(saved_series_store),
-            )
-        except Exception:
-            primary_stats = []
-
-    normalized_primary_stats = _normalize_stats_payload(primary_stats)
-    if not _has_non_date_values(normalized_primary_stats):
-        normalized_primary_stats = []
-
-    normalized_model_stats = []
-    display_df, _display_order = _reg_build_display_series(entry, raw_data)
-    model_columns = [c for c in ("Predicted", "Actual (Y)", "Residual") if c in display_df.columns]
-    if model_columns:
-        stats_input = display_df[model_columns].copy()
-        series_names = tuple(model_columns)
-        try:
-            model_stats = calculate_statistics_cached(
-                df_to_json(stats_input),
-                periodicity,
-                series_names,
-                "{}",
-                "{}",
-                "null",
-                0,
-                "{}",
-                risk_free_json_from_store(saved_series_store),
-                spx_json_from_store(saved_series_store),
-            )
-            normalized_model_stats = _normalize_stats_payload(model_stats)
-        except Exception as exc:
-            if not normalized_primary_stats:
-                return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")
-
-    merged_stats = []
-    by_series_name = {}
-    for row in normalized_primary_stats + normalized_model_stats:
-        series_name = row.get("Series")
-        if not series_name:
-            continue
-        series_name = str(series_name)
-        if series_name in by_series_name:
-            existing = by_series_name[series_name]
-            for key, value in row.items():
-                if key == "Series":
-                    continue
-                if key not in existing or existing.get(key) is None:
-                    existing[key] = value
-            continue
-        row_copy = dict(row)
-        row_copy["Series"] = series_name
-        by_series_name[series_name] = row_copy
-        merged_stats.append(row_copy)
-
-    if not merged_stats:
+    # Use the same canonical, window-clipped display series used by Returns/Growth/etc.
+    # This ensures statistics for X variables align with the model application window.
+    display_df, display_order = _reg_build_display_series(entry, raw_data)
+    if display_df.empty or not display_order:
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
+
+    stats_input = display_df[display_order].copy().dropna(how="all")
+    if stats_input.empty:
+        return dmc.Text("No statistics available.", size="sm", c="dimmed")
+
+    try:
+        stats_payload = calculate_statistics_cached(
+            df_to_json(stats_input),
+            periodicity,
+            tuple(display_order),
+            "{}",
+            "{}",
+            "null",
+            0,
+            "{}",
+            risk_free_json_from_store(saved_series_store),
+            spx_json_from_store(saved_series_store),
+        )
+    except Exception as exc:
+        return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")
+
+    normalized_stats = _normalize_stats_payload(stats_payload)
+    if not normalized_stats:
+        return dmc.Text("No statistics available.", size="sm", c="dimmed")
+
     return _build_stats_grid(
-        merged_stats,
+        normalized_stats,
         dependent_var=dependent_var,
         independent_vars=independent_vars,
     )
@@ -4799,6 +4948,20 @@ def reg_render_scatter(selected, results, mode, x_var, raw_data, theme):
             name=title,
         )
     )
+    paired = pd.DataFrame({"x": x_vals.values, "y": y_vals.values}).replace([np.inf, -np.inf], np.nan).dropna()
+    if len(paired) >= 2 and paired["x"].nunique() > 1:
+        slope, intercept = np.polyfit(paired["x"].to_numpy(), paired["y"].to_numpy(), 1)
+        x_line = np.linspace(float(paired["x"].min()), float(paired["x"].max()), 100)
+        y_line = slope * x_line + intercept
+        fig.add_trace(
+            go.Scatter(
+                x=x_line,
+                y=y_line,
+                mode="lines",
+                name="Trend Line",
+                line={"width": 2},
+            )
+        )
     if mode == "residual_vs_predicted":
         fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
 

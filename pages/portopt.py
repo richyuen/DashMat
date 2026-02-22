@@ -36,6 +36,7 @@ from utils.returns import (
     calculate_calendar_year_returns,
     calculate_excess_returns,
     calculate_rolling_returns,
+    create_monthly_view,
     df_to_json,
     get_available_periodicities,
     get_working_returns,
@@ -214,6 +215,75 @@ def _po_collect_portfolio_returns(results, selected_portfolios=None) -> pd.DataF
     combined_df = pd.DataFrame(all_returns).sort_index()
     combined_df.index.name = "Date"
     return combined_df
+
+
+def _po_single_portfolio_return(results, portfolio_name: str) -> pd.Series:
+    if not results or not portfolio_name:
+        return pd.Series(dtype=float)
+    pdata = (results or {}).get(portfolio_name) or {}
+    returns_json = pdata.get("returns_json")
+    if not returns_json:
+        return pd.Series(dtype=float)
+    try:
+        s = pd.read_json(StringIO(returns_json), typ="series")
+    except Exception:
+        return pd.Series(dtype=float)
+    s.index = pd.to_datetime(s.index)
+    return s.dropna().rename(portfolio_name)
+
+
+def _po_build_display_series(
+    results,
+    selected_portfolio,
+    raw_data,
+    periodicity,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+) -> tuple[pd.DataFrame, list[str]]:
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return pd.DataFrame(), []
+
+    series_map = {}
+    portfolio_series = _po_single_portfolio_return(results, selected_portfolio)
+    if not portfolio_series.empty:
+        series_map[selected_portfolio] = portfolio_series
+
+    config = ((results or {}).get(selected_portfolio) or {}).get("config", {}) or {}
+    source_series = list(dict.fromkeys(config.get("selected_series") or []))
+    if raw_data and source_series:
+        working_bundle = _build_po_working_bundle(
+            raw_data,
+            periodicity,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+        )
+        try:
+            working_df = _po_get_working_returns(working_bundle, source_series)
+        except Exception:
+            working_df = pd.DataFrame()
+        for name in source_series:
+            if not name or name == selected_portfolio or name not in working_df.columns:
+                continue
+            s = working_df[name].dropna()
+            if not s.empty:
+                series_map[name] = s.rename(name)
+
+    if not series_map:
+        return pd.DataFrame(), []
+
+    display_df = pd.concat(series_map, axis=1).sort_index()
+    ordered_cols = [c for c in series_map.keys() if c in display_df.columns]
+    if not ordered_cols:
+        return pd.DataFrame(), []
+    display_df = display_df[ordered_cols]
+    display_df.index.name = "Date"
+    return display_df, ordered_cols
 
 
 def _po_rolling_metric_label(metric: str) -> str:
@@ -2052,9 +2122,9 @@ def build_po_main_layout():
                         dmc.TabsTab("Turnover", value="turnover"),
                         dmc.TabsTab("Statistics", value="statistics"),
                         dmc.TabsTab("Returns", value="returns"),
-                        dmc.TabsTab("Growth of $1", value="growth"),
                         dmc.TabsTab("Rolling", value="rolling"),
                         dmc.TabsTab("Calendar Year", value="calendar"),
+                        dmc.TabsTab("Growth of $1", value="growth"),
                         dmc.TabsTab("Drawdown", value="drawdown"),
                         dmc.TabsTab("Attribution", value="attribution"),
                         dmc.TabsTab("Risk", value="risk"),
@@ -2403,6 +2473,31 @@ def build_po_main_layout():
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
+                            dmc.Group(
+                                mb="md",
+                                gap="md",
+                                children=[
+                                    dmc.SegmentedControl(
+                                        id="po-calendar-view-select",
+                                        data=[
+                                            {"value": "annual", "label": "Annual"},
+                                            {"value": "monthly", "label": "Monthly"},
+                                        ],
+                                        value="annual",
+                                        size="sm",
+                                    ),
+                                    dmc.Select(
+                                        id="po-calendar-series-select",
+                                        data=[],
+                                        value=None,
+                                        w=220,
+                                        size="sm",
+                                        clearable=False,
+                                        disabled=True,
+                                        placeholder="Series (Monthly view)",
+                                    ),
+                                ],
+                            ),
                             html.Div(id="po-calendar-content", style={"height": "100%", "overflow": "auto"}),
                         ],
                     ),
@@ -5123,7 +5218,7 @@ clientside_callback(
     """
     function(tab) {
         if (tab === "growth" || tab === "statistics" || tab === "returns" || tab === "rolling" || tab === "calendar" || tab === "drawdown") {
-            return [{display: "none"}, {display: "none"}, {display: "block"}];
+            return [{display: "block"}, {display: "none"}, {display: "none"}];
         }
         if (tab === "frontier") {
             return [{display: "block"}, {display: "none"}, {display: "none"}];
@@ -8068,38 +8163,66 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
 
 @callback(
     Output("po-growth-chart-container", "children"),
-    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
-    if active_tab != "growth" or not selected_portfolios or not results:
+def po_render_growth_chart(
+    selected_portfolio,
+    results,
+    active_tab,
+    raw_data,
+    periodicity,
+    bench,
+    ls,
+    date_range,
+    vol_scaler,
+    vol_scaling,
+    theme,
+):
+    if active_tab != "growth" or not selected_portfolio or not results:
         return html.Div()
 
-    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
-    if combined_df.empty:
+    display_df, ordered_cols = _po_build_display_series(
+        results,
+        selected_portfolio,
+        raw_data,
+        periodicity,
+        bench,
+        ls,
+        date_range,
+        vol_scaler,
+        vol_scaling,
+    )
+    if display_df.empty or not ordered_cols:
         return html.Div()
 
     fig = go.Figure()
-    for pname in combined_df.columns:
-        returns = combined_df[pname].dropna()
+    for name in ordered_cols:
+        returns = display_df[name].dropna()
         growth = (1 + returns).cumprod()
         fig.add_trace(go.Scatter(
             x=growth.index,
             y=growth.values,
-            name=pname,
+            name=name,
             mode="lines",
         ))
 
     fig.update_layout(
-        title="Growth of $1",
+        title=f"Growth of $1: {selected_portfolio}",
         yaxis_title="Value ($)",
         hovermode="x unified",
         margin={"t": 40, "b": 40, "l": 60, "r": 20},
         height=420,
-        legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
     )
     apply_chart_theme(fig, theme)
 
@@ -8125,28 +8248,60 @@ def po_toggle_rolling_return_type(metric):
     Output("po-rolling-content", "children"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
     Input("po-rolling-window-select", "value"),
     Input("po-rolling-return-type-select", "value"),
     Input("po-rolling-metric-select", "value"),
     Input("po-rolling-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def po_render_rolling(results, active_tab, selected_portfolios, periodicity, rolling_window, return_type, metric, view_mode, theme):
+def po_render_rolling(
+    results,
+    active_tab,
+    selected_portfolio,
+    periodicity,
+    rolling_window,
+    return_type,
+    metric,
+    view_mode,
+    raw_data,
+    bench,
+    ls,
+    date_range,
+    vol_scaler,
+    vol_scaling,
+    theme,
+):
     if active_tab != "rolling" or not results:
         return html.Div()
 
-    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
-    if combined_df.empty:
+    display_df, ordered_cols = _po_build_display_series(
+        results,
+        selected_portfolio,
+        raw_data,
+        periodicity,
+        bench,
+        ls,
+        date_range,
+        vol_scaler,
+        vol_scaling,
+    )
+    if display_df.empty or not ordered_cols:
         return dmc.Text("No rolling data available.", c="dimmed")
 
     metric = metric or "total_return"
     rolling_df = calculate_rolling_returns(
-        df_to_json(combined_df),
+        df_to_json(display_df[ordered_cols]),
         periodicity or "daily",
-        tuple(combined_df.columns),
+        tuple(ordered_cols),
         "total",
         "{}",
         "{}",
@@ -8166,7 +8321,7 @@ def po_render_rolling(results, active_tab, selected_portfolios, periodicity, rol
         table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
         fmt = ".2%" if metric in {"total_return", "volatility"} else ".4f"
         column_defs = [{"field": "Date", "pinned": "left", "width": 96}]
-        for col in combined_df.columns:
+        for col in ordered_cols:
             if col in table_df.columns:
                 column_defs.append(
                     {
@@ -8195,7 +8350,7 @@ def po_render_rolling(results, active_tab, selected_portfolios, periodicity, rol
         )
 
     fig = go.Figure()
-    for col in combined_df.columns:
+    for col in ordered_cols:
         if col not in rolling_df.columns:
             continue
         s = rolling_df[col].dropna()
@@ -8209,7 +8364,6 @@ def po_render_rolling(results, active_tab, selected_portfolios, periodicity, rol
         hovermode="x unified",
         margin={"t": 40, "b": 40, "l": 60, "r": 20},
         height=420,
-        legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
     )
     fig.update_yaxes(tickformat=_po_rolling_metric_tickformat(metric))
     apply_chart_theme(fig, theme)
@@ -8217,26 +8371,120 @@ def po_render_rolling(results, active_tab, selected_portfolios, periodicity, rol
 
 
 @callback(
+    Output("po-calendar-series-select", "disabled"),
+    Output("po-calendar-series-select", "data"),
+    Output("po-calendar-series-select", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    Input("po-calendar-view-select", "value"),
+    State("po-calendar-series-select", "value"),
+    prevent_initial_call=False,
+)
+def po_sync_calendar_series_select(selected_portfolio, results, view_mode, current_value):
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return True, [], None
+
+    config = ((results or {}).get(selected_portfolio) or {}).get("config", {}) or {}
+    ordered_cols = [selected_portfolio]
+    for name in config.get("selected_series") or []:
+        if name and name not in ordered_cols:
+            ordered_cols.append(name)
+
+    options = [{"value": c, "label": c} for c in ordered_cols]
+    if (view_mode or "annual") != "monthly":
+        return True, options, None
+    if not ordered_cols:
+        return True, [], None
+    value = current_value if current_value in ordered_cols else ordered_cols[0]
+    return False, options, value
+
+
+@callback(
     Output("po-calendar-content", "children"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
+    Input("po-calendar-view-select", "value"),
+    Input("po-calendar-series-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_calendar(results, active_tab, selected_portfolios, periodicity):
+def po_render_calendar(
+    results,
+    active_tab,
+    selected_portfolio,
+    periodicity,
+    view_mode,
+    monthly_series,
+    raw_data,
+    bench,
+    ls,
+    date_range,
+    vol_scaler,
+    vol_scaling,
+):
     if active_tab != "calendar" or not results:
         return html.Div()
 
-    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
-    if combined_df.empty:
+    display_df, ordered_cols = _po_build_display_series(
+        results,
+        selected_portfolio,
+        raw_data,
+        periodicity,
+        bench,
+        ls,
+        date_range,
+        vol_scaler,
+        vol_scaling,
+    )
+    if display_df.empty or not ordered_cols:
         return dmc.Text("No calendar data available.", c="dimmed")
 
+    if (view_mode or "annual") == "monthly":
+        target_series = monthly_series if monthly_series in ordered_cols else ordered_cols[0]
+        monthly_col_defs, monthly_rows = create_monthly_view(
+            df_to_json(display_df[ordered_cols]),
+            target_series,
+            periodicity or "daily",
+            periodicity or "daily",
+            "total",
+            {},
+            {},
+            tuple(ordered_cols),
+            None,
+            0,
+            {},
+        )
+        if not monthly_rows:
+            return dmc.Text("No complete monthly history available.", c="dimmed")
+        return dag.AgGrid(
+            enableEnterpriseModules=True,
+            licenseKey=AG_GRID_LICENSE_KEY,
+            className="ag-theme-alpine",
+            columnDefs=monthly_col_defs,
+            rowData=monthly_rows,
+            defaultColDef={
+                "sortable": True,
+                "resizable": True,
+                "suppressHeaderMenuButton": True,
+                "cellStyle": {"textAlign": "center"},
+                "headerClass": "dashmat-center-header",
+            },
+            style={"height": "100%", "width": "100%"},
+            dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+        )
+
     cal_df = calculate_calendar_year_returns(
-        df_to_json(combined_df),
+        df_to_json(display_df[ordered_cols]),
         periodicity or "daily",
         periodicity or "daily",
-        tuple(combined_df.columns),
+        tuple(ordered_cols),
         "total",
         "{}",
         "{}",
@@ -8252,7 +8500,7 @@ def po_render_calendar(results, active_tab, selected_portfolios, periodicity):
     table_df["Year"] = table_df["Year"].astype(str)
 
     column_defs = [{"field": "Year", "pinned": "left", "width": 92}]
-    for col in combined_df.columns:
+    for col in ordered_cols:
         if col in table_df.columns:
             column_defs.append(
                 {
@@ -8284,24 +8532,53 @@ def po_render_calendar(results, active_tab, selected_portfolios, periodicity):
     Output("po-drawdown-content", "children"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
     Input("po-drawdown-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def po_render_drawdown(results, active_tab, selected_portfolios, periodicity, view_mode, theme):
+def po_render_drawdown(
+    results,
+    active_tab,
+    selected_portfolio,
+    periodicity,
+    view_mode,
+    raw_data,
+    bench,
+    ls,
+    date_range,
+    vol_scaler,
+    vol_scaling,
+    theme,
+):
     if active_tab != "drawdown" or not results:
         return html.Div()
 
-    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
-    if combined_df.empty:
+    display_df, ordered_cols = _po_build_display_series(
+        results,
+        selected_portfolio,
+        raw_data,
+        periodicity,
+        bench,
+        ls,
+        date_range,
+        vol_scaler,
+        vol_scaling,
+    )
+    if display_df.empty or not ordered_cols:
         return dmc.Text("No drawdown data available.", c="dimmed")
 
     drawdown_df = calculate_drawdown(
-        df_to_json(combined_df),
+        df_to_json(display_df[ordered_cols]),
         periodicity or "daily",
-        tuple(combined_df.columns),
+        tuple(ordered_cols),
         "total",
         "{}",
         "{}",
@@ -8317,7 +8594,7 @@ def po_render_drawdown(results, active_tab, selected_portfolios, periodicity, vi
         table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
         table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
         column_defs = [{"field": "Date", "pinned": "left", "width": 96}]
-        for col in combined_df.columns:
+        for col in ordered_cols:
             if col in table_df.columns:
                 column_defs.append(
                     {
@@ -8344,7 +8621,7 @@ def po_render_drawdown(results, active_tab, selected_portfolios, periodicity, vi
         )
 
     fig = go.Figure()
-    for col in combined_df.columns:
+    for col in ordered_cols:
         if col not in drawdown_df.columns:
             continue
         s = drawdown_df[col].dropna()
@@ -8357,7 +8634,6 @@ def po_render_drawdown(results, active_tab, selected_portfolios, periodicity, vi
         hovermode="x unified",
         margin={"t": 40, "b": 40, "l": 60, "r": 20},
         height=420,
-        legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
     )
     fig.update_yaxes(tickformat=".2%")
     apply_chart_theme(fig, theme)
@@ -8590,31 +8866,61 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     Output("po-statistics-grid", "rowData"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-weight-portfolio-select", "value"),
     Input("dashmat-saved-series-cache-store", "data"),
     State("po-periodicity-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_statistics(results, active_tab, selected_portfolios, saved_series_store, periodicity):
+def po_render_statistics(
+    results,
+    active_tab,
+    selected_portfolio,
+    saved_series_store,
+    periodicity=None,
+    raw_data=None,
+    bench=None,
+    ls=None,
+    date_range=None,
+    vol_scaler=0,
+    vol_scaling=None,
+):
     if active_tab != "statistics" or not results:
         return [], []
 
-    show = selected_portfolios or list(results.keys())
-
     try:
-        with timed_block("portopt.render_statistics", portfolio_count=len(show)):
-            combined_df = _po_collect_portfolio_returns(results, show)
-            if combined_df.empty:
+        with timed_block("portopt.render_statistics", portfolio_count=1):
+            legacy_compare = isinstance(selected_portfolio, (list, tuple, set))
+            if legacy_compare:
+                display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
+                ordered_cols = list(display_df.columns)
+            else:
+                display_df, ordered_cols = _po_build_display_series(
+                    results,
+                    selected_portfolio,
+                    raw_data,
+                    periodicity,
+                    bench,
+                    ls,
+                    date_range,
+                    vol_scaler,
+                    vol_scaling,
+                )
+            if display_df.empty or not ordered_cols:
                 return [], []
 
-            # Convert to raw-data JSON format for calculate_statistics_cached
-            raw_json = df_to_json(combined_df)
-            portfolio_names = list(combined_df.columns)
+            raw_json = df_to_json(display_df[ordered_cols])
+            series_names = list(ordered_cols)
 
             stats = calculate_statistics_cached(
                 raw_json,
                 periodicity or "daily",
-                tuple(portfolio_names),
+                tuple(series_names),
                 "{}",
                 "{}",
                 "null",
@@ -8630,8 +8936,7 @@ def po_render_statistics(results, active_tab, selected_portfolios, saved_series_
             column_defs = [
                 {"field": "Statistic", "pinned": "left", "width": 200},
             ]
-            for series_stats in stats:
-                series_name = series_stats["Series"]
+            for series_name in series_names:
                 column_defs.append({
                     "field": series_name,
                     "width": 120,
@@ -8644,7 +8949,9 @@ def po_render_statistics(results, active_tab, selected_portfolios, saved_series_
             for stat_name, fmt in STATS_CONFIG:
                 row = {"Statistic": stat_name, "_format": fmt}
                 for series_stats in stats:
-                    series_name = series_stats["Series"]
+                    series_name = series_stats.get("Series")
+                    if series_name not in series_names:
+                        continue
                     value = series_stats.get(stat_name)
                     if value is None or (isinstance(value, float) and pd.isna(value)):
                         row[series_name] = None
@@ -8667,18 +8974,49 @@ def po_render_statistics(results, active_tab, selected_portfolios, saved_series_
     Output("po-returns-grid", "rowData"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_returns(results, active_tab, selected_portfolios):
+def po_render_returns(
+    results,
+    active_tab,
+    selected_portfolio,
+    raw_data=None,
+    periodicity=None,
+    bench=None,
+    ls=None,
+    date_range=None,
+    vol_scaler=0,
+    vol_scaling=None,
+):
     if active_tab != "returns" or not results:
         return [], []
 
-    show = selected_portfolios or list(results.keys())
-
     try:
-        combined_df = _po_collect_portfolio_returns(results, show)
-        if combined_df.empty:
+        legacy_compare = isinstance(selected_portfolio, (list, tuple, set))
+        if legacy_compare:
+            display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
+            ordered_cols = list(display_df.columns)
+        else:
+            display_df, ordered_cols = _po_build_display_series(
+                results,
+                selected_portfolio,
+                raw_data,
+                periodicity,
+                bench,
+                ls,
+                date_range,
+                vol_scaler,
+                vol_scaling,
+            )
+        if display_df.empty or not ordered_cols:
             return [], []
 
         column_defs = [
@@ -8688,14 +9026,14 @@ def po_render_returns(results, active_tab, selected_portfolios):
                 "width": 120,
             },
         ]
-        for col in combined_df.columns:
+        for col in ordered_cols:
             column_defs.append({
                 "field": col,
                 "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
                 "width": 120,
             })
 
-        df_reset = combined_df.reset_index()
+        df_reset = display_df[ordered_cols].reset_index()
         df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
         row_data = df_reset.to_dict("records")
 

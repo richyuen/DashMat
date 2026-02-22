@@ -501,34 +501,12 @@ def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkey
     def _fake_stats(*args, **kwargs):
         calls.append(args)
         selected = tuple(args[2])
-        if selected == ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex"):
-            return [
-                {
-                    "Series": "SPX_TRIndex",
-                    "Start Date": "2024-01-01",
-                    "End Date": "2024-01-05",
-                    "Number of Periods": 5,
-                    "Cumulative Return": 0.009,
-                },
-                {
-                    "Series": "EM_TRIndex",
-                    "Start Date": "2024-01-01",
-                    "End Date": "2024-01-05",
-                    "Number of Periods": 5,
-                    "Cumulative Return": 0.005,
-                },
-                {
-                    "Series": "EAFE_TRIndex",
-                    "Start Date": "2024-01-01",
-                    "End Date": "2024-01-05",
-                    "Number of Periods": 5,
-                    "Cumulative Return": 0.004,
-                },
-            ]
-        if selected == ("Predicted", "Actual (Y)", "Residual"):
+        if selected == ("Predicted", "Actual (Y)", "EM_TRIndex", "EAFE_TRIndex", "Residual"):
             return [
                 {"Series": "Actual (Y)", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.009},
                 {"Series": "Predicted", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.007},
+                {"Series": "EM_TRIndex", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.005},
+                {"Series": "EAFE_TRIndex", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.004},
                 {"Series": "Residual", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.002},
             ]
         return []
@@ -537,11 +515,44 @@ def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkey
     comp = regression_page.reg_render_statistics("R1", {"R1": entry}, df_to_json(raw_df), {})
 
     selected_payloads = [tuple(call[2]) for call in calls]
-    assert ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex") in selected_payloads
-    assert ("Predicted", "Actual (Y)", "Residual") in selected_payloads
-    run_call = next(call for call in calls if tuple(call[2]) == ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex"))
-    assert "\"start\":\"2024-01-01\"" in run_call[5]
+    assert ("Predicted", "Actual (Y)", "EM_TRIndex", "EAFE_TRIndex", "Residual") in selected_payloads
+    run_call = calls[0]
+    assert run_call[5] == "null"
 
     col_fields = [c.get("field") for c in getattr(comp, "columnDefs", [])]
     assert col_fields[:6] == ["Statistic", "Predicted", "Actual (Y)", "EM_TRIndex", "EAFE_TRIndex", "Residual"]
     assert "SPX_TRIndex" not in col_fields
+
+
+def test_reg_build_display_series_clips_x_to_model_window_for_rolling(regression_page):
+    full_idx = pd.date_range("2024-01-01", periods=8, freq="B")
+    model_idx = full_idx[3:]
+    raw_df = pd.DataFrame(
+        {
+            "Y": [0.01, 0.02, -0.01, 0.00, 0.01, -0.02, 0.03, 0.01],
+            "X1": [0.02, -0.01, 0.00, 0.01, 0.00, 0.02, -0.01, 0.03],
+            "X2": [0.01, 0.00, -0.02, 0.02, 0.01, -0.01, 0.00, 0.01],
+        },
+        index=full_idx,
+    )
+    predicted = pd.DataFrame({"predicted": [0.001, 0.002, 0.003, 0.004, 0.005]}, index=model_idx)
+    residuals = pd.DataFrame({"residuals": [0.0, -0.001, 0.0, 0.001, -0.001]}, index=model_idx)
+    entry = {
+        "periodicity": "daily",
+        "dependent_var": "Y",
+        "independent_vars": ["X1", "X2"],
+        "benchmark_assignments": {},
+        "long_short_assignments": {},
+        "date_range": {"start": "2024-01-01", "end": "2024-01-31"},
+        "vol_scaler": 0,
+        "vol_scaling_assignments": {},
+        "config": {"window_type": "rolling"},
+        "predicted_json": df_to_json(predicted),
+        "residuals_json": df_to_json(residuals),
+    }
+
+    display_df, ordered_cols = regression_page._reg_build_display_series(entry, df_to_json(raw_df))
+
+    assert ordered_cols == ["Predicted", "Actual (Y)", "X1", "X2", "Residual"]
+    assert list(display_df.index) == list(model_idx)
+    assert list(display_df["X1"].index) == list(model_idx)
