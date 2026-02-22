@@ -243,11 +243,45 @@ def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page)
     ]
     cell_change = [{"colId": "Y", "rowIndex": 1}]
 
-    out = regression_page.reg_sync_grid_to_temp(cell_change, row_data, None)
+    out = regression_page.reg_sync_grid_to_temp(cell_change, None, row_data, None)
     new_x, new_dep = out[0], out[1]
 
     assert new_dep == "B"
     assert new_x == ["A", "B"]
+
+
+def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_page):
+    idx = pd.date_range("2024-01-01", periods=3, freq="B")
+    raw = df_to_json(pd.DataFrame({"A": [0.01, 0.0, -0.01], "B": [0.0, 0.01, 0.02]}, index=idx))
+
+    children, _order = regression_page.reg_update_series_grid(
+        raw,
+        ["A"],
+        ["A", "B"],
+        [],
+        {},
+        {},
+        {},
+        "A",
+        {},
+        {},
+        {},
+        {},
+    )
+
+    grid = children[0]
+    opts = getattr(grid, "dashGridOptions", {}) or {}
+    assert opts.get("suppressMovableColumns") is True
+    assert opts.get("stopEditingWhenCellsLoseFocus") is True
+    assert opts.get("singleClickEdit") is True
+
+    cols = getattr(grid, "columnDefs", []) or []
+    x_col = next((c for c in cols if c.get("field") == "X"), None)
+    scale_col = next((c for c in cols if c.get("field") == "ScaleVol"), None)
+    assert x_col is not None
+    assert scale_col is not None
+    assert x_col.get("cellRenderer") == "agCheckboxCellRenderer"
+    assert scale_col.get("cellRenderer") == "agCheckboxCellRenderer"
 
 
 def _collect_component_text(node):

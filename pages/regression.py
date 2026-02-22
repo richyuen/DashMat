@@ -2608,7 +2608,6 @@ def reg_open_modal(n_clicks, sel, order, bench, ls, vol_scale, dep_var,
     Input("reg-temp-series-select", "data"),
     Input("reg-temp-series-order-store", "data"),
     Input("reg-temp-deleted-series-store", "data"),
-    Input("reg-series-selection-grid", "cellValueChanged", allow_optional=True),
     Input("reg-temp-benchmark-assignments-store", "data"),
     Input("reg-temp-long-short-store", "data"),
     Input("reg-temp-vol-scaling-assignments-store", "data"),
@@ -2620,7 +2619,7 @@ def reg_open_modal(n_clicks, sel, order, bench, ls, vol_scale, dep_var,
     prevent_initial_call="initial_duplicate",
 )
 def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
-                            _cell, bench_assign, ls_assign, vol_assign,
+                            bench_assign, ls_assign, vol_assign,
                             dep_var, lag_assign, min_b_assign, max_b_assign, enable_assign):
     if raw_data is None:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
@@ -2708,9 +2707,24 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
              "width": 60, "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
         ],
         rowData=row_data,
-        defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True},
-        dashGridOptions={"rowDragManaged": True, "singleClickEdit": True,
-                         "suppressExcelExport": True, "suppressCsvExport": True},
+        defaultColDef={
+            "resizable": True,
+            "sortable": False,
+            "filter": False,
+            "suppressHeaderMenuButton": True,
+            "suppressMovable": True,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "dashmat-center-header",
+        },
+        dashGridOptions={
+            "suppressMovableColumns": True,
+            "rowDragManaged": True,
+            "animateRows": True,
+            "singleClickEdit": True,
+            "stopEditingWhenCellsLoseFocus": True,
+            "suppressExcelExport": True,
+            "suppressCsvExport": True,
+        },
         style={"height": "400px"},
     )
     return [grid], series_order
@@ -2733,36 +2747,76 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
     Output("reg-temp-deleted-series-store", "data", allow_duplicate=True),
     Output("reg-temp-series-order-store", "data", allow_duplicate=True),
     Input("reg-series-selection-grid", "cellValueChanged"),
+    Input("reg-series-selection-grid", "cellClicked", allow_optional=True),
     Input("reg-series-selection-grid", "rowData"),
     State("reg-temp-dependent-var-store", "data"),
     prevent_initial_call=True,
 )
-def reg_sync_grid_to_temp(cell_change, row_data, cur_dep):
+def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
     if not row_data:
         raise PreventUpdate
+    rows = [dict(r) for r in row_data if isinstance(r, dict)]
+    if not rows:
+        raise PreventUpdate
+
+    def _latest_event(payload):
+        evt = payload
+        if isinstance(evt, list):
+            evt = next((item for item in reversed(evt) if isinstance(item, dict)), None)
+        return evt if isinstance(evt, dict) else None
+
+    def _event_col(evt):
+        if not evt:
+            return None
+        col = evt.get("colId")
+        if col is None:
+            col = (evt.get("column") or {}).get("colId")
+        return col
+
+    def _event_series(evt):
+        if not evt:
+            return None
+        data = evt.get("data")
+        if isinstance(data, dict):
+            series = data.get("Series")
+            if series:
+                return series
+        idx = evt.get("rowIndex")
+        if isinstance(idx, int) and 0 <= idx < len(rows):
+            return rows[idx].get("Series")
+        return None
+
+    trigger_props = []
+    try:
+        trigger_props = [item.get("prop_id", "") for item in callback_context.triggered]
+    except Exception:
+        trigger_props = []
+    triggered_by_value_change = any(prop.endswith(".cellValueChanged") for prop in trigger_props)
+    triggered_by_click_only = (
+        any(prop.endswith(".cellClicked") for prop in trigger_props)
+        and not triggered_by_value_change
+    )
+
+    value_event = _latest_event(cell_change)
+    click_event = _latest_event(cell_click)
+    changed_field = _event_col(value_event) if triggered_by_value_change else None
+    changed_series = _event_series(value_event) if triggered_by_value_change else None
+
+    checkbox_fields = {"Y", "X", "LongShort", "ScaleVol", "Enable", "Delete"}
+    if triggered_by_click_only and click_event:
+        click_field = _event_col(click_event)
+        click_series = _event_series(click_event)
+        if click_field in checkbox_fields and click_series:
+            for row in rows:
+                if row.get("Series") == click_series:
+                    row[click_field] = not bool(row.get(click_field, False))
+                    break
+            changed_field = click_field
+            changed_series = click_series
+
     new_x, new_dep, new_lag, new_min, new_max = [], None, {}, {}, {}
     new_enable, new_bench, new_ls, new_vol, new_deleted, new_order = {}, {}, {}, {}, [], []
-    # Dash AG Grid can emit either a single event dict or a list of events.
-    event = cell_change
-    if isinstance(event, list):
-        event = next((item for item in reversed(event) if isinstance(item, dict)), None)
-    elif not isinstance(event, dict):
-        event = None
-
-    changed_field = event.get("colId") if event else None
-    if changed_field is None and event:
-        changed_field = (event.get("column") or {}).get("colId")
-    changed_series = None
-    if event:
-        data = event.get("data")
-        if isinstance(data, dict):
-            changed_series = data.get("Series")
-        if changed_series is None and isinstance(event.get("rowIndex"), int):
-            idx = event["rowIndex"]
-            if 0 <= idx < len(row_data) and isinstance(row_data[idx], dict):
-                changed_series = row_data[idx].get("Series")
-
-    for row in row_data:
+    for row in rows:
         series = row.get("Series", "")
         new_order.append(series)
         y_val = bool(row.get("Y", False))

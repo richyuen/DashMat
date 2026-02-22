@@ -51,6 +51,16 @@
     justify-content: center;
 }
 
+.dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-checkbox-input-wrapper,
+.dashmat-modal .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-checkbox-input-wrapper,
+.dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-selection-checkbox,
+.dashmat-modal .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-selection-checkbox {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+}
+
 .dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-row-drag,
 .dashmat-modal .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-row-drag {
     margin: 0 auto;
