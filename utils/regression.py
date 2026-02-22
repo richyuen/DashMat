@@ -49,6 +49,23 @@ def _build_exponential_weights(n_obs: int, halflife: float) -> np.ndarray:
     return decay / decay.sum()
 
 
+def _parse_optional_float(value: Any) -> float | None:
+    """Parse user-provided numeric input; return None for blank/invalid/non-finite."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(parsed):
+        return None
+    return parsed
+
+
 def _apply_lags(X: pd.DataFrame, lag_config: dict) -> pd.DataFrame:
     """Shift selected X columns by their specified lag, drop resulting NaN rows.
 
@@ -212,7 +229,8 @@ def _run_ols(y: pd.Series, X: pd.DataFrame, force_zero_intercept: bool,
 
 
 def _run_constrained_ols(y: pd.Series, X: pd.DataFrame, min_beta: float,
-                         max_beta: float, enable_constraint: dict,
+                         max_beta: float, min_beta_by_var: dict,
+                         max_beta_by_var: dict, enable_constraint: dict,
                          force_zero_intercept: bool,
                          linear_constraints: list | None,
                          sample_weights: np.ndarray | None) -> dict:
@@ -239,28 +257,43 @@ def _run_constrained_ols(y: pd.Series, X: pd.DataFrame, min_beta: float,
 
     # Per-variable bounds
     bounds = []
+    min_map = min_beta_by_var or {}
+    max_map = max_beta_by_var or {}
     for i, col in enumerate(col_names):
         if col == "intercept" or not enable_constraint.get(col, False):
             bounds.append((-np.inf, np.inf))
         else:
-            bounds.append((float(min_beta), float(max_beta)))
+            try:
+                lower = float(min_map.get(col, min_beta))
+            except (TypeError, ValueError):
+                lower = float(min_beta)
+            try:
+                upper = float(max_map.get(col, max_beta))
+            except (TypeError, ValueError):
+                upper = float(max_beta)
+            if lower > upper:
+                lower, upper = upper, lower
+            bounds.append((lower, upper))
 
     # Linear constraints from UI (A @ beta <= B)
     scipy_constraints = []
     if linear_constraints:
         for row in linear_constraints:
-            coeffs = np.array([float(row.get(c, 0) or 0) for c in col_names])
-            mn = row.get("Min")
-            mx = row.get("Max")
+            coeffs = np.array(
+                [(_parse_optional_float(row.get(c, 0)) or 0.0) for c in col_names],
+                dtype=float,
+            )
+            mn = _parse_optional_float(row.get("Min"))
+            mx = _parse_optional_float(row.get("Max"))
             if mn is not None:
                 scipy_constraints.append({
                     "type": "ineq",
-                    "fun": lambda beta, c=coeffs, b=float(mn): c @ beta - b,
+                    "fun": lambda beta, c=coeffs, b=mn: c @ beta - b,
                 })
             if mx is not None:
                 scipy_constraints.append({
                     "type": "ineq",
-                    "fun": lambda beta, c=coeffs, b=float(mx): b - c @ beta,
+                    "fun": lambda beta, c=coeffs, b=mx: b - c @ beta,
                 })
 
     x0 = np.linalg.lstsq(X_clean, y_clean, rcond=None)[0]
@@ -268,9 +301,13 @@ def _run_constrained_ols(y: pd.Series, X: pd.DataFrame, min_beta: float,
         res = minimize(objective, x0, method="SLSQP", bounds=bounds,
                        constraints=scipy_constraints,
                        options={"maxiter": 1000, "ftol": 1e-12})
-        beta_hat = res.x
     except Exception:
-        beta_hat = x0
+        return {}
+    if not getattr(res, "success", False):
+        return {}
+    beta_hat = np.asarray(getattr(res, "x", None), dtype=float)
+    if beta_hat.size != n or not np.all(np.isfinite(beta_hat)):
+        return {}
 
     fitted = X_clean @ beta_hat
     resid = y_clean - fitted
@@ -327,18 +364,21 @@ def _run_style_analysis(y: pd.Series, X: pd.DataFrame,
     # Extra linear constraints (applied to style weights)
     if linear_constraints:
         for row in linear_constraints:
-            coeffs = np.array([float(row.get(c, 0) or 0) for c in col_names])
-            mn = row.get("Min")
-            mx = row.get("Max")
+            coeffs = np.array(
+                [(_parse_optional_float(row.get(c, 0)) or 0.0) for c in col_names],
+                dtype=float,
+            )
+            mn = _parse_optional_float(row.get("Min"))
+            mx = _parse_optional_float(row.get("Max"))
             if mn is not None:
                 constraints.append({
                     "type": "ineq",
-                    "fun": lambda beta, c=coeffs, b=float(mn): c @ beta - b,
+                    "fun": lambda beta, c=coeffs, b=mn: c @ beta - b,
                 })
             if mx is not None:
                 constraints.append({
                     "type": "ineq",
-                    "fun": lambda beta, c=coeffs, b=float(mx): b - c @ beta,
+                    "fun": lambda beta, c=coeffs, b=mx: b - c @ beta,
                 })
 
     x0 = np.full(n_assets, 1.0 / n_assets)
@@ -346,9 +386,13 @@ def _run_style_analysis(y: pd.Series, X: pd.DataFrame,
         res = minimize(objective, x0, method="SLSQP", bounds=bounds,
                        constraints=constraints,
                        options={"maxiter": 2000, "ftol": 1e-13})
-        beta_hat = res.x
     except Exception:
-        beta_hat = x0
+        return {}
+    if not getattr(res, "success", False):
+        return {}
+    beta_hat = np.asarray(getattr(res, "x", None), dtype=float)
+    if beta_hat.size != n_assets or not np.all(np.isfinite(beta_hat)):
+        return {}
 
     fitted = X_clean @ beta_hat
     resid = y_clean - fitted
@@ -485,7 +529,6 @@ def _fit_arima_garch(residuals: pd.Series, arima_order: tuple,
                 "bic": float(arima_model.bic),
                 "params": {str(k): float(v) for k, v in
                            zip(arima_model.param_names, arima_model.params)},
-                "summary_text": str(arima_model.summary()),
             }
             residuals_for_garch = pd.Series(arima_model.resid, index=clean.index)
         except Exception as exc:
@@ -505,7 +548,6 @@ def _fit_arima_garch(residuals: pd.Series, arima_order: tuple,
                 "aic": float(garch_fit.aic),
                 "bic": float(garch_fit.bic),
                 "params": {str(k): float(v) for k, v in garch_fit.params.items()},
-                "summary_text": str(garch_fit.summary()),
             }
         except Exception as exc:
             summary["garch"] = {"error": str(exc)}
@@ -577,7 +619,7 @@ def run_regression(
     y: pd.Series,
     X: pd.DataFrame,
     config: dict,
-) -> tuple[list[RegressionWindowResult], pd.Series, pd.Series]:
+) -> tuple[list[RegressionWindowResult], pd.Series, pd.Series, dict | None]:
     """Run regression analysis.
 
     Args:
@@ -599,6 +641,8 @@ def run_regression(
             l1_ratio: float (ElasticNet mix)
             min_beta: float (Constrained OLS lower bound, when enabled)
             max_beta: float (Constrained OLS upper bound, when enabled)
+            min_beta_by_var: dict {col: float} (per-variable lower bounds)
+            max_beta_by_var: dict {col: float} (per-variable upper bounds)
             enable_constraint: dict {col: bool}  (per-variable constraint toggle)
             lag_config: dict {col: lag_periods}
             arima_order: (p, d, q)
@@ -606,7 +650,7 @@ def run_regression(
             linear_constraints: list of dicts (UI constraint rows)
 
     Returns:
-        (window_results, predicted_series, residuals_series)
+        (window_results, predicted_series, residuals_series, arima_garch_summary)
     """
     model_name = config.get("model", "ols")
     force_zero_intercept = bool(config.get("force_zero_intercept", False))
@@ -623,6 +667,8 @@ def run_regression(
     l1_ratio = float(config.get("l1_ratio", 0.5) or 0.5)
     min_beta = float(config.get("min_beta", -999) or -999)
     max_beta = float(config.get("max_beta", 999) or 999)
+    min_beta_by_var = config.get("min_beta_by_var", {}) or {}
+    max_beta_by_var = config.get("max_beta_by_var", {}) or {}
     enable_constraint = config.get("enable_constraint", {}) or {}
     lag_config = config.get("lag_config", {}) or {}
     arima_order = tuple(config.get("arima_order", (0, 0, 0)) or (0, 0, 0))
@@ -638,7 +684,7 @@ def run_regression(
     X_aligned = X_lagged.loc[y_aligned.index]
 
     if X_aligned.empty or y_aligned.empty:
-        return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals")
+        return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
 
     # Handle missing data globally
     if missing_data == "fill_0":
@@ -650,7 +696,7 @@ def run_regression(
         X_aligned = combined.iloc[:, 1:]
 
     if len(y_aligned) < 3:
-        return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals")
+        return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
 
     # Build combined df for window indexing
     combined_df = pd.concat([y_aligned, X_aligned], axis=1)
@@ -665,7 +711,7 @@ def run_regression(
                 fill_in_sample, opt_step_unit=opt_step_unit,
             )
         except ValueError:
-            return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals")
+            return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
 
     window_results: list[RegressionWindowResult] = []
     predicted_all = pd.Series(np.nan, index=combined_df.index, dtype=float)
@@ -690,6 +736,8 @@ def run_regression(
             robust_se=robust_se,
             min_beta=min_beta,
             max_beta=max_beta,
+            min_beta_by_var=min_beta_by_var,
+            max_beta_by_var=max_beta_by_var,
             enable_constraint=enable_constraint,
             alpha=alpha,
             l1_ratio=l1_ratio,
@@ -742,16 +790,10 @@ def run_regression(
         if len(resid_series) > 20:
             arima_garch_summary = _fit_arima_garch(resid_series, arima_order, garch_order)
 
-    # Attach ARIMA/GARCH to each window result
-    if arima_garch_summary:
-        for wr in window_results:
-            wr.diagnostics = (wr.diagnostics or {})
-            wr.diagnostics["arima_garch"] = arima_garch_summary
-
     predicted_all.name = "predicted"
     residuals_all.name = "residuals"
 
-    return window_results, predicted_all.dropna(), residuals_all.dropna()
+    return window_results, predicted_all.dropna(), residuals_all.dropna(), arima_garch_summary
 
 
 # ---------------------------------------------------------------------------
@@ -760,14 +802,17 @@ def run_regression(
 
 
 def _fit_model(model_name, y, X, force_zero_intercept, robust_se,
-               min_beta, max_beta, enable_constraint, alpha, l1_ratio,
+               min_beta, max_beta, min_beta_by_var, max_beta_by_var,
+               enable_constraint, alpha, l1_ratio,
                linear_constraints, sample_weights) -> dict:
     """Dispatch to individual model function."""
     if model_name == "ols":
         return _run_ols(y, X, force_zero_intercept, robust_se, sample_weights)
     elif model_name == "constrained_ols":
-        return _run_constrained_ols(y, X, min_beta, max_beta, enable_constraint,
-                                    force_zero_intercept, linear_constraints, sample_weights)
+        return _run_constrained_ols(
+            y, X, min_beta, max_beta, min_beta_by_var, max_beta_by_var,
+            enable_constraint, force_zero_intercept, linear_constraints, sample_weights,
+        )
     elif model_name == "style_analysis":
         return _run_style_analysis(y, X, linear_constraints, sample_weights)
     elif model_name == "ridge":

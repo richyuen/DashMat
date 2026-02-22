@@ -41,12 +41,17 @@ from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
+    build_db_add_modal,
     build_series_selection_modal,
     build_sheet_select_modal,
     build_welcome_screen as build_shared_welcome_screen,
-    js_trigger_upload_with_cancel,
+    compute_close_db_add_modal,
+    compute_open_db_add_modal,
+    compute_validate_db_add_selection,
 )
 from utils.sample_data import get_sample_file_path
+from utils.core_categories import load_cma_returns_for_benches_with_meta
+from dbengine import engine as DB_ENGINE, engine_MRD as MRD_ENGINE
 
 register_page(__name__, path="/regression", name="Regression", title="Regression")
 
@@ -674,8 +679,9 @@ layout = dmc.Container(
         ),
 
         # Modals
+        build_db_add_modal("reg"),
         build_series_selection_modal(REG_CONFIG),
-        build_sheet_select_modal(REG_CONFIG),
+        build_sheet_select_modal(REG_CONFIG.prefix),
 
         # Help modal
         dmc.Modal(
@@ -814,7 +820,22 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_trigger_upload_with_cancel("reg-upload-data"),
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            setTimeout(function() {
+                var uploadDiv = document.getElementById('reg-upload-data');
+                if (uploadDiv) {
+                    var input = uploadDiv.querySelector('input[type="file"]');
+                    if (input) {
+                        input.click();
+                    }
+                }
+            }, 100);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
     Output("reg-upload-data", "contents", allow_duplicate=True),
     Input("reg-menu-add-series", "n_clicks"),
     State("reg-upload-data", "contents"),
@@ -822,9 +843,24 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_trigger_upload_with_cancel("reg-upload-data"),
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            setTimeout(function() {
+                var uploadDiv = document.getElementById('reg-upload-data');
+                if (uploadDiv) {
+                    var input = uploadDiv.querySelector('input[type="file"]');
+                    if (input) {
+                        input.click();
+                    }
+                }
+            }, 100);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
     Output("reg-upload-data", "contents", allow_duplicate=True),
-    Input("reg-welcome-add-db-btn", "n_clicks"),
+    Input("reg-welcome-add-series-btn", "n_clicks"),
     State("reg-upload-data", "contents"),
     prevent_initial_call=True,
 )
@@ -833,7 +869,7 @@ clientside_callback(
 clientside_callback("function(v){return v;}",
     Output("reg-periodicity-value-store","data"), Input("reg-periodicity-select","value"), prevent_initial_call=True)
 clientside_callback("function(v){return v;}",
-    Output("reg-periodicity-select","value"), Input("reg-periodicity-load-sync-dummy","data"), prevent_initial_call=True)
+    Output("reg-periodicity-select","value", allow_duplicate=True), Input("reg-periodicity-load-sync-dummy","data"), prevent_initial_call=True)
 clientside_callback("function(v){return v??0;}",
     Output("reg-vol-scaler-value-store","data"), Input("reg-vol-scaler-input","value"), prevent_initial_call=True)
 clientside_callback("function(v){return v;}",
@@ -912,6 +948,103 @@ def reg_toggle_window_controls(window_type):
 
 
 # ---------------------------------------------------------------------------
+# DB add modal (AA Tool indices)
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("reg-db-add-modal", "opened", allow_duplicate=True),
+    Output("reg-db-add-series-select", "data", allow_duplicate=True),
+    Output("reg-db-add-series-select", "value", allow_duplicate=True),
+    Input("reg-welcome-add-db-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_open_db_add_modal(welcome_clicks):
+    return compute_open_db_add_modal(None, welcome_clicks, DB_ENGINE)
+
+
+@callback(
+    Output("reg-db-add-modal", "opened", allow_duplicate=True),
+    Output("reg-db-add-series-select", "value", allow_duplicate=True),
+    Input("reg-db-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_close_db_add_modal(n_clicks):
+    return compute_close_db_add_modal(n_clicks)
+
+
+@callback(
+    Output("reg-db-add-error-alert", "children"),
+    Output("reg-db-add-error-alert", "hide"),
+    Output("reg-db-add-ok-button", "disabled"),
+    Input("reg-db-add-series-select", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+def reg_validate_db_add_selection(selected_benches, raw_data, opened):
+    return compute_validate_db_add_selection(selected_benches, raw_data, opened)
+
+
+@callback(
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-value-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
+    Output("reg-db-add-modal", "opened", allow_duplicate=True),
+    Output("reg-db-add-series-select", "value", allow_duplicate=True),
+    Output("reg-db-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-db-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-db-add-ok-button", "n_clicks"),
+    State("reg-db-add-series-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_add_series_from_database(n_clicks, selected_benches, existing_data, existing_periodicity):
+    if not n_clicks:
+        raise PreventUpdate
+
+    if not selected_benches:
+        return no_update, no_update, no_update, no_update, True, no_update, "Select at least one series.", False
+
+    try:
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [s for s in selected_benches if s in existing_cols]
+            if duplicates:
+                return (
+                    no_update, no_update, no_update, no_update,
+                    True, no_update, f"Cannot add duplicate series: {', '.join(duplicates)}", False,
+                )
+
+        new_df, _db_meta = load_cma_returns_for_benches_with_meta(DB_ENGINE, selected_benches, MRD_ENGINE)
+        if new_df.empty:
+            return (
+                no_update, no_update, no_update, no_update,
+                True, no_update, "No rows returned for selected series.", False,
+            )
+
+        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        merged_periodicity = merge_result.combined_periodicity
+        return (
+            df_to_json(merged_df),
+            merged_periodicity,
+            merged_periodicity,
+            merged_periodicity,
+            False,
+            [],
+            no_update,
+            True,
+        )
+    except Exception as exc:
+        return (
+            no_update, no_update, no_update, no_update,
+            True, no_update, f"Error loading database series: {exc}", False,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
 
@@ -937,12 +1070,12 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
     if sheet_names and len(sheet_names) > 1:
         return sheet_names, contents, filename, True, no_update, no_update, no_update, no_update
     try:
-        new_df, new_periodicity = _shared_import_single_upload(contents, filename)
+        new_df = _shared_import_single_upload(contents, filename)
     except Exception:
         raise PreventUpdate
-    merged_df, merged_periodicity = _shared_merge_uploaded_with_existing(
-        existing_raw, existing_periodicity, new_df, new_periodicity
-    )
+    merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
+    merged_df = merge_result.merged_df
+    merged_periodicity = merge_result.combined_periodicity
     return (no_update, no_update, no_update, False,
             df_to_json(merged_df), merged_periodicity, merged_periodicity, merged_periodicity)
 
@@ -954,7 +1087,7 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
     Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
     Output("reg-sheet-select-modal", "opened", allow_duplicate=True),
     Input("reg-sheet-select-ok-button", "n_clicks"),
-    State("reg-sheet-select-checklist", "value"),
+    State("reg-sheet-select-dropdown", "value"),
     State("reg-sheet-select-contents-store", "data"),
     State("reg-sheet-select-filename-store", "data"),
     State("dashmat-raw-data-store", "data"),
@@ -965,12 +1098,12 @@ def reg_handle_sheet_select_ok(n_clicks, selected_sheets, contents, filename, ex
     if not n_clicks or not selected_sheets or not contents:
         raise PreventUpdate
     try:
-        new_df, new_periodicity = _shared_import_selected_workbook_sheets(contents, filename, selected_sheets)
+        new_df, _imported_sheets = _shared_import_selected_workbook_sheets(contents, filename, selected_sheets)
     except Exception:
         raise PreventUpdate
-    merged_df, merged_periodicity = _shared_merge_uploaded_with_existing(
-        existing_raw, existing_periodicity, new_df, new_periodicity
-    )
+    merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
+    merged_df = merge_result.merged_df
+    merged_periodicity = merge_result.combined_periodicity
     return df_to_json(merged_df), merged_periodicity, merged_periodicity, merged_periodicity, False
 
 
@@ -984,20 +1117,30 @@ def reg_handle_sheet_select_ok(n_clicks, selected_sheets, contents, filename, ex
     Output("reg-periodicity-select", "data"),
     Output("reg-periodicity-select", "value"),
     Input("dashmat-raw-data-store", "data"),
-    Input("reg-periodicity-value-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("reg-periodicity-value-store", "data"),
     prevent_initial_call=False,
 )
-def reg_toggle_welcome(raw_data, stored_periodicity):
+def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     hide_welcome = {"display": "none"}
     show_welcome = {"display": "flex", "flex": "1", "alignItems": "center", "justifyContent": "center"}
     show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     hide_main = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     if not raw_data:
         return show_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily"
-    df = json_to_df(raw_data)
-    periodicities = get_available_periodicities(df)
-    period_data = [{"value": p, "label": p.replace("_", " ").title()} for p in periodicities]
-    period_value = stored_periodicity if (stored_periodicity and stored_periodicity in periodicities) else (periodicities[0] if periodicities else "daily")
+
+    period_data = get_available_periodicities(original_periodicity or "daily")
+    valid_values = [option["value"] for option in period_data]
+    default_value = (
+        original_periodicity
+        if original_periodicity in valid_values
+        else (valid_values[0] if valid_values else "daily")
+    )
+    period_value = (
+        stored_periodicity
+        if (stored_periodicity and stored_periodicity in valid_values)
+        else default_value
+    )
     return hide_welcome, show_main, period_data, period_value
 
 
@@ -1562,6 +1705,8 @@ def reg_run_regression(
         "l1_ratio": float(l1_ratio or 0.5),
         "min_beta": min(per_var_min.values()) if per_var_min else -999.0,
         "max_beta": max(per_var_max.values()) if per_var_max else 999.0,
+        "min_beta_by_var": per_var_min,
+        "max_beta_by_var": per_var_max,
         "enable_constraint": per_var_enable,
         "lag_config": lag_assign or {},
         "arima_order": (int(arima_p or 0), int(arima_d or 0), int(arima_q or 0)),
@@ -1570,7 +1715,7 @@ def reg_run_regression(
     }
 
     try:
-        window_results, predicted, residuals = run_regression(y, X, config)
+        window_results, predicted, residuals, arima_garch_summary = run_regression(y, X, config)
     except Exception as exc:
         return no_update, no_update, no_update, f"Regression error: {exc}"
 
@@ -1620,6 +1765,7 @@ def reg_run_regression(
         "independent_vars": x_cols,
         "config": config,
         "periodicity": periodicity or "daily",
+        "arima_garch_summary": _clean_dict(arima_garch_summary),
     }
 
     new_results = {**current_results, name: result_entry}
@@ -1792,7 +1938,7 @@ def reg_render_anova(selected, results):
                 ),
             ]
 
-    arima_garch = (diag or {}).get("arima_garch")
+    arima_garch = entry.get("arima_garch_summary") or (diag or {}).get("arima_garch")
     if arima_garch:
         ag_parts = []
         for key, label in [("arima", "ARIMA"), ("garch", "GARCH")]:
