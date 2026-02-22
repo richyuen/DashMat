@@ -3535,141 +3535,446 @@ def reg_toggle_file_menu_actions(raw_data, results):
     State("reg-results-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("reg-result-select", "value"),
+    State("reg-anova-window-select", "value"),
+    State("reg-rolling-window-select", "value"),
+    State("reg-rolling-return-type-select", "value"),
+    State("reg-rolling-metric-select", "value"),
+    State("reg-calendar-view-select", "value"),
+    State("reg-calendar-series-select", "value"),
     prevent_initial_call=True,
 )
-def reg_download_excel(n_clicks, results, raw_data, selected_result=None):
+def reg_download_excel(
+    n_clicks,
+    results,
+    raw_data,
+    selected_result=None,
+    selected_anova_window=None,
+    rolling_window=None,
+    rolling_return_type=None,
+    rolling_metric=None,
+    calendar_view=None,
+    calendar_series=None,
+):
     if n_clicks is None or not results:
         raise PreventUpdate
 
     selected_name, selected_entry = _reg_get_selected_result_entry(selected_result, results)
     if not selected_name or not selected_entry:
         raise PreventUpdate
-    results_to_export = {selected_name: selected_entry}
+    entry = selected_entry
+    config = entry.get("config") or {}
+    periodicity = entry.get("periodicity", "daily")
+    wrs = entry.get("window_results") or []
+    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
 
-    summary_rows = []
-    coef_rows = []
-    diag_rows = []
-    model_rows = []
-    predicted_series = {}
-    residual_series = {}
-    returns_frames = []
-    growth_frames = []
-    rolling_frames = []
-    calendar_frames = []
-    drawdown_frames = []
+    def _info_df(message):
+        return pd.DataFrame({"Info": [message]})
 
-    for name, entry in results_to_export.items():
-        if not isinstance(entry, dict):
-            continue
+    def _to_date_str(value):
+        if value is None:
+            return ""
+        return str(value)[:10]
 
-        config = entry.get("config") or {}
-        windows = entry.get("window_results") or []
-        summary_rows.append(
-            {
-                "Regression": name,
-                "Model": config.get("model"),
-                "Dependent": entry.get("dependent_var"),
-                "Independent": ", ".join(entry.get("independent_vars") or []),
-                "Windows": len(windows),
-                "Periodicity": entry.get("periodicity"),
-            }
-        )
+    def _safe_json(value):
+        if value in (None, ""):
+            return ""
+        try:
+            return json.dumps(value, default=str)
+        except Exception:
+            return str(value)
 
-        for idx, window in enumerate(windows, start=1):
-            if not isinstance(window, dict):
+    # ------------------------------------------------------------------
+    # Settings tab
+    # ------------------------------------------------------------------
+    date_range = entry.get("date_range") or {}
+    settings_rows = [
+        {"Parameter": "Result Name", "Value": selected_name},
+        {"Parameter": "Model", "Value": config.get("model", "")},
+        {"Parameter": "Dependent Variable", "Value": entry.get("dependent_var", "")},
+        {"Parameter": "Independent Variables", "Value": ", ".join(entry.get("independent_vars") or [])},
+        {"Parameter": "Periodicity", "Value": periodicity},
+        {"Parameter": "Date Range Start", "Value": date_range.get("start", "")},
+        {"Parameter": "Date Range End", "Value": date_range.get("end", "")},
+        {"Parameter": "Window Type", "Value": config.get("window_type", "")},
+        {"Parameter": "Window Size", "Value": config.get("window_size", "")},
+        {"Parameter": "Opt Step", "Value": config.get("opt_step", "")},
+        {"Parameter": "Opt Step Unit", "Value": config.get("opt_step_unit", "")},
+        {"Parameter": "Fill In-Sample", "Value": bool(config.get("fill_in_sample", False))},
+        {"Parameter": "Missing Data", "Value": config.get("missing_data", "")},
+        {"Parameter": "Force Zero Intercept", "Value": bool(config.get("force_zero_intercept", False))},
+        {"Parameter": "Robust SE", "Value": bool(config.get("robust_se", False))},
+        {"Parameter": "Exponential Weighting", "Value": bool(config.get("exp_wt", False))},
+        {"Parameter": "Half-Life", "Value": config.get("halflife", "")},
+        {"Parameter": "Alpha", "Value": config.get("alpha", "")},
+        {"Parameter": "L1 Ratio", "Value": config.get("l1_ratio", "")},
+        {"Parameter": "ARIMA Order (p,d,q)", "Value": _safe_json(config.get("arima_order"))},
+        {"Parameter": "GARCH Order (p,q)", "Value": _safe_json(config.get("garch_order"))},
+        {"Parameter": "Vol Scaler", "Value": entry.get("vol_scaler", 0)},
+        {"Parameter": "Benchmark Assignments", "Value": _safe_json(entry.get("benchmark_assignments") or {})},
+        {"Parameter": "Long/Short Assignments", "Value": _safe_json(entry.get("long_short_assignments") or {})},
+        {"Parameter": "Vol Scaling Assignments", "Value": _safe_json(entry.get("vol_scaling_assignments") or {})},
+        {"Parameter": "Lag Assignments", "Value": _safe_json(config.get("lag_config") or {})},
+        {"Parameter": "Per-Variable Min Beta", "Value": _safe_json(config.get("min_beta_by_var") or {})},
+        {"Parameter": "Per-Variable Max Beta", "Value": _safe_json(config.get("max_beta_by_var") or {})},
+        {"Parameter": "Enabled Constraints", "Value": _safe_json(config.get("enable_constraint") or {})},
+        {"Parameter": "Linear Constraints", "Value": _safe_json(config.get("linear_constraints"))},
+    ]
+    settings_df = pd.DataFrame(settings_rows)
+
+    # ------------------------------------------------------------------
+    # ANOVA tab (current selected window)
+    # ------------------------------------------------------------------
+    anova_df = _info_df("No ANOVA data available.")
+    if wrs:
+        try:
+            window_idx = int(selected_anova_window) if selected_anova_window is not None else len(wrs) - 1
+        except (TypeError, ValueError):
+            window_idx = len(wrs) - 1
+        window_idx = max(0, min(window_idx, len(wrs) - 1))
+        wr = wrs[window_idx] if isinstance(wrs[window_idx], dict) else {}
+        parts = []
+
+        fit_rows = [
+            {"Section": "Window", "Metric": "Window Number", "Value": window_idx + 1},
+            {"Section": "Window", "Metric": "Estimation Start", "Value": _to_date_str(wr.get("est_start"))},
+            {"Section": "Window", "Metric": "Estimation End", "Value": _to_date_str(wr.get("est_end"))},
+            {"Section": "Window", "Metric": "Apply Start", "Value": _to_date_str(wr.get("apply_start"))},
+            {"Section": "Window", "Metric": "Apply End", "Value": _to_date_str(wr.get("apply_end"))},
+            {"Section": "Model Fit", "Metric": "R-Squared", "Value": wr.get("r_squared")},
+            {"Section": "Model Fit", "Metric": "Adj R-Squared", "Value": wr.get("adj_r_squared")},
+            {"Section": "Model Fit", "Metric": "Residual Std", "Value": wr.get("residual_std")},
+            {"Section": "Model Fit", "Metric": "Observations", "Value": wr.get("n_obs")},
+        ]
+        parts.append(pd.DataFrame(fit_rows))
+
+        coefs = wr.get("coefficients") or {}
+        pvals = wr.get("p_values") or {}
+        diag = wr.get("diagnostics") if isinstance(wr.get("diagnostics"), dict) else {}
+        ci_low = diag.get("ci_low") or {}
+        ci_high = diag.get("ci_high") or {}
+        std_errs = diag.get("std_errors") or {}
+        t_stats = diag.get("t_stats") or {}
+
+        coef_rows = []
+        for var, coef in coefs.items():
+            coef_rows.append(
+                {
+                    "Section": "Coefficients",
+                    "Variable": var,
+                    "Coefficient": coef,
+                    "Std Error": std_errs.get(var),
+                    "t-stat": t_stats.get(var),
+                    "p-value": pvals.get(var),
+                    "CI Low (95%)": ci_low.get(var),
+                    "CI High (95%)": ci_high.get(var),
+                }
+            )
+        if coef_rows:
+            parts.append(pd.DataFrame(coef_rows))
+
+        anova = wr.get("anova_table") if isinstance(wr.get("anova_table"), dict) else {}
+        if anova:
+            anova_rows = [
+                {
+                    "Section": "ANOVA",
+                    "Source": "Model",
+                    "df": anova.get("df_model"),
+                    "SS": anova.get("ss_model"),
+                    "MS": anova.get("ms_model"),
+                    "F": anova.get("F_stat"),
+                    "p": anova.get("F_pvalue"),
+                },
+                {
+                    "Section": "ANOVA",
+                    "Source": "Residual",
+                    "df": anova.get("df_resid"),
+                    "SS": anova.get("ss_resid"),
+                    "MS": anova.get("ms_resid"),
+                    "F": np.nan,
+                    "p": np.nan,
+                },
+                {
+                    "Section": "ANOVA",
+                    "Source": "Total",
+                    "df": (anova.get("df_model", 0) or 0) + (anova.get("df_resid", 0) or 0),
+                    "SS": anova.get("ss_total"),
+                    "MS": np.nan,
+                    "F": np.nan,
+                    "p": np.nan,
+                },
+            ]
+            parts.append(pd.DataFrame(anova_rows))
+
+        if diag:
+            diag_rows = []
+            diag_key_map = [
+                ("Durbin-Watson", "durbin_watson"),
+                ("Jarque-Bera Stat", "jarque_bera_stat"),
+                ("Jarque-Bera p-value", "jarque_bera_pvalue"),
+                ("AIC", "aic"),
+                ("BIC", "bic"),
+                ("Note", "note"),
+            ]
+            for label, key in diag_key_map:
+                if key in diag and not isinstance(diag.get(key), (dict, list)):
+                    diag_rows.append({"Section": "Diagnostics", "Metric": label, "Value": diag.get(key)})
+            if diag_rows:
+                parts.append(pd.DataFrame(diag_rows))
+
+            vif = diag.get("vif")
+            if isinstance(vif, dict) and vif:
+                vif_rows = [{"Section": "VIF", "Variable": k, "VIF": v} for k, v in vif.items()]
+                parts.append(pd.DataFrame(vif_rows))
+
+        arima_garch = entry.get("arima_garch_summary") or diag.get("arima_garch") or {}
+        if isinstance(arima_garch, dict) and arima_garch:
+            model_rows = []
+            for model_key, label in (("arima", "ARIMA"), ("garch", "GARCH")):
+                details = arima_garch.get(model_key)
+                if isinstance(details, dict):
+                    model_rows.append(
+                        {
+                            "Section": "ARIMA/GARCH",
+                            "Model": label,
+                            "Order": _safe_json(details.get("order")),
+                            "AIC": details.get("aic"),
+                            "BIC": details.get("bic"),
+                        }
+                    )
+            if model_rows:
+                parts.append(pd.DataFrame(model_rows))
+
+        if parts:
+            anova_df = pd.concat(parts, ignore_index=True, sort=False)
+
+    # ------------------------------------------------------------------
+    # Rolling Summary tab
+    # ------------------------------------------------------------------
+    rolling_summary_df = _info_df("No rolling summary data available.")
+    if wrs:
+        rows = []
+        for wr in wrs:
+            if not isinstance(wr, dict):
                 continue
-            coefs = window.get("coefficients") or {}
-            pvals = window.get("p_values") or {}
-            for term, beta in coefs.items():
-                coef_rows.append(
+            row = {
+                "Date": _to_date_str(wr.get("apply_start")),
+                "R²": wr.get("r_squared"),
+                "Adj R²": wr.get("adj_r_squared"),
+                "Residual Std": wr.get("residual_std"),
+                "N Obs": wr.get("n_obs"),
+            }
+            for k, v in (wr.get("coefficients") or {}).items():
+                row[f"β_{k}"] = v
+            oos = wr.get("oos_metrics") or {}
+            if isinstance(oos, dict) and oos:
+                row.update(
                     {
-                        "Regression": name,
-                        "Window": idx,
-                        "Term": term,
-                        "Coefficient": beta,
-                        "P-Value": pvals.get(term),
+                        "OOS R²": oos.get("oos_r2"),
+                        "OOS RMSE": oos.get("oos_rmse"),
+                        "OOS MAE": oos.get("oos_mae"),
                     }
                 )
-            diag_rows.append(
-                {
-                    "Regression": name,
-                    "Window": idx,
-                    "Estimation Start": window.get("est_start"),
-                    "Estimation End": window.get("est_end"),
-                    "R-Squared": window.get("r_squared"),
-                    "Adj R-Squared": window.get("adj_r_squared"),
-                    "Residual Std": window.get("residual_std"),
-                    "Observations": window.get("n_obs"),
-                }
-            )
+            rows.append(row)
+        if rows:
+            rolling_summary_df = pd.DataFrame(rows)
 
-        arima_garch = entry.get("arima_garch_summary") or {}
-        for model_key in ("arima", "garch"):
-            details = arima_garch.get(model_key)
-            if not isinstance(details, dict):
+    # ------------------------------------------------------------------
+    # Weights tab
+    # ------------------------------------------------------------------
+    weights_df = _info_df("No weights data available.")
+    if wrs:
+        rows = []
+        for idx, wr in enumerate(wrs, start=1):
+            if not isinstance(wr, dict):
                 continue
-            model_rows.append(
-                {
-                    "Regression": name,
-                    "Model": model_key.upper(),
-                    "Order": str(details.get("order")),
-                    "AIC": details.get("aic"),
-                    "BIC": details.get("bic"),
-                    "Params": json.dumps(details.get("params") or {}, default=str),
-                }
-            )
+            row = {
+                "Window": idx,
+                "Estimation Start": _to_date_str(wr.get("est_start")),
+                "Estimation End": _to_date_str(wr.get("est_end")),
+                "Apply Start": _to_date_str(wr.get("apply_start")),
+                "Apply End": _to_date_str(wr.get("apply_end")),
+            }
+            for k, v in (wr.get("coefficients") or {}).items():
+                row[k] = v
+            rows.append(row)
+        if rows:
+            weights_df = pd.DataFrame(rows)
 
-        predicted_json = entry.get("predicted_json")
-        if predicted_json:
-            pred_df = json_to_df(predicted_json)
-            if pred_df is not None and not pred_df.empty:
-                predicted_series[name] = pred_df.iloc[:, 0]
+    # ------------------------------------------------------------------
+    # Statistics tab
+    # ------------------------------------------------------------------
+    stats_df = _info_df("No statistics available.")
 
-        residuals_json = entry.get("residuals_json")
-        if residuals_json:
-            resid_df = json_to_df(residuals_json)
-            if resid_df is not None and not resid_df.empty:
-                residual_series[name] = resid_df.iloc[:, 0]
+    def _normalize_stats_payload(stats_payload):
+        if isinstance(stats_payload, list):
+            return [row for row in stats_payload if isinstance(row, dict) and row.get("Series")]
+        if isinstance(stats_payload, dict):
+            series_order = []
+            for values in stats_payload.values():
+                if isinstance(values, dict):
+                    for series_name in values.keys():
+                        if series_name not in series_order:
+                            series_order.append(series_name)
+            rows = []
+            for series_name in series_order:
+                row = {"Series": series_name}
+                for stat_name, values in stats_payload.items():
+                    if isinstance(values, dict):
+                        row[stat_name] = values.get(series_name)
+                rows.append(row)
+            return rows
+        return []
 
-        periodicity = entry.get("periodicity", "daily")
-        display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
-        if display_df.empty or not ordered_cols:
-            continue
-        display_df = display_df[ordered_cols]
+    if not display_df.empty and ordered_cols:
+        stats_input = display_df[ordered_cols].dropna(how="all")
+        if not stats_input.empty:
+            try:
+                stats_payload = calculate_statistics_cached(
+                    df_to_json(stats_input),
+                    periodicity,
+                    tuple(ordered_cols),
+                    "{}",
+                    "{}",
+                    "null",
+                    0,
+                    "{}",
+                )
+                normalized = _normalize_stats_payload(stats_payload)
+                if normalized:
+                    present_series = []
+                    for row in normalized:
+                        sname = str(row.get("Series"))
+                        if sname and sname not in present_series:
+                            present_series.append(sname)
+                    series_order = [s for s in ordered_cols if s in present_series]
+                    for s in present_series:
+                        if s not in series_order:
+                            series_order.append(s)
 
-        returns_pref = _reg_prefixed(display_df, name)
-        if not returns_pref.empty:
-            returns_frames.append(returns_pref)
+                    metric_order = [name for name, _ in STATS_CONFIG]
+                    for row in normalized:
+                        for key in row.keys():
+                            if key != "Series" and key not in metric_order:
+                                metric_order.append(key)
 
-        growth_pref = _reg_prefixed((1 + display_df).cumprod(), name)
-        if not growth_pref.empty:
-            growth_frames.append(growth_pref)
+                    by_series = {str(row.get("Series")): row for row in normalized if row.get("Series")}
+                    row_data = []
+                    for stat_name in metric_order:
+                        row = {"Statistic": stat_name}
+                        for s in series_order:
+                            value = by_series.get(s, {}).get(stat_name)
+                            if isinstance(value, (float, np.floating)) and not np.isfinite(float(value)):
+                                value = None
+                            row[s] = value
+                        row_data.append(row)
+                    stats_df = pd.DataFrame(row_data)
+            except Exception as exc:
+                stats_df = _info_df(f"Statistics error: {exc}")
 
+    # ------------------------------------------------------------------
+    # Returns tab
+    # ------------------------------------------------------------------
+    returns_df = _info_df("No returns available.")
+    if not display_df.empty and ordered_cols:
+        returns_df = display_df[ordered_cols].copy()
+        returns_df.index.name = "Date"
+        returns_df = returns_df.reset_index()
+        returns_df["Date"] = pd.to_datetime(returns_df["Date"]).dt.strftime("%Y-%m-%d")
+
+    # ------------------------------------------------------------------
+    # Rolling tab
+    # ------------------------------------------------------------------
+    rolling_df = _info_df("No rolling values available for selected settings.")
+    if not display_df.empty and ordered_cols:
+        metric = rolling_metric or "total_return"
+        window = rolling_window or "1y"
+        return_type = rolling_return_type or "annualized"
         try:
-            rolling_df = calculate_rolling_returns(
-                df_to_json(display_df),
+            rolling_calc = calculate_rolling_returns(
+                df_to_json(display_df[ordered_cols]),
                 periodicity,
                 tuple(ordered_cols),
                 "total",
                 "{}",
                 "{}",
                 "null",
-                "1y",
-                "annualized",
-                "total_return",
+                window,
+                return_type,
+                metric,
                 0,
                 "{}",
             )
-        except Exception:
-            rolling_df = pd.DataFrame()
-        rolling_pref = _reg_prefixed(rolling_df, name)
-        if not rolling_pref.empty:
-            rolling_frames.append(rolling_pref)
+            if rolling_calc is not None and not rolling_calc.empty:
+                rolling_df = rolling_calc.reset_index()
+                rolling_df["Date"] = pd.to_datetime(rolling_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+                rolling_df = rolling_df.rename(columns={rolling_df.columns[0]: "Date"})
+        except Exception as exc:
+            rolling_df = _info_df(f"Rolling error: {exc}")
 
+    # ------------------------------------------------------------------
+    # Calendar tab
+    # ------------------------------------------------------------------
+    calendar_df = _info_df("No calendar data available.")
+    if not display_df.empty and ordered_cols:
+        if (calendar_view or "annual") == "monthly":
+            target_series = calendar_series if calendar_series in ordered_cols else ordered_cols[0]
+            try:
+                _monthly_col_defs, monthly_rows = create_monthly_view(
+                    df_to_json(display_df[ordered_cols]),
+                    target_series,
+                    periodicity,
+                    periodicity,
+                    "total",
+                    {},
+                    {},
+                    tuple(ordered_cols),
+                    None,
+                    0,
+                    {},
+                )
+                if monthly_rows:
+                    calendar_df = pd.DataFrame(monthly_rows).rename(columns={"Year_Label": "Year"})
+            except Exception as exc:
+                calendar_df = _info_df(f"Calendar error: {exc}")
+        else:
+            try:
+                cal_calc = calculate_calendar_year_returns(
+                    df_to_json(display_df[ordered_cols]),
+                    periodicity,
+                    periodicity,
+                    tuple(ordered_cols),
+                    "total",
+                    "{}",
+                    "{}",
+                    "null",
+                    0,
+                    "{}",
+                )
+                if cal_calc is not None and not cal_calc.empty:
+                    calendar_df = cal_calc.reset_index()
+                    calendar_df = calendar_df.rename(columns={calendar_df.columns[0]: "Year"})
+                    calendar_df["Year"] = calendar_df["Year"].astype(str)
+            except Exception as exc:
+                calendar_df = _info_df(f"Calendar error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Growth tab
+    # ------------------------------------------------------------------
+    growth_df = _info_df("No growth series available.")
+    if not display_df.empty and ordered_cols:
+        growth_df = (1 + display_df[ordered_cols]).cumprod().copy()
+        growth_df.index.name = "Date"
+        growth_df = growth_df.reset_index()
+        growth_df["Date"] = pd.to_datetime(growth_df["Date"]).dt.strftime("%Y-%m-%d")
+
+    # ------------------------------------------------------------------
+    # Drawdown tab
+    # ------------------------------------------------------------------
+    drawdown_df = _info_df("No drawdown data available.")
+    if not display_df.empty and ordered_cols:
         try:
-            calendar_df = calculate_calendar_year_returns(
-                df_to_json(display_df),
-                periodicity,
+            drawdown_calc = calculate_drawdown(
+                df_to_json(display_df[ordered_cols]),
                 periodicity,
                 tuple(ordered_cols),
                 "total",
@@ -3679,90 +3984,34 @@ def reg_download_excel(n_clicks, results, raw_data, selected_result=None):
                 0,
                 "{}",
             )
-        except Exception:
-            calendar_df = pd.DataFrame()
-        calendar_pref = _reg_prefixed(calendar_df, name)
-        if not calendar_pref.empty:
-            calendar_frames.append(calendar_pref)
+            if drawdown_calc is not None and not drawdown_calc.empty:
+                drawdown_df = drawdown_calc.reset_index()
+                drawdown_df["Date"] = pd.to_datetime(drawdown_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+                drawdown_df = drawdown_df.rename(columns={drawdown_df.columns[0]: "Date"})
+        except Exception as exc:
+            drawdown_df = _info_df(f"Drawdown error: {exc}")
 
-        try:
-            drawdown_df = calculate_drawdown(
-                df_to_json(display_df),
-                periodicity,
-                tuple(ordered_cols),
-                "total",
-                "{}",
-                "{}",
-                "null",
-                0,
-                "{}",
-            )
-        except Exception:
-            drawdown_df = pd.DataFrame()
-        drawdown_pref = _reg_prefixed(drawdown_df, name)
-        if not drawdown_pref.empty:
-            drawdown_frames.append(drawdown_pref)
-
-    if not summary_rows:
-        raise PreventUpdate
+    # ------------------------------------------------------------------
+    # Write workbook (tab order + Settings first)
+    # ------------------------------------------------------------------
+    sheets = [
+        ("Settings", settings_df),
+        ("ANOVA", anova_df),
+        ("Rolling Summary", rolling_summary_df),
+        ("Weights", weights_df),
+        ("Statistics", stats_df),
+        ("Returns", returns_df),
+        ("Rolling", rolling_df),
+        ("Calendar Year", calendar_df),
+        ("Growth of $1", growth_df),
+        ("Drawdown", drawdown_df),
+    ]
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        write_excel_with_autofit(writer, pd.DataFrame(summary_rows), "Summary", index=False)
-
-        coef_df = pd.DataFrame(coef_rows)
-        if not coef_df.empty:
-            write_excel_with_autofit(writer, coef_df, "Coefficients", index=False)
-
-        diag_df = pd.DataFrame(diag_rows)
-        if not diag_df.empty:
-            write_excel_with_autofit(writer, diag_df, "Diagnostics", index=False)
-
-        model_df = pd.DataFrame(model_rows)
-        if not model_df.empty:
-            write_excel_with_autofit(writer, model_df, "ARIMA_GARCH", index=False)
-
-        pred_df = pd.DataFrame(predicted_series).sort_index()
-        if not pred_df.empty:
-            pred_export = pred_df.copy()
-            pred_export.index.name = "Date"
-            write_excel_with_autofit(writer, pred_export.reset_index(), "Predicted", index=False)
-
-        resid_df = pd.DataFrame(residual_series).sort_index()
-        if not resid_df.empty:
-            resid_export = resid_df.copy()
-            resid_export.index.name = "Date"
-            write_excel_with_autofit(writer, resid_export.reset_index(), "Residuals", index=False)
-
-        returns_df = pd.concat(returns_frames, axis=1).sort_index() if returns_frames else pd.DataFrame()
-        if not returns_df.empty:
-            returns_export = returns_df.copy()
-            returns_export.index.name = "Date"
-            write_excel_with_autofit(writer, returns_export.reset_index(), "Returns", index=False)
-
-        growth_df = pd.concat(growth_frames, axis=1).sort_index() if growth_frames else pd.DataFrame()
-        if not growth_df.empty:
-            growth_export = growth_df.copy()
-            growth_export.index.name = "Date"
-            write_excel_with_autofit(writer, growth_export.reset_index(), "Growth of $1", index=False)
-
-        rolling_df = pd.concat(rolling_frames, axis=1).sort_index() if rolling_frames else pd.DataFrame()
-        if not rolling_df.empty:
-            rolling_export = rolling_df.copy()
-            rolling_export.index.name = "Date"
-            write_excel_with_autofit(writer, rolling_export.reset_index(), "Rolling (1Y Ann)", index=False)
-
-        calendar_df = pd.concat(calendar_frames, axis=1).sort_index() if calendar_frames else pd.DataFrame()
-        if not calendar_df.empty:
-            calendar_export = calendar_df.copy()
-            calendar_export.index.name = "Year"
-            write_excel_with_autofit(writer, calendar_export.reset_index(), "Calendar Year", index=False)
-
-        drawdown_df = pd.concat(drawdown_frames, axis=1).sort_index() if drawdown_frames else pd.DataFrame()
-        if not drawdown_df.empty:
-            drawdown_export = drawdown_df.copy()
-            drawdown_export.index.name = "Date"
-            write_excel_with_autofit(writer, drawdown_export.reset_index(), "Drawdown", index=False)
+        for sheet_name, frame in sheets:
+            out_df = frame if frame is not None and not frame.empty else _info_df("No data available.")
+            write_excel_with_autofit(writer, out_df, sheet_name, index=False)
 
     output.seek(0)
     return dcc.send_bytes(output.getvalue(), "regression_results.xlsx")

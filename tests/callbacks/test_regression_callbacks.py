@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -563,3 +565,148 @@ def test_reg_sync_name_with_model_uses_model_defaults(regression_page):
     assert regression_page.reg_sync_name_with_model("ridge") == "Ridge"
     assert regression_page.reg_sync_name_with_model("style_analysis") == "Style Analysis"
     assert regression_page.reg_sync_name_with_model("unknown_model") == "Regression"
+
+
+def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+    predicted = pd.DataFrame({"Predicted": [0.01, -0.002, 0.003, 0.004, -0.001]}, index=idx)
+    residuals = pd.DataFrame({"Residual": [0.001, -0.001, 0.0, 0.001, -0.002]}, index=idx)
+
+    window_result = {
+        "est_start": idx[0],
+        "est_end": idx[-1],
+        "apply_start": idx[0],
+        "apply_end": idx[-1],
+        "r_squared": 0.82,
+        "adj_r_squared": 0.76,
+        "residual_std": 0.014,
+        "n_obs": len(idx),
+        "coefficients": {"intercept": 0.001, "X1": 0.95},
+        "p_values": {"intercept": 0.21, "X1": 0.01},
+        "anova_table": {
+            "df_model": 1,
+            "df_resid": 3,
+            "ss_model": 0.45,
+            "ms_model": 0.45,
+            "F_stat": 9.0,
+            "F_pvalue": 0.05,
+            "ss_resid": 0.15,
+            "ms_resid": 0.05,
+            "ss_total": 0.60,
+        },
+        "diagnostics": {
+            "std_errors": {"intercept": 0.05, "X1": 0.12},
+            "t_stats": {"intercept": 2.0, "X1": 7.9},
+            "ci_low": {"intercept": -0.09, "X1": 0.70},
+            "ci_high": {"intercept": 0.11, "X1": 1.20},
+            "durbin_watson": 2.10,
+            "aic": 12.3,
+            "bic": 14.2,
+            "vif": {"X1": 1.1},
+        },
+        "oos_metrics": {"oos_r2": 0.61, "oos_rmse": 0.02, "oos_mae": 0.01},
+    }
+
+    results = {
+        "R1": {
+            "periodicity": "daily",
+            "dependent_var": "Y",
+            "independent_vars": ["X1"],
+            "config": {
+                "model": "ols",
+                "window_type": "rolling",
+                "window_size": 24,
+                "opt_step": 1,
+                "opt_step_unit": "months",
+                "fill_in_sample": True,
+                "missing_data": "fill_na",
+                "force_zero_intercept": False,
+                "robust_se": True,
+                "exp_wt": False,
+                "halflife": 63,
+                "alpha": 1.0,
+                "l1_ratio": 0.5,
+            },
+            "window_results": [window_result],
+            "date_range": {"start": "2024-01-01", "end": "2024-01-31"},
+            "vol_scaler": 0,
+            "benchmark_assignments": {},
+            "long_short_assignments": {},
+            "vol_scaling_assignments": {},
+            "predicted_json": df_to_json(predicted),
+            "residuals_json": df_to_json(residuals),
+        }
+    }
+
+    monkeypatch.setattr(
+        regression_page,
+        "calculate_statistics_cached",
+        lambda *_args, **_kwargs: [
+            {"Series": "Predicted", "Cumulative Return": 0.015, "Annualized Return": 0.20},
+            {"Series": "Actual (Y)", "Cumulative Return": 0.014, "Annualized Return": 0.18},
+            {"Series": "Residual", "Cumulative Return": -0.001, "Annualized Return": -0.01},
+        ],
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "calculate_rolling_returns",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {
+                "Predicted": [0.10],
+                "Actual (Y)": [0.08],
+                "Residual": [0.02],
+            },
+            index=[pd.Timestamp("2024-01-31")],
+        ),
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "create_monthly_view",
+        lambda *_args, **_kwargs: ([], [{"Year_Label": "2024", "Jan": 0.01, "YTD": 0.01}]),
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "calculate_drawdown",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {
+                "Predicted": [0.0, -0.02],
+                "Actual (Y)": [0.0, -0.03],
+                "Residual": [0.0, -0.01],
+            },
+            index=[pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-31")],
+        ),
+    )
+    monkeypatch.setattr(regression_page.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
+
+    payload = regression_page.reg_download_excel(
+        1,
+        results,
+        None,
+        "R1",
+        0,
+        "1y",
+        "annualized",
+        "total_return",
+        "monthly",
+        "Predicted",
+    )
+
+    workbook = BytesIO(payload["content"])
+    xl = pd.ExcelFile(workbook)
+    assert xl.sheet_names == [
+        "Settings",
+        "ANOVA",
+        "Rolling Summary",
+        "Weights",
+        "Statistics",
+        "Returns",
+        "Rolling",
+        "Calendar Year",
+        "Growth of $1",
+        "Drawdown",
+    ]
+
+    settings_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Settings")
+    settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))
+    assert settings_map["Result Name"] == "R1"
+    assert settings_map["Model"] == "ols"
