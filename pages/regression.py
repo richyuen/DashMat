@@ -3534,11 +3534,17 @@ def reg_toggle_file_menu_actions(raw_data, results):
     Input("reg-menu-download-excel", "n_clicks"),
     State("reg-results-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("reg-result-select", "value"),
     prevent_initial_call=True,
 )
-def reg_download_excel(n_clicks, results, raw_data):
+def reg_download_excel(n_clicks, results, raw_data, selected_result=None):
     if n_clicks is None or not results:
         raise PreventUpdate
+
+    selected_name, selected_entry = _reg_get_selected_result_entry(selected_result, results)
+    if not selected_name or not selected_entry:
+        raise PreventUpdate
+    results_to_export = {selected_name: selected_entry}
 
     summary_rows = []
     coef_rows = []
@@ -3552,7 +3558,7 @@ def reg_download_excel(n_clicks, results, raw_data):
     calendar_frames = []
     drawdown_frames = []
 
-    for name, entry in (results or {}).items():
+    for name, entry in results_to_export.items():
         if not isinstance(entry, dict):
             continue
 
@@ -4223,10 +4229,20 @@ def reg_render_rolling(selected, results, view_mode, theme):
 
     fig = go.Figure()
     numeric_cols = [c for c in df_roll.columns if c != "Date"]
+    visible_default = "R²" if "R²" in numeric_cols else (numeric_cols[0] if numeric_cols else None)
     for col in numeric_cols[:8]:
         if df_roll[col].notna().any():
-            fig.add_trace(go.Scatter(x=df_roll["Date"], y=df_roll[col], mode="lines", name=col, line={"width": 1.5}))
-    fig.update_layout(height=380, margin={"l": 50, "r": 20, "t": 30, "b": 50},
+            fig.add_trace(
+                go.Scatter(
+                    x=df_roll["Date"],
+                    y=df_roll[col],
+                    mode="lines",
+                    name=col,
+                    line={"width": 1.5},
+                    visible=True if col == visible_default else "legendonly",
+                )
+            )
+    fig.update_layout(height=380, title="Rolling Summary", margin={"l": 50, "r": 20, "t": 30, "b": 50},
                       legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
     apply_chart_theme(fig, theme)
 
@@ -4419,7 +4435,8 @@ def reg_render_weights(selected, results, theme):
         coefs = wrs[0].get("coefficients") or {}
         fig.add_trace(go.Bar(x=list(coefs.keys()), y=list(coefs.values()), name="Coefficients"))
 
-    fig.update_layout(height=380, margin={"l": 50, "r": 20, "t": 30, "b": 50},
+    chart_title = "Style Weights" if model == "style_analysis" else "Regression Weights / Coefficients"
+    fig.update_layout(height=380, title=chart_title, margin={"l": 50, "r": 20, "t": 30, "b": 50},
                       yaxis_title="Weight / Coefficient",
                       legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
     apply_chart_theme(fig, theme)

@@ -9063,14 +9063,22 @@ def po_render_returns(
     State("po-rolling-return-type-select", "value"),
     State("po-rolling-metric-select", "value"),
     State("dashmat-saved-series-cache-store", "data"),
+    State("po-weight-portfolio-select", "value"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
-                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, saved_series_store=None):
+                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, saved_series_store=None, selected_portfolio=None):
     if n_clicks is None or not results:
         raise PreventUpdate
 
-    timing_ctx = timed_block("portopt.download_excel.total", portfolio_count=len(results))
+    selected_name = selected_portfolio if selected_portfolio in (results or {}) else None
+    if selected_name is None and results:
+        selected_name = list(results.keys())[-1]
+    if not selected_name:
+        raise PreventUpdate
+    active_results = {selected_name: (results or {}).get(selected_name)}
+
+    timing_ctx = timed_block("portopt.download_excel.total", portfolio_count=len(active_results))
     timing_ctx.__enter__()
     try:
         working_bundle = _build_po_working_bundle(
@@ -9086,7 +9094,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         # Build combined returns DataFrame (shared by multiple tabs/sheets)
         with timed_block("portopt.download_excel.build_returns"):
-            combined_df = _po_collect_portfolio_returns(results)
+            combined_df = _po_collect_portfolio_returns(active_results, [selected_name])
 
         if combined_df.empty:
             raise PreventUpdate
@@ -9097,7 +9105,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # Settings tab
         # ------------------------------------------------------------------
         settings_rows = []
-        for pname, pdata in results.items():
+        for pname, pdata in active_results.items():
             cfg = pdata.get("config", {}) or {}
             exp_weighted = bool(cfg.get("exp_wt_cov", False))
             decay_value = normalize_decay_input(cfg.get("halflife", 63), 63.0)
@@ -9124,7 +9132,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         weight_rows = []
         weight_cols = []
-        for pname, pdata in results.items():
+        for pname, pdata in active_results.items():
             for ww in pdata.get("window_weights", []) or []:
                 row = {
                     "Portfolio": pname,
@@ -9148,7 +9156,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         turnover_rows = []
         turnover_delta_cols = []
-        for pname, pdata in results.items():
+        for pname, pdata in active_results.items():
             window_weights = pdata.get("window_weights", []) or []
             if len(window_weights) < 2:
                 continue
@@ -9282,8 +9290,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # Attribution tab
         # ------------------------------------------------------------------
         attribution_frames = []
-        with timed_block("portopt.download_excel.attribution", portfolio_count=len(results)):
-            for pname, pdata in results.items():
+        with timed_block("portopt.download_excel.attribution", portfolio_count=len(active_results)):
+            for pname, pdata in active_results.items():
                 config = pdata.get("config", {}) or {}
                 opt_series = config.get("selected_series", []) or []
                 window_weights = pdata.get("window_weights", []) or []
@@ -9328,7 +9336,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         risk_rows = []
         risk_asset_cols = []
-        for pname, pdata in results.items():
+        for pname, pdata in active_results.items():
             config = pdata.get("config", {}) or {}
             opt_series = config.get("selected_series", []) or []
             window_weights = pdata.get("window_weights", []) or []
@@ -9365,8 +9373,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         frontier_rows = []
         frontier_weight_cols = []
-        with timed_block("portopt.download_excel.frontier", portfolio_count=len(results)):
-            for pname, pdata in results.items():
+        with timed_block("portopt.download_excel.frontier", portfolio_count=len(active_results)):
+            for pname, pdata in active_results.items():
                 config = pdata.get("config", {}) or {}
                 window_weights = pdata.get("window_weights", []) or []
                 opt_series = config.get("selected_series", []) or []
