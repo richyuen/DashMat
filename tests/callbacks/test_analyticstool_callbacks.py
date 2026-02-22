@@ -229,6 +229,45 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
     assert row_data[1]["Asset_A"] == pytest.approx(-0.03)
 
 
+def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    drawdown_df = pd.DataFrame(
+        {"Asset_A": [0.0, -0.03], "Asset_B": [0.0, -0.01]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02"]),
+    )
+    drawdown_df.index.name = "Date"
+    monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *args, **kwargs: drawdown_df)
+
+    graph = analyticstool.update_drawdown_charts(
+        "drawdown",
+        "chart",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {"Asset_B": True},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        "light",
+    )
+
+    fig = getattr(graph, "figure", None)
+    assert fig is not None
+    assert [trace.name for trace in fig.data] == ["Asset_A", "Asset_B"]
+    assert all(getattr(trace, "fill", None) == "tozeroy" for trace in fig.data)
+    assert fig.layout.title.text == "Drawdown"
+    assert fig.layout.yaxis.title.text == "Drawdown"
+    assert fig.layout.yaxis.tickformat == ".2%"
+    assert fig.layout.hovermode == "x unified"
+    assert fig.layout.margin.t == 40
+    assert fig.layout.margin.b == 40
+    assert fig.layout.margin.l == 60
+    assert fig.layout.margin.r >= 160
+
+
 def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules):
     analyticstool, _ = page_modules
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "growth") is no_update

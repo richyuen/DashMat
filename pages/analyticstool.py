@@ -5598,21 +5598,18 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
         if drawdown_df.empty:
             return dmc.Text("No data available for selected series", size="sm", c="dimmed")
 
-        long_short_dict = json.loads(long_short_assignments) if isinstance(long_short_assignments, str) else (long_short_assignments if isinstance(long_short_assignments, dict) else {})
         fig = go.Figure()
         for series in drawdown_df.columns:
             drawdown = drawdown_df[series].dropna()
             if drawdown.empty:
                 continue
-            is_long_short = bool(long_short_dict.get(series, False))
-            suffix = " (Long-Short)" if is_long_short else ""
             fig.add_trace(
                 go.Scatter(
                     x=drawdown.index,
                     y=drawdown,
                     mode="lines",
-                    name=f"{series}{suffix}",
-                    line={"width": 2},
+                    name=series,
+                    fill="tozeroy",
                 )
             )
 
@@ -5621,12 +5618,12 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
 
         fig.update_layout(
             title="Drawdown",
-            xaxis_title="Date",
             yaxis_title="Drawdown",
-            yaxis_tickformat=".2%",
-            height=420,
             hovermode="x unified",
+            margin={"t": 40, "b": 40, "l": 60, "r": 20},
+            height=420,
         )
+        fig.update_yaxes(tickformat=".2%")
         apply_chart_theme(fig, theme)
         return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
