@@ -175,12 +175,64 @@ def test_reg_run_regression_errors_when_dependent_variable_missing(regression_pa
     assert "dependent variable" in out[3].lower()
 
 
-def test_reg_run_regression_errors_when_x_series_missing(regression_page):
-    out = _call_reg_run(regression_page, x_series=[])
+def test_reg_run_regression_errors_when_x_series_missing_for_model_that_requires_x(regression_page):
+    out = _call_reg_run(regression_page, x_series=[], model="style_analysis")
     assert out[0] is no_update
     assert out[1] is no_update
     assert out[2] is no_update
     assert "independent variable" in out[3].lower()
+
+
+def test_reg_run_regression_allows_ols_intercept_only_when_x_missing(monkeypatch, regression_page):
+    idx = pd.date_range("2020-01-01", periods=6, freq="B")
+    working_df = pd.DataFrame({"Y": np.linspace(0.01, 0.06, len(idx))}, index=idx)
+    monkeypatch.setattr(regression_page, "_reg_get_working_returns", lambda *_args, **_kwargs: working_df)
+
+    wr = RegressionWindowResult(
+        est_start=idx[0],
+        est_end=idx[-1],
+        apply_start=idx[0],
+        apply_end=idx[-1],
+        coefficients={"intercept": 0.02},
+        p_values={"intercept": 0.1},
+        diagnostics={"note": "ok"},
+        n_obs=len(idx),
+    )
+    predicted = pd.Series(np.linspace(0.01, 0.06, len(idx)), index=idx, name="predicted")
+    residuals = pd.Series(np.zeros(len(idx)), index=idx, name="residuals")
+
+    captured = {}
+
+    def _fake_run_regression(_y, _X, config):
+        captured["x_columns"] = list(_X.columns)
+        captured["config"] = config
+        return [wr], predicted, residuals, {"arima": {"order": (1, 0, 0)}}
+
+    monkeypatch.setattr(regression_page, "run_regression", _fake_run_regression)
+
+    out = _call_reg_run(
+        regression_page,
+        model="ols",
+        x_series=[],
+        force_zero=False,
+        linear_constraints=[{"X1": 1.0, "Min": 0.0}],
+    )
+
+    new_results, _options, selected, status = out
+    assert new_results is not no_update
+    assert selected in new_results
+    assert "window(s)" in status
+    assert captured["x_columns"] == []
+    assert captured["config"]["linear_constraints"] is None
+    assert new_results[selected]["independent_vars"] == []
+
+
+def test_reg_run_regression_rejects_intercept_only_when_force_zero_enabled(regression_page):
+    out = _call_reg_run(regression_page, x_series=[], model="ols", force_zero=True)
+    assert out[0] is no_update
+    assert out[1] is no_update
+    assert out[2] is no_update
+    assert "force zero intercept" in out[3].lower()
 
 
 def test_reg_run_regression_errors_when_raw_data_missing(regression_page):
@@ -359,6 +411,29 @@ def _collect_component_text(node):
     if isinstance(props, dict):
         for value in props.values():
             out.extend(_collect_component_text(value))
+    return out
+
+
+def _collect_ag_grids(node):
+    if node is None:
+        return []
+    if isinstance(node, (str, int, float, bool, dict)):
+        return []
+    if isinstance(node, (list, tuple, set)):
+        out = []
+        for item in node:
+            out.extend(_collect_ag_grids(item))
+        return out
+
+    out = []
+    if getattr(node, "columnDefs", None) is not None and getattr(node, "rowData", None) is not None:
+        out.append(node)
+    children = getattr(node, "children", None)
+    out.extend(_collect_ag_grids(children))
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            out.extend(_collect_ag_grids(value))
     return out
 
 
@@ -605,6 +680,10 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
             "vif": {"X1": 1.1},
         },
         "oos_metrics": {"oos_r2": 0.61, "oos_rmse": 0.02, "oos_mae": 0.01},
+        "arima_garch": {
+            "arima": {"order": [1, 0, 1], "aic": 11.1, "bic": 12.2, "params": {"const": 0.02, "ar.L1": 0.33}},
+            "garch": {"order": [1, 1], "aic": 13.3, "bic": 14.4, "params": {"mu": 0.01, "omega": 0.2}},
+        },
     }
 
     results = {
@@ -710,6 +789,13 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))
     assert settings_map["Result Name"] == "R1"
     assert settings_map["Model"] == "ols"
+
+    anova_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="ANOVA")
+    assert "Block" in anova_df.columns
+    assert "Parameters" in set(anova_df["Block"].dropna())
+    assert "Overall Fit" in set(anova_df["Block"].dropna())
+    assert "ARIMA.const" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
+    assert "GARCH.mu" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
 
 
 def test_reg_sync_anova_window_options_defaults_to_latest_on_result_change(monkeypatch, regression_page):
@@ -847,9 +933,164 @@ def test_reg_render_weights_table_mode_returns_grid_with_wide_date_column(regres
         }
     }
 
-    stack = regression_page.reg_render_weights("R1", results, "table", "light")
+    stack = regression_page.reg_render_weights("R1", results, "table", "basic", "light")
     children = list(getattr(stack, "children", []) or [])
     grid = children[0]
 
     date_col = next(c for c in getattr(grid, "columnDefs", []) if c.get("field") == "Date")
     assert date_col["width"] == 112
+
+
+def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regression_page):
+    results = {
+        "R1": {
+            "dependent_var": "Y",
+            "config": {"model": "ols"},
+            "window_results": [
+                {
+                    "est_start": "2024-01-01",
+                    "est_end": "2024-01-31",
+                    "apply_start": "2024-01-01",
+                    "apply_end": "2024-01-31",
+                    "coefficients": {"intercept": 0.01, "X1": 0.5},
+                    "p_values": {"intercept": 0.1, "X1": 0.02},
+                    "diagnostics": {
+                        "durbin_watson": 1.9,
+                        "jarque_bera_stat": 2.1,
+                        "jarque_bera_pvalue": 0.3,
+                    },
+                    "r_squared": 0.8,
+                    "adj_r_squared": 0.79,
+                    "n_obs": 21,
+                    "residual_std": 0.02,
+                    "anova_table": {
+                        "df_model": 1,
+                        "df_resid": 19,
+                        "ss_model": 0.45,
+                        "ms_model": 0.45,
+                        "F_stat": 9.0,
+                        "F_pvalue": 0.01,
+                        "ss_resid": 0.15,
+                        "ms_resid": 0.0079,
+                        "ss_total": 0.60,
+                    },
+                    "arima_garch": {
+                        "arima": {"order": [1, 0, 1], "aic": 1.2, "bic": 1.4, "params": {"const": 0.01, "ar.L1": 0.22}},
+                        "garch": {"order": [1, 1], "aic": 2.3, "bic": 2.5, "params": {"mu": 0.02, "omega": 0.1}},
+                    },
+                }
+            ],
+        }
+    }
+
+    comp = regression_page.reg_render_anova("R1", results, "0")
+    grids = _collect_ag_grids(comp)
+    assert len(grids) >= 2
+
+    anova_grid = next(
+        (g for g in grids if {"Source", "df", "SS", "MS", "F", "p-value"}.issubset({c.get("field") for c in (getattr(g, "columnDefs", []) or [])})),
+        None,
+    )
+    assert anova_grid is not None
+    assert (getattr(anova_grid, "style", {}) or {}).get("height") == "132px"
+    anova_sources = [row.get("Source") for row in (getattr(anova_grid, "rowData", []) or [])]
+    assert set(anova_sources) == {"Model", "Residual", "Total"}
+
+    param_grid = next(
+        (g for g in grids if {"Parameter", "Coefficient"}.issubset({c.get("field") for c in (getattr(g, "columnDefs", []) or [])})),
+        None,
+    )
+    assert param_grid is not None
+    param_names = [row.get("Parameter") for row in (getattr(param_grid, "rowData", []) or [])]
+    assert "intercept" in param_names
+    assert "X1" in param_names
+    assert "ARIMA.const" in param_names
+    assert "ARIMA.ar.L1" in param_names
+    assert "GARCH.mu" in param_names
+    assert "GARCH.omega" in param_names
+
+    text_blob = " ".join(_collect_component_text(comp))
+    assert "Overall Fit" in text_blob
+    assert "Regression Fit" in text_blob
+    assert "R-Squared" in text_blob
+    assert "ARIMA Fit" in text_blob
+    assert "AIC" in text_blob
+    assert "GARCH Fit" in text_blob
+
+
+def test_reg_render_rolling_table_merges_arima_garch_columns(regression_page):
+    results = {
+        "R1": {
+            "window_results": [
+                {
+                    "apply_start": "2024-01-01",
+                    "r_squared": 0.5,
+                    "adj_r_squared": 0.4,
+                    "residual_std": 0.02,
+                    "n_obs": 20,
+                    "coefficients": {"X1": 0.3},
+                    "arima_garch": {"arima": {"order": [1, 0, 0], "aic": 1.0, "bic": 1.1, "params": {"ar.L1": 0.2}}},
+                },
+                {
+                    "apply_start": "2024-02-01",
+                    "r_squared": 0.6,
+                    "adj_r_squared": 0.5,
+                    "residual_std": 0.01,
+                    "n_obs": 20,
+                    "coefficients": {"X1": 0.4},
+                    "arima_garch": {"arima": {"order": [1, 0, 0], "aic": 0.9, "bic": 1.0, "params": {"ar.L1": 0.25}}},
+                },
+            ]
+        }
+    }
+
+    grid = regression_page.reg_render_rolling("R1", results, "table", "advanced", "light")
+    fields = [c.get("field") for c in getattr(grid, "columnDefs", [])]
+    assert "ARIMA_AIC" in fields
+    assert "ARIMA_ar_L1" in fields
+
+    rows = getattr(grid, "rowData", []) or []
+    assert rows[0].get("ARIMA_ar_L1") == 0.2
+    assert rows[1].get("ARIMA_ar_L1") == 0.25
+
+    basic_grid = regression_page.reg_render_rolling("R1", results, "table", "basic", "light")
+    basic_fields = [c.get("field") for c in getattr(basic_grid, "columnDefs", [])]
+    assert "ARIMA_AIC" in basic_fields
+    assert "ARIMA_ar_L1" not in basic_fields
+
+
+def test_reg_render_weights_table_merges_arima_garch_columns(regression_page):
+    results = {
+        "R1": {
+            "config": {"model": "ols"},
+            "window_results": [
+                {
+                    "apply_start": "2024-01-01",
+                    "coefficients": {"X1": 0.3},
+                    "arima_garch": {"garch": {"order": [1, 1], "aic": 2.0, "bic": 2.1, "params": {"omega": 0.12}}},
+                },
+                {
+                    "apply_start": "2024-02-01",
+                    "coefficients": {"X1": 0.4},
+                    "arima_garch": {"garch": {"order": [1, 1], "aic": 1.9, "bic": 2.0, "params": {"omega": 0.10}}},
+                },
+            ]
+        }
+    }
+
+    comp = regression_page.reg_render_weights("R1", results, "table", "advanced", "light")
+    children = list(getattr(comp, "children", []) or [])
+    grid = next(c for c in children if getattr(c, "columnDefs", None) is not None)
+    fields = [c.get("field") for c in getattr(grid, "columnDefs", [])]
+    assert "GARCH_AIC" in fields
+    assert "GARCH_omega" in fields
+    row_data = getattr(grid, "rowData", []) or []
+    assert row_data[0].get("GARCH_omega") == 0.12
+    assert row_data[1].get("GARCH_omega") == 0.10
+
+    comp_basic = regression_page.reg_render_weights("R1", results, "table", "basic", "light")
+    children_basic = list(getattr(comp_basic, "children", []) or [])
+    grid_basic = next(c for c in children_basic if getattr(c, "columnDefs", None) is not None)
+    basic_fields = [c.get("field") for c in getattr(grid_basic, "columnDefs", [])]
+    assert "GARCH_AIC" in basic_fields
+    assert "GARCH_omega" not in basic_fields

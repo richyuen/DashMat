@@ -79,6 +79,62 @@ def test_run_level_arima_garch_summary_is_compact_and_not_duplicated_per_window(
         assert "summary_text" not in item
 
 
+def test_rolling_ols_attaches_per_window_arima_garch_results():
+    y, X = _sample_regression_inputs(n_obs=320)
+    config = {
+        "model": "ols",
+        "window_type": "rolling",
+        "window_size": 84,
+        "opt_step": 21,
+        "opt_step_unit": "periods",
+        "fill_in_sample": False,
+        "arima_order": (1, 0, 1),
+        "garch_order": (1, 1),
+    }
+
+    wrs, _predicted, _residuals, arima_garch_summary = run_regression(y, X, config)
+
+    assert len(wrs) > 1
+    assert any(isinstance(wr.arima_garch, dict) for wr in wrs)
+    assert all(("arima_garch" not in (wr.diagnostics or {})) for wr in wrs)
+    assert isinstance(arima_garch_summary, dict)
+
+
+def test_ols_supports_intercept_only_with_no_x():
+    y, _X = _sample_regression_inputs()
+    config = {
+        "model": "ols",
+        "window_type": "full",
+        "force_zero_intercept": False,
+        "arima_order": (1, 0, 1),
+        "garch_order": (1, 1),
+    }
+
+    wrs, predicted, residuals, arima_garch_summary = run_regression(y, pd.DataFrame(index=y.index), config)
+
+    assert len(wrs) == 1
+    assert "intercept" in wrs[0].coefficients
+    assert len(predicted) == len(y)
+    assert len(residuals) == len(y)
+    assert isinstance(arima_garch_summary, dict)
+
+
+def test_ols_force_zero_intercept_with_no_x_returns_no_results():
+    y, _X = _sample_regression_inputs()
+    config = {
+        "model": "ols",
+        "window_type": "full",
+        "force_zero_intercept": True,
+    }
+
+    wrs, predicted, residuals, arima_garch_summary = run_regression(y, pd.DataFrame(index=y.index), config)
+
+    assert wrs == []
+    assert predicted.empty
+    assert residuals.empty
+    assert arima_garch_summary is None
+
+
 def test_constrained_ols_ignores_blank_linear_constraint_bounds_without_crashing():
     y, X = _sample_regression_inputs()
     config = {

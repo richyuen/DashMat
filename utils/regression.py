@@ -31,6 +31,7 @@ class RegressionWindowResult:
     adj_r_squared: float = np.nan
     anova_table: dict | None = None    # F-stat, df, SS, MS, p-value
     diagnostics: dict | None = None    # DW, JB, VIF, AIC, BIC
+    arima_garch: dict | None = None    # Optional residual ARIMA/GARCH summary for this window
     residual_std: float = np.nan
     oos_metrics: dict | None = None    # OOS R², RMSE, MAE (for rolling/expanding only)
     n_obs: int = 0
@@ -674,6 +675,10 @@ def run_regression(
     arima_order = tuple(config.get("arima_order", (0, 0, 0)) or (0, 0, 0))
     garch_order = tuple(config.get("garch_order", (0, 0)) or (0, 0))
     linear_constraints = config.get("linear_constraints", None)
+    run_arima_garch = model_name in ("ols", "constrained_ols")
+
+    supports_intercept_only = model_name in ("ols", "constrained_ols") and not force_zero_intercept
+    X = X if isinstance(X, pd.DataFrame) else pd.DataFrame(index=y.index)
 
     # Apply lags to X
     X_lagged = _apply_lags(X, lag_config)
@@ -683,7 +688,9 @@ def run_regression(
     y_aligned = y.loc[common_idx].dropna()
     X_aligned = X_lagged.loc[y_aligned.index]
 
-    if X_aligned.empty or y_aligned.empty:
+    if y_aligned.empty:
+        return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
+    if X_aligned.empty and not supports_intercept_only:
         return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
 
     # Handle missing data globally
@@ -694,6 +701,11 @@ def run_regression(
         combined = pd.concat([y_aligned, X_aligned], axis=1).dropna()
         y_aligned = combined.iloc[:, 0]
         X_aligned = combined.iloc[:, 1:]
+
+    if y_aligned.empty:
+        return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
+    if X_aligned.empty and not supports_intercept_only:
+        return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
 
     if len(y_aligned) < 3:
         return [], pd.Series(dtype=float, name="predicted"), pd.Series(dtype=float, name="residuals"), None
@@ -757,6 +769,14 @@ def run_regression(
                                    model_name)
         residuals_apply = y_apply - predicted_apply
 
+        # Per-window residual model diagnostics are most meaningful for rolling/expanding.
+        # For full-window runs, keep legacy run-level summary behavior below.
+        window_arima_garch = None
+        if run_arima_garch and window_type != "full":
+            est_residuals = result_dict.get("residuals")
+            if isinstance(est_residuals, pd.Series):
+                window_arima_garch = _fit_arima_garch(est_residuals, arima_order, garch_order)
+
         # OOS metrics: only for non-full windows where apply != estimation
         oos_metrics = None
         if window_type != "full" and apply_start_i > est_end_i:
@@ -777,15 +797,16 @@ def run_regression(
             adj_r_squared=result_dict.get("adj_r_squared", np.nan),
             anova_table=result_dict.get("anova_table"),
             diagnostics=result_dict.get("diagnostics"),
+            arima_garch=window_arima_garch,
             residual_std=result_dict.get("residual_std", np.nan),
             oos_metrics=oos_metrics,
             n_obs=result_dict.get("n_obs", 0),
         ))
 
-    # ARIMA/GARCH on residuals from the full-window (last window's residuals for full mode,
-    # or aggregate residuals for rolling/expanding)
+    # Keep run-level ARIMA/GARCH summary for compatibility. Full-window uses its full
+    # residual stream; rolling/expanding uses aggregate applied residuals as fallback.
     arima_garch_summary = None
-    if window_results and model_name in ("ols", "constrained_ols"):
+    if window_results and run_arima_garch:
         resid_series = residuals_all.dropna()
         if len(resid_series) > 20:
             arima_garch_summary = _fit_arima_garch(resid_series, arima_order, garch_order)

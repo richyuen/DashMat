@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+import re
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
@@ -184,6 +185,287 @@ def _fmt(v, decimals=6):
     if v is None or (isinstance(v, float) and not np.isfinite(v)):
         return "—"
     return f"{v:.{decimals}f}"
+
+
+def _reg_json_text(value):
+    if value in (None, ""):
+        return None
+    try:
+        return json.dumps(value, default=str)
+    except Exception:
+        return str(value)
+
+
+def _reg_field_safe_name(name: str) -> str:
+    cleaned = re.sub(r"[^0-9A-Za-z_]+", "_", str(name or "")).strip("_")
+    return cleaned or "param"
+
+
+def _reg_extract_arima_garch_rows(arima_garch):
+    """Extract ARIMA/GARCH summary and parameter rows for ANOVA row tables."""
+    summary_rows = []
+    param_rows = []
+    if not isinstance(arima_garch, dict):
+        return summary_rows, param_rows
+
+    for model_key, label in (("arima", "ARIMA"), ("garch", "GARCH")):
+        details = arima_garch.get(model_key)
+        if not isinstance(details, dict):
+            continue
+
+        error_msg = details.get("error")
+        summary_rows.extend(
+            [
+                {"Section": "ARIMA/GARCH", "Model": label, "Metric": "Order", "Value": _reg_json_text(details.get("order"))},
+                {"Section": "ARIMA/GARCH", "Model": label, "Metric": "AIC", "Value": details.get("aic")},
+                {"Section": "ARIMA/GARCH", "Model": label, "Metric": "BIC", "Value": details.get("bic")},
+                {"Section": "ARIMA/GARCH", "Model": label, "Metric": "Error", "Value": str(error_msg) if error_msg else None},
+            ]
+        )
+
+        params = details.get("params") if not error_msg else None
+        if not isinstance(params, dict):
+            continue
+        for pname, pval in params.items():
+            param_rows.append(
+                {
+                    "Section": "ARIMA/GARCH",
+                    "Model": label,
+                    "Metric": "Parameter",
+                    "Parameter": str(pname),
+                    "Value": pval,
+                }
+            )
+    return summary_rows, param_rows
+
+
+def _reg_get_window_arima_garch(entry: dict, wr: dict, allow_run_level_fallback: bool = False) -> dict:
+    wr = wr or {}
+    per_window = wr.get("arima_garch")
+    if isinstance(per_window, dict) and per_window:
+        return per_window
+    if allow_run_level_fallback:
+        run_level = (entry or {}).get("arima_garch_summary")
+        if isinstance(run_level, dict) and run_level:
+            return run_level
+    return {}
+
+
+def _reg_apply_arima_garch_columns(row: dict, arima_garch: dict):
+    if not isinstance(arima_garch, dict) or not arima_garch:
+        return
+
+    for model_key, prefix in (("arima", "ARIMA"), ("garch", "GARCH")):
+        details = arima_garch.get(model_key)
+        if not isinstance(details, dict):
+            continue
+        row[f"{prefix}_Order"] = _reg_json_text(details.get("order"))
+        row[f"{prefix}_AIC"] = details.get("aic")
+        row[f"{prefix}_BIC"] = details.get("bic")
+        row[f"{prefix}_Error"] = str(details.get("error")) if details.get("error") else None
+        params = details.get("params")
+        if isinstance(params, dict):
+            for pname, pval in params.items():
+                row[f"{prefix}_{_reg_field_safe_name(pname)}"] = pval
+
+
+def _reg_collect_arima_param_headers(wrs: list[dict], entry: dict, allow_run_level_fallback: bool) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for wr in wrs:
+        arima_garch = _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=allow_run_level_fallback)
+        if not isinstance(arima_garch, dict):
+            continue
+        for model_key, prefix in (("arima", "ARIMA"), ("garch", "GARCH")):
+            details = arima_garch.get(model_key)
+            params = details.get("params") if isinstance(details, dict) else None
+            if not isinstance(params, dict):
+                continue
+            for pname in params.keys():
+                field = f"{prefix}_{_reg_field_safe_name(pname)}"
+                headers[field] = f"{prefix} {pname}"
+    return headers
+
+
+def _reg_build_table_coldefs(fields: list[str], header_overrides: dict[str, str] | None = None) -> list[dict]:
+    header_overrides = header_overrides or {}
+    col_defs: list[dict] = []
+    for field in fields:
+        col_def = {"field": field, "headerName": header_overrides.get(field, field)}
+        if field in {"Date", "Window"}:
+            col_def["pinned"] = "left"
+        if field == "Date":
+            col_def.update({"width": 112, "minWidth": 106, "maxWidth": 122})
+        elif field == "Window":
+            col_def.update({"width": 88, "minWidth": 80, "maxWidth": 96})
+        elif field.endswith("_Order"):
+            col_def.update({"width": 130, "minWidth": 120})
+        elif field.endswith("_Error"):
+            col_def.update({"minWidth": 180, "flex": 1})
+        else:
+            col_def.update(
+                {
+                    "width": 120,
+                    "minWidth": 110,
+                    "valueFormatter": {"function": "params.value != null && typeof params.value === 'number' ? d3.format('.4f')(params.value) : (params.value ?? '')"},
+                }
+            )
+        col_defs.append(col_def)
+    return col_defs
+
+
+def _reg_visible_summary_cols(fields: list[str]) -> list[str]:
+    preferred = ["Date", "R²", "Adj R²", "Residual Std", "N Obs", "ARIMA_AIC", "GARCH_AIC", "ARIMA_BIC", "GARCH_BIC", "ARIMA_Error", "GARCH_Error"]
+    selected = [f for f in preferred if f in fields]
+    beta_cols = [f for f in fields if str(f).startswith("β_")]
+    for col in beta_cols:
+        if col not in selected:
+            selected.append(col)
+    if "Window" in fields and "Window" not in selected:
+        selected.insert(0, "Window")
+    return selected
+
+
+def _reg_visible_weight_cols(fields: list[str]) -> list[str]:
+    preferred = ["Window", "Date", "ARIMA_AIC", "GARCH_AIC", "ARIMA_BIC", "GARCH_BIC", "ARIMA_Error", "GARCH_Error"]
+    selected = [f for f in preferred if f in fields]
+    coef_cols = [f for f in fields if f not in {"Window", "Date"} and not str(f).startswith(("ARIMA_", "GARCH_"))]
+    for col in coef_cols:
+        if col not in selected:
+            selected.append(col)
+    return selected
+
+
+def _reg_drop_empty_columns(df: pd.DataFrame, keep_fields: list[str] | None = None) -> pd.DataFrame:
+    if df.empty:
+        return df
+    keep_set = set(keep_fields or [])
+    cols = []
+    for col in df.columns:
+        if col in keep_set or df[col].notna().any():
+            cols.append(col)
+    return df[cols]
+
+
+def _reg_build_anova_decomposition_rows(wr: dict) -> list[dict]:
+    anova = wr.get("anova_table") if isinstance(wr.get("anova_table"), dict) else {}
+    if not anova:
+        return []
+    return [
+        {
+            "Source": "Model",
+            "df": anova.get("df_model"),
+            "SS": anova.get("ss_model"),
+            "MS": anova.get("ms_model"),
+            "F": anova.get("F_stat"),
+            "p-value": anova.get("F_pvalue"),
+        },
+        {
+            "Source": "Residual",
+            "df": anova.get("df_resid"),
+            "SS": anova.get("ss_resid"),
+            "MS": anova.get("ms_resid"),
+            "F": np.nan,
+            "p-value": np.nan,
+        },
+        {
+            "Source": "Total",
+            "df": (anova.get("df_model", 0) or 0) + (anova.get("df_resid", 0) or 0),
+            "SS": anova.get("ss_total"),
+            "MS": np.nan,
+            "F": np.nan,
+            "p-value": np.nan,
+        },
+    ]
+
+
+def _reg_build_anova_parameter_rows(entry: dict, wr: dict) -> list[dict]:
+    rows: list[dict] = []
+    coefs = wr.get("coefficients") or {}
+    pvals = wr.get("p_values") or {}
+    diag = wr.get("diagnostics") if isinstance(wr.get("diagnostics"), dict) else {}
+    ci_low = diag.get("ci_low") or {}
+    ci_high = diag.get("ci_high") or {}
+    std_errs = diag.get("std_errors") or {}
+    t_stats = diag.get("t_stats") or {}
+
+    ordered = list(coefs.keys())
+    if "intercept" in ordered:
+        ordered = ["intercept"] + [k for k in ordered if k != "intercept"]
+    for param in ordered:
+        rows.append(
+            {
+                "Parameter": param,
+                "Coefficient": coefs.get(param),
+                "Std Error": std_errs.get(param),
+                "t-stat": t_stats.get(param),
+                "p-value": pvals.get(param),
+                "CI Low (95%)": ci_low.get(param),
+                "CI High (95%)": ci_high.get(param),
+            }
+        )
+
+    arima_garch = _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=True)
+    for model_key, label in (("arima", "ARIMA"), ("garch", "GARCH")):
+        details = arima_garch.get(model_key) if isinstance(arima_garch, dict) else None
+        params = details.get("params") if isinstance(details, dict) else None
+        if not isinstance(params, dict):
+            continue
+        for pname, pval in params.items():
+            rows.append(
+                {
+                    "Parameter": f"{label}.{pname}",
+                    "Coefficient": pval,
+                    "Std Error": None,
+                    "t-stat": None,
+                    "p-value": None,
+                    "CI Low (95%)": None,
+                    "CI High (95%)": None,
+                }
+            )
+    return rows
+
+
+def _reg_build_anova_fit_rows(entry: dict, wr: dict) -> list[dict]:
+    rows: list[dict] = [
+        {"Section": "Window", "Metric": "Estimation Start", "Value": str(wr.get("est_start") or "")[:10]},
+        {"Section": "Window", "Metric": "Estimation End", "Value": str(wr.get("est_end") or "")[:10]},
+        {"Section": "Window", "Metric": "Apply Start", "Value": str(wr.get("apply_start") or "")[:10]},
+        {"Section": "Window", "Metric": "Apply End", "Value": str(wr.get("apply_end") or "")[:10]},
+        {"Section": "Regression", "Metric": "R-Squared", "Value": wr.get("r_squared")},
+        {"Section": "Regression", "Metric": "Adj R-Squared", "Value": wr.get("adj_r_squared")},
+        {"Section": "Regression", "Metric": "Residual Std", "Value": wr.get("residual_std")},
+        {"Section": "Regression", "Metric": "Observations", "Value": wr.get("n_obs")},
+    ]
+
+    diag = wr.get("diagnostics") if isinstance(wr.get("diagnostics"), dict) else {}
+    diag_map = [
+        ("Durbin-Watson", "durbin_watson"),
+        ("Jarque-Bera Stat", "jarque_bera_stat"),
+        ("Jarque-Bera p-value", "jarque_bera_pvalue"),
+        ("AIC", "aic"),
+        ("BIC", "bic"),
+        ("Note", "note"),
+    ]
+    for label, key in diag_map:
+        if key in diag and not isinstance(diag.get(key), (dict, list)):
+            rows.append({"Section": "Diagnostics", "Metric": label, "Value": diag.get(key)})
+
+    vif = diag.get("vif")
+    if isinstance(vif, dict):
+        for var, value in vif.items():
+            rows.append({"Section": "VIF", "Metric": str(var), "Value": value})
+
+    arima_garch = _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=True)
+    for model_key, label in (("arima", "ARIMA"), ("garch", "GARCH")):
+        details = arima_garch.get(model_key) if isinstance(arima_garch, dict) else None
+        if not isinstance(details, dict):
+            continue
+        rows.append({"Section": label, "Metric": "Order", "Value": _reg_json_text(details.get("order"))})
+        rows.append({"Section": label, "Metric": "AIC", "Value": details.get("aic")})
+        rows.append({"Section": label, "Metric": "BIC", "Value": details.get("bic")})
+        if details.get("error"):
+            rows.append({"Section": label, "Metric": "Error", "Value": str(details.get("error"))})
+    return rows
 
 
 def _reg_get_selected_result_entry(selected, results):
@@ -1314,6 +1596,15 @@ def build_reg_main_layout():
                                                 value="chart",
                                                 size="sm",
                                             ),
+                                            dmc.SegmentedControl(
+                                                id="reg-rolling-summary-detail-switch",
+                                                data=[
+                                                    {"value": "basic", "label": "Basic"},
+                                                    {"value": "advanced", "label": "Advanced"},
+                                                ],
+                                                value="basic",
+                                                size="sm",
+                                            ),
                                         ],
                                     ),
                                     html.Div(id="reg-rolling-content", style={"padding": "8px"}),
@@ -1392,6 +1683,15 @@ def build_reg_main_layout():
                                                     {"value": "chart", "label": "Chart"},
                                                 ],
                                                 value="chart",
+                                                size="sm",
+                                            ),
+                                            dmc.SegmentedControl(
+                                                id="reg-weights-detail-switch",
+                                                data=[
+                                                    {"value": "basic", "label": "Basic"},
+                                                    {"value": "advanced", "label": "Advanced"},
+                                                ],
+                                                value="basic",
                                                 size="sm",
                                             ),
                                         ],
@@ -3671,126 +3971,25 @@ def reg_download_excel(
             window_idx = len(wrs) - 1
         window_idx = max(0, min(window_idx, len(wrs) - 1))
         wr = wrs[window_idx] if isinstance(wrs[window_idx], dict) else {}
-        parts = []
-
-        fit_rows = [
-            {"Section": "Window", "Metric": "Window Number", "Value": window_idx + 1},
-            {"Section": "Window", "Metric": "Estimation Start", "Value": _to_date_str(wr.get("est_start"))},
-            {"Section": "Window", "Metric": "Estimation End", "Value": _to_date_str(wr.get("est_end"))},
-            {"Section": "Window", "Metric": "Apply Start", "Value": _to_date_str(wr.get("apply_start"))},
-            {"Section": "Window", "Metric": "Apply End", "Value": _to_date_str(wr.get("apply_end"))},
-            {"Section": "Model Fit", "Metric": "R-Squared", "Value": wr.get("r_squared")},
-            {"Section": "Model Fit", "Metric": "Adj R-Squared", "Value": wr.get("adj_r_squared")},
-            {"Section": "Model Fit", "Metric": "Residual Std", "Value": wr.get("residual_std")},
-            {"Section": "Model Fit", "Metric": "Observations", "Value": wr.get("n_obs")},
-        ]
-        parts.append(pd.DataFrame(fit_rows))
-
-        coefs = wr.get("coefficients") or {}
-        pvals = wr.get("p_values") or {}
-        diag = wr.get("diagnostics") if isinstance(wr.get("diagnostics"), dict) else {}
-        ci_low = diag.get("ci_low") or {}
-        ci_high = diag.get("ci_high") or {}
-        std_errs = diag.get("std_errors") or {}
-        t_stats = diag.get("t_stats") or {}
-
-        coef_rows = []
-        for var, coef in coefs.items():
-            coef_rows.append(
-                {
-                    "Section": "Coefficients",
-                    "Variable": var,
-                    "Coefficient": coef,
-                    "Std Error": std_errs.get(var),
-                    "t-stat": t_stats.get(var),
-                    "p-value": pvals.get(var),
-                    "CI Low (95%)": ci_low.get(var),
-                    "CI High (95%)": ci_high.get(var),
-                }
+        anova_rows = _reg_build_anova_decomposition_rows(wr)
+        param_rows = _reg_build_anova_parameter_rows(entry, wr)
+        fit_rows = _reg_build_anova_fit_rows(entry, wr)
+        export_rows = []
+        export_rows.extend([{"Block": "ANOVA", **row} for row in anova_rows])
+        export_rows.extend([{"Block": "Parameters", **row} for row in param_rows])
+        export_rows.extend([{"Block": "Overall Fit", **row} for row in fit_rows])
+        if export_rows:
+            anova_df = _reg_drop_empty_columns(
+                pd.DataFrame(export_rows),
+                keep_fields=["Block", "Source", "Parameter", "Section", "Metric"],
             )
-        if coef_rows:
-            parts.append(pd.DataFrame(coef_rows))
-
-        anova = wr.get("anova_table") if isinstance(wr.get("anova_table"), dict) else {}
-        if anova:
-            anova_rows = [
-                {
-                    "Section": "ANOVA",
-                    "Source": "Model",
-                    "df": anova.get("df_model"),
-                    "SS": anova.get("ss_model"),
-                    "MS": anova.get("ms_model"),
-                    "F": anova.get("F_stat"),
-                    "p": anova.get("F_pvalue"),
-                },
-                {
-                    "Section": "ANOVA",
-                    "Source": "Residual",
-                    "df": anova.get("df_resid"),
-                    "SS": anova.get("ss_resid"),
-                    "MS": anova.get("ms_resid"),
-                    "F": np.nan,
-                    "p": np.nan,
-                },
-                {
-                    "Section": "ANOVA",
-                    "Source": "Total",
-                    "df": (anova.get("df_model", 0) or 0) + (anova.get("df_resid", 0) or 0),
-                    "SS": anova.get("ss_total"),
-                    "MS": np.nan,
-                    "F": np.nan,
-                    "p": np.nan,
-                },
-            ]
-            parts.append(pd.DataFrame(anova_rows))
-
-        if diag:
-            diag_rows = []
-            diag_key_map = [
-                ("Durbin-Watson", "durbin_watson"),
-                ("Jarque-Bera Stat", "jarque_bera_stat"),
-                ("Jarque-Bera p-value", "jarque_bera_pvalue"),
-                ("AIC", "aic"),
-                ("BIC", "bic"),
-                ("Note", "note"),
-            ]
-            for label, key in diag_key_map:
-                if key in diag and not isinstance(diag.get(key), (dict, list)):
-                    diag_rows.append({"Section": "Diagnostics", "Metric": label, "Value": diag.get(key)})
-            if diag_rows:
-                parts.append(pd.DataFrame(diag_rows))
-
-            vif = diag.get("vif")
-            if isinstance(vif, dict) and vif:
-                vif_rows = [{"Section": "VIF", "Variable": k, "VIF": v} for k, v in vif.items()]
-                parts.append(pd.DataFrame(vif_rows))
-
-        arima_garch = entry.get("arima_garch_summary") or diag.get("arima_garch") or {}
-        if isinstance(arima_garch, dict) and arima_garch:
-            model_rows = []
-            for model_key, label in (("arima", "ARIMA"), ("garch", "GARCH")):
-                details = arima_garch.get(model_key)
-                if isinstance(details, dict):
-                    model_rows.append(
-                        {
-                            "Section": "ARIMA/GARCH",
-                            "Model": label,
-                            "Order": _safe_json(details.get("order")),
-                            "AIC": details.get("aic"),
-                            "BIC": details.get("bic"),
-                        }
-                    )
-            if model_rows:
-                parts.append(pd.DataFrame(model_rows))
-
-        if parts:
-            anova_df = pd.concat(parts, ignore_index=True, sort=False)
 
     # ------------------------------------------------------------------
     # Rolling Summary tab
     # ------------------------------------------------------------------
     rolling_summary_df = _info_df("No rolling summary data available.")
     if wrs:
+        use_run_level_fallback = len(wrs) == 1
         rows = []
         for wr in wrs:
             if not isinstance(wr, dict):
@@ -3813,6 +4012,10 @@ def reg_download_excel(
                         "OOS MAE": oos.get("oos_mae"),
                     }
                 )
+            _reg_apply_arima_garch_columns(
+                row,
+                _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
+            )
             rows.append(row)
         if rows:
             rolling_summary_df = pd.DataFrame(rows)
@@ -3822,6 +4025,7 @@ def reg_download_excel(
     # ------------------------------------------------------------------
     weights_df = _info_df("No weights data available.")
     if wrs:
+        use_run_level_fallback = len(wrs) == 1
         rows = []
         for idx, wr in enumerate(wrs, start=1):
             if not isinstance(wr, dict):
@@ -3835,6 +4039,10 @@ def reg_download_excel(
             }
             for k, v in (wr.get("coefficients") or {}).items():
                 row[k] = v
+            _reg_apply_arima_garch_columns(
+                row,
+                _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
+            )
             rows.append(row)
         if rows:
             weights_df = pd.DataFrame(rows)
@@ -4114,12 +4322,22 @@ def reg_run_regression(
 ):
     if not n_clicks:
         raise PreventUpdate
+    selected_model = str(model or "ols")
+    supports_intercept_only = selected_model in ("ols", "constrained_ols")
     if not dep_var:
         return no_update, no_update, no_update, "Error: Select a dependent variable (Y)."
-    if not x_series:
-        return no_update, no_update, no_update, "Error: Select at least one independent variable (X)."
     if not raw_data:
         return no_update, no_update, no_update, "Error: No data loaded."
+    if not x_series:
+        if not supports_intercept_only:
+            return no_update, no_update, no_update, "Error: Select at least one independent variable (X)."
+        if bool(force_zero):
+            return (
+                no_update,
+                no_update,
+                no_update,
+                "Error: With no X series selected, disable Force Zero Intercept.",
+            )
 
     all_series = list(dict.fromkeys([dep_var] + [s for s in (x_series or []) if s != dep_var]))
     try:
@@ -4136,9 +4354,17 @@ def reg_run_regression(
     y = df[dep_var]
     x_cols = [c for c in (x_series or []) if c in df.columns and c != dep_var]
     if not x_cols:
-        return no_update, no_update, no_update, "Error: No X series data available."
+        if not supports_intercept_only:
+            return no_update, no_update, no_update, "Error: No X series data available."
+        if bool(force_zero):
+            return (
+                no_update,
+                no_update,
+                no_update,
+                "Error: No X series data available with Force Zero Intercept enabled.",
+            )
 
-    X = df[x_cols]
+    X = df[x_cols] if x_cols else pd.DataFrame(index=df.index)
 
     # Build per-variable beta constraints
     per_var_enable = enable_assign or {}
@@ -4146,7 +4372,7 @@ def reg_run_regression(
     per_var_max = {c: float((max_beta_assign or {}).get(c, 999.0) or 999.0) for c in x_cols}
 
     config = {
-        "model": model or "ols",
+        "model": selected_model,
         "force_zero_intercept": bool(force_zero),
         "robust_se": bool(robust_se),
         "exp_wt": bool(exp_wt),
@@ -4167,7 +4393,7 @@ def reg_run_regression(
         "lag_config": lag_assign or {},
         "arima_order": (int(arima_p or 0), int(arima_d or 0), int(arima_q or 0)),
         "garch_order": (int(garch_p or 0), int(garch_q or 0)),
-        "linear_constraints": linear_constraints or None,
+        "linear_constraints": (linear_constraints or None) if x_cols else None,
     }
 
     try:
@@ -4208,6 +4434,7 @@ def reg_run_regression(
             "adj_r_squared": _clean_val(wr.adj_r_squared),
             "anova_table": _clean_dict(wr.anova_table),
             "diagnostics": _clean_dict(wr.diagnostics),
+            "arima_garch": _clean_dict(wr.arima_garch),
             "residual_std": _clean_val(wr.residual_std),
             "oos_metrics": _clean_dict(wr.oos_metrics),
             "n_obs": wr.n_obs,
@@ -4326,149 +4553,122 @@ def reg_render_anova(selected, results, selected_window):
     except (TypeError, ValueError):
         window_idx = len(wrs) - 1
     window_idx = max(0, min(window_idx, len(wrs) - 1))
+    wr = wrs[window_idx] if isinstance(wrs[window_idx], dict) else {}
+    anova_rows = _reg_build_anova_decomposition_rows(wr)
+    param_rows = _reg_build_anova_parameter_rows(entry, wr)
+    fit_rows = _reg_build_anova_fit_rows(entry, wr)
 
-    wr = wrs[window_idx]
-    coefs = wr.get("coefficients") or {}
-    pvals = wr.get("p_values") or {}
-    diag = wr.get("diagnostics") or {}
-    anova = wr.get("anova_table")
-    dep_var = entry.get("dependent_var", "Y")
-    config = entry.get("config", {})
-    model = config.get("model", "ols")
-    n_windows = len(wrs)
+    blocks = []
 
-    ci_low = (diag.get("ci_low") or {}) if diag else {}
-    ci_high = (diag.get("ci_high") or {}) if diag else {}
-    std_errs = (diag.get("std_errors") or {}) if diag else {}
-    t_stats = (diag.get("t_stats") or {}) if diag else {}
-
-    coef_rows = [
-        {
-            "Variable": var,
-            "Coefficient": _fmt(coefs.get(var)),
-            "Std Error": _fmt(std_errs.get(var)),
-            "t-stat": _fmt(t_stats.get(var)),
-            "p-value": _fmt(pvals.get(var)),
-            "CI Low (95%)": _fmt(ci_low.get(var)),
-            "CI High (95%)": _fmt(ci_high.get(var)),
-        }
-        for var in coefs
-    ]
-
-    coef_grid = dag.AgGrid(
-        className="ag-theme-alpine",
-        columnDefs=[
-            {"field": "Variable", "width": 130, "minWidth": 110},
-            {"field": "Coefficient", "width": 95, "minWidth": 85},
-            {"field": "Std Error", "width": 95, "minWidth": 85},
-            {"field": "t-stat", "width": 85, "minWidth": 75},
-            {"field": "p-value", "width": 85, "minWidth": 75},
-            {"field": "CI Low (95%)", "width": 105, "minWidth": 90},
-            {"field": "CI High (95%)", "width": 105, "minWidth": 90},
-        ],
-        rowData=coef_rows,
-        defaultColDef={"resizable": True, "sortable": True},
-        style={"height": f"{max(120, 42 + 42 * len(coef_rows))}px"},
-        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
-    )
-
-    r2 = wr.get("r_squared")
-    adj_r2 = wr.get("adj_r_squared")
-    n_obs = wr.get("n_obs", "—")
-    resid_std = wr.get("residual_std")
-
-    fit_row = dmc.Group(gap="xl", children=[
-        dmc.Stack(gap=2, children=[dmc.Text("R²", size="xs", c="dimmed"), dmc.Text(_fmt(r2), size="sm", fw=600)]),
-        dmc.Stack(gap=2, children=[dmc.Text("Adj. R²", size="xs", c="dimmed"), dmc.Text(_fmt(adj_r2), size="sm", fw=600)]),
-        dmc.Stack(gap=2, children=[dmc.Text("Observations", size="xs", c="dimmed"), dmc.Text(str(n_obs), size="sm", fw=600)]),
-        dmc.Stack(gap=2, children=[dmc.Text("Residual Std", size="xs", c="dimmed"), dmc.Text(_fmt(resid_std), size="sm", fw=600)]),
-        dmc.Stack(gap=2, children=[dmc.Text("Model", size="xs", c="dimmed"), dmc.Text(model.replace("_", " ").title(), size="sm", fw=600)]),
-        dmc.Stack(gap=2, children=[dmc.Text("Windows", size="xs", c="dimmed"), dmc.Text(str(n_windows), size="sm", fw=600)]),
-        dmc.Stack(gap=2, children=[dmc.Text("Dependent", size="xs", c="dimmed"), dmc.Text(dep_var, size="sm", fw=600)]),
-    ])
-
-    sections = [
-        dmc.Text("Coefficient Table", size="sm", fw=600, mb="xs"),
-        coef_grid,
-        dmc.Divider(mt="sm", mb="sm"),
-        dmc.Text("Model Fit", size="sm", fw=600, mb="xs"),
-        fit_row,
-    ]
-
-    if anova:
-        anova_rows = [
-            {"Source": "Model", "df": anova.get("df_model", "—"), "SS": _fmt(anova.get("ss_model")), "MS": _fmt(anova.get("ms_model")), "F": _fmt(anova.get("F_stat")), "p": _fmt(anova.get("F_pvalue"))},
-            {"Source": "Residual", "df": anova.get("df_resid", "—"), "SS": _fmt(anova.get("ss_resid")), "MS": _fmt(anova.get("ms_resid")), "F": "—", "p": "—"},
-            {"Source": "Total", "df": (anova.get("df_model", 0) or 0) + (anova.get("df_resid", 0) or 0), "SS": _fmt(anova.get("ss_total")), "MS": "—", "F": "—", "p": "—"},
-        ]
-        sections += [
-            dmc.Divider(mt="sm", mb="sm"),
-            dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"),
-            dag.AgGrid(
-                className="ag-theme-alpine",
-                columnDefs=[
-                    {"field": "Source", "width": 100, "minWidth": 90},
-                    {"field": "df", "width": 65, "minWidth": 60},
-                    {"field": "SS", "width": 90, "minWidth": 80},
-                    {"field": "MS", "width": 90, "minWidth": 80},
-                    {"field": "F", "width": 85, "minWidth": 75},
-                    {"field": "p", "width": 85, "minWidth": 75},
-                ],
-                rowData=anova_rows,
-                defaultColDef={"resizable": True, "sortable": False},
-                style={"height": "168px"},
-                dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
-            ),
-        ]
-
-    if diag and not diag.get("note"):
-        dw = diag.get("durbin_watson")
-        jb_stat = diag.get("jarque_bera_stat")
-        jb_p = diag.get("jarque_bera_pvalue")
-        aic = diag.get("aic")
-        bic = diag.get("bic")
-        vif = diag.get("vif") or {}
-
-        diag_row = dmc.Group(gap="xl", children=[
-            dmc.Stack(gap=2, children=[dmc.Text("Durbin-Watson", size="xs", c="dimmed"), dmc.Text(_fmt(dw), size="sm", fw=600)]),
-            dmc.Stack(gap=2, children=[dmc.Text("Jarque-Bera stat", size="xs", c="dimmed"), dmc.Text(_fmt(jb_stat), size="sm", fw=600)]),
-            dmc.Stack(gap=2, children=[dmc.Text("JB p-value", size="xs", c="dimmed"), dmc.Text(_fmt(jb_p), size="sm", fw=600)]),
-            dmc.Stack(gap=2, children=[dmc.Text("AIC", size="xs", c="dimmed"), dmc.Text(_fmt(aic), size="sm", fw=600)]),
-            dmc.Stack(gap=2, children=[dmc.Text("BIC", size="xs", c="dimmed"), dmc.Text(_fmt(bic), size="sm", fw=600)]),
-        ])
-        sections += [dmc.Divider(mt="sm", mb="sm"), dmc.Text("Diagnostics", size="sm", fw=600, mb="xs"), diag_row]
-
-        if vif:
-            vif_rows = [{"Variable": k, "VIF": _fmt(v)} for k, v in vif.items()]
-            sections += [
-                dmc.Text("Variance Inflation Factor (VIF)", size="sm", fw=500, mt="sm", mb="xs"),
-                dag.AgGrid(
-                    className="ag-theme-alpine",
-                    columnDefs=[
-                        {"field": "Variable", "width": 130, "minWidth": 110},
-                        {"field": "VIF", "width": 80, "minWidth": 70},
-                    ],
-                    rowData=vif_rows,
-                    defaultColDef={"resizable": True, "sortable": True},
-                    style={"height": f"{max(120, 42 + 42 * len(vif_rows))}px"},
-                    dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
-                ),
+    if anova_rows:
+        anova_grid = dag.AgGrid(
+            className="ag-theme-alpine",
+            columnDefs=[
+                {"field": "Source", "width": 100, "minWidth": 90},
+                {"field": "df", "width": 70, "minWidth": 60},
+                {"field": "SS", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
+                {"field": "MS", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
+                {"field": "F", "width": 85, "minWidth": 75, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
+                {"field": "p-value", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
+            ],
+            rowData=anova_rows,
+            defaultColDef={"resizable": True, "sortable": False},
+            style={"height": "132px"},
+            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        )
+        blocks.extend([dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"), anova_grid])
+    else:
+        blocks.extend(
+            [
+                dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"),
+                dmc.Text("ANOVA decomposition unavailable for this model/window.", size="sm", c="dimmed"),
             ]
+        )
 
-    arima_garch = entry.get("arima_garch_summary") or (diag or {}).get("arima_garch")
-    if arima_garch:
-        ag_parts = []
-        for key, label in [("arima", "ARIMA"), ("garch", "GARCH")]:
-            item = arima_garch.get(key)
-            if item and "error" not in item:
-                ag_parts.append(dmc.Text(
-                    f"{label}{item.get('order','?')}: AIC={_fmt(item.get('aic'))}, BIC={_fmt(item.get('bic'))}",
-                    size="sm"
-                ))
-        if ag_parts:
-            sections += [dmc.Divider(mt="sm", mb="sm"), dmc.Text("ARIMA/GARCH Residual Model", size="sm", fw=600, mb="xs")] + ag_parts
+    if param_rows:
+        param_df = pd.DataFrame(param_rows)
+        param_df = _reg_drop_empty_columns(param_df, keep_fields=["Parameter", "Coefficient"])
+        param_grid = dag.AgGrid(
+            className="ag-theme-alpine",
+            columnDefs=[
+                {"field": "Parameter", "minWidth": 170, "flex": 1},
+                {"field": "Coefficient", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
+                {"field": "Std Error", "width": 110, "minWidth": 100, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
+                {"field": "t-stat", "width": 100, "minWidth": 90, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
+                {"field": "p-value", "width": 100, "minWidth": 90, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
+                {"field": "CI Low (95%)", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
+                {"field": "CI High (95%)", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
+            ],
+            rowData=param_df.to_dict("records"),
+            defaultColDef={"resizable": True, "sortable": True},
+            style={"height": f"{max(150, 36 + 30 * len(param_df))}px"},
+            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        )
+        blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), param_grid])
+    else:
+        blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), dmc.Text("No parameter rows available.", size="sm", c="dimmed")])
 
-    return dmc.Stack(gap="xs", children=sections, p="sm")
+    if fit_rows:
+        section_title_map = {
+            "Window": "Window",
+            "Regression": "Regression Fit",
+            "Diagnostics": "Diagnostics",
+            "ARIMA": "ARIMA Fit",
+            "GARCH": "GARCH Fit",
+            "VIF": "VIF",
+        }
+        section_order = ["Window", "Regression", "Diagnostics", "ARIMA", "GARCH", "VIF"]
+        grouped_rows: dict[str, list[dict]] = {}
+        for row in fit_rows:
+            section = str(row.get("Section") or "").strip() or "Other"
+            grouped_rows.setdefault(section, []).append(row)
+
+        section_blocks = []
+        for section in section_order + [s for s in grouped_rows if s not in section_order]:
+            rows_for_section = grouped_rows.get(section) or []
+            if not rows_for_section:
+                continue
+            fit_items = []
+            for row in rows_for_section:
+                metric = str(row.get("Metric") or "").strip() or "Metric"
+                value = row.get("Value")
+                value_comp = (
+                    dmc.Text(_fmt(value), size="sm", fw=600)
+                    if isinstance(value, (int, float, np.floating))
+                    else dmc.Text(str(value) if value not in (None, "") else "—", size="sm", fw=600)
+                )
+                fit_items.append(
+                    dmc.Stack(
+                        gap=2,
+                        children=[
+                            dmc.Text(metric, size="xs", c="dimmed"),
+                            value_comp,
+                        ],
+                    )
+                )
+            section_blocks.append(
+                dmc.Stack(
+                    gap=4,
+                    children=[
+                        dmc.Text(section_title_map.get(section, section), size="xs", fw=700, c="dimmed"),
+                        dmc.SimpleGrid(
+                            cols={"base": 1, "sm": 3, "lg": 6},
+                            spacing="sm",
+                            verticalSpacing=6,
+                            children=fit_items,
+                        ),
+                    ],
+                )
+            )
+        blocks.extend(
+            [
+                dmc.Divider(my="sm"),
+                dmc.Text("Overall Fit", size="sm", fw=600, mb="xs"),
+                dmc.Stack(gap=8, children=section_blocks),
+            ]
+        )
+
+    return dmc.Stack(gap="xs", children=blocks, p="sm")
 
 
 # ---------------------------------------------------------------------------
@@ -4480,10 +4680,11 @@ def reg_render_anova(selected, results, selected_window):
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("reg-rolling-summary-chart-switch", "value"),
+    Input("reg-rolling-summary-detail-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_rolling(selected, results, view_mode, theme):
+def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -4493,6 +4694,7 @@ def reg_render_rolling(selected, results, view_mode, theme):
     if len(wrs) == 1:
         return dmc.Alert("Rolling Summary requires rolling or expanding window.", color="blue", title="Info", p="md")
 
+    use_run_level_fallback = len(wrs) == 1
     rows = []
     for wr in wrs:
         row = {
@@ -4507,6 +4709,10 @@ def reg_render_rolling(selected, results, view_mode, theme):
         oos = wr.get("oos_metrics") or {}
         if oos:
             row.update({"OOS R²": oos.get("oos_r2"), "OOS RMSE": oos.get("oos_rmse"), "OOS MAE": oos.get("oos_mae")})
+        _reg_apply_arima_garch_columns(
+            row,
+            _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
+        )
         rows.append(row)
 
     df_roll = pd.DataFrame(rows)
@@ -4514,7 +4720,10 @@ def reg_render_rolling(selected, results, view_mode, theme):
     df_roll = df_roll.sort_values("Date")
 
     fig = go.Figure()
-    numeric_cols = [c for c in df_roll.columns if c != "Date"]
+    numeric_cols = [
+        c for c in df_roll.columns
+        if c != "Date" and not str(c).startswith(("ARIMA_", "GARCH_"))
+    ]
     visible_default = "R²" if "R²" in numeric_cols else (numeric_cols[0] if numeric_cols else None)
     for col in numeric_cols[:8]:
         if df_roll[col].notna().any():
@@ -4533,10 +4742,18 @@ def reg_render_rolling(selected, results, view_mode, theme):
     apply_chart_theme(fig, theme)
 
     df_display = df_roll.assign(Date=df_roll["Date"].dt.strftime("%Y-%m-%d"))
+    df_display = _reg_drop_empty_columns(df_display, keep_fields=["Date"])
+    fields = list(df_display.columns)
+    if (detail_mode or "basic") == "basic":
+        table_fields = _reg_visible_summary_cols(fields)
+    else:
+        table_fields = fields
+    header_overrides = _reg_collect_arima_param_headers(wrs, entry, allow_run_level_fallback=use_run_level_fallback)
+
     table = dag.AgGrid(
         className="ag-theme-alpine",
-        columnDefs=[{"field": c, "minWidth": 110} for c in df_display.columns],
-        rowData=df_display.to_dict("records"),
+        columnDefs=_reg_build_table_coldefs(table_fields, header_overrides=header_overrides),
+        rowData=df_display[table_fields].to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "380px"},
         dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
@@ -4691,10 +4908,11 @@ def reg_render_rolling_returns(
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("reg-weights-chart-switch", "value"),
+    Input("reg-weights-detail-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_weights(selected, results, view_mode, theme):
+def reg_render_weights(selected, results, view_mode, detail_mode, theme):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -4710,6 +4928,7 @@ def reg_render_weights(selected, results, view_mode, theme):
                           color="yellow", title="Note", mb="sm")
 
     dates = [pd.Timestamp(wr["apply_start"]) for wr in wrs]
+    use_run_level_fallback = len(wrs) == 1
     coef_keys = []
     for wr in wrs:
         for key in (wr.get("coefficients") or {}).keys():
@@ -4725,23 +4944,20 @@ def reg_render_weights(selected, results, view_mode, theme):
             }
             for key in coef_keys:
                 row[key] = (wr.get("coefficients") or {}).get(key)
+            _reg_apply_arima_garch_columns(
+                row,
+                _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
+            )
             table_rows.append(row)
 
-        cols = [
-            {"field": "Window", "pinned": "left", "width": 88, "minWidth": 80, "maxWidth": 96},
-            {"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122},
-        ]
-        for key in coef_keys:
-            cols.append(
-                {
-                    "field": key,
-                    "width": 120,
-                    "minWidth": 110,
-                    "valueFormatter": {
-                        "function": "params.value != null ? d3.format('.6f')(params.value) : ''"
-                    },
-                }
-            )
+        table_df = pd.DataFrame(table_rows)
+        table_df = _reg_drop_empty_columns(table_df, keep_fields=["Window", "Date"])
+        fields = list(table_df.columns)
+        if (detail_mode or "basic") == "basic":
+            table_fields = _reg_visible_weight_cols(fields)
+        else:
+            table_fields = fields
+        header_overrides = _reg_collect_arima_param_headers(wrs, entry, allow_run_level_fallback=use_run_level_fallback)
 
         children = []
         if alert:
@@ -4749,8 +4965,8 @@ def reg_render_weights(selected, results, view_mode, theme):
         children.append(
             dag.AgGrid(
                 className="ag-theme-alpine",
-                columnDefs=cols,
-                rowData=table_rows,
+                columnDefs=_reg_build_table_coldefs(table_fields, header_overrides=header_overrides),
+                rowData=table_df[table_fields].to_dict("records"),
                 defaultColDef={"resizable": True, "sortable": True},
                 style={"height": "420px"},
                 dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
