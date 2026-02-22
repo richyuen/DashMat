@@ -128,6 +128,10 @@ AT_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     series_modal_size="80vw",
     series_modal_max_width="1250px",
     series_modal_transition_ms=180,
+    welcome_switch_buttons=(
+        ("welcome-view-portfolio", "Switch to Optimization", "grommet-icons:optimize"),
+        ("welcome-view-regression", "Switch to Regression", "tabler:chart-dots-3"),
+    ),
 )
 
 
@@ -1726,6 +1730,15 @@ layout = dmc.Container(
                             gradient={"from": "indigo", "to": "cyan", "deg": 90},
                             leftSection=DashIconify(icon="grommet-icons:optimize", width=16),
                         ),
+                        dmc.Button(
+                            "Switch to Regression",
+                            id="at-menu-view-regression",
+                            size="sm",
+                            radius="md",
+                            variant="gradient",
+                            gradient={"from": "grape", "to": "indigo", "deg": 90},
+                            leftSection=DashIconify(icon="tabler:chart-dots-3", width=16),
+                        ),
                         # Spacer
                         dmc.Box(style={"flexGrow": 1}),
                         # Help button (opens User Guide)
@@ -2379,6 +2392,51 @@ clientside_callback(
     """,
     Output("at-url-location", "pathname", allow_duplicate=True),
     Input("at-menu-view-portfolio", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            window.location.pathname = '/regression';
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("at-url-location", "pathname", allow_duplicate=True),
+    Input("at-menu-view-regression", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            window.location.pathname = '/portopt';
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("at-url-location", "pathname", allow_duplicate=True),
+    Input("at-welcome-view-portfolio", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            window.location.pathname = '/regression';
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("at-url-location", "pathname", allow_duplicate=True),
+    Input("at-welcome-view-regression", "n_clicks"),
     prevent_initial_call=True,
 )
 

@@ -31,6 +31,61 @@ def _sample_window_weights() -> list[dict]:
     ]
 
 
+def _collect_component_text(node):
+    if node is None:
+        return []
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, (int, float, bool)):
+        return [str(node)]
+    if isinstance(node, (list, tuple, set)):
+        out = []
+        for item in node:
+            out.extend(_collect_component_text(item))
+        return out
+    if isinstance(node, dict):
+        out = []
+        for value in node.values():
+            out.extend(_collect_component_text(value))
+        return out
+
+    out = []
+    children = getattr(node, "children", None)
+    out.extend(_collect_component_text(children))
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            out.extend(_collect_component_text(value))
+    return out
+
+
+def _find_component_by_id(node, target_id):
+    if node is None:
+        return None
+    node_id = getattr(node, "id", None)
+    if node_id == target_id:
+        return node
+
+    children = getattr(node, "children", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            found = _find_component_by_id(child, target_id)
+            if found is not None:
+                return found
+    else:
+        found = _find_component_by_id(children, target_id)
+        if found is not None:
+            return found
+
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            found = _find_component_by_id(value, target_id)
+            if found is not None:
+                return found
+    return None
+
+
 def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
     _, portopt = page_modules
 
@@ -692,3 +747,35 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     assert "Wt_Asset_A" in frontier_df.columns
     assert "Sharpe Ratio" in frontier_df.columns
     assert "Frontier Point" in set(frontier_df["Type"])
+
+
+def test_po_help_modal_has_three_guide_sections(page_modules):
+    _, portopt = page_modules
+    modal = _find_component_by_id(portopt.layout, "po-help-modal")
+    assert modal is not None
+
+    text_blob = " ".join(_collect_component_text(modal)).lower()
+    assert "basic guide" in text_blob
+    assert "advanced guide" in text_blob
+    assert "model deep dive" in text_blob
+
+
+def test_po_help_modal_model_deep_dive_covers_all_models(page_modules):
+    _, portopt = page_modules
+    modal = _find_component_by_id(portopt.layout, "po-help-modal")
+    assert modal is not None
+
+    text_blob = " ".join(_collect_component_text(modal)).lower()
+    required_models = [
+        "risk parity",
+        "factor risk parity",
+        "hierarchical rp",
+        "maximize sharpe ratio",
+        "minimize variance",
+        "minimize cvar",
+        "equal weight",
+        "ex ante mean-variance",
+        "black-litterman",
+    ]
+    for model in required_models:
+        assert model in text_blob

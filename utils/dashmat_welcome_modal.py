@@ -41,9 +41,37 @@ class PagePrefixConfig:
     series_modal_size: str
     series_modal_max_width: str
     series_modal_transition_ms: int
+    welcome_switch_buttons: tuple[tuple[str, str, str], ...] = ()
 
 
 def build_welcome_screen(cfg: PagePrefixConfig):
+    switch_buttons = [
+        dmc.Button(
+            label,
+            id=_sid(cfg.prefix, suffix),
+            variant="light",
+            size="sm",
+            radius="md",
+            leftSection=DashIconify(icon=icon, width=15),
+        )
+        for suffix, label, icon in (cfg.welcome_switch_buttons or ())
+    ]
+
+    header_children = [
+        DashIconify(icon=cfg.page_icon, width=54, color="#8b95a1"),
+        dmc.Text(cfg.page_title, size="xl", fw=600, mt=2),
+        dmc.Text(cfg.page_subtitle, size="sm", c="dimmed"),
+    ]
+    if switch_buttons:
+        header_children.append(
+            dmc.Group(
+                justify="center",
+                gap="xs",
+                style={"flexWrap": "wrap", "marginTop": "8px"},
+                children=switch_buttons,
+            )
+        )
+
     return dmc.Stack(
         align="center",
         justify="center",
@@ -53,11 +81,7 @@ def build_welcome_screen(cfg: PagePrefixConfig):
             dmc.Stack(
                 align="center",
                 gap=2,
-                children=[
-                    DashIconify(icon=cfg.page_icon, width=54, color="#8b95a1"),
-                    dmc.Text(cfg.page_title, size="xl", fw=600, mt=2),
-                    dmc.Text(cfg.page_subtitle, size="sm", c="dimmed"),
-                ],
+                children=header_children,
             ),
             html.Div(
                 className="dashmat-welcome-sections-grid",

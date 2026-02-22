@@ -122,6 +122,10 @@ PO_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     series_modal_size="84vw",
     series_modal_max_width="1450px",
     series_modal_transition_ms=200,
+    welcome_switch_buttons=(
+        ("welcome-view-analytics", "Switch to Analytics", "tabler:chart-line"),
+        ("welcome-view-regression", "Switch to Regression", "tabler:chart-dots-3"),
+    ),
 )
 
 # ---------------------------------------------------------------------------
@@ -2444,6 +2448,15 @@ layout = dmc.Container(
                             gradient={"from": "orange", "to": "red", "deg": 90},
                             leftSection=DashIconify(icon="tabler:chart-line", width=16),
                         ),
+                        dmc.Button(
+                            "Switch to Regression",
+                            id="po-menu-view-regression",
+                            size="sm",
+                            radius="md",
+                            variant="gradient",
+                            gradient={"from": "grape", "to": "indigo", "deg": 90},
+                            leftSection=DashIconify(icon="tabler:chart-dots-3", width=16),
+                        ),
                         dmc.Box(style={"flexGrow": 1}),
                         # Help button (opens User Guide)
                         dmc.Button(
@@ -2611,7 +2624,11 @@ layout = dmc.Container(
                                                 gap=0,
                                                 children=[
                                                     dmc.Text("Portfolio Optimization Guide", fw=600, size="sm"),
-                                                    dmc.Text("Use Basic for workflow setup and Advanced for model/constraint details.", size="xs", c="dimmed"),
+                                                    dmc.Text(
+                                                        "Use Basic for setup, Advanced for constraints/inputs, and Model Deep Dive for model-level guidance.",
+                                                        size="xs",
+                                                        c="dimmed",
+                                                    ),
                                                 ],
                                             ),
                                         ],
@@ -2628,6 +2645,7 @@ layout = dmc.Container(
                                     children=[
                                         dmc.TabsTab([DashIconify(icon="tabler:compass", width=14), "Basic Guide"], value="basic"),
                                         dmc.TabsTab([DashIconify(icon="tabler:settings-cog", width=14), "Advanced Guide"], value="advanced"),
+                                        dmc.TabsTab([DashIconify(icon="tabler:book-2", width=14), "Model Deep Dive"], value="models"),
                                     ],
                                 ),
                                 dmc.TabsPanel(
@@ -2835,6 +2853,123 @@ layout = dmc.Container(
                                         ],
                                     ),
                                 ),
+                                dmc.TabsPanel(
+                                    value="models",
+                                    pt="sm",
+                                    children=dmc.Accordion(
+                                        variant="separated",
+                                        children=[
+                                            dmc.AccordionItem(
+                                                value="model-risk-parity",
+                                                children=[
+                                                    dmc.AccordionControl("Risk Parity"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: balances total risk contribution across assets.", size="sm"),
+                                                        dmc.Text("When to use: diversify risk when expected return forecasts are weak.", size="sm"),
+                                                        dmc.Text("Key controls: Min/Max/Force Max bounds, window settings, and missing-data handling.", size="sm"),
+                                                        dmc.Text("Pitfalls: can still concentrate in highly correlated assets if constraints are loose.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-factor-risk-parity",
+                                                children=[
+                                                    dmc.AccordionControl("Factor Risk Parity"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: balances risk through latent factor structure rather than only pairwise covariance.", size="sm"),
+                                                        dmc.Text("When to use: assets share common factor drivers and covariance is noisy.", size="sm"),
+                                                        dmc.Text("Key controls: same bounds and window controls as other historical models.", size="sm"),
+                                                        dmc.Text("Pitfalls: factor estimation can be unstable with short samples.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-hrp",
+                                                children=[
+                                                    dmc.AccordionControl("Hierarchical RP"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: clusters assets and allocates top-down for robust diversification.", size="sm"),
+                                                        dmc.Text("When to use: correlation matrix is unstable and clustering adds structure.", size="sm"),
+                                                        dmc.Text("Key controls: selected series, bounds, and sample window choices.", size="sm"),
+                                                        dmc.Text("Pitfalls: cluster splits can shift across windows, changing allocations abruptly.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-max-sharpe",
+                                                children=[
+                                                    dmc.AccordionControl("Maximize Sharpe Ratio"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: highest expected return per unit volatility.", size="sm"),
+                                                        dmc.Text("When to use: you want risk-adjusted return efficiency from historical estimates.", size="sm"),
+                                                        dmc.Text("Key controls: Exp Wt decay, windowing, and all weight constraints.", size="sm"),
+                                                        dmc.Text("Pitfalls: sensitive to mean-return estimation error and outliers.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-min-variance",
+                                                children=[
+                                                    dmc.AccordionControl("Minimize Variance"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: lowest volatility portfolio under current constraints.", size="sm"),
+                                                        dmc.Text("When to use: capital preservation and stability are higher priority than return targeting.", size="sm"),
+                                                        dmc.Text("Key controls: covariance estimate settings, bounds, and linear constraints.", size="sm"),
+                                                        dmc.Text("Pitfalls: may underweight growth assets and reduce upside participation.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-min-cvar",
+                                                children=[
+                                                    dmc.AccordionControl("Minimize CVaR"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: downside tail risk instead of only variance.", size="sm"),
+                                                        dmc.Text("When to use: drawdown and tail-event protection are primary objectives.", size="sm"),
+                                                        dmc.Text("Key controls: sample window quality, bounds, and missing-data handling.", size="sm"),
+                                                        dmc.Text("Pitfalls: requires enough data for stable tail estimation.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-equal-weight",
+                                                children=[
+                                                    dmc.AccordionControl("Equal Weight"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: 1/N allocation baseline without parameter-driven optimization.", size="sm"),
+                                                        dmc.Text("When to use: neutral benchmark or when model uncertainty is high.", size="sm"),
+                                                        dmc.Text("Key controls: included assets and hard constraints still determine feasible holdings.", size="sm"),
+                                                        dmc.Text("Pitfalls: ignores differences in risk, liquidity, and covariance.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-ex-ante",
+                                                children=[
+                                                    dmc.AccordionControl("Ex Ante Mean-Variance"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: forward-looking mean-variance using your expected return and risk assumptions.", size="sm"),
+                                                        dmc.Text("When to use: you have investment views not captured by historical sample estimates.", size="sm"),
+                                                        dmc.Text("Key controls: Objective selector, Risk Input Mode, expected returns, and covariance or vol/corr grids.", size="sm"),
+                                                        dmc.Text("Pitfalls: inconsistent assumptions (non-symmetric matrices, unrealistic vol/corr) can invalidate outputs.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="model-black-litterman",
+                                                children=[
+                                                    dmc.AccordionControl("Black-Litterman"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("What it optimizes: blends prior estimates with user views and confidence into posterior return/covariance inputs.", size="sm"),
+                                                        dmc.Text("When to use: combine strategic priors with tactical absolute or relative views.", size="sm"),
+                                                        dmc.Text("Key controls: view rows, confidence, tau, and base ex-ante assumptions.", size="sm"),
+                                                        dmc.Text("Pitfalls: weak view specification or extreme confidence values can dominate priors unexpectedly.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ),
                             ],
                         ),
                     ],
@@ -3018,6 +3153,45 @@ clientside_callback(
     """,
     Output("po-url-location", "pathname", allow_duplicate=True),
     Input("po-menu-view-analytics", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { window.location.pathname = '/regression'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-url-location", "pathname", allow_duplicate=True),
+    Input("po-menu-view-regression", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { window.location.pathname = '/analyticstool'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-url-location", "pathname", allow_duplicate=True),
+    Input("po-welcome-view-analytics", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { window.location.pathname = '/regression'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-url-location", "pathname", allow_duplicate=True),
+    Input("po-welcome-view-regression", "n_clicks"),
     prevent_initial_call=True,
 )
 

@@ -234,3 +234,76 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert main_style["display"] == "flex"
     assert options == [{"value": "daily", "label": "Daily"}, {"value": "monthly", "label": "Monthly"}]
     assert value == "monthly"
+
+
+def _collect_component_text(node):
+    if node is None:
+        return []
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, (int, float, bool)):
+        return [str(node)]
+    if isinstance(node, (list, tuple, set)):
+        out = []
+        for item in node:
+            out.extend(_collect_component_text(item))
+        return out
+    if isinstance(node, dict):
+        out = []
+        for value in node.values():
+            out.extend(_collect_component_text(value))
+        return out
+
+    out = []
+    children = getattr(node, "children", None)
+    out.extend(_collect_component_text(children))
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            out.extend(_collect_component_text(value))
+    return out
+
+
+def test_reg_toggle_welcome_no_data_shows_top_aligned_welcome(regression_page):
+    welcome_style, main_style, options, value = regression_page.reg_toggle_welcome(None, None, None)
+
+    assert welcome_style == {"display": "block"}
+    assert main_style["display"] == "none"
+    assert options == [{"value": "daily", "label": "Daily"}]
+    assert value == "daily"
+
+
+def test_reg_help_modal_covers_three_sections_and_model_explainers(regression_page):
+    modal = regression_page.build_reg_help_modal()
+    text_blob = " ".join(_collect_component_text(modal)).lower()
+
+    required_phrases = [
+        "basic guide",
+        "advanced guide",
+        "model deep dive",
+        "what it is: baseline linear regression with unconstrained coefficients",
+        "what it is: ols with per-variable beta limits and optional linear constraints",
+        "what it is: constrained style decomposition where exposures are bounded and sum to one",
+        "what it is: l2-regularized regression that shrinks coefficients toward zero",
+        "what it is: l1-regularized regression that can zero out coefficients",
+        "what it is: combined l1 and l2 regularization",
+        "series selection modal",
+        "periodicity",
+        "vol scaler",
+        "date range",
+        "common range",
+        "max range",
+        "fill in-sample",
+        "linear constraints",
+        "run regression",
+        "anova, rolling, weights, statistics, returns, growth, and scatter",
+        "save session",
+        "load session",
+        "download excel",
+        "clear server cache",
+        "arima(p,d,q)",
+        "garch(p,q)",
+        "arima and garch residual overlay",
+    ]
+    for phrase in required_phrases:
+        assert phrase in text_blob

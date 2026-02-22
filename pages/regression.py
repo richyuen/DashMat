@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 import json
 
 import dash_ag_grid as dag
@@ -39,19 +40,44 @@ from utils.statistics import calculate_statistics_cached
 from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
+from utils.excel_export import write_excel_with_autofit
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
+    build_portfolio_add_modal,
+    build_raw_db_add_modal,
     build_series_selection_modal,
     build_sheet_select_modal,
     build_welcome_screen as build_shared_welcome_screen,
     compute_close_db_add_modal,
+    compute_close_portfolio_add_modal,
+    compute_close_raw_db_add_modal,
     compute_open_db_add_modal,
+    compute_open_portfolio_add_modal,
+    compute_open_raw_db_add_modal,
+    compute_sync_include_benchmark_enabled,
     compute_validate_db_add_selection,
+    js_portfolio_add_row,
+    js_portfolio_benchmark_toggle,
+    js_portfolio_clear_rows,
+    js_portfolio_delete_row,
+    js_portfolio_ok_disabled,
 )
 from utils.sample_data import get_sample_file_path
-from utils.core_categories import load_cma_returns_for_benches_with_meta
-from dbengine import engine as DB_ENGINE, engine_MRD as MRD_ENGINE
+from utils.core_categories import clear_dropdown_caches, load_cma_returns_for_benches_with_meta
+from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE, engine_PERFORMANCE as PERF_ENGINE
+from utils.portfolio_series import load_portfolio_series
+from utils.raw_data_imports import (
+    build_preview_row_from_controls,
+    factor_defaults_to_returns,
+    get_factor_option_meta_cached,
+    get_fund_option_meta_cached,
+    get_performance_option_meta_cached,
+    get_preview_lines_for_row,
+    load_factor_series,
+    load_fund_series,
+    load_performance_series,
+)
 
 register_page(__name__, path="/regression", name="Regression", title="Regression")
 
@@ -63,6 +89,10 @@ REG_CONFIG = PagePrefixConfig(
     series_modal_size="90vw",
     series_modal_max_width="1650px",
     series_modal_transition_ms=200,
+    welcome_switch_buttons=(
+        ("welcome-view-analytics", "Switch to Analytics", "tabler:chart-line"),
+        ("welcome-view-portfolio", "Switch to Optimization", "grommet-icons:optimize"),
+    ),
 )
 
 _MODEL_OPTIONS = [
@@ -145,6 +175,512 @@ def _fmt(v, decimals=6):
 
 def build_reg_welcome_screen():
     return build_shared_welcome_screen(REG_CONFIG)
+
+
+def build_reg_help_modal():
+    return dmc.Modal(
+        id="reg-help-modal",
+        title=dmc.Group(
+            gap="xs",
+            children=[
+                dmc.ThemeIcon(DashIconify(icon="tabler:help-circle"), color="blue", variant="light", size="sm"),
+                dmc.Text("Regression Analysis - User Guide", fw=600, size="sm"),
+            ],
+        ),
+        size="lg",
+        centered=True,
+        withCloseButton=True,
+        radius="lg",
+        className="dashmat-modal",
+        overlayProps={"blur": 2, "opacity": 0.45},
+        children=[
+            dmc.Stack(
+                gap="md",
+                children=[
+                    dmc.Paper(
+                        withBorder=True,
+                        radius="md",
+                        p="sm",
+                        bg="var(--mantine-color-body)",
+                        children=dmc.Group(
+                            justify="flex-start",
+                            align="center",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    children=[
+                                        dmc.ThemeIcon(DashIconify(icon="tabler:help-circle"), variant="light", color="blue", size="md"),
+                                        dmc.Stack(
+                                            gap=0,
+                                            children=[
+                                                dmc.Text("Regression Analysis Guide", fw=600, size="sm"),
+                                                dmc.Text(
+                                                    "Use Basic for setup, Advanced for controls, and Model Deep Dive for model-level guidance.",
+                                                    size="xs",
+                                                    c="dimmed",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ),
+                    dmc.Tabs(
+                        value="basic",
+                        variant="outline",
+                        color="blue",
+                        children=[
+                            dmc.TabsList(
+                                children=[
+                                    dmc.TabsTab([DashIconify(icon="tabler:compass", width=14), "Basic Guide"], value="basic"),
+                                    dmc.TabsTab([DashIconify(icon="tabler:settings-cog", width=14), "Advanced Guide"], value="advanced"),
+                                    dmc.TabsTab([DashIconify(icon="tabler:book-2", width=14), "Model Deep Dive"], value="models"),
+                                ],
+                            ),
+                            dmc.TabsPanel(
+                                value="basic",
+                                pt="sm",
+                                children=dmc.Accordion(
+                                    variant="separated",
+                                    children=[
+                    dmc.AccordionItem(
+                        value="overview",
+                        children=[
+                            dmc.AccordionControl("Overview and Workflow"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text(
+                                            "This module runs return-based regressions with model diagnostics, rolling windows, and chart outputs.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text(
+                                            "Typical flow: load data, open Series Selection, assign one Y and one or more X, configure model and windows, run, then review tabs.",
+                                            size="sm",
+                                        ),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="menus",
+                        children=[
+                            dmc.AccordionControl("Navigation and Menus"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("File menu: New session, Load session, Save session, Download Excel, Exit.", size="sm"),
+                                        dmc.Text("Edit menu: Add AA Tool indices, portfolio imports, raw imports, add series from file, clear server cache.", size="sm"),
+                                        dmc.Text("Switch buttons: move directly to Analytics Tool or Portfolio Optimization.", size="sm"),
+                                        dmc.Text("Help opens this guide.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="data-sources",
+                        children=[
+                            dmc.AccordionControl("Data Sources and Import"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("AA Tool indices: select one or more core categories and append to current dataset.", size="sm"),
+                                        dmc.Text("Portfolio imports: peer-relative, index-relative, and alternative portfolio streams.", size="sm"),
+                                        dmc.Text("Raw imports: factor, funds, and performance with staged rows before import.", size="sm"),
+                                        dmc.Text(
+                                            "Raw options include table choice, fee type, include benchmark, and factor convert-to-returns/divide-by controls.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text(
+                                            "File imports support CSV/XLS/XLSX, plus multi-sheet selection using the sheet-select modal.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text("Sample daily and monthly files are available from the welcome card area.", size="sm"),
+                                        dmc.Text("Duplicate series names are blocked across all import paths.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="series-selection",
+                        children=[
+                            dmc.AccordionControl("Series Selection Modal"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("Set exactly one dependent variable (Y) and one or more independent variables (X).", size="sm"),
+                                        dmc.Text("Assign optional benchmark, long/short flag, and per-series volatility scaling toggle.", size="sm"),
+                                        dmc.Text("Set per-series lag and constrained beta bounds (Min Beta, Max Beta, Enable).", size="sm"),
+                                        dmc.Text("Use row drag to reorder series. You can also mark rows for deletion.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="controls",
+                        children=[
+                            dmc.AccordionControl("Controls and Time Settings"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("Periodicity: pick from available frequencies based on loaded data.", size="sm"),
+                                        dmc.Text("Vol scaler: apply global volatility scaling percentage.", size="sm"),
+                                        dmc.Text("Date range: Start Date, End Date, Common Range, and Max Range shortcuts.", size="sm"),
+                                        dmc.Text("Missing data handling: Fill NA or Fill 0.", size="sm"),
+                                        dmc.Text("Fill in-sample toggle controls forecasting treatment in rolling/expanding workflows.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="regression-types",
+                        children=[
+                            dmc.AccordionControl("Regression Types Explained"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text(
+                                            "OLS: baseline linear regression. Use when you want an unconstrained reference model with standard diagnostics.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text(
+                                            "Constrained OLS: OLS with coefficient limits and optional linear constraints. Use when exposures must stay within policy bounds.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text(
+                                            "Style Analysis: constrained exposure decomposition where factor weights are bounded and sum to one. Use to estimate style mix.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text(
+                                            "Ridge: L2-regularized regression that shrinks coefficients but usually keeps all predictors. Use for collinearity and stability.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text(
+                                            "Lasso: L1-regularized regression that can push some coefficients to zero. Use for variable selection and sparse models.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text(
+                                            "Elastic Net: blend of Ridge and Lasso using alpha and l1-ratio. Use when you want both shrinkage and sparsity control.",
+                                            size="sm",
+                                        ),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="advanced",
+                        children=[
+                            dmc.AccordionControl("Advanced Model Inputs"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("Force Zero Intercept and Robust SE are available where supported by model choice.", size="sm"),
+                                        dmc.Text("Exponential weighting uses Exp Wt plus Half-Life.", size="sm"),
+                                        dmc.Text("Window controls: Full, Expanding, Rolling, with Window Size and Opt Step/Unit.", size="sm"),
+                                        dmc.Text("Regularization controls: alpha for Ridge/Lasso/Elastic Net and l1-ratio for Elastic Net.", size="sm"),
+                                        dmc.Text(
+                                            "ARIMA(p,d,q) and GARCH(p,q) are residual-model overlays for OLS and Constrained OLS results.",
+                                            size="sm",
+                                        ),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="constraints",
+                        children=[
+                            dmc.AccordionControl("Linear Constraints"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("Use Add Constraint to append rows and Clear Constraints to reset the grid.", size="sm"),
+                                        dmc.Text("Each row supports constraint coefficients plus Min/Max bounds.", size="sm"),
+                                        dmc.Text("Blank linear-constraint rows are ignored safely.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="results",
+                        children=[
+                            dmc.AccordionControl("Run, Result Management, and Output Tabs"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("Run Regression executes using the current configuration and selected series.", size="sm"),
+                                        dmc.Text("Results are saved by name, selectable from the result dropdown, and can be deleted.", size="sm"),
+                                        dmc.Text("Output tabs include ANOVA, Rolling, Weights, Statistics, Returns, Growth, and Scatter.", size="sm"),
+                                        dmc.Text("Status text reports success and common input errors like missing Y/X/data.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="session-export",
+                        children=[
+                            dmc.AccordionControl("Session, Export, and Utilities"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("Save session exports current session storage to JSON.", size="sm"),
+                                        dmc.Text("Load session imports a saved JSON and restores page state.", size="sm"),
+                                        dmc.Text("New session clears session storage and reloads the page.", size="sm"),
+                                        dmc.Text("Download Excel exports summary, coefficients, diagnostics, and predicted/residual sheets.", size="sm"),
+                                        dmc.Text("Clear server cache resets memoized server-side caches for refreshed data pulls.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                    dmc.AccordionItem(
+                        value="troubleshooting",
+                        children=[
+                            dmc.AccordionControl("Troubleshooting"),
+                            dmc.AccordionPanel(
+                                dmc.Stack(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Text("If Run fails, first check dependent variable, independent variables, and date coverage.", size="sm"),
+                                        dmc.Text("If imports fail, check duplicate names, option staging rows, and source availability.", size="sm"),
+                                        dmc.Text("If periodicity options look incorrect, verify original data frequency and store sync state.", size="sm"),
+                                    ],
+                                )
+                            ),
+                        ],
+                    ),
+                                    ],
+                                ),
+                            ),
+                            dmc.TabsPanel(
+                                value="advanced",
+                                pt="sm",
+                                children=dmc.Accordion(
+                                    variant="separated",
+                                    children=[
+                                        dmc.AccordionItem(
+                                            value="adv-setup",
+                                            children=[
+                                                dmc.AccordionControl("Advanced Setup and Utilities"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("File menu includes New session, Load session, Save session, Download Excel, and Exit.", size="sm"),
+                                                            dmc.Text("Edit menu includes imports and Clear server cache.", size="sm"),
+                                                            dmc.Text("Switch buttons move directly to Analytics Tool and Portfolio Optimization.", size="sm"),
+                                                            dmc.Text("Download Excel exports summary, coefficients, diagnostics, and predicted/residual sheets.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="adv-model-controls",
+                                            children=[
+                                                dmc.AccordionControl("Advanced Model Controls"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("Force Zero Intercept and Robust SE are available where supported by model choice.", size="sm"),
+                                                            dmc.Text("Exponential weighting uses Exp Wt plus Half-Life.", size="sm"),
+                                                            dmc.Text("Window controls: Full, Expanding, Rolling, with Window Size and Opt Step/Unit.", size="sm"),
+                                                            dmc.Text("Regularization controls: alpha for Ridge/Lasso/Elastic Net and l1-ratio for Elastic Net.", size="sm"),
+                                                            dmc.Text("ARIMA(p,d,q) and GARCH(p,q) are residual-model overlays for OLS and Constrained OLS results.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="adv-constraints",
+                                            children=[
+                                                dmc.AccordionControl("Constraints and Feasibility"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("Per-series Min Beta, Max Beta, and Enable control constrained coefficient behavior.", size="sm"),
+                                                            dmc.Text("Linear constraints support row coefficients with Min/Max bounds.", size="sm"),
+                                                            dmc.Text("If constrained models fail, relax bounds or simplify linear constraints.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="adv-troubleshooting",
+                                            children=[
+                                                dmc.AccordionControl("Troubleshooting"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("If Run fails, confirm Y, X, and date coverage first.", size="sm"),
+                                                            dmc.Text("If imports fail, check duplicate names, staged rows, and source availability.", size="sm"),
+                                                            dmc.Text("If periodicity options look incorrect, verify original periodicity and load-sync state.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ),
+                            dmc.TabsPanel(
+                                value="models",
+                                pt="sm",
+                                children=dmc.Accordion(
+                                    variant="separated",
+                                    children=[
+                                        dmc.AccordionItem(
+                                            value="model-ols",
+                                            children=[
+                                                dmc.AccordionControl("OLS"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("What it is: baseline linear regression with unconstrained coefficients.", size="sm"),
+                                                            dmc.Text("When to use: reference model for coefficient interpretation and diagnostics.", size="sm"),
+                                                            dmc.Text("Key controls: intercept, robust SE, periodicity, date range, and windowing.", size="sm"),
+                                                            dmc.Text("Watch out for multicollinearity and unstable coefficients in noisy factor sets.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="model-constrained-ols",
+                                            children=[
+                                                dmc.AccordionControl("Constrained OLS"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("What it is: OLS with per-variable beta limits and optional linear constraints.", size="sm"),
+                                                            dmc.Text("When to use: exposure policy rules or mandate limits are required.", size="sm"),
+                                                            dmc.Text("Key controls: Min Beta, Max Beta, Enable, and linear-constraint rows.", size="sm"),
+                                                            dmc.Text("Too many hard constraints can make the problem infeasible.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="model-style-analysis",
+                                            children=[
+                                                dmc.AccordionControl("Style Analysis"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("What it is: constrained style decomposition where exposures are bounded and sum to one.", size="sm"),
+                                                            dmc.Text("When to use: estimate style mix of a portfolio or strategy.", size="sm"),
+                                                            dmc.Text("Key controls: selected factors, date window, and style-specific constraints.", size="sm"),
+                                                            dmc.Text("Missing style proxies can force misleading allocations across available factors.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="model-ridge",
+                                            children=[
+                                                dmc.AccordionControl("Ridge"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("What it is: L2-regularized regression that shrinks coefficients toward zero.", size="sm"),
+                                                            dmc.Text("When to use: multicollinearity is high and stability matters more than sparsity.", size="sm"),
+                                                            dmc.Text("Key controls: alpha regularization strength plus standard preprocessing controls.", size="sm"),
+                                                            dmc.Text("High alpha can over-shrink and hide meaningful exposures.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="model-lasso",
+                                            children=[
+                                                dmc.AccordionControl("Lasso"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("What it is: L1-regularized regression that can zero out coefficients.", size="sm"),
+                                                            dmc.Text("When to use: feature selection with many candidate factors.", size="sm"),
+                                                            dmc.Text("Key controls: alpha strength and common preprocessing settings.", size="sm"),
+                                                            dmc.Text("Selection can be unstable when factors are highly correlated.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="model-elastic-net",
+                                            children=[
+                                                dmc.AccordionControl("Elastic Net"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("What it is: combined L1 and L2 regularization.", size="sm"),
+                                                            dmc.Text("When to use: correlated factors with need for both sparsity and stability.", size="sm"),
+                                                            dmc.Text("Key controls: alpha and l1-ratio along with window and missing-data controls.", size="sm"),
+                                                            dmc.Text("Tune alpha and l1-ratio together; extreme settings collapse to Lasso or Ridge behavior.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        dmc.AccordionItem(
+                                            value="model-arima-garch",
+                                            children=[
+                                                dmc.AccordionControl("ARIMA and GARCH Residual Overlay"),
+                                                dmc.AccordionPanel(
+                                                    dmc.Stack(
+                                                        gap="xs",
+                                                        children=[
+                                                            dmc.Text("What it is: ARIMA and GARCH fit on residuals from OLS-family regressions.", size="sm"),
+                                                            dmc.Text("When to use: residuals show serial correlation or volatility clustering.", size="sm"),
+                                                            dmc.Text("Key controls: ARIMA p,d,q and GARCH p,q orders.", size="sm"),
+                                                            dmc.Text("Interpret as residual diagnostics and forecasts, not a replacement for factor model choice.", size="sm"),
+                                                        ],
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
 
 
 def build_reg_main_layout():
@@ -619,18 +1155,32 @@ layout = dmc.Container(
                     gap="xs",
                     children=[
                         dmc.Menu(
-                            trigger="click", openDelay=100, closeDelay=200,
-                            position="bottom-start", shadow="md", offset=6,
+                            trigger="click",
+                            openDelay=100,
+                            closeDelay=200,
+                            position="bottom-start",
+                            shadow="md",
+                            offset=6,
                             children=[
-                                dmc.MenuTarget(dmc.Button("File", variant="subtle", color="gray", size="sm", radius="sm")),
+                                dmc.MenuTarget(
+                                    dmc.Button(
+                                        "File",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        radius="sm",
+                                    )
+                                ),
                                 dmc.MenuDropdown(className="dashmat-menu-dropdown", children=[
-                                    dmc.MenuItem("Add series (upload)", id="reg-menu-add-series",
-                                                 leftSection=DashIconify(icon="tabler:upload", width=14)),
+                                    dmc.MenuItem("New session", id="reg-menu-clear-local-storage",
+                                                 leftSection=DashIconify(icon="tabler:trash", width=14)),
+                                    dmc.MenuItem("Load session", id="reg-menu-load-session",
+                                                 leftSection=DashIconify(icon="tabler:folder-open", width=14)),
+                                    dmc.MenuItem("Save session", id="reg-menu-save-session",
+                                                 leftSection=DashIconify(icon="tabler:device-floppy", width=14)),
                                     dmc.MenuDivider(),
-                                    dmc.MenuItem("Download sample data (daily)", id="reg-download-sample-daily-btn",
-                                                 leftSection=DashIconify(icon="tabler:file-download", width=14)),
-                                    dmc.MenuItem("Download sample data (monthly)", id="reg-download-sample-monthly-btn",
-                                                 leftSection=DashIconify(icon="tabler:file-download", width=14)),
+                                    dmc.MenuItem("Download Excel", id="reg-menu-download-excel",
+                                                 leftSection=DashIconify(icon="tabler:file-spreadsheet", width=14)),
                                     dmc.MenuDivider(),
                                     dmc.MenuItem("Exit", id="reg-menu-exit", color="red",
                                                  leftSection=DashIconify(icon="tabler:door-exit", width=14)),
@@ -638,26 +1188,76 @@ layout = dmc.Container(
                             ],
                         ),
                         dmc.Menu(
-                            trigger="click", openDelay=100, closeDelay=200,
-                            position="bottom-start", shadow="md", offset=6,
+                            trigger="click",
+                            openDelay=100,
+                            closeDelay=200,
+                            position="bottom-start",
+                            shadow="md",
+                            offset=6,
                             children=[
-                                dmc.MenuTarget(dmc.Button("Edit", variant="subtle", color="gray", size="sm", radius="sm")),
+                                dmc.MenuTarget(
+                                    dmc.Button(
+                                        "Edit",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        radius="sm",
+                                    )
+                                ),
                                 dmc.MenuDropdown(className="dashmat-menu-dropdown", children=[
-                                    dmc.MenuItem("Clear all series", id="reg-menu-clear-series", color="red",
-                                                 leftSection=DashIconify(icon="tabler:trash", width=14)),
+                                    dmc.MenuItem("Add AA Tool indices...", id="reg-menu-add-from-db",
+                                                 leftSection=DashIconify(icon="tabler:database", width=14)),
+                                    dmc.MenuDivider(),
+                                    dmc.MenuItem("Add peer-relative portfolios...", id="reg-menu-add-portfolios-peer",
+                                                 leftSection=DashIconify(icon="tabler:users", width=14)),
+                                    dmc.MenuItem("Add index-relative portfolios...", id="reg-menu-add-portfolios-index",
+                                                 leftSection=DashIconify(icon="tabler:chart-line", width=14)),
+                                    dmc.MenuItem("Add alternative portfolios...", id="reg-menu-add-portfolios-other",
+                                                 leftSection=DashIconify(icon="tabler:stack", width=14)),
+                                    dmc.MenuDivider(),
+                                    dmc.MenuItem("Add raw factor data...", id="reg-menu-add-raw-factor",
+                                                 leftSection=DashIconify(icon="tabler:chart-dots", width=14)),
+                                    dmc.MenuItem("Add raw funds...", id="reg-menu-add-raw-funds",
+                                                 leftSection=DashIconify(icon="tabler:building-bank", width=14)),
+                                    dmc.MenuItem("Add raw performance...", id="reg-menu-add-raw-performance",
+                                                 leftSection=DashIconify(icon="tabler:activity-heartbeat", width=14)),
+                                    dmc.MenuDivider(),
+                                    dmc.MenuItem("Add series from file...", id="reg-menu-add-series",
+                                                 leftSection=DashIconify(icon="tabler:upload", width=14)),
+                                    dmc.MenuDivider(),
+                                    dmc.MenuItem("Clear server cache", id="reg-menu-clear-server-cache",
+                                                 leftSection=DashIconify(icon="tabler:server-off", width=14)),
                                 ]),
                             ],
                         ),
-                        dmc.Menu(
-                            trigger="click", openDelay=100, closeDelay=200,
-                            position="bottom-start", shadow="md", offset=6,
-                            children=[
-                                dmc.MenuTarget(dmc.Button("Help", variant="subtle", color="gray", size="sm", radius="sm")),
-                                dmc.MenuDropdown(className="dashmat-menu-dropdown", children=[
-                                    dmc.MenuItem("User Guide", id="reg-menu-help-guide",
-                                                 leftSection=DashIconify(icon="tabler:help-circle", width=14)),
-                                ]),
-                            ],
+                        dmc.Button(
+                            "Switch to Analytics",
+                            id="reg-menu-view-analytics",
+                            size="sm",
+                            radius="md",
+                            variant="gradient",
+                            gradient={"from": "orange", "to": "red", "deg": 90},
+                            leftSection=DashIconify(icon="tabler:chart-line", width=16),
+                        ),
+                        dmc.Button(
+                            "Switch to Optimization",
+                            id="reg-menu-view-portfolio",
+                            size="sm",
+                            radius="md",
+                            variant="gradient",
+                            gradient={"from": "indigo", "to": "cyan", "deg": 90},
+                            leftSection=DashIconify(icon="grommet-icons:optimize", width=16),
+                        ),
+                        dmc.Box(style={"flexGrow": 1}),
+                        dmc.Button(
+                            "Help",
+                            id="reg-menu-help-guide",
+                            variant="gradient",
+                            gradient={"from": "teal", "to": "cyan", "deg": 90},
+                            size="sm",
+                            radius="xl",
+                            className="dashmat-menu-trigger",
+                            leftSection=DashIconify(icon="tabler:help-circle", width=14),
                         ),
                     ],
                 ),
@@ -668,7 +1268,7 @@ layout = dmc.Container(
         html.Div(
             id="reg-welcome-screen",
             children=build_reg_welcome_screen(),
-            style={"display": "flex", "flex": "1", "alignItems": "center", "justifyContent": "center"},
+            style={"display": "block"},
         ),
 
         # Main container
@@ -680,48 +1280,13 @@ layout = dmc.Container(
 
         # Modals
         build_db_add_modal("reg"),
+        build_portfolio_add_modal("reg", AG_GRID_LICENSE_KEY),
+        build_raw_db_add_modal("reg", AG_GRID_LICENSE_KEY),
         build_series_selection_modal(REG_CONFIG),
         build_sheet_select_modal(REG_CONFIG.prefix),
 
         # Help modal
-        dmc.Modal(
-            id="reg-help-modal",
-            title=dmc.Group(gap="xs", children=[
-                dmc.ThemeIcon(DashIconify(icon="tabler:help-circle"), color="blue", variant="light", size="sm"),
-                dmc.Text("Regression Analysis — User Guide", fw=600, size="sm"),
-            ]),
-            size="lg", centered=True, withCloseButton=True, radius="lg",
-            className="dashmat-modal",
-            overlayProps={"blur": 2, "opacity": 0.45},
-            children=[
-                dmc.Accordion(children=[
-                    dmc.AccordionItem(value="overview", children=[
-                        dmc.AccordionControl("Overview"),
-                        dmc.AccordionPanel(dmc.Text(
-                            "Run OLS, Constrained OLS, Style Analysis, Ridge, Lasso, or Elastic Net on return series. "
-                            "Select Y (dependent) and X (independent) series, configure the model, then click Run.",
-                            size="sm")),
-                    ]),
-                    dmc.AccordionItem(value="series", children=[
-                        dmc.AccordionControl("Series Selection"),
-                        dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                            dmc.Text("• Y: Exactly one series as the dependent variable.", size="sm"),
-                            dmc.Text("• X: One or more series as independent variables.", size="sm"),
-                            dmc.Text("• Lag: Shift an X series by N periods before regression.", size="sm"),
-                            dmc.Text("• Min/Max Beta + Enable: Per-variable beta bounds (Constrained OLS).", size="sm"),
-                        ])),
-                    ]),
-                    dmc.AccordionItem(value="models", children=[
-                        dmc.AccordionControl("Models"),
-                        dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                            dmc.Text("• OLS: Full ANOVA, t-stats, p-values, diagnostics.", size="sm"),
-                            dmc.Text("• Style Analysis: Weights sum to 1, bounded [0,1], no intercept.", size="sm"),
-                            dmc.Text("• ARIMA/GARCH: Post-regression residual modeling (OLS/Constrained OLS).", size="sm"),
-                        ])),
-                    ]),
-                ]),
-            ],
-        ),
+        build_reg_help_modal(),
 
         # ---- Stores ----
         dcc.Store(id="reg-series-select", data=[], storage_type="session"),
@@ -746,6 +1311,10 @@ layout = dmc.Container(
         dcc.Store(id="reg-temp-min-beta-store", data={}),
         dcc.Store(id="reg-temp-max-beta-store", data={}),
         dcc.Store(id="reg-temp-enable-constraint-store", data={}),
+        dcc.Store(id="reg-portfolio-add-mode-store", data=None),
+        dcc.Store(id="reg-portfolio-add-rows-store", data=[]),
+        dcc.Store(id="reg-raw-db-add-mode-store", data=None),
+        dcc.Store(id="reg-raw-db-add-rows-store", data=[]),
         # Sheet select temp
         dcc.Store(id="reg-sheet-select-contents-store", data=None),
         dcc.Store(id="reg-sheet-select-filename-store", data=None),
@@ -775,6 +1344,19 @@ layout = dmc.Container(
         # Results
         dcc.Store(id="reg-results-store", data={}, storage_type="session"),
         dcc.Store(id="reg-active-tab-store", data="anova", storage_type="session"),
+        # Save/Load session + cache
+        dcc.Store(id="reg-save-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="reg-load-session-dummy", data=None, storage_type="memory"),
+        dcc.Store(id="reg-server-cache-clear-result", data=None, storage_type="memory"),
+        html.Div(
+            dcc.Upload(
+                id="reg-load-session-upload",
+                children=html.Div(),
+                multiple=False,
+                accept=".json",
+            ),
+            style={"display": "none"},
+        ),
         # Uploads / downloads
         html.Div(
             dcc.Upload(id="reg-upload-data", children=html.Div(), multiple=False),
@@ -809,6 +1391,127 @@ clientside_callback(
     """,
     Output("reg-url-location", "pathname"),
     Input("reg-menu-exit", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { window.location.pathname = '/analyticstool'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-url-location", "pathname", allow_duplicate=True),
+    Input("reg-menu-view-analytics", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { window.location.pathname = '/portopt'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-url-location", "pathname", allow_duplicate=True),
+    Input("reg-menu-view-portfolio", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { window.location.pathname = '/analyticstool'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-url-location", "pathname", allow_duplicate=True),
+    Input("reg-welcome-view-analytics", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) { window.location.pathname = '/portopt'; }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-url-location", "pathname", allow_duplicate=True),
+    Input("reg-welcome-view-portfolio", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        sessionStorage.clear();
+        window.location.reload();
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-load-session-dummy", "data"),
+    Input("reg-menu-clear-local-storage", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        var data = {};
+        for (var i = 0; i < sessionStorage.length; i++) {
+            var key = sessionStorage.key(i);
+            data[key] = sessionStorage.getItem(key);
+        }
+        var blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'dashmat_session.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-save-session-dummy", "data"),
+    Input("reg-menu-save-session", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        setTimeout(function() {
+            var el = document.querySelector('#reg-load-session-upload input[type=\"file\"]');
+            if (el) el.click();
+        }, 100);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-load-session-dummy", "data", allow_duplicate=True),
+    Input("reg-menu-load-session", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(contents) {
+        if (!contents) return window.dash_clientside.no_update;
+        var raw = atob(contents.split(',')[1]);
+        var data = JSON.parse(raw);
+        sessionStorage.clear();
+        for (var key in data) {
+            sessionStorage.setItem(key, data[key]);
+        }
+        window.location.reload();
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-load-session-dummy", "data", allow_duplicate=True),
+    Input("reg-load-session-upload", "contents"),
     prevent_initial_call=True,
 )
 
@@ -947,6 +1650,19 @@ def reg_toggle_window_controls(window_type):
     return is_full, is_full, is_full
 
 
+@callback(
+    Output("reg-server-cache-clear-result", "data"),
+    Input("reg-menu-clear-server-cache", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_clear_server_cache(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    cache_config.cache.clear()
+    clear_dropdown_caches()
+    return {"cleared": True, "timestamp": pd.Timestamp.utcnow().isoformat()}
+
+
 # ---------------------------------------------------------------------------
 # DB add modal (AA Tool indices)
 # ---------------------------------------------------------------------------
@@ -955,11 +1671,12 @@ def reg_toggle_window_controls(window_type):
     Output("reg-db-add-modal", "opened", allow_duplicate=True),
     Output("reg-db-add-series-select", "data", allow_duplicate=True),
     Output("reg-db-add-series-select", "value", allow_duplicate=True),
+    Input("reg-menu-add-from-db", "n_clicks"),
     Input("reg-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def reg_open_db_add_modal(welcome_clicks):
-    return compute_open_db_add_modal(None, welcome_clicks, DB_ENGINE)
+def reg_open_db_add_modal(menu_clicks=None, welcome_clicks=None):
+    return compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
 
 
 @callback(
@@ -1044,6 +1761,703 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
         )
 
 
+@callback(
+    Output("reg-raw-db-add-modal", "opened", allow_duplicate=True),
+    Output("reg-raw-db-add-modal", "title", allow_duplicate=True),
+    Output("reg-raw-db-add-mode-store", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-series-select", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-series-select", "value", allow_duplicate=True),
+    Output("reg-raw-db-add-table-select", "value", allow_duplicate=True),
+    Output("reg-raw-db-add-fee-select", "value", allow_duplicate=True),
+    Output("reg-raw-db-add-include-benchmark", "checked", allow_duplicate=True),
+    Output("reg-raw-db-add-convert-returns", "checked", allow_duplicate=True),
+    Output("reg-raw-db-add-divide-by", "value", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("reg-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Input("reg-menu-add-raw-factor", "n_clicks"),
+    Input("reg-menu-add-raw-funds", "n_clicks"),
+    Input("reg-menu-add-raw-performance", "n_clicks"),
+    Input("reg-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("reg-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("reg-welcome-add-raw-performance-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_open_raw_db_add_modal(
+    factor_clicks,
+    funds_clicks,
+    performance_clicks,
+    welcome_factor_clicks,
+    welcome_funds_clicks,
+    welcome_performance_clicks,
+):
+    return compute_open_raw_db_add_modal(
+        prefix="reg",
+        triggered_id=callback_context.triggered_id,
+        factor_clicks=factor_clicks,
+        funds_clicks=funds_clicks,
+        performance_clicks=performance_clicks,
+        welcome_factor_clicks=welcome_factor_clicks,
+        welcome_funds_clicks=welcome_funds_clicks,
+        welcome_performance_clicks=welcome_performance_clicks,
+        mrd_engine=MRD_ENGINE,
+        perf_engine=PERF_ENGINE,
+    )
+
+
+@callback(
+    Output("reg-raw-db-add-modal", "opened", allow_duplicate=True),
+    Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Output("reg-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("reg-raw-db-add-series-select", "value", allow_duplicate=True),
+    Input("reg-raw-db-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_close_raw_db_add_modal(n_clicks):
+    opened, rows, grid_rows, preview = compute_close_raw_db_add_modal(n_clicks)
+    return opened, rows, grid_rows, preview, True, True, None
+
+
+@callback(
+    Output("reg-raw-db-add-table-select", "disabled"),
+    Output("reg-raw-db-add-fee-select", "data"),
+    Output("reg-raw-db-add-fee-select", "value"),
+    Output("reg-raw-db-add-fee-select", "disabled"),
+    Output("reg-raw-db-add-include-benchmark", "disabled"),
+    Output("reg-raw-db-add-include-benchmark", "checked", allow_duplicate=True),
+    Output("reg-raw-db-factor-controls", "style"),
+    Output("reg-raw-db-add-convert-returns", "checked", allow_duplicate=True),
+    Input("reg-raw-db-add-mode-store", "data"),
+    Input("reg-raw-db-add-series-select", "value"),
+    Input("reg-raw-db-add-modal", "opened"),
+    State("reg-raw-db-add-fee-select", "value"),
+    State("reg-raw-db-add-include-benchmark", "checked"),
+    State("reg-raw-db-add-convert-returns", "checked"),
+    prevent_initial_call=True,
+)
+def reg_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_include_benchmark, current_convert):
+    if not opened:
+        raise PreventUpdate
+
+    triggered_id = callback_context.triggered_id
+    preserve_series_selection_state = triggered_id == "reg-raw-db-add-series-select"
+    mode_key = str(mode or "").strip().lower()
+    if mode_key == "factor":
+        default_convert = False
+        if series_key:
+            meta = get_factor_option_meta_cached(MRD_ENGINE).get(str(series_key), {})
+            default_convert = factor_defaults_to_returns(meta.get("factor_name"))
+        convert_value = default_convert
+        fee_options = [
+            {"value": "gross", "label": "Gross"},
+            {"value": "net", "label": "Net"},
+        ]
+        fee_values = {str(opt["value"]) for opt in fee_options}
+        fee_value = str(current_fee) if preserve_series_selection_state and str(current_fee) in fee_values else "net"
+        return (
+            True,
+            fee_options,
+            fee_value,
+            True,
+            True,
+            False,
+            {},
+            convert_value,
+        )
+
+    if mode_key == "funds":
+        fee_options = [
+            {"value": "gross", "label": "Gross"},
+            {"value": "net", "label": "Net"},
+        ]
+        fee_values = {str(opt["value"]) for opt in fee_options}
+        fee_value = str(current_fee) if str(current_fee) in fee_values else "net"
+        return (
+            False,
+            fee_options,
+            fee_value,
+            False,
+            True,
+            False,
+            {"display": "none"},
+            False,
+        )
+
+    fee_options = [
+        {"value": "G", "label": "Gross"},
+        {"value": "N", "label": "Net"},
+    ]
+    fee_values = {str(opt["value"]) for opt in fee_options}
+    fee_value = str(current_fee) if str(current_fee) in fee_values else "N"
+    include_value = bool(current_include_benchmark) if current_include_benchmark is not None else False
+    return (
+        False,
+        fee_options,
+        fee_value,
+        False,
+        False,
+        include_value,
+        {"display": "none"},
+        False,
+    )
+
+
+@callback(
+    Output("reg-raw-db-add-divide-by", "disabled"),
+    Input("reg-raw-db-add-mode-store", "data"),
+    Input("reg-raw-db-add-convert-returns", "checked"),
+    Input("reg-raw-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+def reg_toggle_raw_divide_by(mode, convert_to_returns, opened):
+    if not opened:
+        raise PreventUpdate
+    return not (str(mode or "").strip().lower() == "factor" and not bool(convert_to_returns))
+
+
+@callback(
+    Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-raw-db-add-row-btn", "n_clicks"),
+    State("reg-raw-db-add-rows-store", "data"),
+    State("reg-raw-db-add-mode-store", "data"),
+    State("reg-raw-db-add-series-select", "value"),
+    State("reg-raw-db-add-table-select", "value"),
+    State("reg-raw-db-add-fee-select", "value"),
+    State("reg-raw-db-add-include-benchmark", "checked"),
+    State("reg-raw-db-add-convert-returns", "checked"),
+    State("reg-raw-db-add-divide-by", "value"),
+    prevent_initial_call=True,
+)
+def reg_stage_raw_db_row(
+    n_add,
+    staged_rows,
+    mode,
+    series_key,
+    table_choice,
+    fee_choice,
+    include_benchmark,
+    convert_to_returns,
+    divide_by,
+):
+    n_no = no_update
+    if not n_add:
+        raise PreventUpdate
+
+    mode_key = str(mode or "").strip().lower()
+    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+    key = str(series_key or "").strip()
+    if mode_key not in {"factor", "funds", "performance"}:
+        return rows, rows, "Select a raw import type first.", False
+    if not key:
+        return rows, rows, "Select a series to add.", False
+
+    if mode_key == "factor":
+        meta = get_factor_option_meta_cached(MRD_ENGINE).get(key)
+        if not meta:
+            return rows, rows, "Selected factor series is unavailable.", False
+        import_name = str(meta.get("import_name", "")).strip()
+        if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+            return rows, rows, f"Series `{import_name}` is already staged.", False
+        convert = bool(convert_to_returns)
+        div_value = pd.to_numeric(pd.Series([divide_by]), errors="coerce").iloc[0]
+        if not convert and (pd.isna(div_value) or float(div_value) == 0.0):
+            return rows, rows, "Divide by must be a non-zero number when convert-to-returns is unchecked.", False
+        row_id = f"factor:{key}"
+        row = {
+            "row_id": row_id,
+            "mode": "factor",
+            "series_key": key,
+            "series_label": str(meta.get("label", import_name)),
+            "import_name": import_name,
+            "convert_to_returns": convert,
+            "divide_by": float(div_value) if not convert else 100.0,
+            "Series": str(meta.get("label", import_name)),
+            "Table": "",
+            "Fee": "",
+            "Include Benchmark": "",
+            "Convert to Returns": "Yes" if convert else "No",
+            "Divide By": "" if convert else float(div_value),
+        }
+        rows.append(row)
+        return rows, rows, n_no, True
+
+    if mode_key == "funds":
+        meta = get_fund_option_meta_cached(MRD_ENGINE).get(key)
+        if not meta:
+            return rows, rows, "Selected fund series is unavailable.", False
+        base_name = str(meta.get("import_name", "")).strip()
+        table_key = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
+        fee_key = "net" if str(fee_choice or "").lower().startswith("n") else "gross"
+        if table_key == "daily" and fee_key == "net":
+            import_name = base_name
+        elif table_key == "monthly" and fee_key == "net":
+            import_name = f"{base_name}_M"
+        elif table_key == "daily" and fee_key == "gross":
+            import_name = f"{base_name}_G"
+        else:
+            import_name = f"{base_name}_GM"
+        if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+            return rows, rows, f"Series `{import_name}` is already staged.", False
+        row_id = f"funds:{key}:{table_key}:{fee_key}"
+        row = {
+            "row_id": row_id,
+            "mode": "funds",
+            "series_key": key,
+            "series_label": str(meta.get("label", base_name)),
+            "import_name": import_name,
+            "table_choice": table_key,
+            "fee_choice": fee_key,
+            "Series": import_name,
+            "Table": "Monthly" if table_key == "monthly" else "Daily",
+            "Fee": "Net" if fee_key == "net" else "Gross",
+            "Include Benchmark": "",
+            "Convert to Returns": "",
+            "Divide By": "",
+        }
+        rows.append(row)
+        return rows, rows, n_no, True
+
+    meta = get_performance_option_meta_cached(PERF_ENGINE).get(key)
+    if not meta:
+        return rows, rows, "Selected performance series is unavailable.", False
+    base_name = str(meta.get("import_name", "")).strip()
+    table_key = "monthly" if str(table_choice or "").lower() == "monthly" else "daily"
+    fee_key = str(fee_choice or "N").upper()
+    include_bm = bool(include_benchmark)
+    import_name = base_name
+    if table_key == "monthly":
+        import_name = f"{import_name}_M"
+    if fee_key == "G":
+        import_name = f"{import_name}_G"
+    if include_bm:
+        import_name = f"{import_name}_withBM"
+    if any(str(r.get("import_name", "")).strip() == import_name for r in rows):
+        return rows, rows, f"Series `{import_name}` is already staged.", False
+    row_id = f"performance:{key}:{table_key}:{fee_key}:{int(include_bm)}"
+    row = {
+        "row_id": row_id,
+        "mode": "performance",
+        "series_key": key,
+        "series_label": str(meta.get("label", base_name)),
+        "import_name": import_name,
+        "table_choice": table_key,
+        "fee_choice": fee_key,
+        "include_benchmark": include_bm,
+        "Series": import_name,
+        "Table": "Monthly" if table_key == "monthly" else "Daily",
+        "Fee": "Gross" if fee_key == "G" else "Net",
+        "Include Benchmark": "Yes" if include_bm else "No",
+        "Convert to Returns": "",
+        "Divide By": "",
+    }
+    rows.append(row)
+    return rows, rows, n_no, True
+
+
+@callback(
+    Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-raw-db-delete-row-btn", "n_clicks"),
+    State("reg-raw-db-add-rows-store", "data"),
+    State("reg-raw-db-add-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+def reg_delete_raw_db_row(n_delete, staged_rows, selected_rows):
+    if not n_delete:
+        raise PreventUpdate
+    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+    n_no = no_update
+    if not rows:
+        return rows, rows, "No staged rows to delete.", False
+    selected = selected_rows or []
+    if not selected:
+        return rows, rows, "Select one staged row to delete.", False
+    selected_id = str((selected[0] or {}).get("row_id", "")).strip()
+    if not selected_id:
+        return rows, rows, "Select one staged row to delete.", False
+    kept = [r for r in rows if str(r.get("row_id", "")).strip() != selected_id]
+    return kept, kept, n_no, True
+
+
+@callback(
+    Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-raw-db-clear-rows-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_clear_raw_db_rows(n_clear):
+    if not n_clear:
+        raise PreventUpdate
+    return [], [], no_update, True
+
+
+clientside_callback(
+    js_portfolio_ok_disabled(),
+    Output("reg-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Input("reg-raw-db-add-rows-store", "data"),
+    Input("reg-raw-db-add-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
+    Input("reg-raw-db-add-modal", "opened"),
+    Input("reg-raw-db-add-mode-store", "data"),
+    Input("reg-raw-db-add-series-select", "value"),
+    Input("reg-raw-db-add-table-select", "value"),
+    Input("reg-raw-db-add-fee-select", "value"),
+    Input("reg-raw-db-add-include-benchmark", "checked"),
+    Input("reg-raw-db-add-convert-returns", "checked"),
+    Input("reg-raw-db-add-divide-by", "value"),
+    prevent_initial_call=True,
+)
+def reg_update_raw_db_preview(
+    opened,
+    mode,
+    series_key,
+    table_choice,
+    fee_choice,
+    include_benchmark,
+    convert_to_returns,
+    divide_by,
+):
+    if not opened:
+        raise PreventUpdate
+    preview_row = build_preview_row_from_controls(
+        mode=mode,
+        series_key=series_key,
+        table_choice=table_choice,
+        fee_choice=fee_choice,
+        include_benchmark=include_benchmark,
+        convert_to_returns=convert_to_returns,
+        divide_by=divide_by,
+    )
+    if not preview_row:
+        return "Select a series to preview option-adjusted results (first 6 rows)."
+
+    lines = get_preview_lines_for_row(preview_row, MRD_ENGINE, PERF_ENGINE)
+    if not lines:
+        return "No rows returned for the selected options."
+    return "\n".join(lines)
+
+
+@callback(
+    Output("reg-portfolio-add-modal", "opened", allow_duplicate=True),
+    Output("reg-portfolio-add-modal", "title", allow_duplicate=True),
+    Output("reg-portfolio-add-mode-store", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-series-select", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-series-select", "value", allow_duplicate=True),
+    Output("reg-portfolio-add-type-select", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-type-select", "value", allow_duplicate=True),
+    Output("reg-portfolio-add-benchmark-type-select", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-benchmark-type-select", "value", allow_duplicate=True),
+    Output("reg-portfolio-add-include-benchmark", "checked", allow_duplicate=True),
+    Output("reg-portfolio-add-benchmark-type-select", "disabled", allow_duplicate=True),
+    Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-menu-add-portfolios-peer", "n_clicks"),
+    Input("reg-menu-add-portfolios-index", "n_clicks"),
+    Input("reg-menu-add-portfolios-other", "n_clicks"),
+    Input("reg-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("reg-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("reg-welcome-add-portfolios-other-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_open_portfolio_add_modal(
+    peer_clicks,
+    index_clicks,
+    other_clicks,
+    welcome_peer_clicks,
+    welcome_index_clicks,
+    welcome_other_clicks,
+):
+    return compute_open_portfolio_add_modal(
+        prefix="reg",
+        triggered_id=callback_context.triggered_id,
+        peer_clicks=peer_clicks,
+        index_clicks=index_clicks,
+        other_clicks=other_clicks,
+        welcome_peer_clicks=welcome_peer_clicks,
+        welcome_index_clicks=welcome_index_clicks,
+        welcome_other_clicks=welcome_other_clicks,
+        db_engine=DB_ENGINE,
+    )
+
+
+@callback(
+    Output("reg-portfolio-add-include-benchmark", "disabled"),
+    Output("reg-portfolio-add-include-benchmark", "checked", allow_duplicate=True),
+    Input("reg-portfolio-add-mode-store", "data"),
+    Input("reg-portfolio-add-series-select", "value"),
+    State("reg-portfolio-add-include-benchmark", "checked"),
+    prevent_initial_call=True,
+)
+def reg_sync_include_benchmark_enabled(mode, selected_portfolio, current_checked):
+    return compute_sync_include_benchmark_enabled(mode, selected_portfolio, current_checked, DB_ENGINE)
+
+
+clientside_callback(
+    js_portfolio_benchmark_toggle(),
+    Output("reg-portfolio-add-benchmark-type-select", "disabled", allow_duplicate=True),
+    Output("reg-portfolio-add-benchmark-type-select", "value", allow_duplicate=True),
+    Input("reg-portfolio-add-include-benchmark", "checked"),
+    State("reg-portfolio-add-benchmark-type-select", "data"),
+    State("reg-portfolio-add-benchmark-type-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    js_portfolio_add_row(),
+    Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-portfolio-add-row-btn", "n_clicks"),
+    State("reg-portfolio-add-rows-store", "data"),
+    State("reg-portfolio-add-series-select", "value"),
+    State("reg-portfolio-add-type-select", "value"),
+    State("reg-portfolio-add-include-benchmark", "checked"),
+    State("reg-portfolio-add-benchmark-type-select", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_portfolio_delete_row(),
+    Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-portfolio-delete-row-btn", "n_clicks"),
+    State("reg-portfolio-add-rows-store", "data"),
+    State("reg-portfolio-add-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_portfolio_clear_rows(),
+    Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-portfolio-clear-rows-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("reg-portfolio-add-modal", "opened", allow_duplicate=True),
+    Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Input("reg-portfolio-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_close_portfolio_add_modal(n_clicks):
+    return compute_close_portfolio_add_modal(n_clicks)
+
+
+clientside_callback(
+    js_portfolio_ok_disabled(),
+    Output("reg-portfolio-add-ok-button", "disabled"),
+    Input("reg-portfolio-add-rows-store", "data"),
+    Input("reg-portfolio-add-modal", "opened"),
+)
+
+
+@callback(
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-value-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-modal", "opened", allow_duplicate=True),
+    Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-raw-db-add-error-alert", "hide", allow_duplicate=True),
+    Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
+    Input("reg-raw-db-add-ok-button", "n_clicks"),
+    State("reg-raw-db-add-mode-store", "data"),
+    State("reg-raw-db-add-rows-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_add_raw_series_from_database(
+    n_clicks,
+    mode,
+    staged_rows,
+    existing_data,
+    existing_periodicity,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+    mode_key = str(mode or "").strip().lower()
+    if mode_key not in {"factor", "funds", "performance"} or not rows:
+        return (
+            no_update, no_update, no_update, no_update,
+            True,
+            rows,
+            rows,
+            "Stage at least one row before importing.",
+            False,
+            "Select a series to preview option-adjusted results (first 6 rows).",
+        )
+
+    try:
+        if mode_key == "factor":
+            load_result = load_factor_series(MRD_ENGINE, rows)
+        elif mode_key == "funds":
+            load_result = load_fund_series(MRD_ENGINE, rows)
+        else:
+            load_result = load_performance_series(PERF_ENGINE, rows)
+        new_df = load_result.returns_df
+        if new_df.empty:
+            raise ValueError("No rows returned for staged raw-data requests.")
+
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [s for s in new_df.columns if s in existing_cols]
+            if duplicates:
+                return (
+                    no_update, no_update, no_update, no_update,
+                    True,
+                    rows,
+                    rows,
+                    f"Cannot add duplicate series: {', '.join(duplicates)}",
+                    False,
+                    no_update,
+                )
+
+        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        merged_periodicity = merge_result.combined_periodicity
+        return (
+            df_to_json(merged_df),
+            merged_periodicity,
+            merged_periodicity,
+            merged_periodicity,
+            False,
+            [],
+            [],
+            no_update,
+            True,
+            "Select a series to preview option-adjusted results (first 6 rows).",
+        )
+    except Exception as exc:
+        return (
+            no_update, no_update, no_update, no_update,
+            True,
+            rows,
+            rows,
+            f"Error loading raw database series: {exc}",
+            False,
+            no_update,
+        )
+
+
+@callback(
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-value-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-modal", "opened", allow_duplicate=True),
+    Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
+    Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "children", allow_duplicate=True),
+    Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Input("reg-portfolio-add-ok-button", "n_clicks"),
+    State("reg-portfolio-add-mode-store", "data"),
+    State("reg-portfolio-add-rows-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_add_portfolios_from_database(
+    n_clicks,
+    mode,
+    staged_rows,
+    existing_data,
+    existing_periodicity,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    rows = [r for r in (staged_rows or []) if isinstance(r, dict)]
+    if mode not in {"peer", "index", "other"} or not rows:
+        return (
+            no_update, no_update, no_update, no_update,
+            True,
+            rows,
+            rows,
+            "Stage at least one portfolio row before importing.",
+            False,
+        )
+
+    try:
+        load_result = load_portfolio_series(
+            DB_ENGINE,
+            mode,
+            rows,
+            performance_engine=PERF_ENGINE,
+        )
+        new_df = load_result.returns_df
+        if new_df.empty:
+            raise ValueError("No rows returned for staged portfolio requests.")
+
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [s for s in new_df.columns if s in existing_cols]
+            if duplicates:
+                return (
+                    no_update, no_update, no_update, no_update,
+                    True,
+                    rows,
+                    rows,
+                    f"Cannot add duplicate series: {', '.join(duplicates)}",
+                    False,
+                )
+
+        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        merged_periodicity = merge_result.combined_periodicity
+        return (
+            df_to_json(merged_df),
+            merged_periodicity,
+            merged_periodicity,
+            merged_periodicity,
+            False,
+            [],
+            [],
+            no_update,
+            True,
+        )
+    except Exception as exc:
+        return (
+            no_update, no_update, no_update, no_update,
+            True,
+            rows,
+            rows,
+            f"Error loading portfolio series: {exc}",
+            False,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
@@ -1123,7 +2537,7 @@ def reg_handle_sheet_select_ok(n_clicks, selected_sheets, contents, filename, ex
 )
 def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     hide_welcome = {"display": "none"}
-    show_welcome = {"display": "flex", "flex": "1", "alignItems": "center", "justifyContent": "center"}
+    show_welcome = {"display": "block"}
     show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     hide_main = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     if not raw_data:
@@ -1537,7 +2951,7 @@ def reg_save_date_range(start, end, stored):
     Output("reg-series-select", "data", allow_duplicate=True),
     Output("reg-dependent-var-store", "data", allow_duplicate=True),
     Output("reg-series-order-store", "data", allow_duplicate=True),
-    Input("reg-menu-clear-series", "n_clicks"),
+    Input("reg-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
 )
 def reg_clear_series(n_clicks):
@@ -1598,6 +3012,148 @@ def reg_download_sample_monthly(n):
     if not n:
         raise PreventUpdate
     return dcc.send_file(str(get_sample_file_path("monthly")))
+
+
+# ---------------------------------------------------------------------------
+# File menu state + Excel export
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("reg-menu-save-session", "disabled"),
+    Output("reg-menu-download-excel", "disabled"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-results-store", "data"),
+    prevent_initial_call=False,
+)
+def reg_toggle_file_menu_actions(raw_data, results):
+    save_disabled = not bool(raw_data)
+    download_disabled = not bool(results)
+    return save_disabled, download_disabled
+
+
+@callback(
+    Output("reg-download-excel", "data"),
+    Input("reg-menu-download-excel", "n_clicks"),
+    State("reg-results-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_download_excel(n_clicks, results):
+    if n_clicks is None or not results:
+        raise PreventUpdate
+
+    summary_rows = []
+    coef_rows = []
+    diag_rows = []
+    model_rows = []
+    predicted_series = {}
+    residual_series = {}
+
+    for name, entry in (results or {}).items():
+        if not isinstance(entry, dict):
+            continue
+
+        config = entry.get("config") or {}
+        windows = entry.get("window_results") or []
+        summary_rows.append(
+            {
+                "Regression": name,
+                "Model": config.get("model"),
+                "Dependent": entry.get("dependent_var"),
+                "Independent": ", ".join(entry.get("independent_vars") or []),
+                "Windows": len(windows),
+                "Periodicity": entry.get("periodicity"),
+            }
+        )
+
+        for idx, window in enumerate(windows, start=1):
+            if not isinstance(window, dict):
+                continue
+            coefs = window.get("coefficients") or {}
+            pvals = window.get("p_values") or {}
+            for term, beta in coefs.items():
+                coef_rows.append(
+                    {
+                        "Regression": name,
+                        "Window": idx,
+                        "Term": term,
+                        "Coefficient": beta,
+                        "P-Value": pvals.get(term),
+                    }
+                )
+            diag_rows.append(
+                {
+                    "Regression": name,
+                    "Window": idx,
+                    "Estimation Start": window.get("est_start"),
+                    "Estimation End": window.get("est_end"),
+                    "R-Squared": window.get("r_squared"),
+                    "Adj R-Squared": window.get("adj_r_squared"),
+                    "Residual Std": window.get("residual_std"),
+                    "Observations": window.get("n_obs"),
+                }
+            )
+
+        arima_garch = entry.get("arima_garch_summary") or {}
+        for model_key in ("arima", "garch"):
+            details = arima_garch.get(model_key)
+            if not isinstance(details, dict):
+                continue
+            model_rows.append(
+                {
+                    "Regression": name,
+                    "Model": model_key.upper(),
+                    "Order": str(details.get("order")),
+                    "AIC": details.get("aic"),
+                    "BIC": details.get("bic"),
+                    "Params": json.dumps(details.get("params") or {}, default=str),
+                }
+            )
+
+        predicted_json = entry.get("predicted_json")
+        if predicted_json:
+            pred_df = json_to_df(predicted_json)
+            if pred_df is not None and not pred_df.empty:
+                predicted_series[name] = pred_df.iloc[:, 0]
+
+        residuals_json = entry.get("residuals_json")
+        if residuals_json:
+            resid_df = json_to_df(residuals_json)
+            if resid_df is not None and not resid_df.empty:
+                residual_series[name] = resid_df.iloc[:, 0]
+
+    if not summary_rows:
+        raise PreventUpdate
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        write_excel_with_autofit(writer, pd.DataFrame(summary_rows), "Summary", index=False)
+
+        coef_df = pd.DataFrame(coef_rows)
+        if not coef_df.empty:
+            write_excel_with_autofit(writer, coef_df, "Coefficients", index=False)
+
+        diag_df = pd.DataFrame(diag_rows)
+        if not diag_df.empty:
+            write_excel_with_autofit(writer, diag_df, "Diagnostics", index=False)
+
+        model_df = pd.DataFrame(model_rows)
+        if not model_df.empty:
+            write_excel_with_autofit(writer, model_df, "ARIMA_GARCH", index=False)
+
+        pred_df = pd.DataFrame(predicted_series).sort_index()
+        if not pred_df.empty:
+            pred_export = pred_df.copy()
+            pred_export.index.name = "Date"
+            write_excel_with_autofit(writer, pred_export.reset_index(), "Predicted", index=False)
+
+        resid_df = pd.DataFrame(residual_series).sort_index()
+        if not resid_df.empty:
+            resid_export = resid_df.copy()
+            resid_export.index.name = "Date"
+            write_excel_with_autofit(writer, resid_export.reset_index(), "Residuals", index=False)
+
+    output.seek(0)
+    return dcc.send_bytes(output.getvalue(), "regression_results.xlsx")
 
 
 # ---------------------------------------------------------------------------
