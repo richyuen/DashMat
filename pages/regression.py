@@ -314,11 +314,15 @@ def _reg_build_table_coldefs(fields: list[str], header_overrides: dict[str, str]
 
 
 def _reg_visible_summary_cols(fields: list[str]) -> list[str]:
-    preferred = ["Date", "R²", "Adj R²", "Residual Std", "N Obs", "ARIMA_AIC", "GARCH_AIC", "ARIMA_BIC", "GARCH_BIC", "ARIMA_Error", "GARCH_Error"]
-    selected = [f for f in preferred if f in fields]
+    base = ["Date", "R²", "Adj R²", "Residual Std", "N Obs"]
+    arima_cols = ["ARIMA_AIC", "GARCH_AIC", "ARIMA_BIC", "GARCH_BIC", "ARIMA_Error", "GARCH_Error"]
+    selected = [f for f in base if f in fields]
     beta_cols = [f for f in fields if str(f).startswith("β_")]
     for col in beta_cols:
         if col not in selected:
+            selected.append(col)
+    for col in arima_cols:
+        if col in fields and col not in selected:
             selected.append(col)
     if "Window" in fields and "Window" not in selected:
         selected.insert(0, "Window")
@@ -1683,15 +1687,6 @@ def build_reg_main_layout():
                                                     {"value": "chart", "label": "Chart"},
                                                 ],
                                                 value="chart",
-                                                size="sm",
-                                            ),
-                                            dmc.SegmentedControl(
-                                                id="reg-weights-detail-switch",
-                                                data=[
-                                                    {"value": "basic", "label": "Basic"},
-                                                    {"value": "advanced", "label": "Advanced"},
-                                                ],
-                                                value="basic",
                                                 size="sm",
                                             ),
                                         ],
@@ -4719,28 +4714,6 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
     df_roll["Date"] = pd.to_datetime(df_roll["Date"])
     df_roll = df_roll.sort_values("Date")
 
-    fig = go.Figure()
-    numeric_cols = [
-        c for c in df_roll.columns
-        if c != "Date" and not str(c).startswith(("ARIMA_", "GARCH_"))
-    ]
-    visible_default = "R²" if "R²" in numeric_cols else (numeric_cols[0] if numeric_cols else None)
-    for col in numeric_cols[:8]:
-        if df_roll[col].notna().any():
-            fig.add_trace(
-                go.Scatter(
-                    x=df_roll["Date"],
-                    y=df_roll[col],
-                    mode="lines",
-                    name=col,
-                    line={"width": 1.5},
-                    visible=True if col == visible_default else "legendonly",
-                )
-            )
-    fig.update_layout(height=380, title="Rolling Summary", margin={"l": 50, "r": 20, "t": 30, "b": 50},
-                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
-    apply_chart_theme(fig, theme)
-
     df_display = df_roll.assign(Date=df_roll["Date"].dt.strftime("%Y-%m-%d"))
     df_display = _reg_drop_empty_columns(df_display, keep_fields=["Date"])
     fields = list(df_display.columns)
@@ -4749,6 +4722,35 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
     else:
         table_fields = fields
     header_overrides = _reg_collect_arima_param_headers(wrs, entry, allow_run_level_fallback=use_run_level_fallback)
+
+    fig = go.Figure()
+    chart_fields = []
+    for col in table_fields:
+        if col == "Date" or col not in df_roll.columns:
+            continue
+        try:
+            if not pd.api.types.is_numeric_dtype(df_roll[col]):
+                continue
+        except Exception:
+            continue
+        if df_roll[col].notna().any():
+            chart_fields.append(col)
+
+    visible_default = "R²" if "R²" in chart_fields else (chart_fields[0] if chart_fields else None)
+    for col in chart_fields:
+        fig.add_trace(
+            go.Scatter(
+                x=df_roll["Date"],
+                y=df_roll[col],
+                mode="lines",
+                name=col,
+                line={"width": 1.5},
+                visible=True if col == visible_default else "legendonly",
+            )
+        )
+    fig.update_layout(height=380, title="Rolling Summary", margin={"l": 50, "r": 20, "t": 30, "b": 50},
+                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
+    apply_chart_theme(fig, theme)
 
     table = dag.AgGrid(
         className="ag-theme-alpine",
@@ -4908,11 +4910,10 @@ def reg_render_rolling_returns(
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("reg-weights-chart-switch", "value"),
-    Input("reg-weights-detail-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_weights(selected, results, view_mode, detail_mode, theme):
+def reg_render_weights(selected, results, view_mode, theme):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -4922,13 +4923,7 @@ def reg_render_weights(selected, results, view_mode, detail_mode, theme):
     if not wrs:
         return dmc.Text("No results.", size="sm", c="dimmed")
 
-    alert = None
-    if model != "style_analysis":
-        alert = dmc.Alert("Weights tab is most useful for Style Analysis (coefficients sum to 1).",
-                          color="yellow", title="Note", mb="sm")
-
     dates = [pd.Timestamp(wr["apply_start"]) for wr in wrs]
-    use_run_level_fallback = len(wrs) == 1
     coef_keys = []
     for wr in wrs:
         for key in (wr.get("coefficients") or {}).keys():
@@ -4944,35 +4939,26 @@ def reg_render_weights(selected, results, view_mode, detail_mode, theme):
             }
             for key in coef_keys:
                 row[key] = (wr.get("coefficients") or {}).get(key)
-            _reg_apply_arima_garch_columns(
-                row,
-                _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
-            )
             table_rows.append(row)
 
         table_df = pd.DataFrame(table_rows)
         table_df = _reg_drop_empty_columns(table_df, keep_fields=["Window", "Date"])
-        fields = list(table_df.columns)
-        if (detail_mode or "basic") == "basic":
-            table_fields = _reg_visible_weight_cols(fields)
-        else:
-            table_fields = fields
-        header_overrides = _reg_collect_arima_param_headers(wrs, entry, allow_run_level_fallback=use_run_level_fallback)
+        table_fields = list(table_df.columns)
 
-        children = []
-        if alert:
-            children.append(alert)
-        children.append(
+        return dmc.Stack(
+            gap="sm",
+            p="sm",
+            children=[
             dag.AgGrid(
                 className="ag-theme-alpine",
-                columnDefs=_reg_build_table_coldefs(table_fields, header_overrides=header_overrides),
+                columnDefs=_reg_build_table_coldefs(table_fields),
                 rowData=table_df[table_fields].to_dict("records"),
                 defaultColDef={"resizable": True, "sortable": True},
                 style={"height": "420px"},
                 dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
             )
+            ],
         )
-        return dmc.Stack(gap="sm", p="sm", children=children)
 
     fig = go.Figure()
     if len(wrs) > 1 and coef_keys:
@@ -4991,11 +4977,11 @@ def reg_render_weights(selected, results, view_mode, detail_mode, theme):
                       legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
     apply_chart_theme(fig, theme)
 
-    children = []
-    if alert:
-        children.append(alert)
-    children.append(dcc.Graph(figure=fig, config={"displayModeBar": False}))
-    return dmc.Stack(gap="sm", p="sm", children=children)
+    return dmc.Stack(
+        gap="sm",
+        p="sm",
+        children=[dcc.Graph(figure=fig, config={"displayModeBar": False})],
+    )
 
 
 # ---------------------------------------------------------------------------

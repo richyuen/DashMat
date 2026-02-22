@@ -933,7 +933,7 @@ def test_reg_render_weights_table_mode_returns_grid_with_wide_date_column(regres
         }
     }
 
-    stack = regression_page.reg_render_weights("R1", results, "table", "basic", "light")
+    stack = regression_page.reg_render_weights("R1", results, "table", "light")
     children = list(getattr(stack, "children", []) or [])
     grid = children[0]
 
@@ -1055,11 +1055,50 @@ def test_reg_render_rolling_table_merges_arima_garch_columns(regression_page):
 
     basic_grid = regression_page.reg_render_rolling("R1", results, "table", "basic", "light")
     basic_fields = [c.get("field") for c in getattr(basic_grid, "columnDefs", [])]
+    assert basic_fields.index("β_X1") < basic_fields.index("ARIMA_AIC")
     assert "ARIMA_AIC" in basic_fields
     assert "ARIMA_ar_L1" not in basic_fields
 
 
-def test_reg_render_weights_table_merges_arima_garch_columns(regression_page):
+def test_reg_render_rolling_chart_respects_basic_advanced_field_scope(regression_page):
+    results = {
+        "R1": {
+            "window_results": [
+                {
+                    "apply_start": "2024-01-01",
+                    "r_squared": 0.5,
+                    "adj_r_squared": 0.4,
+                    "residual_std": 0.02,
+                    "n_obs": 20,
+                    "coefficients": {"intercept": 0.1, "X1": 0.3},
+                    "arima_garch": {"arima": {"order": [1, 0, 0], "aic": 1.0, "bic": 1.1, "params": {"ar.L1": 0.2}}},
+                },
+                {
+                    "apply_start": "2024-02-01",
+                    "r_squared": 0.6,
+                    "adj_r_squared": 0.5,
+                    "residual_std": 0.01,
+                    "n_obs": 20,
+                    "coefficients": {"intercept": 0.1, "X1": 0.4},
+                    "arima_garch": {"arima": {"order": [1, 0, 0], "aic": 0.9, "bic": 1.0, "params": {"ar.L1": 0.25}}},
+                },
+            ]
+        }
+    }
+
+    basic_chart = regression_page.reg_render_rolling("R1", results, "chart", "basic", "light")
+    basic_names = [trace.name for trace in getattr(getattr(basic_chart, "figure", None), "data", [])]
+    assert "β_intercept" in basic_names
+    assert "β_X1" in basic_names
+    assert "ARIMA_AIC" in basic_names
+    assert "ARIMA_ar_L1" not in basic_names
+
+    advanced_chart = regression_page.reg_render_rolling("R1", results, "chart", "advanced", "light")
+    advanced_names = [trace.name for trace in getattr(getattr(advanced_chart, "figure", None), "data", [])]
+    assert "ARIMA_ar_L1" in advanced_names
+
+
+def test_reg_render_weights_table_only_shows_prediction_coefficients(regression_page):
     results = {
         "R1": {
             "config": {"model": "ols"},
@@ -1078,19 +1117,11 @@ def test_reg_render_weights_table_merges_arima_garch_columns(regression_page):
         }
     }
 
-    comp = regression_page.reg_render_weights("R1", results, "table", "advanced", "light")
+    comp = regression_page.reg_render_weights("R1", results, "table", "light")
     children = list(getattr(comp, "children", []) or [])
     grid = next(c for c in children if getattr(c, "columnDefs", None) is not None)
     fields = [c.get("field") for c in getattr(grid, "columnDefs", [])]
-    assert "GARCH_AIC" in fields
-    assert "GARCH_omega" in fields
+    assert fields == ["Window", "Date", "X1"]
     row_data = getattr(grid, "rowData", []) or []
-    assert row_data[0].get("GARCH_omega") == 0.12
-    assert row_data[1].get("GARCH_omega") == 0.10
-
-    comp_basic = regression_page.reg_render_weights("R1", results, "table", "basic", "light")
-    children_basic = list(getattr(comp_basic, "children", []) or [])
-    grid_basic = next(c for c in children_basic if getattr(c, "columnDefs", None) is not None)
-    basic_fields = [c.get("field") for c in getattr(grid_basic, "columnDefs", [])]
-    assert "GARCH_AIC" in basic_fields
-    assert "GARCH_omega" not in basic_fields
+    assert row_data[0].get("X1") == 0.3
+    assert row_data[1].get("X1") == 0.4
