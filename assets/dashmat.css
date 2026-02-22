@@ -49,16 +49,19 @@
 .dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-cell-wrapper,
 .dashmat-modal .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-cell-wrapper {
     justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding-left: 0;
+    padding-right: 0;
 }
 
-.dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-checkbox-input-wrapper,
-.dashmat-modal .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-checkbox-input-wrapper,
-.dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-selection-checkbox,
-.dashmat-modal .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-selection-checkbox {
-    display: inline-flex;
+.dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-cell-wrapper .ag-cell-value,
+.dashmat-modal .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-cell-wrapper .ag-cell-value {
+    display: flex;
+    width: 100%;
+    height: 100%;
     align-items: center;
     justify-content: center;
-    margin: 0;
 }
 
 .dashmat-page-container .ag-theme-alpine.dashmat-series-modal-grid .ag-cell.dashmat-series-center-cell .ag-row-drag,
