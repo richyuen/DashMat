@@ -474,7 +474,7 @@ def test_reg_render_statistics_includes_actual_predicted_residual_when_available
     assert "Residual" in col_fields
 
 
-def test_reg_render_statistics_prefers_run_series_stats_when_raw_data_available(monkeypatch, regression_page):
+def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkeypatch, regression_page):
     idx = pd.date_range("2024-01-01", periods=5, freq="B")
     raw_df = pd.DataFrame(
         {
@@ -496,40 +496,56 @@ def test_reg_render_statistics_prefers_run_series_stats_when_raw_data_available(
         "predicted_json": df_to_json(pd.DataFrame({"predicted": raw_df["SPX_TRIndex"]}, index=idx)),
         "residuals_json": df_to_json(pd.DataFrame({"residuals": np.zeros(len(idx))}, index=idx)),
     }
-    captured = {}
+    calls = []
 
     def _fake_stats(*args, **kwargs):
-        captured["args"] = args
-        return [
-            {
-                "Series": "SPX_TRIndex",
-                "Start Date": "2024-01-01",
-                "End Date": "2024-01-05",
-                "Number of Periods": 5,
-                "Cumulative Return": 0.009,
-            },
-            {
-                "Series": "EM_TRIndex",
-                "Start Date": "2024-01-01",
-                "End Date": "2024-01-05",
-                "Number of Periods": 5,
-                "Cumulative Return": 0.005,
-            },
-            {
-                "Series": "EAFE_TRIndex",
-                "Start Date": "2024-01-01",
-                "End Date": "2024-01-05",
-                "Number of Periods": 5,
-                "Cumulative Return": 0.004,
-            },
-        ]
+        calls.append(args)
+        selected = tuple(args[2])
+        if selected == ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex"):
+            return [
+                {
+                    "Series": "SPX_TRIndex",
+                    "Start Date": "2024-01-01",
+                    "End Date": "2024-01-05",
+                    "Number of Periods": 5,
+                    "Cumulative Return": 0.009,
+                },
+                {
+                    "Series": "EM_TRIndex",
+                    "Start Date": "2024-01-01",
+                    "End Date": "2024-01-05",
+                    "Number of Periods": 5,
+                    "Cumulative Return": 0.005,
+                },
+                {
+                    "Series": "EAFE_TRIndex",
+                    "Start Date": "2024-01-01",
+                    "End Date": "2024-01-05",
+                    "Number of Periods": 5,
+                    "Cumulative Return": 0.004,
+                },
+            ]
+        if selected == ("Actual (Y)", "Predicted", "Residual"):
+            return [
+                {"Series": "Actual (Y)", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.009},
+                {"Series": "Predicted", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.007},
+                {"Series": "Residual", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.002},
+            ]
+        return []
 
     monkeypatch.setattr(regression_page, "calculate_statistics_cached", _fake_stats)
     comp = regression_page.reg_render_statistics("R1", {"R1": entry}, df_to_json(raw_df), {})
 
-    assert captured["args"][2] == ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex")
-    assert "\"start\":\"2024-01-01\"" in captured["args"][5]
+    selected_payloads = [tuple(call[2]) for call in calls]
+    assert ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex") in selected_payloads
+    assert ("Actual (Y)", "Predicted", "Residual") in selected_payloads
+    run_call = next(call for call in calls if tuple(call[2]) == ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex"))
+    assert "\"start\":\"2024-01-01\"" in run_call[5]
+
     col_fields = [c.get("field") for c in getattr(comp, "columnDefs", [])]
     assert "SPX_TRIndex" in col_fields
     assert "EM_TRIndex" in col_fields
     assert "EAFE_TRIndex" in col_fields
+    assert "Actual (Y)" in col_fields
+    assert "Predicted" in col_fields
+    assert "Residual" in col_fields

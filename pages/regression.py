@@ -3491,8 +3491,15 @@ def reg_render_anova(selected, results):
 
     coef_grid = dag.AgGrid(
         className="ag-theme-alpine",
-        columnDefs=[{"field": k, "minWidth": 110} for k in
-                    ("Variable", "Coefficient", "Std Error", "t-stat", "p-value", "CI Low (95%)", "CI High (95%)")],
+        columnDefs=[
+            {"field": "Variable", "width": 130, "minWidth": 110},
+            {"field": "Coefficient", "width": 95, "minWidth": 85},
+            {"field": "Std Error", "width": 95, "minWidth": 85},
+            {"field": "t-stat", "width": 85, "minWidth": 75},
+            {"field": "p-value", "width": 85, "minWidth": 75},
+            {"field": "CI Low (95%)", "width": 105, "minWidth": 90},
+            {"field": "CI High (95%)", "width": 105, "minWidth": 90},
+        ],
         rowData=coef_rows,
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": f"{max(120, 42 + 42 * len(coef_rows))}px"},
@@ -3533,7 +3540,14 @@ def reg_render_anova(selected, results):
             dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"),
             dag.AgGrid(
                 className="ag-theme-alpine",
-                columnDefs=[{"field": k, "minWidth": 90} for k in ("Source", "df", "SS", "MS", "F", "p")],
+                columnDefs=[
+                    {"field": "Source", "width": 100, "minWidth": 90},
+                    {"field": "df", "width": 65, "minWidth": 60},
+                    {"field": "SS", "width": 90, "minWidth": 80},
+                    {"field": "MS", "width": 90, "minWidth": 80},
+                    {"field": "F", "width": 85, "minWidth": 75},
+                    {"field": "p", "width": 85, "minWidth": 75},
+                ],
                 rowData=anova_rows,
                 defaultColDef={"resizable": True, "sortable": False},
                 style={"height": "168px"},
@@ -3564,7 +3578,10 @@ def reg_render_anova(selected, results):
                 dmc.Text("Variance Inflation Factor (VIF)", size="sm", fw=500, mt="sm", mb="xs"),
                 dag.AgGrid(
                     className="ag-theme-alpine",
-                    columnDefs=[{"field": "Variable", "minWidth": 150}, {"field": "VIF", "minWidth": 100}],
+                    columnDefs=[
+                        {"field": "Variable", "width": 130, "minWidth": 110},
+                        {"field": "VIF", "width": 80, "minWidth": 70},
+                    ],
                     rowData=vif_rows,
                     defaultColDef={"resizable": True, "sortable": True},
                     style={"height": f"{max(120, 42 + 42 * len(vif_rows))}px"},
@@ -3596,7 +3613,7 @@ def reg_render_anova(selected, results):
     Output("reg-rolling-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
-    Input("mantine-provider", "forceColorScheme"),
+    Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
 def reg_render_rolling(selected, results, theme):
@@ -3660,7 +3677,7 @@ def reg_render_rolling(selected, results, theme):
     Output("reg-weights-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
-    Input("mantine-provider", "forceColorScheme"),
+    Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
 def reg_render_weights(selected, results, theme):
@@ -3739,8 +3756,11 @@ def reg_render_returns(selected, results):
         rowData=df_reset.to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "500px"},
-        dashGridOptions={"pagination": True, "paginationPageSize": 100,
-                         "suppressExcelExport": True, "suppressCsvExport": True},
+        dashGridOptions={
+            "pagination": False,
+            "suppressExcelExport": True,
+            "suppressCsvExport": True,
+        },
     )
 
 
@@ -3752,7 +3772,7 @@ def reg_render_returns(selected, results):
     Output("reg-growth-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
-    Input("mantine-provider", "forceColorScheme"),
+    Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
 def reg_render_growth(selected, results, theme):
@@ -3906,61 +3926,82 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
             primary_stats = []
 
     normalized_primary_stats = _normalize_stats_payload(primary_stats)
-    if normalized_primary_stats and _has_non_date_values(normalized_primary_stats):
-        return _build_stats_grid(normalized_primary_stats)
+    if not _has_non_date_values(normalized_primary_stats):
+        normalized_primary_stats = []
 
+    normalized_model_stats = []
     try:
         predicted_df = json_to_df(entry["predicted_json"])
     except Exception:
-        return dmc.Text("Could not load predicted series.", size="sm", c="dimmed")
+        predicted_df = pd.DataFrame()
 
-    if predicted_df.empty:
-        return dmc.Text("No predicted series available.", size="sm", c="dimmed")
+    if not predicted_df.empty:
+        residuals_df = pd.DataFrame()
+        residuals_json = entry.get("residuals_json")
+        if residuals_json:
+            try:
+                residuals_df = json_to_df(residuals_json)
+            except Exception:
+                residuals_df = pd.DataFrame()
 
-    residuals_df = pd.DataFrame()
-    residuals_json = entry.get("residuals_json")
-    if residuals_json:
+        # Build a richer statistics input so users can compare actual vs predicted behavior.
+        predicted_series = predicted_df.iloc[:, 0].copy()
+        stats_input = pd.DataFrame({"Predicted": predicted_series})
+
+        if not residuals_df.empty:
+            residual_series = residuals_df.iloc[:, 0]
+            pred_aligned, resid_aligned = predicted_series.align(residual_series, join="inner")
+            if not pred_aligned.empty:
+                stats_input = pd.DataFrame(
+                    {
+                        "Actual (Y)": pred_aligned + resid_aligned,
+                        "Predicted": pred_aligned,
+                        "Residual": resid_aligned,
+                    }
+                )
+
+        series_names = tuple(stats_input.columns)
         try:
-            residuals_df = json_to_df(residuals_json)
-        except Exception:
-            residuals_df = pd.DataFrame()
-
-    # Build a richer statistics input so users can compare actual vs predicted behavior.
-    predicted_series = predicted_df.iloc[:, 0].copy()
-    stats_input = pd.DataFrame({"Predicted": predicted_series})
-
-    if not residuals_df.empty:
-        residual_series = residuals_df.iloc[:, 0]
-        pred_aligned, resid_aligned = predicted_series.align(residual_series, join="inner")
-        if not pred_aligned.empty:
-            stats_input = pd.DataFrame(
-                {
-                    "Actual (Y)": pred_aligned + resid_aligned,
-                    "Predicted": pred_aligned,
-                    "Residual": resid_aligned,
-                }
+            model_stats = calculate_statistics_cached(
+                df_to_json(stats_input),
+                periodicity,
+                series_names,
+                "{}",
+                "{}",
+                "null",
+                0,
+                "{}",
+                risk_free_json_from_store(saved_series_store),
+                spx_json_from_store(saved_series_store),
             )
+            normalized_model_stats = _normalize_stats_payload(model_stats)
+        except Exception as exc:
+            if not normalized_primary_stats:
+                return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")
 
-    series_names = tuple(stats_input.columns)
-    try:
-        stats = calculate_statistics_cached(
-            df_to_json(stats_input),
-            periodicity,
-            series_names,
-            "{}",
-            "{}",
-            "null",
-            0,
-            "{}",
-            risk_free_json_from_store(saved_series_store),
-            spx_json_from_store(saved_series_store),
-        )
-    except Exception as exc:
-        return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")
+    merged_stats = []
+    by_series_name = {}
+    for row in normalized_primary_stats + normalized_model_stats:
+        series_name = row.get("Series")
+        if not series_name:
+            continue
+        series_name = str(series_name)
+        if series_name in by_series_name:
+            existing = by_series_name[series_name]
+            for key, value in row.items():
+                if key == "Series":
+                    continue
+                if key not in existing or existing.get(key) is None:
+                    existing[key] = value
+            continue
+        row_copy = dict(row)
+        row_copy["Series"] = series_name
+        by_series_name[series_name] = row_copy
+        merged_stats.append(row_copy)
 
-    if not stats:
+    if not merged_stats:
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
-    return _build_stats_grid(stats)
+    return _build_stats_grid(merged_stats)
 
 
 # ---------------------------------------------------------------------------
@@ -3971,7 +4012,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
     Output("reg-scatter-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
-    Input("mantine-provider", "forceColorScheme"),
+    Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
 def reg_render_scatter(selected, results, theme):
