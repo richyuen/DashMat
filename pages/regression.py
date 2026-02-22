@@ -787,6 +787,61 @@ def build_reg_main_layout():
                 ],
             ),
 
+            # Linear Constraints Accordion
+            dmc.Accordion(
+                value=None,
+                mb="xs",
+                variant="contained",
+                children=[
+                    dmc.AccordionItem(
+                        value="linear-constraints",
+                        children=[
+                            dmc.AccordionControl("Linear Constraints"),
+                            dmc.AccordionPanel(children=[
+                                dmc.Text(
+                                    "Define linear beta constraints. Each row enforces Min <= sum(coef_i * beta_i) <= Max.",
+                                    size="xs", c="dimmed", mb="xs",
+                                ),
+                                dmc.Group(
+                                    gap="xs",
+                                    mb="sm",
+                                    children=[
+                                        dmc.Button(
+                                            "Add Constraint",
+                                            id="reg-add-constraint-btn",
+                                            variant="outline",
+                                            size="xs",
+                                            leftSection=DashIconify(icon="tabler:plus"),
+                                        ),
+                                        dmc.Button(
+                                            "Clear Constraints",
+                                            id="reg-clear-constraints-btn",
+                                            variant="outline",
+                                            size="xs",
+                                            color="red",
+                                            leftSection=DashIconify(icon="tabler:trash"),
+                                        ),
+                                    ],
+                                ),
+                                dag.AgGrid(
+                                    id="reg-linear-constraints-grid",
+                                    className="ag-theme-alpine",
+                                    columnDefs=[
+                                        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
+                                        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
+                                        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
+                                    ],
+                                    rowData=[],
+                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}},
+                                    style={"height": "160px"},
+                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "suppressCsvExport": True},
+                                ),
+                            ]),
+                        ],
+                    ),
+                ],
+            ),
+
             # Regression Accordion
             dmc.Accordion(
                 value="regression",
@@ -1009,61 +1064,6 @@ def build_reg_main_layout():
                                         ),
                                         dmc.Text(id="reg-run-status-text", size="sm", c="dimmed"),
                                     ],
-                                ),
-                            ]),
-                        ],
-                    ),
-                ],
-            ),
-
-            # Linear Constraints Accordion
-            dmc.Accordion(
-                value=None,
-                mb="xs",
-                variant="contained",
-                children=[
-                    dmc.AccordionItem(
-                        value="linear-constraints",
-                        children=[
-                            dmc.AccordionControl("Linear Constraints"),
-                            dmc.AccordionPanel(children=[
-                                dmc.Text(
-                                    "Define linear beta constraints. Each row enforces Min <= sum(coef_i * beta_i) <= Max.",
-                                    size="xs", c="dimmed", mb="xs",
-                                ),
-                                dmc.Group(
-                                    gap="xs",
-                                    mb="sm",
-                                    children=[
-                                        dmc.Button(
-                                            "Add Constraint",
-                                            id="reg-add-constraint-btn",
-                                            variant="outline",
-                                            size="xs",
-                                            leftSection=DashIconify(icon="tabler:plus"),
-                                        ),
-                                        dmc.Button(
-                                            "Clear Constraints",
-                                            id="reg-clear-constraints-btn",
-                                            variant="outline",
-                                            size="xs",
-                                            color="red",
-                                            leftSection=DashIconify(icon="tabler:trash"),
-                                        ),
-                                    ],
-                                ),
-                                dag.AgGrid(
-                                    id="reg-linear-constraints-grid",
-                                    className="ag-theme-alpine",
-                                    columnDefs=[
-                                        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
-                                        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
-                                        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
-                                    ],
-                                    rowData=[],
-                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}},
-                                    style={"height": "160px"},
-                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "suppressCsvExport": True},
                                 ),
                             ]),
                         ],
@@ -2742,8 +2742,26 @@ def reg_sync_grid_to_temp(cell_change, row_data, cur_dep):
         raise PreventUpdate
     new_x, new_dep, new_lag, new_min, new_max = [], None, {}, {}, {}
     new_enable, new_bench, new_ls, new_vol, new_deleted, new_order = {}, {}, {}, {}, [], []
-    changed_field = (cell_change or {}).get("colId")
-    changed_series = (cell_change.get("data", {}).get("Series") if cell_change else None)
+    # Dash AG Grid can emit either a single event dict or a list of events.
+    event = cell_change
+    if isinstance(event, list):
+        event = next((item for item in reversed(event) if isinstance(item, dict)), None)
+    elif not isinstance(event, dict):
+        event = None
+
+    changed_field = event.get("colId") if event else None
+    if changed_field is None and event:
+        changed_field = (event.get("column") or {}).get("colId")
+    changed_series = None
+    if event:
+        data = event.get("data")
+        if isinstance(data, dict):
+            changed_series = data.get("Series")
+        if changed_series is None and isinstance(event.get("rowIndex"), int):
+            idx = event["rowIndex"]
+            if 0 <= idx < len(row_data) and isinstance(row_data[idx], dict):
+                changed_series = row_data[idx].get("Series")
+
     for row in row_data:
         series = row.get("Series", "")
         new_order.append(series)

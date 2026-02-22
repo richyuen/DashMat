@@ -236,6 +236,20 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert value == "monthly"
 
 
+def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):
+    row_data = [
+        {"Series": "A", "Y": True, "X": True},
+        {"Series": "B", "Y": True, "X": True},
+    ]
+    cell_change = [{"colId": "Y", "rowIndex": 1}]
+
+    out = regression_page.reg_sync_grid_to_temp(cell_change, row_data, None)
+    new_x, new_dep = out[0], out[1]
+
+    assert new_dep == "B"
+    assert new_x == ["A", "B"]
+
+
 def _collect_component_text(node):
     if node is None:
         return []
