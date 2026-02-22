@@ -201,6 +201,44 @@ def _reg_field_safe_name(name: str) -> str:
     return cleaned or "param"
 
 
+def _reg_int_lag(value, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _reg_build_feature_label_map(dep_var, x_cols, lag_assign) -> dict[str, str]:
+    """Map internal X feature names to display labels."""
+    lag_assign = lag_assign or {}
+    mapping: dict[str, str] = {}
+    used_labels: set[str] = set()
+
+    for col in x_cols or []:
+        col_name = str(col)
+        lag_val = _reg_int_lag(lag_assign.get(col_name, lag_assign.get(col, 0)), 0)
+        base_label = f"{col_name} (lag {lag_val})" if (col_name == str(dep_var) and lag_val >= 1) else col_name
+        label = base_label
+        suffix = 2
+        while label in used_labels:
+            label = f"{base_label} [{suffix}]"
+            suffix += 1
+        mapping[col_name] = label
+        used_labels.add(label)
+
+    return mapping
+
+
+def _reg_remap_feature_dict(values: dict | None, feature_label_map: dict[str, str]) -> dict:
+    if not isinstance(values, dict):
+        return {}
+    out: dict = {}
+    for key, value in values.items():
+        mapped = feature_label_map.get(str(key), key)
+        out[mapped] = value
+    return out
+
+
 def _reg_extract_arima_garch_rows(arima_garch):
     """Extract ARIMA/GARCH summary and parameter rows for ANOVA row tables."""
     summary_rows = []
@@ -509,9 +547,20 @@ def _reg_build_display_series(entry, raw_data):
     entry = entry or {}
     periodicity = entry.get("periodicity", "daily")
     dep_var = entry.get("dependent_var")
-    indep_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
     config = entry.get("config") or {}
-    window_type = str(config.get("window_type") or "full").lower()
+    indep_vars_display = list(dict.fromkeys(entry.get("independent_vars") or []))
+    feature_label_map = {
+        str(k): str(v) for k, v in (config.get("feature_label_map") or {}).items()
+    }
+    display_to_internal = {v: k for k, v in feature_label_map.items()}
+    indep_vars_internal = list(dict.fromkeys(entry.get("independent_vars_internal") or []))
+    if not indep_vars_internal:
+        indep_vars_internal = [
+            display_to_internal.get(str(name), str(name))
+            for name in indep_vars_display
+        ]
+    if not indep_vars_display and indep_vars_internal:
+        indep_vars_display = [feature_label_map.get(str(name), str(name)) for name in indep_vars_internal]
 
     predicted = pd.Series(dtype=float)
     residual = pd.Series(dtype=float)
@@ -535,10 +584,10 @@ def _reg_build_display_series(entry, raw_data):
         if not p_aligned.empty:
             actual = (p_aligned + r_aligned).rename("Actual (Y)")
 
-    # For rolling/expanding models, downstream tabs should respect the model
-    # application window rather than showing full-history X data.
+    # Downstream tabs should respect the effective model application window.
+    # This includes full-window runs with lagged predictors.
     model_window_index = pd.DatetimeIndex([])
-    if window_type != "full" and not predicted.empty:
+    if not predicted.empty:
         model_window_index = pd.DatetimeIndex(predicted.index)
         predicted = predicted.reindex(model_window_index).dropna()
         if not residual.empty:
@@ -547,8 +596,8 @@ def _reg_build_display_series(entry, raw_data):
             actual = actual.reindex(model_window_index).dropna()
 
     x_df = pd.DataFrame()
-    if raw_data and indep_vars:
-        selected_series = [dep_var] + indep_vars if dep_var else indep_vars
+    if raw_data and indep_vars_internal:
+        selected_series = [dep_var] + indep_vars_internal if dep_var else indep_vars_internal
         try:
             working_df = _reg_get_working_returns(
                 raw_data,
@@ -566,9 +615,14 @@ def _reg_build_display_series(entry, raw_data):
         if actual.empty and dep_var and dep_var in working_df.columns:
             actual = working_df[dep_var].dropna().rename("Actual (Y)")
 
-        x_cols = [x for x in indep_vars if x in working_df.columns]
+        x_cols = [x for x in indep_vars_internal if x in working_df.columns]
         if x_cols:
             x_df = working_df[x_cols].copy()
+            lag_cfg = config.get("lag_config") or {}
+            for x_name in x_cols:
+                lag_val = _reg_int_lag(lag_cfg.get(x_name, lag_cfg.get(str(x_name), 0)), 0)
+                if lag_val != 0:
+                    x_df[x_name] = x_df[x_name].shift(lag_val)
             if len(model_window_index) > 0:
                 x_df = x_df.reindex(model_window_index)
 
@@ -577,9 +631,10 @@ def _reg_build_display_series(entry, raw_data):
         series_map["Predicted"] = predicted
     if not actual.empty:
         series_map["Actual (Y)"] = actual
-    for x in indep_vars:
-        if not x_df.empty and x in x_df.columns:
-            series_map[x] = x_df[x].dropna().rename(x)
+    for x_label in indep_vars_display:
+        internal_name = display_to_internal.get(str(x_label), str(x_label))
+        if not x_df.empty and internal_name in x_df.columns:
+            series_map[x_label] = x_df[internal_name].dropna().rename(x_label)
     if not residual.empty:
         series_map["Residual"] = residual
 
@@ -749,6 +804,7 @@ def build_reg_help_modal():
                                         dmc.Text("Set exactly one dependent variable (Y) and one or more independent variables (X).", size="sm"),
                                         dmc.Text("Assign optional benchmark, long/short flag, and per-series volatility scaling toggle.", size="sm"),
                                         dmc.Text("Set per-series lag and constrained beta bounds (Min Beta, Max Beta, Enable).", size="sm"),
+                                        dmc.Text("If Y is also selected as X, set lag to at least 1; early periods without lag history are excluded from modeled dates.", size="sm"),
                                         dmc.Text("Use row drag to reorder series. You can also mark rows for deletion.", size="sm"),
                                     ],
                                 )
@@ -3921,6 +3977,12 @@ def reg_download_excel(
     # Settings tab
     # ------------------------------------------------------------------
     date_range = entry.get("date_range") or {}
+    effective_range = entry.get("effective_date_range") or {}
+    if not effective_range and wrs:
+        effective_range = {
+            "start": _to_date_str((wrs[0] or {}).get("apply_start")),
+            "end": _to_date_str((wrs[-1] or {}).get("apply_end")),
+        }
     settings_rows = [
         {"Parameter": "Result Name", "Value": selected_name},
         {"Parameter": "Model", "Value": config.get("model", "")},
@@ -3929,6 +3991,8 @@ def reg_download_excel(
         {"Parameter": "Periodicity", "Value": periodicity},
         {"Parameter": "Date Range Start", "Value": date_range.get("start", "")},
         {"Parameter": "Date Range End", "Value": date_range.get("end", "")},
+        {"Parameter": "Effective Sample Start", "Value": effective_range.get("start", "")},
+        {"Parameter": "Effective Sample End", "Value": effective_range.get("end", "")},
         {"Parameter": "Window Type", "Value": config.get("window_type", "")},
         {"Parameter": "Window Size", "Value": config.get("window_size", "")},
         {"Parameter": "Opt Step", "Value": config.get("opt_step", "")},
@@ -3947,10 +4011,10 @@ def reg_download_excel(
         {"Parameter": "Benchmark Assignments", "Value": _safe_json(entry.get("benchmark_assignments") or {})},
         {"Parameter": "Long/Short Assignments", "Value": _safe_json(entry.get("long_short_assignments") or {})},
         {"Parameter": "Vol Scaling Assignments", "Value": _safe_json(entry.get("vol_scaling_assignments") or {})},
-        {"Parameter": "Lag Assignments", "Value": _safe_json(config.get("lag_config") or {})},
-        {"Parameter": "Per-Variable Min Beta", "Value": _safe_json(config.get("min_beta_by_var") or {})},
-        {"Parameter": "Per-Variable Max Beta", "Value": _safe_json(config.get("max_beta_by_var") or {})},
-        {"Parameter": "Enabled Constraints", "Value": _safe_json(config.get("enable_constraint") or {})},
+        {"Parameter": "Lag Assignments", "Value": _safe_json(config.get("lag_config_display") or config.get("lag_config") or {})},
+        {"Parameter": "Per-Variable Min Beta", "Value": _safe_json(config.get("min_beta_by_var_display") or config.get("min_beta_by_var") or {})},
+        {"Parameter": "Per-Variable Max Beta", "Value": _safe_json(config.get("max_beta_by_var_display") or config.get("max_beta_by_var") or {})},
+        {"Parameter": "Enabled Constraints", "Value": _safe_json(config.get("enable_constraint_display") or config.get("enable_constraint") or {})},
         {"Parameter": "Linear Constraints", "Value": _safe_json(config.get("linear_constraints"))},
     ]
     settings_df = pd.DataFrame(settings_rows)
@@ -4334,7 +4398,9 @@ def reg_run_regression(
                 "Error: With no X series selected, disable Force Zero Intercept.",
             )
 
-    all_series = list(dict.fromkeys([dep_var] + [s for s in (x_series or []) if s != dep_var]))
+    x_requested = [str(series) for series in (x_series or []) if series is not None]
+    x_requested = list(dict.fromkeys(x_requested))
+    all_series = list(dict.fromkeys(([dep_var] if dep_var else []) + x_requested))
     try:
         df = _reg_get_working_returns(
             raw_data, periodicity, all_series,
@@ -4347,7 +4413,13 @@ def reg_run_regression(
         return no_update, no_update, no_update, "Error: No data for selected series/date range."
 
     y = df[dep_var]
-    x_cols = [c for c in (x_series or []) if c in df.columns and c != dep_var]
+    x_cols = [c for c in x_requested if c in df.columns]
+    lag_assign = lag_assign or {}
+    if dep_var in x_cols:
+        self_lag = _reg_int_lag(lag_assign.get(dep_var, lag_assign.get(str(dep_var), 0)), 0)
+        if self_lag < 1:
+            return no_update, no_update, no_update, "Error: When Y is also selected as X, set lag to at least 1."
+
     if not x_cols:
         if not supports_intercept_only:
             return no_update, no_update, no_update, "Error: No X series data available."
@@ -4360,11 +4432,28 @@ def reg_run_regression(
             )
 
     X = df[x_cols] if x_cols else pd.DataFrame(index=df.index)
+    feature_label_map = _reg_build_feature_label_map(dep_var, x_cols, lag_assign)
+    x_display_cols = [feature_label_map.get(str(col), str(col)) for col in x_cols]
+    lag_config_for_model = {
+        str(col): _reg_int_lag(lag_assign.get(col, lag_assign.get(str(col), 0)), 0)
+        for col in x_cols
+    }
+    lag_config_display = {
+        feature_label_map.get(str(col), str(col)): lag_config_for_model.get(str(col), 0)
+        for col in x_cols
+    }
 
     # Build per-variable beta constraints
-    per_var_enable = enable_assign or {}
+    per_var_enable = {str(k): bool(v) for k, v in (enable_assign or {}).items()}
     per_var_min = {c: float((min_beta_assign or {}).get(c, -999.0) or -999.0) for c in x_cols}
     per_var_max = {c: float((max_beta_assign or {}).get(c, 999.0) or 999.0) for c in x_cols}
+    min_beta_display = {feature_label_map.get(str(k), str(k)): v for k, v in per_var_min.items()}
+    max_beta_display = {feature_label_map.get(str(k), str(k)): v for k, v in per_var_max.items()}
+    enable_display = {
+        feature_label_map.get(str(k), str(k)): bool(v)
+        for k, v in per_var_enable.items()
+        if str(k) in feature_label_map
+    }
 
     config = {
         "model": selected_model,
@@ -4384,11 +4473,18 @@ def reg_run_regression(
         "max_beta": max(per_var_max.values()) if per_var_max else 999.0,
         "min_beta_by_var": per_var_min,
         "max_beta_by_var": per_var_max,
+        "min_beta_by_var_display": min_beta_display,
+        "max_beta_by_var_display": max_beta_display,
         "enable_constraint": per_var_enable,
-        "lag_config": lag_assign or {},
+        "enable_constraint_display": enable_display,
+        "lag_config": lag_config_for_model,
+        "lag_config_display": lag_config_display,
         "arima_order": (int(arima_p or 0), int(arima_d or 0), int(arima_q or 0)),
         "garch_order": (int(garch_p or 0), int(garch_q or 0)),
         "linear_constraints": (linear_constraints or None) if x_cols else None,
+        "feature_label_map": feature_label_map,
+        "independent_vars_internal": list(x_cols),
+        "independent_vars_display": list(x_display_cols),
     }
 
     try:
@@ -4418,32 +4514,49 @@ def reg_run_regression(
         return {k: (_clean_dict(v) if isinstance(v, dict) else _clean_val(v)) for k, v in d.items()}
 
     def _serialize_wr(wr: RegressionWindowResult) -> dict:
+        mapped_coefficients = _reg_remap_feature_dict(wr.coefficients, feature_label_map)
+        mapped_p_values = _reg_remap_feature_dict(wr.p_values, feature_label_map)
+        diagnostics = dict(wr.diagnostics or {}) if isinstance(wr.diagnostics, dict) else {}
+        for key in ("vif", "ci_low", "ci_high", "std_errors", "t_stats"):
+            if key in diagnostics:
+                diagnostics[key] = _reg_remap_feature_dict(diagnostics.get(key), feature_label_map)
         return {
             "est_start": str(wr.est_start)[:10],
             "est_end": str(wr.est_end)[:10],
             "apply_start": str(wr.apply_start)[:10],
             "apply_end": str(wr.apply_end)[:10],
-            "coefficients": _clean_dict(wr.coefficients),
-            "p_values": _clean_dict(wr.p_values),
+            "coefficients": _clean_dict(mapped_coefficients),
+            "p_values": _clean_dict(mapped_p_values),
             "r_squared": _clean_val(wr.r_squared),
             "adj_r_squared": _clean_val(wr.adj_r_squared),
             "anova_table": _clean_dict(wr.anova_table),
-            "diagnostics": _clean_dict(wr.diagnostics),
+            "diagnostics": _clean_dict(diagnostics),
             "arima_garch": _clean_dict(wr.arima_garch),
             "residual_std": _clean_val(wr.residual_std),
             "oos_metrics": _clean_dict(wr.oos_metrics),
             "n_obs": wr.n_obs,
         }
 
+    effective_start = ""
+    effective_end = ""
+    if isinstance(predicted, pd.Series) and not predicted.empty:
+        effective_start = str(pd.Timestamp(predicted.index.min()))[:10]
+        effective_end = str(pd.Timestamp(predicted.index.max()))[:10]
+    elif window_results:
+        effective_start = str(window_results[0].apply_start)[:10]
+        effective_end = str(window_results[-1].apply_end)[:10]
+
     result_entry = {
         "window_results": [_serialize_wr(wr) for wr in window_results],
         "predicted_json": df_to_json(predicted.to_frame("predicted")),
         "residuals_json": df_to_json(residuals.to_frame("residuals")),
         "dependent_var": dep_var,
-        "independent_vars": x_cols,
+        "independent_vars": x_display_cols,
+        "independent_vars_internal": x_cols,
         "benchmark_assignments": bench_assign or {},
         "long_short_assignments": ls_assign or {},
         "date_range": date_range,
+        "effective_date_range": {"start": effective_start, "end": effective_end},
         "vol_scaler": vol_scaler or 0,
         "vol_scaling_assignments": vol_scale_assign or {},
         "config": config,

@@ -235,6 +235,82 @@ def test_reg_run_regression_rejects_intercept_only_when_force_zero_enabled(regre
     assert "force zero intercept" in out[3].lower()
 
 
+def test_reg_run_regression_rejects_self_lag_without_positive_lag(monkeypatch, regression_page):
+    idx = pd.date_range("2020-01-01", periods=6, freq="B")
+    working_df = pd.DataFrame({"Y": np.linspace(0.01, 0.06, len(idx))}, index=idx)
+    monkeypatch.setattr(regression_page, "_reg_get_working_returns", lambda *_args, **_kwargs: working_df)
+
+    out = _call_reg_run(
+        regression_page,
+        model="ols",
+        dep_var="Y",
+        x_series=["Y"],
+        lag_assign={"Y": 0},
+    )
+
+    assert out[0] is no_update
+    assert out[1] is no_update
+    assert out[2] is no_update
+    assert "lag to at least 1" in out[3].lower()
+
+
+def test_reg_run_regression_supports_self_lag_with_display_labels(monkeypatch, regression_page):
+    idx = pd.date_range("2020-01-01", periods=6, freq="B")
+    working_df = pd.DataFrame({"Y": np.linspace(0.01, 0.06, len(idx))}, index=idx)
+    monkeypatch.setattr(regression_page, "_reg_get_working_returns", lambda *_args, **_kwargs: working_df)
+
+    wr = RegressionWindowResult(
+        est_start=idx[1],
+        est_end=idx[-1],
+        apply_start=idx[1],
+        apply_end=idx[-1],
+        coefficients={"intercept": 0.02, "Y": 0.5},
+        p_values={"intercept": 0.1, "Y": 0.05},
+        diagnostics={
+            "std_errors": {"intercept": 0.01, "Y": 0.2},
+            "t_stats": {"intercept": 2.0, "Y": 2.5},
+            "ci_low": {"intercept": 0.0, "Y": 0.1},
+            "ci_high": {"intercept": 0.03, "Y": 0.9},
+            "vif": {"Y": 1.0},
+        },
+        n_obs=5,
+    )
+    predicted = pd.Series(np.linspace(0.02, 0.06, len(idx) - 1), index=idx[1:], name="predicted")
+    residuals = pd.Series(np.zeros(len(idx) - 1), index=idx[1:], name="residuals")
+
+    captured = {}
+
+    def _fake_run_regression(_y, _X, config):
+        captured["x_columns"] = list(_X.columns)
+        captured["config"] = config
+        return [wr], predicted, residuals, None
+
+    monkeypatch.setattr(regression_page, "run_regression", _fake_run_regression)
+
+    new_results, _options, selected, status = _call_reg_run(
+        regression_page,
+        model="ols",
+        dep_var="Y",
+        x_series=["Y"],
+        lag_assign={"Y": 1},
+    )
+
+    assert "window(s)" in status
+    assert captured["x_columns"] == ["Y"]
+    assert captured["config"]["lag_config"] == {"Y": 1}
+    assert captured["config"]["lag_config_display"] == {"Y (lag 1)": 1}
+
+    entry = new_results[selected]
+    assert entry["independent_vars"] == ["Y (lag 1)"]
+    assert entry["independent_vars_internal"] == ["Y"]
+    assert entry["effective_date_range"] == {"start": "2020-01-02", "end": "2020-01-08"}
+
+    wr_saved = entry["window_results"][0]
+    assert "Y (lag 1)" in wr_saved["coefficients"]
+    assert "Y (lag 1)" in wr_saved["p_values"]
+    assert wr_saved["diagnostics"]["std_errors"]["Y (lag 1)"] == pytest.approx(0.2)
+
+
 def test_reg_run_regression_errors_when_raw_data_missing(regression_page):
     out = _call_reg_run(regression_page, raw_data=None)
     assert out[0] is no_update
@@ -635,6 +711,41 @@ def test_reg_build_display_series_clips_x_to_model_window_for_rolling(regression
     assert list(display_df["X1"].index) == list(model_idx)
 
 
+def test_reg_build_display_series_clips_to_effective_window_for_full_lagged_self_x(regression_page):
+    full_idx = pd.date_range("2024-01-01", periods=6, freq="B")
+    model_idx = full_idx[1:]
+    raw_df = pd.DataFrame(
+        {"Y": [0.01, 0.02, -0.01, 0.00, 0.01, -0.02]},
+        index=full_idx,
+    )
+    predicted = pd.DataFrame({"predicted": [0.011, 0.018, -0.005, 0.004, -0.018]}, index=model_idx)
+    residuals = pd.DataFrame({"residuals": [0.001, 0.002, -0.001, 0.003, -0.002]}, index=model_idx)
+    entry = {
+        "periodicity": "daily",
+        "dependent_var": "Y",
+        "independent_vars": ["Y (lag 1)"],
+        "independent_vars_internal": ["Y"],
+        "benchmark_assignments": {},
+        "long_short_assignments": {},
+        "date_range": {"start": "2024-01-01", "end": "2024-01-31"},
+        "vol_scaler": 0,
+        "vol_scaling_assignments": {},
+        "config": {
+            "window_type": "full",
+            "feature_label_map": {"Y": "Y (lag 1)"},
+            "lag_config": {"Y": 1},
+        },
+        "predicted_json": df_to_json(predicted),
+        "residuals_json": df_to_json(residuals),
+    }
+
+    display_df, ordered_cols = regression_page._reg_build_display_series(entry, df_to_json(raw_df))
+
+    assert ordered_cols == ["Predicted", "Actual (Y)", "Y (lag 1)", "Residual"]
+    assert list(display_df.index) == list(model_idx)
+    assert display_df.iloc[0]["Y (lag 1)"] == pytest.approx(raw_df.iloc[0]["Y"])
+
+
 def test_reg_sync_name_with_model_uses_model_defaults(regression_page):
     assert regression_page.reg_sync_name_with_model("ols") == "OLS"
     assert regression_page.reg_sync_name_with_model("ridge") == "Ridge"
@@ -789,6 +900,8 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))
     assert settings_map["Result Name"] == "R1"
     assert settings_map["Model"] == "ols"
+    assert settings_map["Effective Sample Start"] == "2024-01-01"
+    assert settings_map["Effective Sample End"] == "2024-01-05"
 
     weights_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Weights")
     assert list(weights_df.columns) == ["Window", "Date", "intercept", "X1"]
