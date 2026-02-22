@@ -1029,6 +1029,7 @@ def build_reg_main_layout():
                                                 w=170,
                                                 size="sm",
                                                 clearable=False,
+                                                allowDeselect=False,
                                             ),
                                         ]),
                                         html.Div([
@@ -1959,7 +1960,7 @@ clientside_callback("function(v){return v;}",
     Output("reg-periodicity-select","value", allow_duplicate=True), Input("reg-periodicity-load-sync-dummy","data"), prevent_initial_call=True)
 clientside_callback("function(v){return v??0;}",
     Output("reg-vol-scaler-value-store","data"), Input("reg-vol-scaler-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
+clientside_callback("function(v){return v || 'ols';}",
     Output("reg-model-store","data"), Input("reg-model-select","value"), prevent_initial_call=True)
 clientside_callback("function(v){return v;}",
     Output("reg-regression-name-store","data"), Input("reg-regression-name-input","value"), prevent_initial_call=True)

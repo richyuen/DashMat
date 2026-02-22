@@ -1668,6 +1668,7 @@ def build_po_main_layout():
                                                 w=210,
                                                 size="sm",
                                                 clearable=False,
+                                                allowDeselect=False,
                                                 maxDropdownHeight=420,
                                             ),
                                         ]),
@@ -4246,7 +4247,7 @@ clientside_callback(
 
 # Store sync: opt model
 clientside_callback(
-    "function(value) { return value; }",
+    "function(value) { return value || 'risk_parity'; }",
     Output("po-opt-model-store", "data"),
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
@@ -5573,6 +5574,7 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
 clientside_callback(
     """
     function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, missing, fillIS) {
+        var safeModel = model || "risk_parity";
         var defaults = {
             "risk_parity": "RP",
             "factor_risk_parity": "FRP",
@@ -5585,8 +5587,8 @@ clientside_callback(
             "ex_ante_mv": "ExAnteMV",
             "black_litterman": "BL",
         };
-        var defaultName = defaults[model] || "Port";
-        return [optWindow, windowSize, optStep, optStepUnit, model, name || defaultName,
+        var defaultName = defaults[safeModel] || "Port";
+        return [optWindow, windowSize, optStep, optStepUnit, safeModel, name || defaultName,
                 expWt || false, halflife, !expWt, missing, fillIS];
     }
     """,
