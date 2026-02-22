@@ -543,9 +543,5 @@ def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkey
     assert "\"start\":\"2024-01-01\"" in run_call[5]
 
     col_fields = [c.get("field") for c in getattr(comp, "columnDefs", [])]
-    assert "SPX_TRIndex" in col_fields
-    assert "EM_TRIndex" in col_fields
-    assert "EAFE_TRIndex" in col_fields
-    assert "Actual (Y)" in col_fields
-    assert "Predicted" in col_fields
-    assert "Residual" in col_fields
+    assert col_fields[:6] == ["Statistic", "Predicted", "Actual (Y)", "EM_TRIndex", "EAFE_TRIndex", "Residual"]
+    assert "SPX_TRIndex" not in col_fields

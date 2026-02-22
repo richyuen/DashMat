@@ -3852,14 +3852,44 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
                 return True
         return False
 
-    def _build_stats_grid(stats_payload):
+    def _build_stats_grid(stats_payload, dependent_var=None, independent_vars=None):
         stats_rows = _normalize_stats_payload(stats_payload)
         if not stats_rows:
             return dmc.Text("No statistics available.", size="sm", c="dimmed")
 
-        series_order = [str(row.get("Series")) for row in stats_rows if row.get("Series")]
-        if not series_order:
+        present_series = []
+        for row in stats_rows:
+            series_name = row.get("Series")
+            if not series_name:
+                continue
+            series_name = str(series_name)
+            if series_name not in present_series:
+                present_series.append(series_name)
+        if not present_series:
             return dmc.Text("No statistics available.", size="sm", c="dimmed")
+
+        series_order = []
+
+        def _append_series(name):
+            sname = str(name)
+            if sname in present_series and sname not in series_order:
+                series_order.append(sname)
+
+        # Preferred order for regression statistics view.
+        _append_series("Predicted")
+        _append_series("Actual (Y)")
+
+        for x_name in independent_vars or []:
+            _append_series(x_name)
+
+        _append_series("Residual")
+
+        dep_name = str(dependent_var) if dependent_var else None
+        hide_dependent_duplicate = bool(dep_name and dep_name in present_series and "Actual (Y)" in present_series)
+        for sname in present_series:
+            if hide_dependent_duplicate and sname == dep_name:
+                continue
+            _append_series(sname)
 
         metric_keys = [name for name, _ in STATS_CONFIG]
         for row in stats_rows:
@@ -3903,9 +3933,11 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
 
     entry = results[selected]
     periodicity = entry.get("periodicity", "daily")
+    dependent_var = entry.get("dependent_var")
+    independent_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
 
     primary_stats = []
-    selected_series = [entry.get("dependent_var")] + list(entry.get("independent_vars") or [])
+    selected_series = [dependent_var] + independent_vars
     selected_series = [s for s in dict.fromkeys(selected_series) if s]
 
     if raw_data and selected_series:
@@ -4001,7 +4033,11 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
 
     if not merged_stats:
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
-    return _build_stats_grid(merged_stats)
+    return _build_stats_grid(
+        merged_stats,
+        dependent_var=dependent_var,
+        independent_vars=independent_vars,
+    )
 
 
 # ---------------------------------------------------------------------------
