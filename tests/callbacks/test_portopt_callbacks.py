@@ -210,6 +210,26 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert row_data[0]["Date"] == "2024-01-01"
 
 
+def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
+    _, portopt = page_modules
+
+    empty = portopt.po_update_portfolio_dropdowns(None, None, None)
+    assert empty == ([], None, [], [], True)
+
+    results = {"P1": {"x": 1}, "P2": {"x": 2}}
+    options, selected, multi_options, multi_value, delete_disabled = portopt.po_update_portfolio_dropdowns(
+        results,
+        "P1",
+        ["P1"],
+    )
+
+    assert [o["value"] for o in options] == ["P1", "P2"]
+    assert selected == "P2"
+    assert [o["value"] for o in multi_options] == ["P1", "P2"]
+    assert multi_value == ["P1", "P2"]
+    assert delete_disabled is False
+
+
 def test_po_default_name_for_model_uses_short_aliases(page_modules):
     _, portopt = page_modules
 
@@ -860,11 +880,21 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     assert xl.sheet_names[-3:] == ["Attribution", "Risk", "Frontier"]
 
     settings_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Settings")
-    assert "Decay Input" in settings_df.columns
-    assert "Decay Mode" in settings_df.columns
-    assert "Selected Series" in settings_df.columns
-    assert "Benchmark Assignments" in settings_df.columns
-    assert settings_df.loc[0, "Decay Mode"] == "halflife_periods"
+    settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))
+    assert settings_map["Result Name"] == "P1"
+    assert settings_map["Decay Input"] == pytest.approx(63.0)
+    assert settings_map["Decay Mode"] == "halflife_periods"
+    assert settings_map["Selected Series"] == "Asset_A, Asset_B"
+    assert settings_map["Benchmark Assignments"] == "{}"
+
+    weights_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Weights")
+    assert list(weights_df.columns) == ["Apply Start", "Apply End", "Asset_A", "Asset_B"]
+    assert weights_df.loc[0, "Apply Start"] == "2024-01-01"
+    assert weights_df.loc[0, "Apply End"] == "2024-01-31"
+    assert weights_df.loc[0, "Asset_A"] == pytest.approx(0.6)
+    assert weights_df.loc[0, "Asset_B"] == pytest.approx(0.4)
+    assert "Portfolio" not in set(weights_df.columns)
+    assert "Wt_Asset_A" not in set(weights_df.columns)
 
     frontier_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Frontier")
     assert "Wt_Asset_A" in frontier_df.columns

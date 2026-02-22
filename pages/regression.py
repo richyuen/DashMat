@@ -4020,27 +4020,27 @@ def reg_download_excel(
     # ------------------------------------------------------------------
     weights_df = _info_df("No weights data available.")
     if wrs:
-        use_run_level_fallback = len(wrs) == 1
+        coef_keys = []
+        for wr in wrs:
+            if not isinstance(wr, dict):
+                continue
+            for key in (wr.get("coefficients") or {}).keys():
+                if key not in coef_keys:
+                    coef_keys.append(key)
         rows = []
         for idx, wr in enumerate(wrs, start=1):
             if not isinstance(wr, dict):
                 continue
             row = {
                 "Window": idx,
-                "Estimation Start": _to_date_str(wr.get("est_start")),
-                "Estimation End": _to_date_str(wr.get("est_end")),
-                "Apply Start": _to_date_str(wr.get("apply_start")),
-                "Apply End": _to_date_str(wr.get("apply_end")),
+                "Date": _to_date_str(wr.get("apply_start")),
             }
-            for k, v in (wr.get("coefficients") or {}).items():
-                row[k] = v
-            _reg_apply_arima_garch_columns(
-                row,
-                _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
-            )
+            for key in coef_keys:
+                row[key] = (wr.get("coefficients") or {}).get(key)
             rows.append(row)
         if rows:
             weights_df = pd.DataFrame(rows)
+            weights_df = _reg_drop_empty_columns(weights_df, keep_fields=["Window", "Date"])
 
     # ------------------------------------------------------------------
     # Statistics tab

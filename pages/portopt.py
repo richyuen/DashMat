@@ -2095,24 +2095,26 @@ def build_po_main_layout():
             # Portfolio selector and visualization tabs
             dmc.Group(
                 mb="xs",
-                gap="md",
+                gap="xs",
+                align="flex-end",
                 children=[
                     dmc.Select(
                         id="po-weight-portfolio-select",
                         label="Portfolio",
                         data=[],
                         value=None,
-                        w=200,
+                        w=250,
                         size="sm",
                         clearable=False,
                     ),
-                    dmc.ActionIcon(
-                        DashIconify(icon="tabler:trash", width=18),
+                    dmc.Button(
+                        "Delete",
                         id="po-delete-portfolio-button",
+                        variant="outline",
                         color="red",
-                        variant="subtle",
                         size="sm",
-                        style={"alignSelf": "flex-end", "marginBottom": "8px"},
+                        disabled=True,
+                        leftSection=DashIconify(icon="tabler:trash"),
                     ),
                     html.Div(
                         id="po-growth-multiselect-wrapper",
@@ -5259,13 +5261,7 @@ def po_init_linear_constraints_grid(store_data, current_rows):
 clientside_callback(
     """
     function(tab) {
-        if (tab === "growth" || tab === "statistics" || tab === "returns" || tab === "rolling" || tab === "calendar" || tab === "drawdown") {
-            return [{display: "block"}, {display: "none"}, {display: "none"}];
-        }
-        if (tab === "frontier") {
-            return [{display: "block"}, {display: "none"}, {display: "none"}];
-        }
-        return [{display: "block"}, {display: "block"}, {display: "none"}];
+        return [{}, {}, {display: "none"}];
     }
     """,
     Output("po-weight-portfolio-select", "style"),
@@ -8062,6 +8058,7 @@ clientside_callback(
     Output("po-weight-portfolio-select", "value"),
     Output("po-growth-portfolio-multiselect", "data"),
     Output("po-growth-portfolio-multiselect", "value"),
+    Output("po-delete-portfolio-button", "disabled"),
     Input("po-results-store", "data"),
     State("po-weight-portfolio-select", "value"),
     State("po-growth-portfolio-multiselect", "value"),
@@ -8069,7 +8066,7 @@ clientside_callback(
 )
 def po_update_portfolio_dropdowns(results, current_select, current_multi):
     if not results:
-        return [], None, [], []
+        return [], None, [], [], True
     names = list(results.keys())
     options = [{"value": n, "label": n} for n in names]
     # Always select the newest portfolio (last added)
@@ -8078,7 +8075,7 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
     newest = names[-1] if names else None
     if newest and newest not in multi:
         multi.append(newest)
-    return options, sel, options, multi
+    return options, sel, options, multi, not bool(sel)
 
 
 # ---------------------------------------------------------------------------
@@ -9197,7 +9194,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # Settings tab
         # ------------------------------------------------------------------
         def _safe_json_text(value):
-            if value in (None, "", {}, []):
+            if value in (None, ""):
                 return ""
             try:
                 return json.dumps(value, default=str, sort_keys=True)
@@ -9213,86 +9210,84 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 return str(value)
 
         settings_rows = []
-        for pname, pdata in active_results.items():
-            cfg = pdata.get("config", {}) or {}
-            window_weights = pdata.get("window_weights", []) or []
-            risk_free_meta = pdata.get("risk_free_meta", {}) or {}
-            selected_series = list(cfg.get("selected_series") or [])
-            first_apply_start = _safe_date_text(window_weights[0].get("apply_start")) if window_weights else ""
-            last_apply_end = _safe_date_text(window_weights[-1].get("apply_end")) if window_weights else ""
-            exp_weighted = bool(cfg.get("exp_wt_cov", False))
-            decay_value = normalize_decay_input(cfg.get("halflife", 63), 63.0)
-            settings_rows.append(
-                {
-                    "Portfolio": pname,
-                    "Model": cfg.get("model", ""),
-                    "Objective": cfg.get("objective", ""),
-                    "Window Type": cfg.get("window_type", ""),
-                    "Window Size": cfg.get("window_size"),
-                    "Opt Step": cfg.get("opt_step"),
-                    "Opt Step Unit": cfg.get("opt_step_unit"),
-                    "Window Count": len(window_weights),
-                    "First Apply Start": first_apply_start,
-                    "Last Apply End": last_apply_end,
-                    "Missing Data": cfg.get("missing_data", ""),
-                    "Fill In-Sample": bool(cfg.get("fill_in_sample", False)),
-                    "Exp Wt": exp_weighted,
-                    "Decay Input": float(decay_value),
-                    "Decay Mode": decay_input_mode(decay_value, 63.0),
-                    "Periodicity": cfg.get("periodicity", periodicity or "daily"),
-                    "Selected Series Count": len(selected_series),
-                    "Selected Series": ", ".join(selected_series),
-                    "Date Range Start": (date_range or {}).get("start", ""),
-                    "Date Range End": (date_range or {}).get("end", ""),
-                    "Vol Scaler": float(vol_scaler or 0),
-                    "Benchmark Assignments": _safe_json_text(bench or {}),
-                    "CMA Benchmark Assignments": _safe_json_text(cmabench or {}),
-                    "Long/Short Assignments": _safe_json_text(ls or {}),
-                    "Vol Scaling Assignments": _safe_json_text(vol_scaling or {}),
-                    "Min Wt Constraints": _safe_json_text(cfg.get("min_wt") or {}),
-                    "Max Wt Constraints": _safe_json_text(cfg.get("max_wt") or {}),
-                    "Force Max Flags": _safe_json_text(cfg.get("force_max") or {}),
-                    "Linear Constraints": _safe_json_text(cfg.get("linear_constraints") or []),
-                    "Ex-Ante Mode": cfg.get("ex_ante_mode", ""),
-                    "Ex-Ante Returns": _safe_json_text(cfg.get("ex_ante_returns") or {}),
-                    "Ex-Ante Covariance": _safe_json_text(cfg.get("ex_ante_cov") or {}),
-                    "Ex-Ante Volatility": _safe_json_text(cfg.get("ex_ante_vol") or {}),
-                    "Ex-Ante Correlation": _safe_json_text(cfg.get("ex_ante_corr") or {}),
-                    "BL Tau": cfg.get("bl_tau"),
-                    "BL Views": _safe_json_text(cfg.get("bl_views") or []),
-                    "Risk-Free Source": risk_free_meta.get("source", cfg.get("risk_free_source", "")),
-                    "Risk-Free Annual": risk_free_meta.get("annual", cfg.get("risk_free_annual_default")),
-                    "Risk-Free Warning": risk_free_meta.get("warning", cfg.get("risk_free_warning", "")),
-                    "Rolling Window (Export)": rolling_window or "1y",
-                    "Rolling Return Type (Export)": rolling_return_type or "annualized",
-                    "Rolling Metric (Export)": rolling_metric or "total_return",
-                }
-            )
+        pdata = (active_results or {}).get(selected_name) or {}
+        cfg = pdata.get("config", {}) or {}
+        window_weights = pdata.get("window_weights", []) or []
+        risk_free_meta = pdata.get("risk_free_meta", {}) or {}
+        selected_series = list(cfg.get("selected_series") or [])
+        first_apply_start = _safe_date_text(window_weights[0].get("apply_start")) if window_weights else ""
+        last_apply_end = _safe_date_text(window_weights[-1].get("apply_end")) if window_weights else ""
+        exp_weighted = bool(cfg.get("exp_wt_cov", False))
+        decay_value = normalize_decay_input(cfg.get("halflife", 63), 63.0)
+
+        def _add_setting(parameter, value):
+            settings_rows.append({"Parameter": parameter, "Value": value})
+
+        _add_setting("Result Name", selected_name)
+        _add_setting("Model", cfg.get("model", ""))
+        _add_setting("Objective", cfg.get("objective", ""))
+        _add_setting("Periodicity", cfg.get("periodicity", periodicity or "daily"))
+        _add_setting("Selected Series Count", len(selected_series))
+        _add_setting("Selected Series", ", ".join(selected_series))
+        _add_setting("Date Range Start", (date_range or {}).get("start", ""))
+        _add_setting("Date Range End", (date_range or {}).get("end", ""))
+        _add_setting("Window Type", cfg.get("window_type", ""))
+        _add_setting("Window Size", cfg.get("window_size"))
+        _add_setting("Opt Step", cfg.get("opt_step"))
+        _add_setting("Opt Step Unit", cfg.get("opt_step_unit"))
+        _add_setting("Window Count", len(window_weights))
+        _add_setting("First Apply Start", first_apply_start)
+        _add_setting("Last Apply End", last_apply_end)
+        _add_setting("Missing Data", cfg.get("missing_data", ""))
+        _add_setting("Fill In-Sample", bool(cfg.get("fill_in_sample", False)))
+        _add_setting("Exponential Weighting (Cov)", exp_weighted)
+        _add_setting("Decay Input", float(decay_value))
+        _add_setting("Decay Mode", decay_input_mode(decay_value, 63.0))
+        _add_setting("Vol Scaler", float(vol_scaler or 0))
+        _add_setting("Benchmark Assignments", _safe_json_text(bench or {}))
+        _add_setting("CMA Benchmark Assignments", _safe_json_text(cmabench or {}))
+        _add_setting("Long/Short Assignments", _safe_json_text(ls or {}))
+        _add_setting("Vol Scaling Assignments", _safe_json_text(vol_scaling or {}))
+        _add_setting("Min Wt Constraints", _safe_json_text(cfg.get("min_wt") or {}))
+        _add_setting("Max Wt Constraints", _safe_json_text(cfg.get("max_wt") or {}))
+        _add_setting("Force Max Flags", _safe_json_text(cfg.get("force_max") or {}))
+        _add_setting("Linear Constraints", _safe_json_text(cfg.get("linear_constraints") or []))
+        _add_setting("Ex-Ante Mode", cfg.get("ex_ante_mode", ""))
+        _add_setting("Ex-Ante Returns", _safe_json_text(cfg.get("ex_ante_returns") or {}))
+        _add_setting("Ex-Ante Covariance", _safe_json_text(cfg.get("ex_ante_cov") or {}))
+        _add_setting("Ex-Ante Volatility", _safe_json_text(cfg.get("ex_ante_vol") or {}))
+        _add_setting("Ex-Ante Correlation", _safe_json_text(cfg.get("ex_ante_corr") or {}))
+        _add_setting("BL Tau", cfg.get("bl_tau"))
+        _add_setting("BL Views", _safe_json_text(cfg.get("bl_views") or []))
+        _add_setting("Risk-Free Source", risk_free_meta.get("source", cfg.get("risk_free_source", "")))
+        _add_setting("Risk-Free Annual", risk_free_meta.get("annual", cfg.get("risk_free_annual_default")))
+        _add_setting("Risk-Free Warning", risk_free_meta.get("warning", cfg.get("risk_free_warning", "")))
+        _add_setting("Rolling Window (Export)", rolling_window or "1y")
+        _add_setting("Rolling Return Type (Export)", rolling_return_type or "annualized")
+        _add_setting("Rolling Metric (Export)", rolling_metric or "total_return")
+
         settings_df = pd.DataFrame(settings_rows)
 
         # ------------------------------------------------------------------
         # Weights tab
         # ------------------------------------------------------------------
-        weight_rows = []
-        weight_cols = []
-        for pname, pdata in active_results.items():
-            for ww in pdata.get("window_weights", []) or []:
+        selected_portfolio_data = (active_results or {}).get(selected_name) or {}
+        selected_window_weights = selected_portfolio_data.get("window_weights", []) or []
+        if selected_window_weights:
+            asset_names = list((selected_window_weights[0].get("weights") or {}).keys())
+            weight_rows = []
+            for ww in selected_window_weights:
                 row = {
-                    "Portfolio": pname,
-                    "Apply Start": format_mdy_date(pd.Timestamp(ww["apply_start"])),
-                    "Apply End": format_mdy_date(pd.Timestamp(ww["apply_end"])),
+                    "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
+                    "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
                 }
-                for asset, weight in (ww.get("weights", {}) or {}).items():
-                    col = f"Wt_{asset}"
-                    row[col] = float(weight)
-                    if col not in weight_cols:
-                        weight_cols.append(col)
+                for asset in asset_names:
+                    row[asset] = (ww.get("weights") or {}).get(asset, 0)
                 weight_rows.append(row)
-        if weight_rows:
             weights_df = pd.DataFrame(weight_rows)
-            weights_df = weights_df[["Portfolio", "Apply Start", "Apply End", *weight_cols]]
+            weights_df = weights_df[["Apply Start", "Apply End", *asset_names]]
         else:
-            weights_df = pd.DataFrame(columns=["Portfolio", "Apply Start", "Apply End"])
+            weights_df = pd.DataFrame(columns=["Apply Start", "Apply End"])
 
         # ------------------------------------------------------------------
         # Turnover tab
@@ -9569,7 +9564,6 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         output = BytesIO()
         settings_df = format_excel_dates(settings_df)
-        weights_df = format_excel_dates(weights_df)
         turnover_df = format_excel_dates(turnover_df)
         stats_df = format_excel_dates(stats_df)
         returns_df = format_excel_dates(returns_df)

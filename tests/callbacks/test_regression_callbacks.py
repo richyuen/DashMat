@@ -790,6 +790,14 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     assert settings_map["Result Name"] == "R1"
     assert settings_map["Model"] == "ols"
 
+    weights_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Weights")
+    assert list(weights_df.columns) == ["Window", "Date", "intercept", "X1"]
+    assert "ARIMA_AIC" not in set(weights_df.columns)
+    assert "GARCH_AIC" not in set(weights_df.columns)
+    assert weights_df.loc[0, "Date"] == "2024-01-01"
+    assert weights_df.loc[0, "intercept"] == pytest.approx(0.001)
+    assert weights_df.loc[0, "X1"] == pytest.approx(0.95)
+
     anova_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="ANOVA")
     assert "Block" in anova_df.columns
     assert "Parameters" in set(anova_df["Block"].dropna())
