@@ -112,6 +112,15 @@ _MODEL_OPTIONS = [
     {"value": "elastic_net", "label": "Elastic Net"},
 ]
 
+_MODEL_DEFAULT_NAME = {
+    "ols": "OLS",
+    "constrained_ols": "Constrained OLS",
+    "style_analysis": "Style Analysis",
+    "ridge": "Ridge",
+    "lasso": "Lasso",
+    "elastic_net": "Elastic Net",
+}
+
 _MISSING_DATA_OPTIONS = [
     {"value": "fill_na", "label": "Fill NA"},
     {"value": "fill_0", "label": "Fill 0"},
@@ -1007,7 +1016,7 @@ def build_reg_main_layout():
                                         dmc.TextInput(
                                             id="reg-regression-name-input",
                                             label="Regression Name",
-                                            value="OLS_1",
+                                            value="OLS",
                                             w=130,
                                             size="sm",
                                         ),
@@ -1664,7 +1673,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-series-select-value-store", data=[], storage_type="session"),
         # Regression settings
         dcc.Store(id="reg-model-store", data="ols", storage_type="session"),
-        dcc.Store(id="reg-regression-name-store", data="OLS_1", storage_type="session"),
+        dcc.Store(id="reg-regression-name-store", data="OLS", storage_type="session"),
         dcc.Store(id="reg-force-zero-intercept-store", data=False, storage_type="session"),
         dcc.Store(id="reg-robust-se-store", data=False, storage_type="session"),
         dcc.Store(id="reg-exp-wt-store", data=False, storage_type="session"),
@@ -1973,6 +1982,15 @@ def reg_toggle_model_controls(model):
 )
 def reg_force_zero_for_style(model, current):
     return True if model == "style_analysis" else current
+
+
+@callback(
+    Output("reg-regression-name-input", "value"),
+    Input("reg-model-select", "value"),
+    prevent_initial_call=False,
+)
+def reg_sync_name_with_model(model):
+    return _MODEL_DEFAULT_NAME.get(model, "Regression")
 
 
 @callback(

@@ -556,3 +556,10 @@ def test_reg_build_display_series_clips_x_to_model_window_for_rolling(regression
     assert ordered_cols == ["Predicted", "Actual (Y)", "X1", "X2", "Residual"]
     assert list(display_df.index) == list(model_idx)
     assert list(display_df["X1"].index) == list(model_idx)
+
+
+def test_reg_sync_name_with_model_uses_model_defaults(regression_page):
+    assert regression_page.reg_sync_name_with_model("ols") == "OLS"
+    assert regression_page.reg_sync_name_with_model("ridge") == "Ridge"
+    assert regression_page.reg_sync_name_with_model("style_analysis") == "Style Analysis"
+    assert regression_page.reg_sync_name_with_model("unknown_model") == "Regression"
