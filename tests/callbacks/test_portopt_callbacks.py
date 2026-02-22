@@ -726,17 +726,16 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
 
     workbook = BytesIO(payload["content"])
     xl = pd.ExcelFile(workbook)
-    assert xl.sheet_names == [
+    assert xl.sheet_names[:6] == [
         "Settings",
         "Weights",
         "Turnover",
         "Statistics",
         "Returns",
         "Growth of $1",
-        "Attribution",
-        "Risk",
-        "Frontier",
     ]
+    assert "Drawdown" in xl.sheet_names
+    assert xl.sheet_names[-3:] == ["Attribution", "Risk", "Frontier"]
 
     settings_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Settings")
     assert "Decay Input" in settings_df.columns

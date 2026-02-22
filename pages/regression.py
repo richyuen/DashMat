@@ -30,13 +30,19 @@ from utils.upload_flow import (
     merge_uploaded_with_existing as _shared_merge_uploaded_with_existing,
 )
 from utils.returns import (
+    calculate_calendar_year_returns,
+    calculate_rolling_returns,
     df_to_json,
     get_available_periodicities,
     get_working_returns,
     json_to_df,
     annualization_factor,
 )
-from utils.statistics import calculate_statistics_cached
+from utils.statistics import (
+    calculate_drawdown,
+    calculate_growth_of_dollar,
+    calculate_statistics_cached,
+)
 from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
@@ -168,6 +174,112 @@ def _fmt(v, decimals=6):
     if v is None or (isinstance(v, float) and not np.isfinite(v)):
         return "—"
     return f"{v:.{decimals}f}"
+
+
+def _reg_get_selected_result_entry(selected, results):
+    results = results or {}
+    if not results:
+        return None, None
+    if selected and selected in results:
+        return selected, results[selected]
+    fallback = list(results.keys())[-1]
+    return fallback, results[fallback]
+
+
+def _rolling_metric_label(metric: str) -> str:
+    labels = {
+        "total_return": "Total Return",
+        "volatility": "Volatility",
+        "sharpe_ratio": "Sharpe Ratio",
+        "sortino_ratio": "Sortino Ratio",
+    }
+    return labels.get(metric or "total_return", "Total Return")
+
+
+def _rolling_metric_tickformat(metric: str) -> str:
+    if metric in {"total_return", "volatility"}:
+        return ".2%"
+    return ".2f"
+
+
+def _reg_build_display_series(entry, raw_data):
+    """Build canonical series used across Statistics/Returns/Growth/Scatter."""
+    entry = entry or {}
+    periodicity = entry.get("periodicity", "daily")
+    dep_var = entry.get("dependent_var")
+    indep_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
+
+    predicted = pd.Series(dtype=float)
+    residual = pd.Series(dtype=float)
+    try:
+        predicted_df = json_to_df(entry.get("predicted_json"))
+        if predicted_df is not None and not predicted_df.empty:
+            predicted = predicted_df.iloc[:, 0].dropna().rename("Predicted")
+    except Exception:
+        predicted = pd.Series(dtype=float)
+
+    try:
+        residuals_df = json_to_df(entry.get("residuals_json"))
+        if residuals_df is not None and not residuals_df.empty:
+            residual = residuals_df.iloc[:, 0].dropna().rename("Residual")
+    except Exception:
+        residual = pd.Series(dtype=float)
+
+    actual = pd.Series(dtype=float)
+    if not predicted.empty and not residual.empty:
+        p_aligned, r_aligned = predicted.align(residual, join="inner")
+        if not p_aligned.empty:
+            actual = (p_aligned + r_aligned).rename("Actual (Y)")
+
+    x_df = pd.DataFrame()
+    if raw_data and indep_vars:
+        selected_series = [dep_var] + indep_vars if dep_var else indep_vars
+        try:
+            working_df = _reg_get_working_returns(
+                raw_data,
+                periodicity,
+                selected_series,
+                entry.get("benchmark_assignments") or {},
+                entry.get("long_short_assignments") or {},
+                entry.get("date_range"),
+                float(entry.get("vol_scaler") or 0),
+                entry.get("vol_scaling_assignments") or {},
+            )
+        except Exception:
+            working_df = pd.DataFrame()
+
+        if actual.empty and dep_var and dep_var in working_df.columns:
+            actual = working_df[dep_var].dropna().rename("Actual (Y)")
+
+        x_cols = [x for x in indep_vars if x in working_df.columns]
+        if x_cols:
+            x_df = working_df[x_cols].copy()
+
+    series_map = {}
+    if not predicted.empty:
+        series_map["Predicted"] = predicted
+    if not actual.empty:
+        series_map["Actual (Y)"] = actual
+    for x in indep_vars:
+        if not x_df.empty and x in x_df.columns:
+            series_map[x] = x_df[x].dropna().rename(x)
+    if not residual.empty:
+        series_map["Residual"] = residual
+
+    if not series_map:
+        return pd.DataFrame(), []
+
+    display_df = pd.concat(series_map, axis=1).sort_index()
+    display_df = display_df.loc[:, [c for c in series_map.keys() if c in display_df.columns]]
+    return display_df, list(display_df.columns)
+
+
+def _reg_prefixed(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    out.columns = [f"{prefix} | {c}" for c in out.columns]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +540,12 @@ def build_reg_help_modal():
                                     children=[
                                         dmc.Text("Run Regression executes using the current configuration and selected series.", size="sm"),
                                         dmc.Text("Results are saved by name, selectable from the result dropdown, and can be deleted.", size="sm"),
-                                        dmc.Text("Output tabs include ANOVA, Rolling, Weights, Statistics, Returns, Growth, and Scatter.", size="sm"),
+                                        dmc.Text(
+                                            "Output tabs include ANOVA, Rolling Summary, Rolling, Weights, Statistics, Returns, Growth of $1, Calendar Year, Drawdown, and Scatter.",
+                                            size="sm",
+                                        ),
+                                        dmc.Text("Rolling tab supports Total Return, Volatility, Sharpe Ratio, and Sortino Ratio metrics.", size="sm"),
+                                        dmc.Text("Scatter supports residual-vs-predicted, actual-vs-predicted, and X-variable comparisons.", size="sm"),
                                         dmc.Text("Status text reports success and common input errors like missing Y/X/data.", size="sm"),
                                     ],
                                 )
@@ -446,7 +563,10 @@ def build_reg_help_modal():
                                         dmc.Text("Save session exports current session storage to JSON.", size="sm"),
                                         dmc.Text("Load session imports a saved JSON and restores page state.", size="sm"),
                                         dmc.Text("New session clears session storage and reloads the page.", size="sm"),
-                                        dmc.Text("Download Excel exports summary, coefficients, diagnostics, and predicted/residual sheets.", size="sm"),
+                                        dmc.Text(
+                                            "Download Excel exports summary, coefficients, diagnostics, predicted/residual, and tab data sheets for returns, growth, rolling, calendar year, and drawdown.",
+                                            size="sm",
+                                        ),
                                         dmc.Text("Clear server cache resets memoized server-side caches for refreshed data pulls.", size="sm"),
                                     ],
                                 )
@@ -489,7 +609,10 @@ def build_reg_help_modal():
                                                             dmc.Text("File menu includes New session, Load session, Save session, Download Excel, and Exit.", size="sm"),
                                                             dmc.Text("Edit menu includes imports and Clear server cache.", size="sm"),
                                                             dmc.Text("Switch buttons move directly to Analytics Tool and Portfolio Optimization.", size="sm"),
-                                                            dmc.Text("Download Excel exports summary, coefficients, diagnostics, and predicted/residual sheets.", size="sm"),
+                                                            dmc.Text(
+                                                                "Download Excel exports summary, coefficients, diagnostics, predicted/residual, and tab data sheets for returns, growth, rolling, calendar year, and drawdown.",
+                                                                size="sm",
+                                                            ),
                                                         ],
                                                     )
                                                 ),
@@ -1110,16 +1233,119 @@ def build_reg_main_layout():
                             dmc.TabsList([
                                 dmc.TabsTab("ANOVA", value="anova"),
                                 dmc.TabsTab("Rolling Summary", value="rolling"),
+                                dmc.TabsTab("Rolling", value="rolling_returns"),
                                 dmc.TabsTab("Weights", value="weights"),
                                 dmc.TabsTab("Statistics", value="statistics"),
                                 dmc.TabsTab("Returns", value="returns"),
                                 dmc.TabsTab("Growth of $1", value="growth"),
+                                dmc.TabsTab("Calendar Year", value="calendar"),
+                                dmc.TabsTab("Drawdown", value="drawdown"),
                                 dmc.TabsTab("Scatter", value="scatter"),
                             ]),
-                            dmc.TabsPanel(value="anova", style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-anova-content", style={"padding": "8px"})]),
-                            dmc.TabsPanel(value="rolling", style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-rolling-content", style={"padding": "8px"})]),
+                            dmc.TabsPanel(
+                                value="anova",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        align="flex-end",
+                                        children=[
+                                            dmc.Select(
+                                                id="reg-anova-window-select",
+                                                label="Window Period",
+                                                data=[],
+                                                value=None,
+                                                w=360,
+                                                size="sm",
+                                                clearable=False,
+                                                disabled=True,
+                                                placeholder="Latest period",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-anova-content", style={"padding": "8px"}),
+                                ],
+                            ),
+                            dmc.TabsPanel(
+                                value="rolling",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="reg-rolling-summary-chart-switch",
+                                                data=[
+                                                    {"value": "table", "label": "Table"},
+                                                    {"value": "chart", "label": "Chart"},
+                                                ],
+                                                value="chart",
+                                                size="sm",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-rolling-content", style={"padding": "8px"}),
+                                ],
+                            ),
+                            dmc.TabsPanel(
+                                value="rolling_returns",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        gap="md",
+                                        children=[
+                                            dmc.Select(
+                                                id="reg-rolling-metric-select",
+                                                data=[
+                                                    {"value": "total_return", "label": "Total Return"},
+                                                    {"value": "volatility", "label": "Volatility"},
+                                                    {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
+                                                    {"value": "sortino_ratio", "label": "Sortino Ratio"},
+                                                ],
+                                                value="total_return",
+                                                w=170,
+                                                size="sm",
+                                                clearable=False,
+                                            ),
+                                            dmc.Select(
+                                                id="reg-rolling-window-select",
+                                                data=[
+                                                    {"value": "3m", "label": "3-month"},
+                                                    {"value": "6m", "label": "6-month"},
+                                                    {"value": "1y", "label": "1-year"},
+                                                    {"value": "3y", "label": "3-year"},
+                                                    {"value": "5y", "label": "5-year"},
+                                                    {"value": "10y", "label": "10-year"},
+                                                ],
+                                                value="1y",
+                                                w=120,
+                                                size="sm",
+                                                clearable=False,
+                                            ),
+                                            dmc.SegmentedControl(
+                                                id="reg-rolling-return-type-select",
+                                                data=[
+                                                    {"value": "cumulative", "label": "Cumulative"},
+                                                    {"value": "annualized", "label": "Annualized"},
+                                                ],
+                                                value="annualized",
+                                                size="sm",
+                                            ),
+                                            dmc.SegmentedControl(
+                                                id="reg-rolling-chart-switch",
+                                                data=[
+                                                    {"value": "table", "label": "Table"},
+                                                    {"value": "chart", "label": "Chart"},
+                                                ],
+                                                value="chart",
+                                                size="sm",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-rolling-returns-content", style={"padding": "8px", "height": "100%"}),
+                                ],
+                            ),
                             dmc.TabsPanel(value="weights", style={"overflow": "auto", "flex": "1"},
                                 children=[html.Div(id="reg-weights-content", style={"padding": "8px"})]),
                             dmc.TabsPanel(value="statistics", style={"overflow": "auto", "flex": "1"},
@@ -1128,8 +1354,69 @@ def build_reg_main_layout():
                                 children=[html.Div(id="reg-returns-content", style={"padding": "8px"})]),
                             dmc.TabsPanel(value="growth", style={"overflow": "auto", "flex": "1"},
                                 children=[html.Div(id="reg-growth-content", style={"padding": "8px"})]),
-                            dmc.TabsPanel(value="scatter", style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-scatter-content", style={"padding": "8px"})]),
+                            dmc.TabsPanel(
+                                value="calendar",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[html.Div(id="reg-calendar-content", style={"padding": "8px"})],
+                            ),
+                            dmc.TabsPanel(
+                                value="drawdown",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        children=[
+                                            dmc.SegmentedControl(
+                                                id="reg-drawdown-chart-switch",
+                                                data=[
+                                                    {"value": "table", "label": "Table"},
+                                                    {"value": "chart", "label": "Chart"},
+                                                ],
+                                                value="chart",
+                                                size="sm",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-drawdown-content", style={"padding": "8px"}),
+                                ],
+                            ),
+                            dmc.TabsPanel(
+                                value="scatter",
+                                style={"overflow": "auto", "flex": "1"},
+                                children=[
+                                    dmc.Group(
+                                        mb="xs",
+                                        gap="md",
+                                        children=[
+                                            dmc.Select(
+                                                id="reg-scatter-mode-select",
+                                                label="Scatter Mode",
+                                                data=[
+                                                    {"value": "residual_vs_predicted", "label": "Residual vs Predicted"},
+                                                    {"value": "actual_vs_predicted", "label": "Actual vs Predicted"},
+                                                    {"value": "actual_vs_x", "label": "Actual vs X"},
+                                                    {"value": "predicted_vs_x", "label": "Predicted vs X"},
+                                                ],
+                                                value="residual_vs_predicted",
+                                                w=220,
+                                                size="sm",
+                                                clearable=False,
+                                            ),
+                                            dmc.Select(
+                                                id="reg-scatter-x-select",
+                                                label="X Variable",
+                                                data=[],
+                                                value=None,
+                                                w=200,
+                                                size="sm",
+                                                clearable=False,
+                                                disabled=True,
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(id="reg-scatter-content", style={"padding": "8px"}),
+                                ],
+                            ),
                         ],
                     ),
                 ],
@@ -1649,6 +1936,45 @@ def reg_force_zero_for_style(model, current):
 def reg_toggle_window_controls(window_type):
     is_full = window_type == "full"
     return is_full, is_full, is_full
+
+
+@callback(
+    Output("reg-rolling-return-type-select", "disabled"),
+    Output("reg-rolling-return-type-select", "style"),
+    Input("reg-rolling-metric-select", "value"),
+    prevent_initial_call=False,
+)
+def reg_toggle_rolling_return_type(metric):
+    disabled = (metric or "total_return") != "total_return"
+    style = {} if not disabled else {"opacity": 0.5, "pointerEvents": "none"}
+    return disabled, style
+
+
+@callback(
+    Output("reg-scatter-x-select", "data"),
+    Output("reg-scatter-x-select", "value"),
+    Output("reg-scatter-x-select", "disabled"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    Input("reg-scatter-mode-select", "value"),
+    State("reg-scatter-x-select", "value"),
+    prevent_initial_call=False,
+)
+def reg_sync_scatter_x_options(selected, results, mode, current_x):
+    if not selected or not results or selected not in results:
+        return [], None, True
+
+    entry = results[selected] or {}
+    indep_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
+    options = [{"value": x, "label": x} for x in indep_vars]
+    needs_x = mode in {"actual_vs_x", "predicted_vs_x"}
+    if not needs_x:
+        return options, current_x if current_x in indep_vars else None, True
+    if not indep_vars:
+        return [], None, True
+    if current_x in indep_vars:
+        return options, current_x, False
+    return options, indep_vars[0], False
 
 
 @callback(
@@ -3108,9 +3434,10 @@ def reg_toggle_file_menu_actions(raw_data, results):
     Output("reg-download-excel", "data"),
     Input("reg-menu-download-excel", "n_clicks"),
     State("reg-results-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def reg_download_excel(n_clicks, results):
+def reg_download_excel(n_clicks, results, raw_data):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -3120,6 +3447,11 @@ def reg_download_excel(n_clicks, results):
     model_rows = []
     predicted_series = {}
     residual_series = {}
+    returns_frames = []
+    growth_frames = []
+    rolling_frames = []
+    calendar_frames = []
+    drawdown_frames = []
 
     for name, entry in (results or {}).items():
         if not isinstance(entry, dict):
@@ -3194,6 +3526,78 @@ def reg_download_excel(n_clicks, results):
             if resid_df is not None and not resid_df.empty:
                 residual_series[name] = resid_df.iloc[:, 0]
 
+        periodicity = entry.get("periodicity", "daily")
+        display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+        if display_df.empty or not ordered_cols:
+            continue
+        display_df = display_df[ordered_cols]
+
+        returns_pref = _reg_prefixed(display_df, name)
+        if not returns_pref.empty:
+            returns_frames.append(returns_pref)
+
+        growth_pref = _reg_prefixed((1 + display_df).cumprod(), name)
+        if not growth_pref.empty:
+            growth_frames.append(growth_pref)
+
+        try:
+            rolling_df = calculate_rolling_returns(
+                df_to_json(display_df),
+                periodicity,
+                tuple(ordered_cols),
+                "total",
+                "{}",
+                "{}",
+                "null",
+                "1y",
+                "annualized",
+                "total_return",
+                0,
+                "{}",
+            )
+        except Exception:
+            rolling_df = pd.DataFrame()
+        rolling_pref = _reg_prefixed(rolling_df, name)
+        if not rolling_pref.empty:
+            rolling_frames.append(rolling_pref)
+
+        try:
+            calendar_df = calculate_calendar_year_returns(
+                df_to_json(display_df),
+                periodicity,
+                periodicity,
+                tuple(ordered_cols),
+                "total",
+                "{}",
+                "{}",
+                "null",
+                0,
+                "{}",
+            )
+        except Exception:
+            calendar_df = pd.DataFrame()
+        calendar_pref = _reg_prefixed(calendar_df, name)
+        if not calendar_pref.empty:
+            calendar_frames.append(calendar_pref)
+
+        try:
+            drawdown_df = calculate_drawdown(
+                df_to_json(display_df),
+                periodicity,
+                tuple(ordered_cols),
+                "total",
+                "{}",
+                "{}",
+                "null",
+                0,
+                "{}",
+            )
+        except Exception:
+            drawdown_df = pd.DataFrame()
+        drawdown_pref = _reg_prefixed(drawdown_df, name)
+        if not drawdown_pref.empty:
+            drawdown_frames.append(drawdown_pref)
+
     if not summary_rows:
         raise PreventUpdate
 
@@ -3224,6 +3628,36 @@ def reg_download_excel(n_clicks, results):
             resid_export = resid_df.copy()
             resid_export.index.name = "Date"
             write_excel_with_autofit(writer, resid_export.reset_index(), "Residuals", index=False)
+
+        returns_df = pd.concat(returns_frames, axis=1).sort_index() if returns_frames else pd.DataFrame()
+        if not returns_df.empty:
+            returns_export = returns_df.copy()
+            returns_export.index.name = "Date"
+            write_excel_with_autofit(writer, returns_export.reset_index(), "Returns", index=False)
+
+        growth_df = pd.concat(growth_frames, axis=1).sort_index() if growth_frames else pd.DataFrame()
+        if not growth_df.empty:
+            growth_export = growth_df.copy()
+            growth_export.index.name = "Date"
+            write_excel_with_autofit(writer, growth_export.reset_index(), "Growth of $1", index=False)
+
+        rolling_df = pd.concat(rolling_frames, axis=1).sort_index() if rolling_frames else pd.DataFrame()
+        if not rolling_df.empty:
+            rolling_export = rolling_df.copy()
+            rolling_export.index.name = "Date"
+            write_excel_with_autofit(writer, rolling_export.reset_index(), "Rolling (1Y Ann)", index=False)
+
+        calendar_df = pd.concat(calendar_frames, axis=1).sort_index() if calendar_frames else pd.DataFrame()
+        if not calendar_df.empty:
+            calendar_export = calendar_df.copy()
+            calendar_export.index.name = "Year"
+            write_excel_with_autofit(writer, calendar_export.reset_index(), "Calendar Year", index=False)
+
+        drawdown_df = pd.concat(drawdown_frames, axis=1).sort_index() if drawdown_frames else pd.DataFrame()
+        if not drawdown_df.empty:
+            drawdown_export = drawdown_df.copy()
+            drawdown_export.index.name = "Date"
+            write_excel_with_autofit(writer, drawdown_export.reset_index(), "Drawdown", index=False)
 
     output.seek(0)
     return dcc.send_bytes(output.getvalue(), "regression_results.xlsx")
@@ -3430,6 +3864,40 @@ def reg_sync_result_options(results, current_val):
 
 
 @callback(
+    Output("reg-anova-window-select", "data"),
+    Output("reg-anova-window-select", "value"),
+    Output("reg-anova-window-select", "disabled"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    State("reg-anova-window-select", "value"),
+    prevent_initial_call=False,
+)
+def reg_sync_anova_window_options(selected, results, current_window):
+    if not selected or not results or selected not in results:
+        return [], None, True
+
+    wrs = (results[selected] or {}).get("window_results") or []
+    if not wrs:
+        return [], None, True
+
+    options = []
+    for idx, wr in enumerate(wrs):
+        apply_start = str((wr or {}).get("apply_start") or "")[:10]
+        apply_end = str((wr or {}).get("apply_end") or "")[:10]
+        options.append(
+            {
+                "value": str(idx),
+                "label": f"Window {idx + 1}: {apply_start} to {apply_end}",
+            }
+        )
+
+    latest_val = str(len(wrs) - 1)
+    if current_window is not None and str(current_window) in {o["value"] for o in options}:
+        return options, str(current_window), False
+    return options, latest_val, False
+
+
+@callback(
     Output("reg-results-store", "data", allow_duplicate=True),
     Input("reg-delete-result-btn", "n_clicks"),
     State("reg-result-select", "value"),
@@ -3450,9 +3918,10 @@ def reg_delete_result(n_clicks, selected, results):
     Output("reg-anova-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("reg-anova-window-select", "value"),
     prevent_initial_call=False,
 )
-def reg_render_anova(selected, results):
+def reg_render_anova(selected, results, selected_window):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
 
@@ -3461,7 +3930,13 @@ def reg_render_anova(selected, results):
     if not wrs:
         return dmc.Text("No results.", size="sm", c="dimmed")
 
-    wr = wrs[-1]
+    try:
+        window_idx = int(selected_window) if selected_window is not None else (len(wrs) - 1)
+    except (TypeError, ValueError):
+        window_idx = len(wrs) - 1
+    window_idx = max(0, min(window_idx, len(wrs) - 1))
+
+    wr = wrs[window_idx]
     coefs = wr.get("coefficients") or {}
     pvals = wr.get("p_values") or {}
     diag = wr.get("diagnostics") or {}
@@ -3613,10 +4088,11 @@ def reg_render_anova(selected, results):
     Output("reg-rolling-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("reg-rolling-summary-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_rolling(selected, results, theme):
+def reg_render_rolling(selected, results, view_mode, theme):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -3656,17 +4132,118 @@ def reg_render_rolling(selected, results, theme):
     apply_chart_theme(fig, theme)
 
     df_display = df_roll.assign(Date=df_roll["Date"].dt.strftime("%Y-%m-%d"))
-    return dmc.Stack(gap="sm", p="sm", children=[
-        dcc.Graph(figure=fig, config={"displayModeBar": False}),
-        dag.AgGrid(
+    table = dag.AgGrid(
+        className="ag-theme-alpine",
+        columnDefs=[{"field": c, "minWidth": 110} for c in df_display.columns],
+        rowData=df_display.to_dict("records"),
+        defaultColDef={"resizable": True, "sortable": True},
+        style={"height": "380px"},
+        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+    )
+    if view_mode == "table":
+        return table
+    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
+@callback(
+    Output("reg-rolling-returns-content", "children"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-rolling-window-select", "value"),
+    Input("reg-rolling-return-type-select", "value"),
+    Input("reg-rolling-metric-select", "value"),
+    Input("reg-rolling-chart-switch", "value"),
+    Input("global-color-scheme-toggle", "computedColorScheme"),
+    prevent_initial_call=False,
+)
+def reg_render_rolling_returns(
+    selected,
+    results,
+    raw_data,
+    rolling_window,
+    rolling_return_type,
+    rolling_metric,
+    view_mode,
+    theme,
+):
+    _name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
+        return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
+
+    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    if display_df.empty or not ordered_cols:
+        return dmc.Text("No rolling data available.", size="sm", c="dimmed")
+
+    periodicity = entry.get("periodicity", "daily")
+    metric = rolling_metric or "total_return"
+    window = rolling_window or "1y"
+    return_type = rolling_return_type or "annualized"
+    series_df = display_df[ordered_cols]
+    rolling_df = calculate_rolling_returns(
+        df_to_json(series_df),
+        periodicity,
+        tuple(ordered_cols),
+        "total",
+        "{}",
+        "{}",
+        "null",
+        window,
+        return_type,
+        metric,
+        0,
+        "{}",
+    )
+    if rolling_df is None or rolling_df.empty:
+        return dmc.Text("No rolling values available for selected window.", size="sm", c="dimmed")
+
+    if (view_mode or "chart") == "table":
+        table_df = rolling_df.reset_index()
+        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+        fmt = ".2%" if metric in {"total_return", "volatility"} else ".4f"
+        cols = [{"field": "Date", "pinned": "left", "width": 96, "minWidth": 90}]
+        for c in ordered_cols:
+            if c in table_df.columns:
+                cols.append(
+                    {
+                        "field": c,
+                        "width": 120,
+                        "minWidth": 110,
+                        "valueFormatter": {
+                            "function": f"params.value != null ? d3.format('{fmt}')(params.value) : ''"
+                        },
+                    }
+                )
+        return dag.AgGrid(
             className="ag-theme-alpine",
-            columnDefs=[{"field": c, "minWidth": 110} for c in df_display.columns],
-            rowData=df_display.to_dict("records"),
+            columnDefs=cols,
+            rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
-            style={"height": "280px"},
+            style={"height": "440px"},
             dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
-        ),
-    ])
+        )
+
+    fig = go.Figure()
+    for c in ordered_cols:
+        if c not in rolling_df.columns:
+            continue
+        s = rolling_df[c].dropna()
+        if s.empty:
+            continue
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=c))
+    if not fig.data:
+        return dmc.Text("No rolling values available for selected window.", size="sm", c="dimmed")
+    fig.update_layout(
+        height=420,
+        title=f"Rolling {_rolling_metric_label(metric)} ({window})",
+        margin={"l": 50, "r": 20, "t": 50, "b": 40},
+        xaxis_title="Date",
+        yaxis_title=_rolling_metric_label(metric),
+    )
+    fig.update_yaxes(tickformat=_rolling_metric_tickformat(metric))
+    apply_chart_theme(fig, theme)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
 
 # ---------------------------------------------------------------------------
@@ -3728,27 +4305,34 @@ def reg_render_weights(selected, results, theme):
     Output("reg-returns-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_returns(selected, results):
-    if not selected or not results or selected not in results:
+def reg_render_returns(selected, results, raw_data):
+    _name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-    entry = results[selected]
-    try:
-        predicted_df = json_to_df(entry["predicted_json"])
-        residuals_df = json_to_df(entry["residuals_json"])
-    except Exception:
-        return dmc.Text("Could not load series.", size="sm", c="dimmed")
 
-    df = pd.concat([predicted_df, residuals_df], axis=1)
+    df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    if df.empty:
+        return dmc.Text("No returns available.", size="sm", c="dimmed")
+
     df.index.name = "Date"
     df_reset = df.reset_index()
     df_reset["Date"] = df_reset["Date"].astype(str).str[:10]
 
-    cols = [{"field": "Date", "pinned": "left", "minWidth": 110}]
-    for c in df.columns:
-        cols.append({"field": c, "minWidth": 110,
-                     "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}})
+    cols = [{"field": "Date", "pinned": "left", "width": 86, "minWidth": 80, "maxWidth": 96}]
+    for c in ordered_cols:
+        cols.append(
+            {
+                "field": c,
+                "width": 112,
+                "minWidth": 102,
+                "valueFormatter": {
+                    "function": "params.value != null ? d3.format('.6f')(params.value) : ''"
+                },
+            }
+        )
 
     return dag.AgGrid(
         className="ag-theme-alpine",
@@ -3772,30 +4356,169 @@ def reg_render_returns(selected, results):
     Output("reg-growth-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_growth(selected, results, theme):
-    if not selected or not results or selected not in results:
+def reg_render_growth(selected, results, raw_data, theme):
+    _name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-    entry = results[selected]
-    try:
-        predicted_df = json_to_df(entry["predicted_json"])
-        residuals_df = json_to_df(entry["residuals_json"])
-    except Exception:
-        return dmc.Text("Could not load series.", size="sm", c="dimmed")
+
+    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    if display_df.empty:
+        return dmc.Text("No growth series available.", size="sm", c="dimmed")
 
     fig = go.Figure()
-    for col_df, label in [(predicted_df, "Predicted"), (residuals_df, "Residuals")]:
-        if col_df.empty:
+    for label in ordered_cols:
+        s = display_df[label].dropna()
+        if s.empty:
             continue
-        s = col_df.iloc[:, 0]
         growth = (1 + s).cumprod()
         fig.add_trace(go.Scatter(x=growth.index, y=growth.values, mode="lines", name=label, line={"width": 1.5}))
 
     fig.update_layout(height=400, margin={"l": 50, "r": 20, "t": 30, "b": 50},
                       xaxis_title="Date", yaxis_title="Growth of $1",
                       legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
+    apply_chart_theme(fig, theme)
+    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
+# ---------------------------------------------------------------------------
+# Calendar + Drawdown Tabs
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("reg-calendar-content", "children"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    prevent_initial_call=False,
+)
+def reg_render_calendar(selected, results, raw_data):
+    _name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
+        return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
+
+    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    if display_df.empty or not ordered_cols:
+        return dmc.Text("No calendar data available.", size="sm", c="dimmed")
+
+    periodicity = entry.get("periodicity", "daily")
+    cal_df = calculate_calendar_year_returns(
+        df_to_json(display_df[ordered_cols]),
+        periodicity,
+        periodicity,
+        tuple(ordered_cols),
+        "total",
+        "{}",
+        "{}",
+        "null",
+        0,
+        "{}",
+    )
+    if cal_df is None or cal_df.empty:
+        return dmc.Text("No complete calendar years available.", size="sm", c="dimmed")
+
+    table_df = cal_df.reset_index()
+    table_df = table_df.rename(columns={table_df.columns[0]: "Year"})
+    table_df["Year"] = table_df["Year"].astype(str)
+    cols = [{"field": "Year", "pinned": "left", "width": 92, "minWidth": 86}]
+    for c in ordered_cols:
+        if c in table_df.columns:
+            cols.append(
+                {
+                    "field": c,
+                    "width": 122,
+                    "minWidth": 108,
+                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                }
+            )
+    return dag.AgGrid(
+        className="ag-theme-alpine",
+        columnDefs=cols,
+        rowData=table_df.to_dict("records"),
+        defaultColDef={"resizable": True, "sortable": True},
+        style={"height": "460px"},
+        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+    )
+
+
+@callback(
+    Output("reg-drawdown-content", "children"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-drawdown-chart-switch", "value"),
+    Input("global-color-scheme-toggle", "computedColorScheme"),
+    prevent_initial_call=False,
+)
+def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
+    _name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
+        return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
+
+    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    if display_df.empty or not ordered_cols:
+        return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
+
+    periodicity = entry.get("periodicity", "daily")
+    drawdown_df = calculate_drawdown(
+        df_to_json(display_df[ordered_cols]),
+        periodicity,
+        tuple(ordered_cols),
+        "total",
+        "{}",
+        "{}",
+        "null",
+        0,
+        "{}",
+    )
+    if drawdown_df is None or drawdown_df.empty:
+        return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
+
+    if (view_mode or "chart") == "table":
+        table_df = drawdown_df.reset_index()
+        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+        cols = [{"field": "Date", "pinned": "left", "width": 96, "minWidth": 90}]
+        for c in ordered_cols:
+            if c in table_df.columns:
+                cols.append(
+                    {
+                        "field": c,
+                        "width": 120,
+                        "minWidth": 110,
+                        "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                    }
+                )
+        return dag.AgGrid(
+            className="ag-theme-alpine",
+            columnDefs=cols,
+            rowData=table_df.to_dict("records"),
+            defaultColDef={"resizable": True, "sortable": True},
+            style={"height": "440px"},
+            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        )
+
+    fig = go.Figure()
+    for c in ordered_cols:
+        if c not in drawdown_df.columns:
+            continue
+        s = drawdown_df[c].dropna()
+        if s.empty:
+            continue
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=c, fill="tozeroy", opacity=0.9))
+    if not fig.data:
+        return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
+    fig.update_layout(
+        height=420,
+        title="Drawdown",
+        margin={"l": 50, "r": 20, "t": 50, "b": 40},
+        xaxis_title="Date",
+        yaxis_title="Drawdown",
+    )
+    fig.update_yaxes(tickformat=".2%")
     apply_chart_theme(fig, theme)
     return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
@@ -3913,11 +4636,12 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
         return dag.AgGrid(
             className="ag-theme-alpine",
             columnDefs=[
-                {"field": "Statistic", "pinned": "left", "minWidth": 210},
+                {"field": "Statistic", "pinned": "left", "width": 190, "minWidth": 170},
                 *[
                     {
                         "field": c,
-                        "minWidth": 140,
+                        "width": 118,
+                        "minWidth": 105,
                         "valueFormatter": {
                             "function": "(!params.data._format || params.value == null) ? params.value : d3.format(params.data._format)(params.value)"
                         },
@@ -3962,37 +4686,11 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
         normalized_primary_stats = []
 
     normalized_model_stats = []
-    try:
-        predicted_df = json_to_df(entry["predicted_json"])
-    except Exception:
-        predicted_df = pd.DataFrame()
-
-    if not predicted_df.empty:
-        residuals_df = pd.DataFrame()
-        residuals_json = entry.get("residuals_json")
-        if residuals_json:
-            try:
-                residuals_df = json_to_df(residuals_json)
-            except Exception:
-                residuals_df = pd.DataFrame()
-
-        # Build a richer statistics input so users can compare actual vs predicted behavior.
-        predicted_series = predicted_df.iloc[:, 0].copy()
-        stats_input = pd.DataFrame({"Predicted": predicted_series})
-
-        if not residuals_df.empty:
-            residual_series = residuals_df.iloc[:, 0]
-            pred_aligned, resid_aligned = predicted_series.align(residual_series, join="inner")
-            if not pred_aligned.empty:
-                stats_input = pd.DataFrame(
-                    {
-                        "Actual (Y)": pred_aligned + resid_aligned,
-                        "Predicted": pred_aligned,
-                        "Residual": resid_aligned,
-                    }
-                )
-
-        series_names = tuple(stats_input.columns)
+    display_df, _display_order = _reg_build_display_series(entry, raw_data)
+    model_columns = [c for c in ("Predicted", "Actual (Y)", "Residual") if c in display_df.columns]
+    if model_columns:
+        stats_input = display_df[model_columns].copy()
+        series_names = tuple(model_columns)
         try:
             model_stats = calculate_statistics_cached(
                 df_to_json(stats_input),
@@ -4048,39 +4746,68 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
     Output("reg-scatter-content", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("reg-scatter-mode-select", "value"),
+    Input("reg-scatter-x-select", "value"),
+    Input("dashmat-raw-data-store", "data"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
-def reg_render_scatter(selected, results, theme):
-    if not selected or not results or selected not in results:
+def reg_render_scatter(selected, results, mode, x_var, raw_data, theme):
+    _name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-    entry = results[selected]
-    try:
-        predicted_df = json_to_df(entry["predicted_json"])
-        residuals_df = json_to_df(entry["residuals_json"])
-    except Exception:
-        return dmc.Text("Could not load data.", size="sm", c="dimmed")
 
-    if predicted_df.empty:
-        return dmc.Text("No predicted data.", size="sm", c="dimmed")
+    display_df, _ordered = _reg_build_display_series(entry, raw_data)
+    if display_df.empty:
+        return dmc.Text("No scatter data available.", size="sm", c="dimmed")
 
-    predicted = predicted_df.iloc[:, 0]
-    residuals = residuals_df.iloc[:, 0] if not residuals_df.empty else pd.Series(dtype=float)
+    mode = mode or "residual_vs_predicted"
+    predicted = display_df["Predicted"] if "Predicted" in display_df.columns else pd.Series(dtype=float)
+    actual = display_df["Actual (Y)"] if "Actual (Y)" in display_df.columns else pd.Series(dtype=float)
+    residual = display_df["Residual"] if "Residual" in display_df.columns else pd.Series(dtype=float)
+
+    if mode in {"actual_vs_x", "predicted_vs_x"}:
+        if not x_var or x_var not in display_df.columns:
+            return dmc.Text("Select an X variable to view this scatter.", size="sm", c="dimmed")
+        x_series = display_df[x_var]
+    else:
+        x_series = pd.Series(dtype=float)
+
+    if mode == "actual_vs_predicted":
+        x_vals, y_vals = predicted.align(actual, join="inner")
+        title, xlabel, ylabel = "Actual vs Predicted", "Predicted", "Actual (Y)"
+    elif mode == "actual_vs_x":
+        x_vals, y_vals = x_series.align(actual, join="inner")
+        title, xlabel, ylabel = f"Actual vs {x_var}", x_var, "Actual (Y)"
+    elif mode == "predicted_vs_x":
+        x_vals, y_vals = x_series.align(predicted, join="inner")
+        title, xlabel, ylabel = f"Predicted vs {x_var}", x_var, "Predicted"
+    else:
+        x_vals, y_vals = predicted.align(residual, join="inner")
+        title, xlabel, ylabel = "Residual vs Predicted", "Predicted", "Residual"
+
+    if x_vals.empty or y_vals.empty:
+        return dmc.Text("No overlapping data for selected scatter mode.", size="sm", c="dimmed")
 
     fig = go.Figure()
-    if not residuals.empty:
-        common_pred, common_resid = predicted.align(residuals, join="inner")
-        fig.add_trace(go.Scatter(
-            x=common_pred.values, y=common_resid.values,
-            mode="markers", name="Residuals vs Fitted",
+    fig.add_trace(
+        go.Scatter(
+            x=x_vals.values,
+            y=y_vals.values,
+            mode="markers",
             marker={"size": 5, "opacity": 0.7},
-        ))
+            name=title,
+        )
+    )
+    if mode == "residual_vs_predicted":
         fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
-        title, xlabel, ylabel = "Residuals vs Fitted", "Fitted Values", "Residuals"
-    else:
-        title, xlabel, ylabel = "Scatter", "Fitted", "Values"
 
-    fig.update_layout(height=400, title=title, margin={"l": 50, "r": 20, "t": 50, "b": 50},
-                      xaxis_title=xlabel, yaxis_title=ylabel)
+    fig.update_layout(
+        height=400,
+        title=title,
+        margin={"l": 50, "r": 20, "t": 50, "b": 50},
+        xaxis_title=xlabel,
+        yaxis_title=ylabel,
+    )
     apply_chart_theme(fig, theme)
     return dcc.Graph(figure=fig, config={"displayModeBar": False})

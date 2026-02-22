@@ -33,7 +33,9 @@ from utils.upload_flow import (
 from utils.returns import (
     align_monthly_index_to_month_end,
     align_monthly_series_to_month_end,
+    calculate_calendar_year_returns,
     calculate_excess_returns,
+    calculate_rolling_returns,
     df_to_json,
     get_available_periodicities,
     get_working_returns,
@@ -55,6 +57,7 @@ from utils.shared_metrics import (
     spx_json_from_store as _spx_json_from_store,
 )
 from utils.statistics import (
+    calculate_drawdown,
     calculate_statistics_cached,
     annualized_return,
     annualized_return_calendar_days,
@@ -186,6 +189,45 @@ def _po_get_working_returns(bundle: _PoWorkingReturnsBundle, selected_series) ->
         bundle.vol_scaler,
         bundle.vol_scaling_payload,
     )
+
+
+def _po_collect_portfolio_returns(results, selected_portfolios=None) -> pd.DataFrame:
+    if not results:
+        return pd.DataFrame()
+    show = list(selected_portfolios or list(results.keys()))
+    all_returns = {}
+    for pname in show:
+        pdata = (results or {}).get(pname)
+        if not pdata:
+            continue
+        returns_json = pdata.get("returns_json")
+        if not returns_json:
+            continue
+        try:
+            s = pd.read_json(StringIO(returns_json), typ="series")
+        except Exception:
+            continue
+        s.index = pd.to_datetime(s.index)
+        all_returns[pname] = s
+    if not all_returns:
+        return pd.DataFrame()
+    combined_df = pd.DataFrame(all_returns).sort_index()
+    combined_df.index.name = "Date"
+    return combined_df
+
+
+def _po_rolling_metric_label(metric: str) -> str:
+    labels = {
+        "total_return": "Total Return",
+        "volatility": "Volatility",
+        "sharpe_ratio": "Sharpe Ratio",
+        "sortino_ratio": "Sortino Ratio",
+    }
+    return labels.get(metric or "total_return", "Total Return")
+
+
+def _po_rolling_metric_tickformat(metric: str) -> str:
+    return ".2%" if metric in {"total_return", "volatility"} else ".2f"
 
 
 def _build_apply_weight_matrix(
@@ -2011,6 +2053,9 @@ def build_po_main_layout():
                         dmc.TabsTab("Statistics", value="statistics"),
                         dmc.TabsTab("Returns", value="returns"),
                         dmc.TabsTab("Growth of $1", value="growth"),
+                        dmc.TabsTab("Rolling", value="rolling"),
+                        dmc.TabsTab("Calendar Year", value="calendar"),
+                        dmc.TabsTab("Drawdown", value="drawdown"),
                         dmc.TabsTab("Attribution", value="attribution"),
                         dmc.TabsTab("Risk", value="risk"),
                         dmc.TabsTab("Frontier", value="frontier"),
@@ -2291,6 +2336,96 @@ def build_po_main_layout():
                                 type="default",
                                 children=[html.Div(id="po-growth-chart-container")],
                             ),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="rolling",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            dmc.Group(
+                                mb="md",
+                                gap="md",
+                                children=[
+                                    dmc.Select(
+                                        id="po-rolling-metric-select",
+                                        data=[
+                                            {"value": "total_return", "label": "Total Return"},
+                                            {"value": "volatility", "label": "Volatility"},
+                                            {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
+                                            {"value": "sortino_ratio", "label": "Sortino Ratio"},
+                                        ],
+                                        value="total_return",
+                                        w=180,
+                                        size="sm",
+                                        clearable=False,
+                                    ),
+                                    dmc.Select(
+                                        id="po-rolling-window-select",
+                                        data=[
+                                            {"value": "3m", "label": "3-month"},
+                                            {"value": "6m", "label": "6-month"},
+                                            {"value": "1y", "label": "1-year"},
+                                            {"value": "3y", "label": "3-year"},
+                                            {"value": "5y", "label": "5-year"},
+                                            {"value": "10y", "label": "10-year"},
+                                        ],
+                                        value="1y",
+                                        w=120,
+                                        size="sm",
+                                        clearable=False,
+                                    ),
+                                    dmc.SegmentedControl(
+                                        id="po-rolling-return-type-select",
+                                        data=[
+                                            {"value": "cumulative", "label": "Cumulative"},
+                                            {"value": "annualized", "label": "Annualized"},
+                                        ],
+                                        value="annualized",
+                                        size="sm",
+                                    ),
+                                    dmc.SegmentedControl(
+                                        id="po-rolling-chart-switch",
+                                        data=[
+                                            {"value": "table", "label": "Table"},
+                                            {"value": "chart", "label": "Chart"},
+                                        ],
+                                        value="chart",
+                                        size="sm",
+                                    ),
+                                ],
+                            ),
+                            html.Div(id="po-rolling-content", style={"height": "100%", "overflow": "auto"}),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="calendar",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            html.Div(id="po-calendar-content", style={"height": "100%", "overflow": "auto"}),
+                        ],
+                    ),
+                    dmc.TabsPanel(
+                        value="drawdown",
+                        pt="md",
+                        style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                        children=[
+                            dmc.Group(
+                                mb="md",
+                                children=[
+                                    dmc.SegmentedControl(
+                                        id="po-drawdown-chart-switch",
+                                        data=[
+                                            {"value": "table", "label": "Table"},
+                                            {"value": "chart", "label": "Chart"},
+                                        ],
+                                        value="chart",
+                                        size="sm",
+                                    ),
+                                ],
+                            ),
+                            html.Div(id="po-drawdown-content", style={"height": "100%", "overflow": "auto"}),
                         ],
                     ),
                 ],
@@ -2664,7 +2799,7 @@ layout = dmc.Container(
                                                         dmc.Text("3) Set Periodicity, Vol Scaler, and Date Range so estimation and backtest use the intended sample.", size="sm"),
                                                         dmc.Text("4) Choose Model and controls (window, step, missing-data handling, and optional exponential weighting).", size="sm"),
                                                         dmc.Text("5) Click Run to create a named portfolio. Run additional scenarios using different names.", size="sm"),
-                                                        dmc.Text("6) Review Weights, Turnover, Statistics, Returns, Growth, Attribution, Risk, and Frontier tabs.", size="sm"),
+                                                        dmc.Text("6) Review Weights, Turnover, Statistics, Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, and Frontier tabs.", size="sm"),
                                                     ])),
                                                 ],
                                             ),
@@ -2739,6 +2874,9 @@ layout = dmc.Container(
                                                         dmc.Text("Statistics: portfolio-level performance and risk metrics.", size="sm"),
                                                         dmc.Text("Returns: return time series grid.", size="sm"),
                                                         dmc.Text("Growth of $1: compounded path from initial value 1.", size="sm"),
+                                                        dmc.Text("Rolling: trailing Total Return, Volatility, Sharpe, or Sortino across selected windows.", size="sm"),
+                                                        dmc.Text("Calendar Year: one-row-per-year compounded annual return table.", size="sm"),
+                                                        dmc.Text("Drawdown: peak-to-trough drawdown paths as chart or table.", size="sm"),
                                                         dmc.Text("Attribution: asset-level return contribution.", size="sm"),
                                                         dmc.Text("Risk: asset-level risk contribution across windows.", size="sm"),
                                                         dmc.Text("Frontier: efficient frontier with active-portfolio marker.", size="sm"),
@@ -2843,7 +2981,10 @@ layout = dmc.Container(
                                                         dmc.Text("Portfolio dropdown selects the active stored result; compare control overlays portfolios where supported.", size="sm"),
                                                         dmc.Text("Delete icon removes selected result. Use unique names to keep scenario history.", size="sm"),
                                                         dmc.Text("File > Save session exports JSON state; Load session restores it.", size="sm"),
-                                                        dmc.Text("File > Download Excel exports portfolio outputs plus a Settings sheet that records Exp Wt decay input and interpretation mode.", size="sm"),
+                                                        dmc.Text(
+                                                            "File > Download Excel exports Settings, Weights, Turnover, Statistics, Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, and Frontier.",
+                                                            size="sm",
+                                                        ),
                                                         dmc.Text("Run disabled: load data and select at least one series.", size="sm"),
                                                         dmc.Text("Optimization fails: review bounds, force-max flags, and linear constraints first.", size="sm"),
                                                         dmc.Text("Turnover missing: Full window mode does not generate multiple rebalance events.", size="sm"),
@@ -4981,7 +5122,7 @@ def po_init_linear_constraints_grid(store_data, current_rows):
 clientside_callback(
     """
     function(tab) {
-        if (tab === "growth" || tab === "statistics" || tab === "returns") {
+        if (tab === "growth" || tab === "statistics" || tab === "returns" || tab === "rolling" || tab === "calendar" || tab === "drawdown") {
             return [{display: "none"}, {display: "none"}, {display: "block"}];
         }
         if (tab === "frontier") {
@@ -7937,16 +8078,13 @@ def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
     if active_tab != "growth" or not selected_portfolios or not results:
         return html.Div()
 
+    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
+    if combined_df.empty:
+        return html.Div()
+
     fig = go.Figure()
-    for pname in selected_portfolios:
-        if pname not in results:
-            continue
-        returns_json = results[pname].get("returns_json")
-        if not returns_json:
-            continue
-        returns = pd.read_json(StringIO(returns_json), typ="series")
-        returns.index = pd.to_datetime(returns.index)
-        returns = returns.sort_index()
+    for pname in combined_df.columns:
+        returns = combined_df[pname].dropna()
         growth = (1 + returns).cumprod()
         fig.add_trace(go.Scatter(
             x=growth.index,
@@ -7965,6 +8103,264 @@ def po_render_growth_chart(selected_portfolios, results, active_tab, theme):
     )
     apply_chart_theme(fig, theme)
 
+    return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+
+
+# ---------------------------------------------------------------------------
+# Rolling / Calendar / Drawdown tabs
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-rolling-return-type-select", "disabled"),
+    Output("po-rolling-return-type-select", "style"),
+    Input("po-rolling-metric-select", "value"),
+    prevent_initial_call=False,
+)
+def po_toggle_rolling_return_type(metric):
+    disabled = (metric or "total_return") != "total_return"
+    return disabled, ({} if not disabled else {"opacity": 0.5, "pointerEvents": "none"})
+
+
+@callback(
+    Output("po-rolling-content", "children"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-periodicity-select", "value"),
+    Input("po-rolling-window-select", "value"),
+    Input("po-rolling-return-type-select", "value"),
+    Input("po-rolling-metric-select", "value"),
+    Input("po-rolling-chart-switch", "value"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
+    prevent_initial_call=True,
+)
+def po_render_rolling(results, active_tab, selected_portfolios, periodicity, rolling_window, return_type, metric, view_mode, theme):
+    if active_tab != "rolling" or not results:
+        return html.Div()
+
+    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
+    if combined_df.empty:
+        return dmc.Text("No rolling data available.", c="dimmed")
+
+    metric = metric or "total_return"
+    rolling_df = calculate_rolling_returns(
+        df_to_json(combined_df),
+        periodicity or "daily",
+        tuple(combined_df.columns),
+        "total",
+        "{}",
+        "{}",
+        "null",
+        rolling_window or "1y",
+        return_type or "annualized",
+        metric,
+        0,
+        "{}",
+    )
+    if rolling_df.empty:
+        return dmc.Text("No rolling values available for selected settings.", c="dimmed")
+
+    if (view_mode or "chart") == "table":
+        table_df = rolling_df.reset_index()
+        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+        fmt = ".2%" if metric in {"total_return", "volatility"} else ".4f"
+        column_defs = [{"field": "Date", "pinned": "left", "width": 96}]
+        for col in combined_df.columns:
+            if col in table_df.columns:
+                column_defs.append(
+                    {
+                        "field": col,
+                        "valueFormatter": {
+                            "function": f"params.value != null ? d3.format('{fmt}')(params.value) : ''"
+                        },
+                        "width": 120,
+                    }
+                )
+        return dag.AgGrid(
+            enableEnterpriseModules=True,
+            licenseKey=AG_GRID_LICENSE_KEY,
+            className="ag-theme-alpine",
+            columnDefs=column_defs,
+            rowData=table_df.to_dict("records"),
+            defaultColDef={
+                "sortable": True,
+                "resizable": True,
+                "suppressHeaderMenuButton": True,
+                "cellStyle": {"textAlign": "center"},
+                "headerClass": "dashmat-center-header",
+            },
+            style={"height": "100%", "width": "100%"},
+            dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+        )
+
+    fig = go.Figure()
+    for col in combined_df.columns:
+        if col not in rolling_df.columns:
+            continue
+        s = rolling_df[col].dropna()
+        if s.empty:
+            continue
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=col))
+
+    fig.update_layout(
+        title=f"Rolling {_po_rolling_metric_label(metric)}",
+        yaxis_title=_po_rolling_metric_label(metric),
+        hovermode="x unified",
+        margin={"t": 40, "b": 40, "l": 60, "r": 20},
+        height=420,
+        legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
+    )
+    fig.update_yaxes(tickformat=_po_rolling_metric_tickformat(metric))
+    apply_chart_theme(fig, theme)
+    return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+
+
+@callback(
+    Output("po-calendar-content", "children"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-periodicity-select", "value"),
+    prevent_initial_call=True,
+)
+def po_render_calendar(results, active_tab, selected_portfolios, periodicity):
+    if active_tab != "calendar" or not results:
+        return html.Div()
+
+    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
+    if combined_df.empty:
+        return dmc.Text("No calendar data available.", c="dimmed")
+
+    cal_df = calculate_calendar_year_returns(
+        df_to_json(combined_df),
+        periodicity or "daily",
+        periodicity or "daily",
+        tuple(combined_df.columns),
+        "total",
+        "{}",
+        "{}",
+        "null",
+        0,
+        "{}",
+    )
+    if cal_df.empty:
+        return dmc.Text("No complete calendar years available.", c="dimmed")
+
+    table_df = cal_df.reset_index()
+    table_df = table_df.rename(columns={table_df.columns[0]: "Year"})
+    table_df["Year"] = table_df["Year"].astype(str)
+
+    column_defs = [{"field": "Year", "pinned": "left", "width": 92}]
+    for col in combined_df.columns:
+        if col in table_df.columns:
+            column_defs.append(
+                {
+                    "field": col,
+                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                    "width": 120,
+                }
+            )
+
+    return dag.AgGrid(
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
+        className="ag-theme-alpine",
+        columnDefs=column_defs,
+        rowData=table_df.to_dict("records"),
+        defaultColDef={
+            "sortable": True,
+            "resizable": True,
+            "suppressHeaderMenuButton": True,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "dashmat-center-header",
+        },
+        style={"height": "100%", "width": "100%"},
+        dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+    )
+
+
+@callback(
+    Output("po-drawdown-content", "children"),
+    Input("po-results-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-growth-portfolio-multiselect", "value"),
+    Input("po-periodicity-select", "value"),
+    Input("po-drawdown-chart-switch", "value"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
+    prevent_initial_call=True,
+)
+def po_render_drawdown(results, active_tab, selected_portfolios, periodicity, view_mode, theme):
+    if active_tab != "drawdown" or not results:
+        return html.Div()
+
+    combined_df = _po_collect_portfolio_returns(results, selected_portfolios)
+    if combined_df.empty:
+        return dmc.Text("No drawdown data available.", c="dimmed")
+
+    drawdown_df = calculate_drawdown(
+        df_to_json(combined_df),
+        periodicity or "daily",
+        tuple(combined_df.columns),
+        "total",
+        "{}",
+        "{}",
+        "null",
+        0,
+        "{}",
+    )
+    if drawdown_df.empty:
+        return dmc.Text("No drawdown data available.", c="dimmed")
+
+    if (view_mode or "chart") == "table":
+        table_df = drawdown_df.reset_index()
+        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+        column_defs = [{"field": "Date", "pinned": "left", "width": 96}]
+        for col in combined_df.columns:
+            if col in table_df.columns:
+                column_defs.append(
+                    {
+                        "field": col,
+                        "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                        "width": 120,
+                    }
+                )
+        return dag.AgGrid(
+            enableEnterpriseModules=True,
+            licenseKey=AG_GRID_LICENSE_KEY,
+            className="ag-theme-alpine",
+            columnDefs=column_defs,
+            rowData=table_df.to_dict("records"),
+            defaultColDef={
+                "sortable": True,
+                "resizable": True,
+                "suppressHeaderMenuButton": True,
+                "cellStyle": {"textAlign": "center"},
+                "headerClass": "dashmat-center-header",
+            },
+            style={"height": "100%", "width": "100%"},
+            dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+        )
+
+    fig = go.Figure()
+    for col in combined_df.columns:
+        if col not in drawdown_df.columns:
+            continue
+        s = drawdown_df[col].dropna()
+        if s.empty:
+            continue
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=col, fill="tozeroy"))
+    fig.update_layout(
+        title="Drawdown",
+        yaxis_title="Drawdown",
+        hovermode="x unified",
+        margin={"t": 40, "b": 40, "l": 60, "r": 20},
+        height=420,
+        legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
+    )
+    fig.update_yaxes(tickformat=".2%")
+    apply_chart_theme(fig, theme)
     return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
 
@@ -8207,28 +8603,13 @@ def po_render_statistics(results, active_tab, selected_portfolios, saved_series_
 
     try:
         with timed_block("portopt.render_statistics", portfolio_count=len(show)):
-            # Build a combined returns DataFrame from selected portfolio results
-            all_returns = {}
-            for pname in show:
-                pdata = results.get(pname)
-                if not pdata:
-                    continue
-                returns_json = pdata.get("returns_json")
-                if returns_json:
-                    s = pd.read_json(StringIO(returns_json), typ="series")
-                    s.index = pd.to_datetime(s.index)
-                    all_returns[pname] = s
-
-            if not all_returns:
+            combined_df = _po_collect_portfolio_returns(results, show)
+            if combined_df.empty:
                 return [], []
-
-            combined_df = pd.DataFrame(all_returns)
-            combined_df = combined_df.sort_index()
-            combined_df.index.name = "Date"
 
             # Convert to raw-data JSON format for calculate_statistics_cached
             raw_json = df_to_json(combined_df)
-            portfolio_names = list(all_returns.keys())
+            portfolio_names = list(combined_df.columns)
 
             stats = calculate_statistics_cached(
                 raw_json,
@@ -8296,23 +8677,9 @@ def po_render_returns(results, active_tab, selected_portfolios):
     show = selected_portfolios or list(results.keys())
 
     try:
-        all_returns = {}
-        for pname in show:
-            pdata = results.get(pname)
-            if not pdata:
-                continue
-            returns_json = pdata.get("returns_json")
-            if returns_json:
-                s = pd.read_json(StringIO(returns_json), typ="series")
-                s.index = pd.to_datetime(s.index)
-                all_returns[pname] = s
-
-        if not all_returns:
+        combined_df = _po_collect_portfolio_returns(results, show)
+        if combined_df.empty:
             return [], []
-
-        combined_df = pd.DataFrame(all_returns)
-        combined_df = combined_df.sort_index()
-        combined_df.index.name = "Date"
 
         column_defs = [
             {
@@ -8354,11 +8721,14 @@ def po_render_returns(results, active_tab, selected_portfolios):
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("po-rolling-window-select", "value"),
+    State("po-rolling-return-type-select", "value"),
+    State("po-rolling-metric-select", "value"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
-                      date_range, vol_scaler, vol_scaling, saved_series_store):
+                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, saved_series_store=None):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -8378,20 +8748,12 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         # Build combined returns DataFrame (shared by multiple tabs/sheets)
         with timed_block("portopt.download_excel.build_returns"):
-            all_returns = {}
-            for pname, pdata in results.items():
-                returns_json = pdata.get("returns_json")
-                if returns_json:
-                    s = pd.read_json(StringIO(returns_json), typ="series")
-                    s.index = pd.to_datetime(s.index)
-                    all_returns[pname] = s
+            combined_df = _po_collect_portfolio_returns(results)
 
-        if not all_returns:
+        if combined_df.empty:
             raise PreventUpdate
 
-        combined_df = pd.DataFrame(all_returns).sort_index()
-        combined_df.index.name = "Date"
-        portfolio_names = list(all_returns.keys())
+        portfolio_names = list(combined_df.columns)
 
         # ------------------------------------------------------------------
         # Settings tab
@@ -8517,11 +8879,66 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         # Growth tab
         # ------------------------------------------------------------------
-        growth_data = {pname: (1 + all_returns[pname]).cumprod() for pname in portfolio_names}
+        growth_data = {pname: (1 + combined_df[pname].dropna()).cumprod() for pname in portfolio_names}
         growth_df = pd.DataFrame(growth_data).sort_index().reset_index()
         growth_date_col = growth_df.columns[0]
         growth_df = growth_df.rename(columns={growth_date_col: "Date"})
         growth_df["Date"] = growth_df["Date"].map(format_mdy_date)
+
+        # ------------------------------------------------------------------
+        # Rolling / Calendar / Drawdown tabs
+        # ------------------------------------------------------------------
+        rolling_df = pd.DataFrame()
+        calendar_df = pd.DataFrame()
+        drawdown_df = pd.DataFrame()
+        try:
+            rolling_df = calculate_rolling_returns(
+                df_to_json(combined_df),
+                periodicity or "daily",
+                tuple(portfolio_names),
+                "total",
+                "{}",
+                "{}",
+                "null",
+                rolling_window or "1y",
+                rolling_return_type or "annualized",
+                rolling_metric or "total_return",
+                0,
+                "{}",
+            )
+        except Exception:
+            rolling_df = pd.DataFrame()
+
+        try:
+            calendar_df = calculate_calendar_year_returns(
+                df_to_json(combined_df),
+                periodicity or "daily",
+                periodicity or "daily",
+                tuple(portfolio_names),
+                "total",
+                "{}",
+                "{}",
+                "null",
+                0,
+                "{}",
+            )
+        except Exception:
+            calendar_df = pd.DataFrame()
+
+        try:
+            drawdown_df = calculate_drawdown(
+                df_to_json(combined_df),
+                periodicity or "daily",
+                tuple(portfolio_names),
+                "total",
+                "{}",
+                "{}",
+                "null",
+                0,
+                "{}",
+            )
+        except Exception:
+            drawdown_df = pd.DataFrame()
 
         # ------------------------------------------------------------------
         # Attribution tab
@@ -8668,19 +9085,28 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         stats_df = format_excel_dates(stats_df)
         returns_df = format_excel_dates(returns_df)
         growth_df = format_excel_dates(growth_df)
+        rolling_df = format_excel_dates(rolling_df, format_index=True)
+        calendar_df = format_excel_dates(calendar_df, format_index=True)
+        drawdown_df = format_excel_dates(drawdown_df, format_index=True)
         attribution_df = format_excel_dates(attribution_df)
         risk_df = format_excel_dates(risk_df)
         frontier_df = format_excel_dates(frontier_df)
 
         with pd.ExcelWriter(output, engine="xlsxwriter", date_format="m/d/yyyy", datetime_format="m/d/yyyy") as writer:
             # Keep exact tab order: Settings, Weights, Turnover, Statistics,
-            # Returns, Growth, Attribution, Risk, Frontier.
+            # Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, Frontier.
             write_excel_with_autofit(writer, settings_df, "Settings", index=False)
             write_excel_with_autofit(writer, weights_df, "Weights", index=False)
             write_excel_with_autofit(writer, turnover_df, "Turnover", index=False)
             write_excel_with_autofit(writer, stats_df, "Statistics", index=False)
             write_excel_with_autofit(writer, returns_df, "Returns", index=False)
             write_excel_with_autofit(writer, growth_df, "Growth of $1", index=False)
+            if not rolling_df.empty:
+                write_excel_with_autofit(writer, rolling_df, "Rolling", index=True)
+            if not calendar_df.empty:
+                write_excel_with_autofit(writer, calendar_df, "Calendar Year", index=True)
+            if not drawdown_df.empty:
+                write_excel_with_autofit(writer, drawdown_df, "Drawdown", index=True)
             write_excel_with_autofit(writer, attribution_df, "Attribution", index=False)
             write_excel_with_autofit(writer, risk_df, "Risk", index=False)
             write_excel_with_autofit(writer, frontier_df, "Frontier", index=False)

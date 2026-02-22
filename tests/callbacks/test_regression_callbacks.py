@@ -392,7 +392,7 @@ def test_reg_help_modal_covers_three_sections_and_model_explainers(regression_pa
         "fill in-sample",
         "linear constraints",
         "run regression",
-        "anova, rolling, weights, statistics, returns, growth, and scatter",
+        "anova, rolling summary, rolling, weights, statistics, returns, growth of $1, calendar year, drawdown, and scatter",
         "save session",
         "load session",
         "download excel",
@@ -458,7 +458,7 @@ def test_reg_render_statistics_includes_actual_predicted_residual_when_available
     }
 
     def _fake_stats(_json_str, _periodicity, selected_series, *_args, **_kwargs):
-        assert tuple(selected_series) == ("Actual (Y)", "Predicted", "Residual")
+        assert tuple(selected_series) == ("Predicted", "Actual (Y)", "Residual")
         return [
             {"Series": "Actual (Y)", "Start Date": "2024-01-01", "End Date": "2024-01-05"},
             {"Series": "Predicted", "Start Date": "2024-01-01", "End Date": "2024-01-05"},
@@ -525,7 +525,7 @@ def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkey
                     "Cumulative Return": 0.004,
                 },
             ]
-        if selected == ("Actual (Y)", "Predicted", "Residual"):
+        if selected == ("Predicted", "Actual (Y)", "Residual"):
             return [
                 {"Series": "Actual (Y)", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.009},
                 {"Series": "Predicted", "Start Date": "2024-01-01", "End Date": "2024-01-05", "Cumulative Return": 0.007},
@@ -538,7 +538,7 @@ def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkey
 
     selected_payloads = [tuple(call[2]) for call in calls]
     assert ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex") in selected_payloads
-    assert ("Actual (Y)", "Predicted", "Residual") in selected_payloads
+    assert ("Predicted", "Actual (Y)", "Residual") in selected_payloads
     run_call = next(call for call in calls if tuple(call[2]) == ("SPX_TRIndex", "EM_TRIndex", "EAFE_TRIndex"))
     assert "\"start\":\"2024-01-01\"" in run_call[5]
 
