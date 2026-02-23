@@ -1954,15 +1954,109 @@ layout = dmc.Container(
                 ],
             ),
             size="lg",
-            centered=True,
+            centered=False,
             radius="lg",
             className="dashmat-modal",
             overlayProps={"blur": 2, "opacity": 0.45},
             transitionProps={"transition": "fade", "duration": 180},
+            styles={"inner": {"alignItems": "flex-start", "paddingTop": "4vh"}},
             children=[
-                dmc.Accordion(
-                    variant="separated",
+                dmc.Stack(
+                    gap="md",
                     children=[
+                        dmc.Paper(
+                            withBorder=True,
+                            radius="md",
+                            p="sm",
+                            bg="var(--mantine-color-body)",
+                            children=dmc.Group(
+                                justify="flex-start",
+                                align="center",
+                                children=[
+                                    dmc.Group(
+                                        gap="xs",
+                                        children=[
+                                            dmc.ThemeIcon(DashIconify(icon="tabler:book"), variant="light", color="blue", size="md"),
+                                            dmc.Stack(
+                                                gap=0,
+                                                children=[
+                                                    dmc.Text("Analytics Tool Guide", fw=600, size="sm"),
+                                                    dmc.Text(
+                                                        "Use Basic for setup/workflow and Advanced for formulas, edge behavior, and full details.",
+                                                        size="xs",
+                                                        c="dimmed",
+                                                    ),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ),
+                        dmc.Tabs(
+                            value="basic",
+                            variant="outline",
+                            color="blue",
+                            children=[
+                                dmc.TabsList(
+                                    children=[
+                                        dmc.TabsTab([DashIconify(icon="tabler:compass", width=14), "Basic Guide"], value="basic"),
+                                        dmc.TabsTab([DashIconify(icon="tabler:settings-cog", width=14), "Advanced Guide"], value="advanced"),
+                                    ],
+                                ),
+                                dmc.TabsPanel(
+                                    value="basic",
+                                    pt="sm",
+                                    children=dmc.Accordion(
+                                        variant="separated",
+                                        children=[
+                                            dmc.AccordionItem(
+                                                value="basic-quick-start",
+                                                children=[
+                                                    dmc.AccordionControl("Quick Start"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("1) Add series using File/Edit menu options.", size="sm"),
+                                                        dmc.Text("2) Configure selections and benchmark/L-S/Scale Vol in Select Series.", size="sm"),
+                                                        dmc.Text("3) Set periodicity, returns type, vol scaler, and date range.", size="sm"),
+                                                        dmc.Text("4) Validate setup in Statistics and Returns.", size="sm"),
+                                                        dmc.Text("5) Use Rolling, Calendar Year, Growth, Drawdown, Correlation, and Factor Analysis for deeper analysis.", size="sm"),
+                                                        dmc.Text("6) Export with File > Download Excel.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="basic-core-controls",
+                                                children=[
+                                                    dmc.AccordionControl("Core Controls"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Periodicity, Returns Type, and Vol Scaler define the analysis stream.", size="sm"),
+                                                        dmc.Text("Common Range, Common Daily, and Max Range help set consistent date windows.", size="sm"),
+                                                        dmc.Text("Series Selection controls include benchmark assignment, L/S conversion, and per-series vol scaling.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                            dmc.AccordionItem(
+                                                value="basic-tabs",
+                                                children=[
+                                                    dmc.AccordionControl("Reading the Tabs"),
+                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                                        dmc.Text("Statistics/Returns: confirm transformed return series and summary metrics.", size="sm"),
+                                                        dmc.Text("Rolling/Calendar Year: inspect trailing and annual behavior.", size="sm"),
+                                                        dmc.Text("Growth of $1/Drawdown: evaluate compounded path and downside profile.", size="sm"),
+                                                        dmc.Text("Correlation: analyze dependency with matrix or scatter-matrix views.", size="sm"),
+                                                        dmc.Text("Factor Analysis: evaluate selected series against a factor via box plots or scatter + trendline.", size="sm"),
+                                                    ])),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                dmc.TabsPanel(
+                                    value="advanced",
+                                    pt="sm",
+                                    children=dmc.Accordion(
+                                        variant="separated",
+                                        children=[
                         dmc.AccordionItem(
                             value="getting-started",
                             children=[
@@ -2303,6 +2397,11 @@ layout = dmc.Container(
                                     "Factor Analysis - Box, and Factor Analysis - Scatter sheets.",
                                     size="sm",
                                 )),
+                            ],
+                        ),
+                                        ],
+                                    ),
+                                ),
                             ],
                         ),
                     ],

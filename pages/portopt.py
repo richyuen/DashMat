@@ -2862,11 +2862,12 @@ layout = dmc.Container(
                 ],
             ),
             size="lg",
-            centered=True,
+            centered=False,
             radius="lg",
             className="dashmat-modal",
             overlayProps={"blur": 2, "opacity": 0.45},
             transitionProps={"transition": "fade", "duration": 180},
+            styles={"inner": {"alignItems": "flex-start", "paddingTop": "4vh"}},
             children=[
                 dmc.Stack(
                     gap="md",

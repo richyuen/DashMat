@@ -673,11 +673,12 @@ def build_reg_help_modal():
             ],
         ),
         size="lg",
-        centered=True,
+        centered=False,
         withCloseButton=True,
         radius="lg",
         className="dashmat-modal",
         overlayProps={"blur": 2, "opacity": 0.45},
+        styles={"inner": {"alignItems": "flex-start", "paddingTop": "4vh"}},
         children=[
             dmc.Stack(
                 gap="md",

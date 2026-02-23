@@ -633,5 +633,7 @@ def test_help_modal_mentions_factor_analysis(page_modules):
     assert modal is not None
 
     text_blob = " ".join(_collect_component_text(modal)).lower()
+    assert "basic guide" in text_blob
+    assert "advanced guide" in text_blob
     assert "factor analysis page" in text_blob
     assert "ignores excess mode" in text_blob
