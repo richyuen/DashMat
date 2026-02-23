@@ -228,6 +228,101 @@ def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.Da
     return df
 
 
+def _prepare_factor_analysis_frames(
+    raw_data,
+    periodicity,
+    selected_series,
+    factor_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    factor_transform,
+):
+    """Prepare dependent-series returns and factor returns for factor analysis."""
+    if not raw_data or not selected_series or not factor_series:
+        return pd.DataFrame(), pd.Series(dtype=float)
+
+    periodicity_value = periodicity or "daily"
+    selected_tuple = tuple(selected_series or ())
+    bench_payload = _mapping_payload(benchmark_assignments)
+    ls_payload = _mapping_payload(long_short_assignments)
+    date_payload = _date_range_payload(date_range)
+    vol_scaler_value = vol_scaler or 0
+    vol_payload = _mapping_payload(vol_scaling_assignments)
+
+    dependent_df = calculate_excess_returns(
+        raw_data,
+        periodicity_value,
+        selected_tuple,
+        bench_payload,
+        returns_type or "total",
+        ls_payload,
+        date_payload,
+        vol_scaler_value,
+        vol_payload,
+    )
+    if dependent_df.empty:
+        return pd.DataFrame(), pd.Series(dtype=float)
+
+    # Factor always comes from total-basis stream (with optional L/S if configured).
+    factor_df = get_working_returns(
+        raw_data,
+        periodicity_value,
+        (factor_series,),
+        bench_payload,
+        ls_payload,
+        date_payload,
+        vol_scaler_value,
+        vol_payload,
+    )
+    if factor_df.empty or factor_series not in factor_df.columns:
+        return dependent_df, pd.Series(dtype=float)
+
+    factor_values = (
+        factor_df[factor_series]
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    if factor_values.empty:
+        return dependent_df, pd.Series(dtype=float)
+
+    if (factor_transform or "raw") == "zscore":
+        std = factor_values.std(ddof=0)
+        if std and not np.isclose(std, 0.0):
+            factor_values = (factor_values - factor_values.mean()) / std
+        else:
+            factor_values = pd.Series(0.0, index=factor_values.index)
+
+    return dependent_df, factor_values
+
+
+def _build_factor_pair_df(factor_values: pd.Series, dependent_values: pd.Series) -> pd.DataFrame:
+    """Align and clean factor/dependent observations for charting and export."""
+    if factor_values is None or dependent_values is None:
+        return pd.DataFrame(columns=["Factor", "Dependent"])
+    paired = pd.concat(
+        [
+            factor_values.rename("Factor"),
+            dependent_values.rename("Dependent"),
+        ],
+        axis=1,
+    )
+    paired = paired.replace([np.inf, -np.inf], np.nan).dropna()
+    return paired
+
+
+def _coerce_factor_quantiles(value, default: int = 5) -> int:
+    """Clamp factor quantiles to a practical range."""
+    try:
+        q = int(value)
+    except Exception:
+        q = default
+    return max(2, min(q, 20))
+
+
 def _import_selected_workbook_sheets(contents, filename, selected_sheets, workbook_sheets=None):
     return _shared_import_selected_workbook_sheets(
         contents,
@@ -971,7 +1066,9 @@ clientside_callback(
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
                       active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
-                      monthly_series_options, monthly_select_disabled):
+                      monthly_series_options, monthly_select_disabled, factor_mode,
+                      factor_quantiles, factor_transform, factor_series_options,
+                      factor_series_value):
     
     # Calculate visibility styles - use flex for full height
     flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
@@ -989,6 +1086,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
 
     rolling_return_type_disabled = False if rolling_metric in ["total_return", "excess_return"] else True
     rolling_return_type_style = {} if not rolling_return_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
+    factor_series_options = factor_series_options or []
 
     return html.Div(
         style={"display": "flex", "flexDirection": "column", "height": "100%", "overflow": "hidden"},
@@ -1135,6 +1233,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.TabsTab("Growth of $1", value="growth"),
                         dmc.TabsTab("Drawdown", value="drawdown"),
                         dmc.TabsTab("Correlation", value="correlogram"),
+                        dmc.TabsTab("Factor Analysis", value="factor_analysis"),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -1452,6 +1551,76 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     style={"flex": "1", "minHeight": "520px", "overflow": "auto"},
                                 ),
                             ],
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="factor_analysis",
+                    pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            gap="md",
+                            align="flex-end",
+                            children=[
+                                html.Div([
+                                    dmc.Text("Mode", size="sm", fw=500, mb=3),
+                                    dmc.SegmentedControl(
+                                        id="at-factor-mode-select",
+                                        data=[
+                                            {"value": "box", "label": "Box Plot"},
+                                            {"value": "scatter", "label": "Scatter"},
+                                        ],
+                                        value=factor_mode,
+                                        size="sm",
+                                    ),
+                                ]),
+                                dmc.Select(
+                                    id="at-factor-series-select",
+                                    label="Factor",
+                                    data=factor_series_options,
+                                    value=factor_series_value,
+                                    w=280,
+                                    size="sm",
+                                    searchable=True,
+                                    clearable=False,
+                                    placeholder="Select factor series",
+                                ),
+                                html.Div(
+                                    id="at-factor-quantiles-wrapper",
+                                    style={"display": "block"},
+                                    children=[
+                                        dmc.NumberInput(
+                                            id="at-factor-quantiles-input",
+                                            label="Quantiles",
+                                            value=factor_quantiles,
+                                            min=2,
+                                            max=20,
+                                            step=1,
+                                            w=120,
+                                            size="sm",
+                                        ),
+                                    ],
+                                ),
+                                html.Div([
+                                    dmc.Text("Factor Transform", size="sm", fw=500, mb=3),
+                                    dmc.SegmentedControl(
+                                        id="at-factor-transform-select",
+                                        data=[
+                                            {"value": "raw", "label": "Raw"},
+                                            {"value": "zscore", "label": "Z-Score"},
+                                        ],
+                                        value=factor_transform,
+                                        size="sm",
+                                    ),
+                                ]),
+                            ],
+                        ),
+                        html.Div(id="at-factor-analysis-warning"),
+                        html.Div(
+                            id="at-factor-analysis-container",
+                            style={"flex": "1", "overflow": "auto"},
                         ),
                     ],
                 ),
@@ -2095,12 +2264,43 @@ layout = dmc.Container(
                             ],
                         ),
                         dmc.AccordionItem(
+                            value="factor-analysis-page",
+                            children=[
+                                dmc.AccordionControl("Factor Analysis Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Select any imported series as the factor, including non-selected series.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Factor stream always uses total-basis data and ignores Excess mode. "
+                                        "If Long-Short is enabled for the factor series, that L/S stream is used.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Box Plot mode buckets factor observations into quantiles and shows Tukey box plots "
+                                        "(IQR boxes, 1.5x IQR whiskers, and outliers) for each selected series.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Scatter mode plots factor (X) vs each selected series (Y) with an OLS trend line.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Factor Transform supports Raw values or global Z-Score normalization of the factor.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
                             value="export",
                             children=[
                                 dmc.AccordionControl("Export"),
                                 dmc.AccordionPanel(dmc.Text(
                                     "Download all tabs as a multi-sheet Excel workbook via File > Download Excel. "
-                                    "The export includes Statistics, Returns, Rolling, Calendar Year, Growth of $1, Drawdown, Correlation, and Covariance sheets.",
+                                    "The export includes Statistics, Returns, Rolling, Calendar Year, Growth of $1, Drawdown, Correlation, Covariance, "
+                                    "Factor Analysis - Box, and Factor Analysis - Scatter sheets.",
                                     size="sm",
                                 )),
                             ],
@@ -2135,7 +2335,12 @@ layout = dmc.Container(
                 monthly_view="annual",
                 monthly_series=None,
                 monthly_series_options=[],
-                monthly_select_disabled=True
+                monthly_select_disabled=True,
+                factor_mode="box",
+                factor_quantiles=5,
+                factor_transform="raw",
+                factor_series_options=[],
+                factor_series_value=None,
             ),
             style={"display": "none"}
         ),
@@ -2158,6 +2363,10 @@ layout = dmc.Container(
         dcc.Store(id="at-growth-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="at-monthly-view-store", data="annual", storage_type="session"),
         dcc.Store(id="at-monthly-series-store", data=None, storage_type="session"),
+        dcc.Store(id="at-factor-mode-store", data="box", storage_type="session"),
+        dcc.Store(id="at-factor-quantiles-store", data=5, storage_type="session"),
+        dcc.Store(id="at-factor-transform-store", data="raw", storage_type="session"),
+        dcc.Store(id="at-factor-series-store", data=None, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
@@ -2260,6 +2469,9 @@ clientside_callback(
     Output("at-rolling-chart-switch", "value"),
     Output("at-drawdown-chart-switch", "value"),
     Output("at-growth-chart-switch", "value"),
+    Output("at-factor-mode-select", "value"),
+    Output("at-factor-quantiles-input", "value"),
+    Output("at-factor-transform-select", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
     Output("at-state-ready-store", "data", allow_duplicate=True),
@@ -2277,18 +2489,42 @@ clientside_callback(
     State("at-rolling-chart-switch-store", "data"),
     State("at-drawdown-chart-switch-store", "data"),
     State("at-growth-chart-switch-store", "data"),
+    State("at-factor-mode-store", "data"),
+    State("at-factor-quantiles-store", "data"),
+    State("at-factor-transform-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_periodicity, stored_series, stored_returns, stored_vol, stored_tab, stored_roll_win, stored_roll_metric, stored_roll_type, stored_roll_chart, stored_dd_chart, stored_gr_chart, stored_monthly_view, stored_monthly_series, pending_series):
+def restore_application_state(
+    n_intervals,
+    raw_data,
+    orig_periodicity,
+    stored_periodicity,
+    stored_series,
+    stored_returns,
+    stored_vol,
+    stored_tab,
+    stored_roll_win,
+    stored_roll_metric,
+    stored_roll_type,
+    stored_roll_chart,
+    stored_dd_chart,
+    stored_gr_chart,
+    stored_factor_mode,
+    stored_factor_quantiles,
+    stored_factor_transform,
+    stored_monthly_view,
+    stored_monthly_series,
+    pending_series,
+):
     if not raw_data:
         # Reset defaults (visibility handled by clientside callback)
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", [], False
+            "box", 5, "raw", "annual", [], False
         )
 
     try:
@@ -2322,6 +2558,11 @@ def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_pe
         
         # Growth
         gr_chart = stored_gr_chart if stored_gr_chart is not None else "chart"
+
+        # Factor Analysis
+        factor_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter"} else "box"
+        factor_quantiles = _coerce_factor_quantiles(stored_factor_quantiles, default=5)
+        factor_transform = stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw"
         
         # Monthly View
         monthly_view = stored_monthly_view if stored_monthly_view is not None else "annual"
@@ -2337,22 +2578,10 @@ def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_pe
             if s in df.columns and s not in valid_selection:
                 valid_selection.append(s)
         
-        monthly_series_options = [{"value": s, "label": s} for s in valid_selection]
-        
-        monthly_select_disabled = True
-        monthly_series_val = None
-        
-        if monthly_view == "monthly":
-            monthly_select_disabled = False
-            if stored_monthly_series and stored_monthly_series in valid_selection:
-                monthly_series_val = stored_monthly_series
-            elif valid_selection:
-                monthly_series_val = valid_selection[0]
-        
         return (
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            monthly_view, valid_selection, False
+            factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, False
         )
 
     except Exception:
@@ -2360,7 +2589,7 @@ def restore_application_state(n_intervals, raw_data, orig_periodicity, stored_pe
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "annual", [], False
+            "box", 5, "raw", "annual", [], False
         )
 
 
@@ -2466,6 +2695,10 @@ clientside_callback(
                 'at-rolling-chart-switch-store',
                 'at-drawdown-chart-switch-store',
                 'at-growth-chart-switch-store',
+                'at-factor-mode-store',
+                'at-factor-quantiles-store',
+                'at-factor-transform-store',
+                'at-factor-series-store',
                 'at-monthly-view-store',
                 'at-monthly-series-store',
                 'at-date-range-store',
@@ -2926,6 +3159,88 @@ clientside_callback(
     Input("at-monthly-series-select", "value"),
     prevent_initial_call=True,
 )
+
+
+clientside_callback(
+    "function(value) { return value || 'box'; }",
+    Output("at-factor-mode-store", "data"),
+    Input("at-factor-mode-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    "function(value) { if (value === null || value === undefined) { return 5; } var q = parseInt(value, 10); if (!Number.isFinite(q)) { return 5; } return Math.min(20, Math.max(2, q)); }",
+    Output("at-factor-quantiles-store", "data"),
+    Input("at-factor-quantiles-input", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    "function(value) { return value === 'zscore' ? 'zscore' : 'raw'; }",
+    Output("at-factor-transform-store", "data"),
+    Input("at-factor-transform-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    "function(value) { return value; }",
+    Output("at-factor-series-store", "data"),
+    Input("at-factor-series-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(mode) {
+        return mode === 'box' ? {display: 'block'} : {display: 'none'};
+    }
+    """,
+    Output("at-factor-quantiles-wrapper", "style"),
+    Input("at-factor-mode-select", "value"),
+    prevent_initial_call=False,
+)
+
+
+@callback(
+    Output("at-factor-series-select", "data"),
+    Output("at-factor-series-select", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-series-select", "data"),
+    State("at-factor-series-store", "data"),
+    State("at-factor-series-select", "value"),
+    prevent_initial_call=False,
+)
+def update_factor_series_select(raw_data, selected_series, stored_factor_series, current_factor_series):
+    """Expose all imported series as factor candidates, with selected series first."""
+    if raw_data is None:
+        return [], None
+
+    try:
+        df = json_to_df(raw_data)
+    except Exception:
+        return [], None
+
+    all_series = list(df.columns)
+    if not all_series:
+        return [], None
+
+    selected_order = [s for s in (selected_series or []) if s in all_series]
+    remaining = [s for s in all_series if s not in selected_order]
+    ordered = selected_order + remaining
+    options = [{"value": s, "label": s} for s in ordered]
+
+    candidate_order = [
+        current_factor_series,
+        stored_factor_series,
+        selected_order[0] if selected_order else None,
+        ordered[0] if ordered else None,
+    ]
+    next_value = next((candidate for candidate in candidate_order if candidate in ordered), None)
+    return options, next_value
 
 
 
@@ -5282,6 +5597,284 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
         return empty_graph, request_key
 
 
+def _factor_quantile_labels(factor_values: pd.Series, quantiles: int):
+    """Build ordered quantile labels for factor buckets."""
+    q = _coerce_factor_quantiles(quantiles)
+    try:
+        buckets = pd.qcut(factor_values, q=q, duplicates="drop")
+    except Exception:
+        return None, []
+
+    if buckets is None:
+        return None, []
+
+    categories = list(getattr(buckets.cat, "categories", []))
+    if not categories:
+        return None, []
+
+    label_map = {cat: f"Q{idx + 1}" for idx, cat in enumerate(categories)}
+    ordered_labels = [label_map[cat] for cat in categories]
+    labels = buckets.map(label_map)
+    return labels, ordered_labels
+
+
+def _build_factor_box_summary_rows(selected_series, dependent_df, factor_series_name, factor_values, quantiles):
+    """Return per-quantile summary rows used by Excel export."""
+    rows = []
+    for series_name in (selected_series or []):
+        if series_name not in dependent_df.columns:
+            continue
+        paired = _build_factor_pair_df(factor_values, dependent_df[series_name])
+        if len(paired) < 2:
+            continue
+
+        labels, ordered_labels = _factor_quantile_labels(paired["Factor"], quantiles)
+        if labels is None:
+            continue
+
+        paired = paired.assign(Quantile=labels.astype(str))
+        for quantile_label in ordered_labels:
+            bucket = paired[paired["Quantile"] == quantile_label]
+            if bucket.empty:
+                continue
+
+            y_vals = bucket["Dependent"]
+            q1 = y_vals.quantile(0.25)
+            q3 = y_vals.quantile(0.75)
+            iqr = q3 - q1
+            lower_fence = q1 - 1.5 * iqr
+            upper_fence = q3 + 1.5 * iqr
+            outliers = int(((y_vals < lower_fence) | (y_vals > upper_fence)).sum())
+
+            rows.append(
+                {
+                    "Factor": factor_series_name,
+                    "Series": series_name,
+                    "Quantile": quantile_label,
+                    "Observations": int(len(bucket)),
+                    "Factor Min": bucket["Factor"].min(),
+                    "Factor Max": bucket["Factor"].max(),
+                    "Factor Mean": bucket["Factor"].mean(),
+                    "Series Mean": y_vals.mean(),
+                    "Series Median": y_vals.median(),
+                    "Series Q1": q1,
+                    "Series Q3": q3,
+                    "Series IQR": iqr,
+                    "Lower Fence": lower_fence,
+                    "Upper Fence": upper_fence,
+                    "Outlier Count": outliers,
+                }
+            )
+    return rows
+
+
+def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_series_name, factor_values):
+    """Return per-series scatter summary rows used by Excel export."""
+    rows = []
+    for series_name in (selected_series or []):
+        if series_name not in dependent_df.columns:
+            continue
+        paired = _build_factor_pair_df(factor_values, dependent_df[series_name])
+        if len(paired) < 2:
+            continue
+
+        x_vals = paired["Factor"].to_numpy()
+        y_vals = paired["Dependent"].to_numpy()
+        corr = paired["Factor"].corr(paired["Dependent"])
+
+        slope = np.nan
+        intercept = np.nan
+        if len(paired) >= 2 and pd.Series(x_vals).nunique() > 1:
+            slope, intercept = np.polyfit(x_vals, y_vals, 1)
+
+        rows.append(
+            {
+                "Factor": factor_series_name,
+                "Series": series_name,
+                "Observations": int(len(paired)),
+                "Slope": slope,
+                "Intercept": intercept,
+                "Correlation": corr,
+                "R-Squared": (corr ** 2) if pd.notna(corr) else np.nan,
+                "Factor Mean": paired["Factor"].mean(),
+                "Factor Std": paired["Factor"].std(ddof=0),
+                "Series Mean": paired["Dependent"].mean(),
+                "Series Std": paired["Dependent"].std(ddof=0),
+            }
+        )
+    return rows
+
+
+@callback(
+    Output("at-factor-analysis-warning", "children"),
+    Output("at-factor-analysis-container", "children"),
+    Input("at-main-tabs", "value"),
+    Input("at-factor-mode-select", "value"),
+    Input("at-factor-series-select", "value"),
+    Input("at-factor-quantiles-input", "value"),
+    Input("at-factor-transform-select", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
+    prevent_initial_call=True,
+)
+def update_factor_analysis(
+    active_tab,
+    factor_mode,
+    factor_series,
+    factor_quantiles,
+    factor_transform,
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    state_ready,
+    vol_scaler,
+    vol_scaling_assignments,
+    theme,
+):
+    """Render Factor Analysis charts for selected series."""
+    if (
+        active_tab != "factor_analysis"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
+        raise PreventUpdate
+
+    if raw_data is None or not selected_series:
+        return None, dmc.Text("Select series to view factor analysis.", size="sm", c="dimmed")
+    if not factor_series:
+        return None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
+
+    dependent_df, factor_values = _prepare_factor_analysis_frames(
+        raw_data,
+        periodicity,
+        selected_series,
+        factor_series,
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+        factor_transform,
+    )
+    if dependent_df.empty:
+        return None, dmc.Text("No dependent-series data available for current settings.", size="sm", c="dimmed")
+    if factor_values.empty:
+        return None, dmc.Text("No factor data available for current settings.", size="sm", c="dimmed")
+
+    mode = factor_mode if factor_mode in {"box", "scatter"} else "box"
+    quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
+    factor_label = (
+        f"{factor_series} (Z-Score)"
+        if (factor_transform or "raw") == "zscore"
+        else factor_series
+    )
+
+    charts = []
+    total_points = 0
+    for series_name in selected_series:
+        if series_name not in dependent_df.columns:
+            continue
+        paired = _build_factor_pair_df(factor_values, dependent_df[series_name])
+        if len(paired) < 2:
+            continue
+        total_points += len(paired)
+
+        fig = go.Figure()
+        if mode == "scatter":
+            fig.add_trace(
+                go.Scattergl(
+                    x=paired["Factor"],
+                    y=paired["Dependent"],
+                    mode="markers",
+                    name=series_name,
+                    marker={"size": 5, "opacity": 0.65},
+                )
+            )
+
+            if paired["Factor"].nunique() > 1:
+                slope, intercept = np.polyfit(paired["Factor"].to_numpy(), paired["Dependent"].to_numpy(), 1)
+                x_line = np.linspace(float(paired["Factor"].min()), float(paired["Factor"].max()), 100)
+                y_line = slope * x_line + intercept
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_line,
+                        y=y_line,
+                        mode="lines",
+                        name="Trend Line",
+                        line={"width": 2},
+                    )
+                )
+
+            fig.update_layout(
+                title=f"Factor Scatter: {series_name} vs {factor_series}",
+                xaxis_title=factor_label,
+                yaxis_title=series_name,
+                yaxis_tickformat=".2%",
+                hovermode="closest",
+                height=420,
+            )
+        else:
+            labels, ordered_labels = _factor_quantile_labels(paired["Factor"], quantiles)
+            if labels is None:
+                continue
+            paired = paired.assign(Quantile=labels.astype(str))
+            fig.add_trace(
+                go.Box(
+                    x=paired["Quantile"],
+                    y=paired["Dependent"],
+                    name=series_name,
+                    boxpoints="outliers",
+                    jitter=0.3,
+                    pointpos=0.0,
+                    marker={"size": 4, "opacity": 0.6},
+                    showlegend=False,
+                )
+            )
+            fig.update_xaxes(
+                title_text=f"{factor_label} Quantile",
+                categoryorder="array",
+                categoryarray=ordered_labels,
+            )
+            fig.update_layout(
+                title=f"Factor Box Plot: {series_name} by {factor_series} Quantiles",
+                yaxis_title=series_name,
+                yaxis_tickformat=".2%",
+                hovermode="closest",
+                height=420,
+            )
+
+        apply_chart_theme(fig, theme)
+        charts.append(dcc.Graph(figure=fig, style={"marginBottom": "1.5rem"}))
+
+    if not charts:
+        return None, dmc.Text("No overlapping data available to render factor analysis.", size="sm", c="dimmed")
+
+    warning_children = None
+    if len(charts) > 12 or total_points > 50000:
+        warning_children = dmc.Alert(
+            "Large factor analysis render. Consider narrowing date range or series selection for faster interaction.",
+            color="yellow",
+            variant="light",
+            mb="sm",
+        )
+
+    return warning_children, html.Div(charts, style={"height": "100%"})
+
+
 @callback(
     Output("at-growth-charts-container", "children"),
     Input("at-main-tabs", "value"),
@@ -5729,10 +6322,35 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-vol-scaling-assignments-store", "data"),
     State("at-correlation-exp-wt-switch", "checked"),
     State("at-correlation-halflife-input", "value"),
+    State("at-factor-series-select", "value"),
+    State("at-factor-quantiles-input", "value"),
+    State("at-factor-transform-select", "value"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window, rolling_return_type, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, correlation_exp_wt, correlation_halflife, saved_series_store):
+def download_excel(
+    n_clicks,
+    raw_data,
+    original_periodicity,
+    selected_periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    rolling_window,
+    rolling_return_type,
+    monthly_view,
+    monthly_series,
+    vol_scaler,
+    vol_scaling_assignments,
+    correlation_exp_wt,
+    correlation_halflife,
+    factor_series,
+    factor_quantiles,
+    factor_transform,
+    saved_series_store,
+):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
     if n_clicks is None or raw_data is None or not selected_series:
         raise PreventUpdate
@@ -5994,6 +6612,72 @@ def download_excel(n_clicks, raw_data, original_periodicity, selected_periodicit
                     "Covariance",
                     index=True,
                 )
+
+                # Sheet 9/10: Factor Analysis summaries
+                try:
+                    with timed_block("analyticstool.download_excel.factor_analysis"):
+                        if factor_series:
+                            factor_transform_value = (
+                                factor_transform if factor_transform in {"raw", "zscore"} else "raw"
+                            )
+                            quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
+                            dependent_df, factor_values = _prepare_factor_analysis_frames(
+                                bundle.raw_data,
+                                bundle.periodicity,
+                                bundle.selected_series,
+                                factor_series,
+                                returns_type,
+                                benchmark_assignments,
+                                long_short_assignments,
+                                date_range,
+                                bundle.vol_scaler,
+                                vol_scaling_assignments,
+                                factor_transform_value,
+                            )
+
+                            box_rows = _build_factor_box_summary_rows(
+                                bundle.selected_series,
+                                dependent_df,
+                                factor_series,
+                                factor_values,
+                                quantiles,
+                            )
+                            box_df = pd.DataFrame(box_rows)
+                            if box_df.empty:
+                                box_df = pd.DataFrame(
+                                    [{"Note": "No overlapping observations for factor box analysis."}]
+                                )
+                            else:
+                                box_df.insert(1, "Transform", "Z-Score" if factor_transform_value == "zscore" else "Raw")
+                                box_df.insert(2, "Quantiles", quantiles)
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(box_df),
+                                "Factor Analysis - Box",
+                                index=False,
+                            )
+
+                            scatter_rows = _build_factor_scatter_summary_rows(
+                                bundle.selected_series,
+                                dependent_df,
+                                factor_series,
+                                factor_values,
+                            )
+                            scatter_df = pd.DataFrame(scatter_rows)
+                            if scatter_df.empty:
+                                scatter_df = pd.DataFrame(
+                                    [{"Note": "No overlapping observations for factor scatter analysis."}]
+                                )
+                            else:
+                                scatter_df.insert(1, "Transform", "Z-Score" if factor_transform_value == "zscore" else "Raw")
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(scatter_df),
+                                "Factor Analysis - Scatter",
+                                index=False,
+                            )
+                except Exception:
+                    pass
 
         output.seek(0)
 

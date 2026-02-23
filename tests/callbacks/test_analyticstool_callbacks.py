@@ -1,11 +1,66 @@
 from __future__ import annotations
 
+from io import BytesIO
 from io import StringIO
 
 import pandas as pd
 import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
+
+
+def _collect_component_text(node):
+    if node is None:
+        return []
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, (int, float, bool)):
+        return [str(node)]
+    if isinstance(node, (list, tuple, set)):
+        out = []
+        for item in node:
+            out.extend(_collect_component_text(item))
+        return out
+    if isinstance(node, dict):
+        out = []
+        for value in node.values():
+            out.extend(_collect_component_text(value))
+        return out
+
+    out = []
+    children = getattr(node, "children", None)
+    out.extend(_collect_component_text(children))
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            out.extend(_collect_component_text(value))
+    return out
+
+
+def _find_component_by_id(node, target_id):
+    if node is None:
+        return None
+    if getattr(node, "id", None) == target_id:
+        return node
+
+    children = getattr(node, "children", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            found = _find_component_by_id(child, target_id)
+            if found is not None:
+                return found
+    else:
+        found = _find_component_by_id(children, target_id)
+        if found is not None:
+            return found
+
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            found = _find_component_by_id(value, target_id)
+            if found is not None:
+                return found
+    return None
 
 
 def test_build_analytics_compute_bundle_normalizes_inputs(page_modules, raw_json):
@@ -404,3 +459,179 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
     assert out_df.index.is_month_end.all()
     assert pd.Timestamp("1976-07-30") not in out_df.index
     assert pd.Timestamp("1976-07-31") in out_df.index
+
+
+def test_update_factor_series_select_includes_unselected_series(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    options, value = analyticstool.update_factor_series_select(
+        raw_json,
+        ["Asset_C", "Asset_A"],
+        None,
+        None,
+    )
+
+    ordered_values = [opt["value"] for opt in options]
+    assert ordered_values[:2] == ["Asset_C", "Asset_A"]
+    assert set(ordered_values) == {"Asset_A", "Asset_B", "Asset_C", "Asset_D"}
+    assert value == "Asset_C"
+
+
+def test_prepare_factor_analysis_frames_uses_factor_total_basis(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    dependent_df = pd.DataFrame({"Asset_A": [0.01, 0.02, -0.01, 0.0]}, index=idx)
+    factor_df = pd.DataFrame({"Asset_B": [0.03, -0.01, 0.02, 0.01]}, index=idx)
+    captured = {}
+
+    def _fake_excess(*args, **kwargs):
+        captured["returns_type"] = args[4]
+        return dependent_df
+
+    def _fake_working(*args, **kwargs):
+        captured["factor_selected"] = args[2]
+        return factor_df
+
+    monkeypatch.setattr(analyticstool, "calculate_excess_returns", _fake_excess)
+    monkeypatch.setattr(analyticstool, "get_working_returns", _fake_working)
+
+    dep_out, factor_out = analyticstool._prepare_factor_analysis_frames(
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        "Asset_B",
+        "excess",
+        {"Asset_A": "Asset_B"},
+        {"Asset_B": True},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        0,
+        {},
+        "raw",
+    )
+
+    assert captured["returns_type"] == "excess"
+    assert captured["factor_selected"] == ("Asset_B",)
+    assert list(dep_out.columns) == ["Asset_A"]
+    assert factor_out.name == "Asset_B"
+
+
+def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    dependent_df = pd.DataFrame(
+        {
+            "Asset_A": [0.01, 0.02, 0.0, -0.01, 0.005, 0.008],
+            "Asset_B": [0.015, 0.01, -0.005, 0.0, 0.004, 0.006],
+        },
+        index=idx,
+    )
+    factor_vals = pd.Series([0.2, 0.1, -0.1, 0.0, 0.05, 0.08], index=idx, name="Factor_X")
+    monkeypatch.setattr(
+        analyticstool,
+        "_prepare_factor_analysis_frames",
+        lambda *_args, **_kwargs: (dependent_df, factor_vals),
+    )
+
+    warning, content = analyticstool.update_factor_analysis(
+        "factor_analysis",
+        "scatter",
+        "Factor_X",
+        5,
+        "raw",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "excess",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        True,
+        0,
+        {},
+        "light",
+    )
+
+    assert warning is None
+    graphs = [child for child in (content.children or []) if getattr(child, "figure", None) is not None]
+    assert len(graphs) == 2
+    assert all("Factor Scatter" in graph.figure.layout.title.text for graph in graphs)
+
+
+def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+    returns_df = pd.DataFrame({"Asset_A": [0.01, 0.0, -0.01, 0.02, 0.005]}, index=idx)
+    returns_df.index.name = "Date"
+
+    monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(
+        analyticstool,
+        "calculate_statistics_cached",
+        lambda *_args, **_kwargs: [{"Series": "Asset_A", "Cumulative Return": 0.1}],
+    )
+    monkeypatch.setattr(analyticstool, "generate_correlogram_cached", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(analyticstool, "calculate_rolling_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(
+        analyticstool,
+        "calculate_calendar_year_returns",
+        lambda *_args, **_kwargs: pd.DataFrame({"Asset_A": [0.1]}, index=[2024]),
+    )
+    monkeypatch.setattr(analyticstool, "calculate_growth_of_dollar", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(
+        analyticstool,
+        "_prepare_factor_analysis_frames",
+        lambda *_args, **_kwargs: (
+            returns_df.copy(),
+            pd.Series([0.2, 0.1, 0.0, -0.1, 0.05], index=idx, name="Factor_X"),
+        ),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "_build_factor_box_summary_rows",
+        lambda *_args, **_kwargs: [{"Factor": "Factor_X", "Series": "Asset_A", "Quantile": "Q1", "Observations": 5}],
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "_build_factor_scatter_summary_rows",
+        lambda *_args, **_kwargs: [{"Factor": "Factor_X", "Series": "Asset_A", "Observations": 5, "Slope": 1.1}],
+    )
+    monkeypatch.setattr(analyticstool.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
+
+    payload = analyticstool.download_excel(
+        1,
+        "raw-json",
+        "daily",
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        "1y",
+        "annualized",
+        "annual",
+        None,
+        0,
+        {},
+        False,
+        63,
+        "Factor_X",
+        5,
+        "raw",
+        None,
+    )
+
+    xl = pd.ExcelFile(BytesIO(payload["content"]))
+    assert "Factor Analysis - Box" in xl.sheet_names
+    assert "Factor Analysis - Scatter" in xl.sheet_names
+
+
+def test_help_modal_mentions_factor_analysis(page_modules):
+    analyticstool, _ = page_modules
+    modal = _find_component_by_id(analyticstool.layout, "at-help-modal")
+    assert modal is not None
+
+    text_blob = " ".join(_collect_component_text(modal)).lower()
+    assert "factor analysis page" in text_blob
+    assert "ignores excess mode" in text_blob
