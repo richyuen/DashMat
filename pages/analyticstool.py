@@ -7847,7 +7847,12 @@ def _build_regime_grid_component(
             col_def["valueFormatter"] = {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}
         if idx == 0:
             col_def["pinned"] = "left"
-        col_def["width"] = 170 if col.lower().startswith("series") else 130
+        if "date" in col.lower():
+            col_def["width"] = 130
+        elif col.lower().startswith("series"):
+            col_def["width"] = 150
+        else:
+            col_def["width"] = 120
         column_defs.append(col_def)
 
     row_data = frame.to_dict("records")
@@ -7862,12 +7867,13 @@ def _build_regime_grid_component(
                 enableEnterpriseModules=True,
                 licenseKey=AG_GRID_LICENSE_KEY,
                 id=f"at-regime-grid-{title.lower().replace(' ', '-')}",
-                className="ag-theme-alpine" if str(theme or "light").lower() != "dark" else "ag-theme-alpine-dark",
+                className="ag-theme-alpine",
                 columnDefs=column_defs,
                 rowData=row_data,
                 defaultColDef={
                     "sortable": True,
                     "resizable": True,
+                    "suppressHeaderMenuButton": True,
                     "cellStyle": {"textAlign": "center"},
                     "headerClass": "dashmat-center-header",
                 },
@@ -8042,7 +8048,7 @@ def update_regime_analysis(
         )
     )
 
-    return html.Div(warning_children), dmc.Stack(gap="md", children=stack_children)
+    return html.Div(warning_children), dmc.Stack(gap="sm", children=stack_children)
 
 
 @callback(
