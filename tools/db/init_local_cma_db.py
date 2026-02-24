@@ -8,7 +8,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import Column, Date, Float, ForeignKey, Integer, MetaData, String, Table, text
+from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, MetaData, String, Table, text
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -22,6 +22,7 @@ from dbengine import (
     engine_MRD,
     engine_PERFORMANCE,
 )
+from tools.db.migrate_factor_definitions import ensure_factor_definition_tables_and_seed
 from utils.sample_data import get_sample_file_path
 
 
@@ -753,7 +754,7 @@ def _build_perf_seed_rows(
     return account_rows, benchmark_rows, daily_rows, monthly_rows
 
 
-def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table]:
+def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table]:
     cma_corr = Table(
         "CMACorrelation",
         metadata,
@@ -841,7 +842,48 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
         Column("Item", String(32), primary_key=True),
         Column("Value", Float, nullable=False),
     )
-    return cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts, alt_ts
+    factor_defs = Table(
+        "FactorDefinitions",
+        metadata,
+        Column("FactorName", String(128), primary_key=True),
+        Column("LongComponent", String(4096), nullable=False),
+        Column("ShortComponent", String(4096), nullable=True),
+        Column("Description", String(4096), nullable=True),
+        Column("LongAggType", Integer, nullable=False),
+        Column("ShortAggType", Integer, nullable=True),
+        Column("LongLag", Integer, nullable=False),
+        Column("OutputTransform", Integer, nullable=False),
+        Column("UPDATE_DATE", DateTime, nullable=False),
+        Column("UPDATE_BY", String(128), nullable=False),
+    )
+    factor_defs_archive = Table(
+        "FactorDefinitionsArchive",
+        metadata,
+        Column("FactorName", String(128), nullable=False),
+        Column("LongComponent", String(4096), nullable=False),
+        Column("ShortComponent", String(4096), nullable=True),
+        Column("Description", String(4096), nullable=True),
+        Column("LongAggType", Integer, nullable=False),
+        Column("ShortAggType", Integer, nullable=True),
+        Column("LongLag", Integer, nullable=False),
+        Column("OutputTransform", Integer, nullable=False),
+        Column("UPDATE_DATE", DateTime, nullable=False),
+        Column("UPDATE_BY", String(128), nullable=False),
+        Column("ARCHIVE_DATE", DateTime, nullable=False),
+    )
+    return (
+        cma_corr,
+        cma_ret,
+        cma_stats,
+        core_categories,
+        suites,
+        portfolios,
+        peer_ts,
+        index_ts,
+        alt_ts,
+        factor_defs,
+        factor_defs_archive,
+    )
 
 
 def _build_mrd_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table]:
@@ -1213,7 +1255,19 @@ def main() -> None:
         daily_df = daily_df.join(mth_to_dly, how="outer")
     daily_df = daily_df.sort_index()
     metadata = MetaData()
-    cma_corr, cma_ret, cma_stats, core_categories, suites, portfolios, peer_ts, index_ts, alt_ts = _build_tables(metadata)
+    (
+        cma_corr,
+        cma_ret,
+        cma_stats,
+        core_categories,
+        suites,
+        portfolios,
+        peer_ts,
+        index_ts,
+        alt_ts,
+        factor_defs,
+        factor_defs_archive,
+    ) = _build_tables(metadata)
     mrd_metadata = MetaData()
     mrd_account, mrd_factor_data, mrd_account_returns, mrd_account_returns_m = _build_mrd_tables(mrd_metadata)
     perf_metadata = MetaData()
@@ -1273,6 +1327,21 @@ def main() -> None:
                 text(
                     "CREATE INDEX IF NOT EXISTS idx_perf_benchmark_precedence "
                     "ON [ACCOUNT_BENCHMARK] (BENCHMARK_ID, PRECEDENCE)"
+                )
+            )
+
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_factor_defs_name "
+                    "ON [FactorDefinitions] (FactorName)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_factor_defs_archive_name_date "
+                    "ON [FactorDefinitionsArchive] (FactorName, ARCHIVE_DATE)"
                 )
             )
 
@@ -1345,6 +1414,15 @@ def main() -> None:
         if perf_monthly_rows:
             conn.execute(perf_monthly_return.insert(), perf_monthly_rows)
 
+    factor_seed_stats = ensure_factor_definition_tables_and_seed(
+        engine,
+        engine_MRD,
+        update_by="init_local_cma_db.py",
+    )
+    with engine.connect() as conn:
+        factor_def_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitions")).scalar_one())
+        factor_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitionsArchive")).scalar_one())
+
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
     print(f"CMAReturns rows: {len(ret_rows)}")
@@ -1355,6 +1433,17 @@ def main() -> None:
     print(f"PeerTS rows: {len(peer_ts_rows)}")
     print(f"IndexTS rows: {len(index_ts_rows)}")
     print(f"AltTS rows: {len(alt_ts_rows)}")
+    print(f"FactorDefinitions rows: {factor_def_count}")
+    print(f"FactorDefinitionsArchive rows: {factor_archive_count}")
+    print(
+        "FactorDefinitions seed stats: "
+        f"inserted={factor_seed_stats['inserted']}, "
+        f"updated={factor_seed_stats['updated']}, "
+        f"archived={factor_seed_stats['archived']}, "
+        f"unchanged={factor_seed_stats['unchanged']}, "
+        f"skipped={factor_seed_stats['skipped']}, "
+        f"tokens={factor_seed_stats['token_count']}"
+    )
     print(f"Initialized MRD database at {MRD_DATABASE_URL}")
     print(f"CORE_DATA.ACCOUNT rows: {len(mrd_account_rows)}")
     print(f"CORE_DATA.ACCOUNT_FACTOR_DATA rows: {len(mrd_factor_rows)}")

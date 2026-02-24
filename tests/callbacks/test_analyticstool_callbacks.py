@@ -467,14 +467,71 @@ def test_update_factor_series_select_includes_unselected_series(page_modules, ra
     options, value = analyticstool.update_factor_series_select(
         raw_json,
         ["Asset_C", "Asset_A"],
+        [],
+        [],
         None,
         None,
     )
 
     ordered_values = [opt["value"] for opt in options]
-    assert ordered_values[:2] == ["Asset_C", "Asset_A"]
-    assert set(ordered_values) == {"Asset_A", "Asset_B", "Asset_C", "Asset_D"}
-    assert value == "Asset_C"
+    assert ordered_values[:2] == ["raw::Asset_C", "raw::Asset_A"]
+    assert set(ordered_values) == {"raw::Asset_A", "raw::Asset_B", "raw::Asset_C", "raw::Asset_D"}
+    assert value == "raw::Asset_C"
+
+
+def test_update_factor_series_select_includes_saved_and_session_definitions(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    options, _value = analyticstool.update_factor_series_select(
+        raw_json,
+        ["Asset_A"],
+        [{"FactorName": "SavedFactor"}],
+        [{"FactorName": "SessionFactor"}],
+        None,
+        None,
+    )
+
+    option_map = {opt["value"]: opt["label"] for opt in options}
+    assert "def::SavedFactor" in option_map
+    assert "def::SessionFactor" in option_map
+    assert option_map["def::SavedFactor"].startswith("[Saved]")
+    assert option_map["def::SessionFactor"].startswith("[Session]")
+
+
+def test_sync_factor_definition_form_ignores_form_origin_updates(page_modules):
+    analyticstool, _ = page_modules
+    with pytest.raises(PreventUpdate):
+        analyticstool.at_sync_factor_definition_form(
+            {
+                "sync_origin": "form",
+                "FactorName": "MyFactor",
+                "Description": "line 1\nline 2",
+                "LongComponentList": ["ACC1 TRIndex"],
+                "LongAggType": 1,
+                "LongLag": 0,
+                "OutputTransform": 0,
+            }
+        )
+
+
+def test_update_factor_definition_draft_preserves_description_text(page_modules):
+    analyticstool, _ = page_modules
+
+    current = analyticstool._default_factor_draft()
+    updated = analyticstool.at_update_factor_definition_draft_from_form(
+        "MyFactor",
+        "line 1\n",
+        ["ACC1 TRIndex"],
+        [],
+        "1",
+        None,
+        0,
+        "0",
+        current,
+    )
+
+    assert updated["sync_origin"] == "form"
+    assert updated["Description"] == "line 1\n"
 
 
 def test_prepare_factor_analysis_frames_uses_factor_total_basis(monkeypatch, page_modules):

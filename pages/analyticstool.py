@@ -54,7 +54,7 @@ from utils.exponential_weighting import normalize_decay_input
 from utils.charting import apply_chart_theme
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
 from utils.perf_timing import timed_block
-from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
+from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.shared_metrics import (
     MARKET_BETA_SERIES,
     RISK_FREE_SERIES,
@@ -109,6 +109,18 @@ from utils.raw_data_imports import (
     load_factor_series,
     load_fund_series,
     load_performance_series,
+)
+from utils.factor_definitions import (
+    FACTOR_AGG_TYPE_OPTIONS,
+    OUTPUT_TRANSFORM_OPTIONS,
+    compute_factor_preview_lines,
+    compute_factor_series,
+    delete_factor_definition,
+    factor_tables_available,
+    get_sec_factor_component_options_cached,
+    load_factor_definitions,
+    save_factor_definition,
+    validate_factor_definition_payload,
 )
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
@@ -228,6 +240,184 @@ def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.Da
     return df
 
 
+def _factor_user_label(userinfo):
+    role = str((userinfo or {}).get("role", "")).strip() or "Unknown"
+    os_user = str((userinfo or {}).get("username", "")).strip()
+    if not os_user:
+        try:
+            import getpass
+
+            os_user = str(getpass.getuser() or "").strip()
+        except Exception:
+            os_user = ""
+    if os_user:
+        return f"{role}:{os_user}"
+    return role
+
+
+def _default_factor_draft() -> dict:
+    return {
+        "selected_key": None,
+        "source": "session",
+        "sync_origin": "system",
+        "original_name": None,
+        "selected_update_date": None,
+        "FactorName": "",
+        "Description": "",
+        "LongComponentList": [],
+        "ShortComponentList": [],
+        "LongAggType": 1,
+        "ShortAggType": None,
+        "LongLag": 0,
+        "OutputTransform": 0,
+    }
+
+
+def _ensure_factor_draft(value):
+    if not isinstance(value, dict):
+        return _default_factor_draft()
+    draft = _default_factor_draft()
+    draft.update(value)
+    draft["LongComponentList"] = [str(v) for v in draft.get("LongComponentList") or []]
+    draft["ShortComponentList"] = [str(v) for v in draft.get("ShortComponentList") or []]
+    draft["LongAggType"] = int(pd.to_numeric(pd.Series([draft.get("LongAggType", 1)]), errors="coerce").iloc[0] or 1)
+    short_agg_num = pd.to_numeric(pd.Series([draft.get("ShortAggType")]), errors="coerce").iloc[0]
+    draft["ShortAggType"] = int(short_agg_num) if not pd.isna(short_agg_num) else None
+    draft["LongLag"] = int(pd.to_numeric(pd.Series([draft.get("LongLag", 0)]), errors="coerce").iloc[0] or 0)
+    draft["OutputTransform"] = int(
+        pd.to_numeric(pd.Series([draft.get("OutputTransform", 0)]), errors="coerce").iloc[0] or 0
+    )
+    return draft
+
+
+def _factor_select_key(source: str, name: str) -> str:
+    return f"{source}::{name}"
+
+
+def _split_factor_select_key(value: str | None) -> tuple[str | None, str | None]:
+    text_val = str(value or "").strip()
+    if not text_val:
+        return None, None
+    if "::" not in text_val:
+        return None, text_val
+    prefix, name = text_val.split("::", 1)
+    return prefix, name
+
+
+def _index_factor_definitions(definitions):
+    out = {}
+    for item in (definitions or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("FactorName", "")).strip()
+        if not name:
+            continue
+        out[name.lower()] = item
+    return out
+
+
+def _lookup_factor_definition(factor_name, db_definitions, local_definitions):
+    key = str(factor_name or "").strip().lower()
+    if not key:
+        return None
+    db_idx = _index_factor_definitions(db_definitions)
+    if key in db_idx:
+        return db_idx[key]
+    local_idx = _index_factor_definitions(local_definitions)
+    return local_idx.get(key)
+
+
+def _normalize_factor_value_for_options(value, raw_names, definition_names):
+    if not value:
+        return None
+    val = str(value).strip()
+    if not val:
+        return None
+    if val.startswith("raw::"):
+        raw_name = val.split("::", 1)[1]
+        return val if raw_name in raw_names else None
+    if val.startswith("def::"):
+        def_name = val.split("::", 1)[1]
+        return val if def_name in definition_names else None
+    if val in raw_names:
+        return f"raw::{val}"
+    if val in definition_names:
+        return f"def::{val}"
+    return None
+
+
+def _factor_option_definitions(db_definitions, local_definitions):
+    out = []
+    seen = set()
+    for item in (db_definitions or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("FactorName", "")).strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "source": "db"})
+    for item in (local_definitions or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("FactorName", "")).strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "source": "session"})
+    return out
+
+
+def _definition_payload_for_compute(definition: dict) -> str:
+    return canonical_json_dumps(
+        {
+            "FactorName": definition.get("FactorName"),
+            "LongComponent": definition.get("LongComponent"),
+            "ShortComponent": definition.get("ShortComponent"),
+            "LongAggType": definition.get("LongAggType"),
+            "ShortAggType": definition.get("ShortAggType"),
+            "LongLag": definition.get("LongLag"),
+            "OutputTransform": definition.get("OutputTransform"),
+            "UPDATE_DATE": definition.get("UPDATE_DATE"),
+        }
+    )
+
+
+def _definition_to_draft(definition: dict, source: str, selected_key: str | None = None) -> dict:
+    base = _ensure_factor_draft(definition)
+    name = str(base.get("FactorName", "")).strip()
+    if selected_key is None and name:
+        selected_key = _factor_select_key(source, name)
+    base["selected_key"] = selected_key
+    base["source"] = source
+    base["sync_origin"] = "system"
+    base["original_name"] = name if source == "db" else base.get("original_name") or name
+    base["selected_update_date"] = base.get("UPDATE_DATE")
+    return base
+
+
+def _draft_to_definition_payload(draft: dict) -> dict:
+    draft_value = _ensure_factor_draft(draft)
+    return {
+        "FactorName": draft_value.get("FactorName"),
+        "Description": draft_value.get("Description"),
+        "LongComponent": draft_value.get("LongComponentList"),
+        "ShortComponent": draft_value.get("ShortComponentList"),
+        "LongAggType": draft_value.get("LongAggType"),
+        "ShortAggType": draft_value.get("ShortAggType"),
+        "LongLag": draft_value.get("LongLag"),
+        "OutputTransform": draft_value.get("OutputTransform"),
+        "UPDATE_DATE": draft_value.get("selected_update_date"),
+        "UPDATE_BY": draft_value.get("UPDATE_BY"),
+    }
+
+
 def _prepare_factor_analysis_frames(
     raw_data,
     periodicity,
@@ -240,6 +430,8 @@ def _prepare_factor_analysis_frames(
     vol_scaler,
     vol_scaling_assignments,
     factor_transform,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
 ):
     """Prepare dependent-series returns and factor returns for factor analysis."""
     if not raw_data or not selected_series or not factor_series:
@@ -267,25 +459,46 @@ def _prepare_factor_analysis_frames(
     if dependent_df.empty:
         return pd.DataFrame(), pd.Series(dtype=float)
 
-    # Factor always comes from total-basis stream (with optional L/S if configured).
-    factor_df = get_working_returns(
-        raw_data,
-        periodicity_value,
-        (factor_series,),
-        bench_payload,
-        ls_payload,
-        date_payload,
-        vol_scaler_value,
-        vol_payload,
-    )
-    if factor_df.empty or factor_series not in factor_df.columns:
-        return dependent_df, pd.Series(dtype=float)
+    factor_values = pd.Series(dtype=float)
+    factor_prefix, factor_name = _split_factor_select_key(factor_series)
+    if factor_prefix == "def":
+        definition = _lookup_factor_definition(factor_name, factor_definitions_db, factor_definitions_local)
+        if not definition:
+            return dependent_df, pd.Series(dtype=float)
+        factor_values = compute_factor_series(
+            MRD_ENGINE,
+            {
+                "FactorName": definition.get("FactorName"),
+                "LongComponent": definition.get("LongComponent"),
+                "ShortComponent": definition.get("ShortComponent"),
+                "LongAggType": definition.get("LongAggType"),
+                "ShortAggType": definition.get("ShortAggType"),
+                "LongLag": definition.get("LongLag"),
+                "OutputTransform": definition.get("OutputTransform"),
+                "UPDATE_DATE": definition.get("UPDATE_DATE"),
+            },
+            periodicity_value,
+            date_range,
+        )
+        factor_values.name = str(definition.get("FactorName") or factor_name)
+    else:
+        raw_factor_name = factor_name if factor_prefix == "raw" else str(factor_series or "")
+        # Factor always comes from total-basis stream (with optional L/S if configured).
+        factor_df = get_working_returns(
+            raw_data,
+            periodicity_value,
+            (raw_factor_name,),
+            bench_payload,
+            ls_payload,
+            date_payload,
+            vol_scaler_value,
+            vol_payload,
+        )
+        if factor_df.empty or raw_factor_name not in factor_df.columns:
+            return dependent_df, pd.Series(dtype=float)
+        factor_values = factor_df[raw_factor_name]
 
-    factor_values = (
-        factor_df[factor_series]
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna()
-    )
+    factor_values = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
     if factor_values.empty:
         return dependent_df, pd.Series(dtype=float)
 
@@ -1587,6 +1800,16 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     clearable=False,
                                     placeholder="Select factor series",
                                 ),
+                                html.Div([
+                                    dmc.Text("Definitions", size="sm", fw=500, mb=3),
+                                    dmc.Button(
+                                        "Add factor",
+                                        id="at-factor-open-modal-btn",
+                                        size="sm",
+                                        variant="light",
+                                        leftSection=DashIconify(icon="tabler:math-function", width=14),
+                                    ),
+                                ]),
                                 html.Div(
                                     id="at-factor-quantiles-wrapper",
                                     style={"display": "block"},
@@ -1873,6 +2096,11 @@ layout = dmc.Container(
                                             id="at-menu-add-raw-performance",
                                             leftSection=DashIconify(icon="tabler:activity-heartbeat", width=14),
                                         ),
+                                        dmc.MenuItem(
+                                            "Add factor...",
+                                            id="at-menu-add-factor",
+                                            leftSection=DashIconify(icon="tabler:math-function", width=14),
+                                        ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Add series from file...",
@@ -1942,6 +2170,168 @@ layout = dmc.Container(
         build_portfolio_add_modal("at", AG_GRID_LICENSE_KEY),
         build_raw_db_add_modal("at", AG_GRID_LICENSE_KEY),
         build_sheet_select_modal("at"),
+        dmc.Modal(
+            id="at-factor-def-modal",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:math-function"), color="violet", variant="light", size="sm"),
+                    dmc.Text("Add factor", fw=600, size="sm"),
+                ],
+            ),
+            size="980px",
+            centered=True,
+            closeOnClickOutside=False,
+            withCloseButton=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
+            children=[
+                dmc.Alert(
+                    id="at-factor-def-status-alert",
+                    title="Factor definitions",
+                    color="blue",
+                    hide=True,
+                    mb="sm",
+                ),
+                dmc.Text(
+                    id="at-factor-def-db-available-note",
+                    size="xs",
+                    c="dimmed",
+                    mb="xs",
+                ),
+                dmc.Stack(
+                    gap="sm",
+                    children=[
+                        dmc.Select(
+                            id="at-factor-def-select",
+                            label="Saved/Session factors",
+                            data=[],
+                            value=None,
+                            clearable=True,
+                            searchable=True,
+                            placeholder="Select existing factor definition",
+                            nothingFoundMessage="No saved factors",
+                        ),
+                        dmc.TextInput(
+                            id="at-factor-def-name-input",
+                            label="Factor name",
+                            placeholder="Example: Quality Spread",
+                        ),
+                        dmc.Textarea(
+                            id="at-factor-def-description-input",
+                            label="Description",
+                            minRows=2,
+                            maxRows=4,
+                        ),
+                        dmc.Group(
+                            grow=True,
+                            children=[
+                                dmc.MultiSelect(
+                                    id="at-factor-def-long-components",
+                                    label="Long components",
+                                    data=[],
+                                    value=[],
+                                    searchable=True,
+                                    clearable=True,
+                                    nothingFoundMessage="No SEC_FACTOR components",
+                                ),
+                                dmc.MultiSelect(
+                                    id="at-factor-def-short-components",
+                                    label="Short components",
+                                    data=[],
+                                    value=[],
+                                    searchable=True,
+                                    clearable=True,
+                                    nothingFoundMessage="No SEC_FACTOR components",
+                                ),
+                            ],
+                        ),
+                        dmc.Group(
+                            grow=True,
+                            children=[
+                                dmc.Select(
+                                    id="at-factor-def-long-agg-type",
+                                    label="Long aggregation",
+                                    data=FACTOR_AGG_TYPE_OPTIONS,
+                                    value="1",
+                                    clearable=False,
+                                ),
+                                dmc.Select(
+                                    id="at-factor-def-short-agg-type",
+                                    label="Short aggregation",
+                                    data=FACTOR_AGG_TYPE_OPTIONS,
+                                    value=None,
+                                    clearable=True,
+                                ),
+                                dmc.NumberInput(
+                                    id="at-factor-def-long-lag",
+                                    label="Long lag (periods)",
+                                    value=0,
+                                    min=0,
+                                    step=1,
+                                ),
+                                dmc.Select(
+                                    id="at-factor-def-output-transform",
+                                    label="Output transform",
+                                    data=OUTPUT_TRANSFORM_OPTIONS,
+                                    value="0",
+                                    clearable=False,
+                                ),
+                            ],
+                        ),
+                        dmc.Stack(
+                            gap=4,
+                            children=[
+                                dmc.Text("Preview (first 6 rows)", fw=500, size="sm"),
+                                dmc.ScrollArea(
+                                    h=140,
+                                    offsetScrollbars=True,
+                                    children=dmc.Code(
+                                        id="at-factor-def-preview-lines",
+                                        block=True,
+                                        children="Define a factor to preview values.",
+                                        style={
+                                            "display": "block",
+                                            "padding": "8px 10px",
+                                            "fontFamily": "Consolas, monospace",
+                                            "fontSize": "12px",
+                                            "lineHeight": "1.4",
+                                            "whiteSpace": "pre-wrap",
+                                            "color": "var(--mantine-color-text)",
+                                            "backgroundColor": "var(--mantine-color-body)",
+                                            "border": "1px solid var(--mantine-color-default-border)",
+                                        },
+                                    ),
+                                ),
+                            ],
+                        ),
+                        dmc.Group(
+                            mt="sm",
+                            justify="space-between",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Button("Save session", id="at-factor-def-save-local-btn", variant="light"),
+                                        dmc.Button("Save database", id="at-factor-def-save-db-btn", variant="outline"),
+                                        dmc.Button("Delete", id="at-factor-def-delete-btn", variant="outline", color="red"),
+                                    ],
+                                ),
+                                dmc.Group(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Button("Use factor", id="at-factor-def-use-btn", color="blue"),
+                                        dmc.Button("Close", id="at-factor-def-close-btn", variant="outline", color="gray"),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
 
         # Help Modal
         dmc.Modal(
@@ -2367,6 +2757,10 @@ layout = dmc.Container(
                                         size="sm",
                                     ),
                                     dmc.Text(
+                                        "Use Add factor to define session or database-backed factors from SEC_FACTOR components.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
                                         "Factor stream always uses total-basis data and ignores Excess mode. "
                                         "If Long-Short is enabled for the factor series, that L/S stream is used.",
                                         size="sm",
@@ -2382,6 +2776,10 @@ layout = dmc.Container(
                                     ),
                                     dmc.Text(
                                         "Factor Transform supports Raw values or global Z-Score normalization of the factor.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "For custom factors, ALREADY_PERIODIC and QUARTERLY_INTERP map values to period-end and can be forward-looking.",
                                         size="sm",
                                     ),
                                 ])),
@@ -2466,6 +2864,10 @@ layout = dmc.Container(
         dcc.Store(id="at-factor-quantiles-store", data=5, storage_type="session"),
         dcc.Store(id="at-factor-transform-store", data="raw", storage_type="session"),
         dcc.Store(id="at-factor-series-store", data=None, storage_type="session"),
+        dcc.Store(id="at-factor-definitions-db-store", data=[], storage_type="session"),
+        dcc.Store(id="at-factor-definitions-local-store", data=[], storage_type="session"),
+        dcc.Store(id="at-factor-def-modal-draft-store", data=None, storage_type="session"),
+        dcc.Store(id="at-factor-def-db-available-store", data=False, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
@@ -2798,6 +3200,10 @@ clientside_callback(
                 'at-factor-quantiles-store',
                 'at-factor-transform-store',
                 'at-factor-series-store',
+                'at-factor-definitions-db-store',
+                'at-factor-definitions-local-store',
+                'at-factor-def-modal-draft-store',
+                'at-factor-def-db-available-store',
                 'at-monthly-view-store',
                 'at-monthly-series-store',
                 'at-date-range-store',
@@ -3306,15 +3712,24 @@ clientside_callback(
 
 @callback(
     Output("at-factor-series-select", "data"),
-    Output("at-factor-series-select", "value"),
+    Output("at-factor-series-select", "value", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("at-series-select", "data"),
+    Input("at-factor-definitions-db-store", "data"),
+    Input("at-factor-definitions-local-store", "data"),
     State("at-factor-series-store", "data"),
     State("at-factor-series-select", "value"),
-    prevent_initial_call=False,
+    prevent_initial_call="initial_duplicate",
 )
-def update_factor_series_select(raw_data, selected_series, stored_factor_series, current_factor_series):
-    """Expose all imported series as factor candidates, with selected series first."""
+def update_factor_series_select(
+    raw_data,
+    selected_series,
+    db_definitions,
+    local_definitions,
+    stored_factor_series,
+    current_factor_series,
+):
+    """Expose raw and custom factor candidates, with selected raw series first."""
     if raw_data is None:
         return [], None
 
@@ -3330,19 +3745,418 @@ def update_factor_series_select(raw_data, selected_series, stored_factor_series,
     selected_order = [s for s in (selected_series or []) if s in all_series]
     remaining = [s for s in all_series if s not in selected_order]
     ordered = selected_order + remaining
-    options = [{"value": s, "label": s} for s in ordered]
+    options = [{"value": f"raw::{s}", "label": f"[Raw] {s}"} for s in ordered]
 
+    definition_entries = _factor_option_definitions(db_definitions, local_definitions)
+    definition_names = [entry["name"] for entry in definition_entries]
+    for entry in definition_entries:
+        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        options.append(
+            {
+                "value": f"def::{entry['name']}",
+                "label": f"{source_label} {entry['name']}",
+            }
+        )
+
+    raw_name_set = set(ordered)
+    definition_name_set = set(definition_names)
     candidate_order = [
         current_factor_series,
         stored_factor_series,
-        selected_order[0] if selected_order else None,
-        ordered[0] if ordered else None,
+        f"raw::{selected_order[0]}" if selected_order else None,
+        f"raw::{ordered[0]}" if ordered else None,
     ]
-    next_value = next((candidate for candidate in candidate_order if candidate in ordered), None)
+    next_value = None
+    for candidate in candidate_order:
+        normalized_candidate = _normalize_factor_value_for_options(
+            candidate,
+            raw_name_set,
+            definition_name_set,
+        )
+        if normalized_candidate:
+            next_value = normalized_candidate
+            break
+    if not next_value and options:
+        next_value = options[0]["value"]
     return options, next_value
 
 
+@callback(
+    Output("at-factor-def-modal", "opened", allow_duplicate=True),
+    Output("at-factor-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-menu-add-factor", "n_clicks"),
+    Input("at-factor-open-modal-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def at_open_factor_definition_modal(menu_clicks, tab_clicks):
+    if not menu_clicks and not tab_clicks:
+        raise PreventUpdate
+    return True, True
 
+
+@callback(
+    Output("at-factor-def-db-available-store", "data", allow_duplicate=True),
+    Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-factor-def-long-components", "data"),
+    Output("at-factor-def-short-components", "data"),
+    Output("at-factor-def-db-available-note", "children"),
+    Output("at-factor-def-save-db-btn", "disabled"),
+    Input("at-factor-def-modal", "opened"),
+    prevent_initial_call=True,
+)
+def at_load_factor_modal_data(opened):
+    if not opened:
+        raise PreventUpdate
+    component_options = get_sec_factor_component_options_cached(MRD_ENGINE)
+    db_available = factor_tables_available(DB_ENGINE)
+    db_definitions = load_factor_definitions(DB_ENGINE) if db_available else []
+    note = "" if db_available else "Database factor tables are unavailable. Session factors are still supported."
+    return db_available, db_definitions, component_options, component_options, note, (not db_available)
+
+
+@callback(
+    Output("at-factor-def-select", "data"),
+    Input("at-factor-definitions-db-store", "data"),
+    Input("at-factor-definitions-local-store", "data"),
+)
+def at_update_factor_definition_select_options(db_definitions, local_definitions):
+    entries = _factor_option_definitions(db_definitions, local_definitions)
+    options = []
+    for entry in entries:
+        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        options.append(
+            {
+                "value": _factor_select_key(entry["source"], entry["name"]),
+                "label": f"{source_label} {entry['name']}",
+            }
+        )
+    return options
+
+
+@callback(
+    Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
+    Input("at-factor-def-select", "value"),
+    State("at-factor-definitions-db-store", "data"),
+    State("at-factor-definitions-local-store", "data"),
+    State("at-factor-def-modal-draft-store", "data"),
+    prevent_initial_call=True,
+)
+def at_load_selected_factor_definition(selected_key, db_definitions, local_definitions, current_draft):
+    if not selected_key:
+        raise PreventUpdate
+    current = _ensure_factor_draft(current_draft)
+    if current.get("selected_key") == selected_key:
+        raise PreventUpdate
+
+    source, name = _split_factor_select_key(selected_key)
+    if source == "db":
+        definition = _lookup_factor_definition(name, db_definitions, [])
+        if not definition:
+            raise PreventUpdate
+        return _definition_to_draft(definition, "db", selected_key=selected_key)
+    if source == "session":
+        definition = _lookup_factor_definition(name, [], local_definitions)
+        if not definition:
+            raise PreventUpdate
+        return _definition_to_draft(definition, "session", selected_key=selected_key)
+    raise PreventUpdate
+
+
+@callback(
+    Output("at-factor-def-select", "value", allow_duplicate=True),
+    Output("at-factor-def-name-input", "value"),
+    Output("at-factor-def-description-input", "value"),
+    Output("at-factor-def-long-components", "value"),
+    Output("at-factor-def-short-components", "value"),
+    Output("at-factor-def-long-agg-type", "value"),
+    Output("at-factor-def-short-agg-type", "value"),
+    Output("at-factor-def-long-lag", "value"),
+    Output("at-factor-def-output-transform", "value"),
+    Input("at-factor-def-modal-draft-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def at_sync_factor_definition_form(draft_data):
+    draft = _ensure_factor_draft(draft_data)
+    if draft.get("sync_origin") == "form":
+        raise PreventUpdate
+
+    long_agg = str(int(draft.get("LongAggType") or 1))
+    short_agg = draft.get("ShortAggType")
+    short_agg_value = str(int(short_agg)) if short_agg is not None else None
+    output_transform = str(int(draft.get("OutputTransform") or 0))
+    return (
+        draft.get("selected_key"),
+        draft.get("FactorName") or "",
+        draft.get("Description") or "",
+        draft.get("LongComponentList") or [],
+        draft.get("ShortComponentList") or [],
+        long_agg,
+        short_agg_value,
+        int(draft.get("LongLag") or 0),
+        output_transform,
+    )
+
+
+@callback(
+    Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
+    Input("at-factor-def-name-input", "value"),
+    Input("at-factor-def-description-input", "value"),
+    Input("at-factor-def-long-components", "value"),
+    Input("at-factor-def-short-components", "value"),
+    Input("at-factor-def-long-agg-type", "value"),
+    Input("at-factor-def-short-agg-type", "value"),
+    Input("at-factor-def-long-lag", "value"),
+    Input("at-factor-def-output-transform", "value"),
+    State("at-factor-def-modal-draft-store", "data"),
+    prevent_initial_call=True,
+)
+def at_update_factor_definition_draft_from_form(
+    factor_name,
+    description,
+    long_components,
+    short_components,
+    long_agg_type,
+    short_agg_type,
+    long_lag,
+    output_transform,
+    draft_data,
+):
+    draft = _ensure_factor_draft(draft_data)
+    next_draft = dict(draft)
+    next_draft["sync_origin"] = "form"
+    next_draft["FactorName"] = str(factor_name or "").strip()
+    next_draft["Description"] = "" if description is None else str(description)
+    next_draft["LongComponentList"] = [str(v) for v in (long_components or [])]
+    next_draft["ShortComponentList"] = [str(v) for v in (short_components or [])]
+    next_draft["LongAggType"] = int(pd.to_numeric(pd.Series([long_agg_type]), errors="coerce").iloc[0] or 1)
+    short_num = pd.to_numeric(pd.Series([short_agg_type]), errors="coerce").iloc[0]
+    next_draft["ShortAggType"] = int(short_num) if not pd.isna(short_num) else None
+    next_draft["LongLag"] = max(0, int(pd.to_numeric(pd.Series([long_lag]), errors="coerce").iloc[0] or 0))
+    next_draft["OutputTransform"] = int(pd.to_numeric(pd.Series([output_transform]), errors="coerce").iloc[0] or 0)
+    if next_draft == draft:
+        raise PreventUpdate
+    return next_draft
+
+
+@callback(
+    Output("at-factor-def-preview-lines", "children"),
+    Input("at-factor-def-modal", "opened"),
+    Input("at-factor-def-modal-draft-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-date-range-store", "data"),
+    prevent_initial_call=True,
+)
+def at_update_factor_definition_preview(opened, draft_data, periodicity, date_range):
+    if not opened:
+        raise PreventUpdate
+
+    payload = _draft_to_definition_payload(draft_data or {})
+    normalized, error = validate_factor_definition_payload(payload)
+    if error or not normalized:
+        return "Define a valid factor to preview values."
+
+    lines = compute_factor_preview_lines(
+        MRD_ENGINE,
+        normalized,
+        periodicity or "daily",
+        date_range,
+        max_rows=6,
+    )
+    if not lines:
+        return "No rows returned for the current factor definition and date range."
+    return "\n".join(lines)
+
+
+
+
+
+@callback(
+    Output("at-factor-definitions-local-store", "data", allow_duplicate=True),
+    Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
+    Output("at-factor-def-select", "value", allow_duplicate=True),
+    Output("at-factor-series-select", "value", allow_duplicate=True),
+    Output("at-factor-def-modal", "opened", allow_duplicate=True),
+    Output("at-factor-def-status-alert", "children", allow_duplicate=True),
+    Output("at-factor-def-status-alert", "color", allow_duplicate=True),
+    Output("at-factor-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-factor-def-save-local-btn", "n_clicks"),
+    Input("at-factor-def-save-db-btn", "n_clicks"),
+    Input("at-factor-def-delete-btn", "n_clicks"),
+    Input("at-factor-def-use-btn", "n_clicks"),
+    Input("at-factor-def-close-btn", "n_clicks"),
+    State("at-factor-def-modal-draft-store", "data"),
+    State("at-factor-definitions-local-store", "data"),
+    State("at-factor-definitions-db-store", "data"),
+    State("at-factor-def-db-available-store", "data"),
+    State("userinfo", "data"),
+    prevent_initial_call=True,
+)
+def at_manage_factor_definitions(
+    save_local_clicks,
+    save_db_clicks,
+    delete_clicks,
+    use_clicks,
+    close_clicks,
+    draft_data,
+    local_definitions,
+    db_definitions,
+    db_available,
+    userinfo,
+):
+    triggered = callback_context.triggered_id
+    n_no = no_update
+    draft = _ensure_factor_draft(draft_data)
+    local_list = [dict(item) for item in (local_definitions or []) if isinstance(item, dict)]
+    update_by = _factor_user_label(userinfo)
+
+    if triggered == "at-factor-def-close-btn":
+        return n_no, n_no, n_no, n_no, n_no, False, n_no, n_no, True
+
+    payload = _draft_to_definition_payload(draft)
+    normalized, error = validate_factor_definition_payload(payload)
+    if triggered in {"at-factor-def-save-local-btn", "at-factor-def-save-db-btn", "at-factor-def-use-btn"}:
+        if error or not normalized:
+            return n_no, n_no, n_no, n_no, n_no, n_no, error or "Invalid factor definition.", "red", False
+    else:
+        normalized = normalized or {}
+
+    if triggered == "at-factor-def-save-local-btn":
+        now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        saved_item = dict(normalized)
+        saved_item["source"] = "session"
+        saved_item["UPDATE_DATE"] = now_str
+        saved_item["UPDATE_BY"] = update_by
+
+        target_name = str(saved_item.get("FactorName") or "").strip().lower()
+        updated_local = [item for item in local_list if str(item.get("FactorName", "")).strip().lower() != target_name]
+        updated_local.append(saved_item)
+        updated_local.sort(key=lambda item: str(item.get("FactorName", "")).lower())
+
+        next_draft = _definition_to_draft(saved_item, "session")
+        return (
+            updated_local,
+            n_no,
+            next_draft,
+            next_draft.get("selected_key"),
+            n_no,
+            n_no,
+            f"Saved session factor `{saved_item['FactorName']}`.",
+            "green",
+            False,
+        )
+
+    if triggered == "at-factor-def-save-db-btn":
+        if not db_available:
+            return n_no, n_no, n_no, n_no, n_no, n_no, "Database factor tables are unavailable.", "orange", False
+
+        original_name = draft.get("original_name") if draft.get("source") == "db" else None
+        expected_update = draft.get("selected_update_date") if draft.get("source") == "db" else None
+        success, message, saved_row = save_factor_definition(
+            DB_ENGINE,
+            payload,
+            update_by=update_by,
+            original_name=original_name,
+            expected_update_date=expected_update,
+        )
+        if not success or not saved_row:
+            return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+
+        updated_db = load_factor_definitions(DB_ENGINE)
+        saved_name = str(saved_row.get("FactorName", "")).strip().lower()
+        updated_local = [
+            item for item in local_list if str(item.get("FactorName", "")).strip().lower() != saved_name
+        ]
+        next_draft = _definition_to_draft(saved_row, "db")
+        return (
+            updated_local,
+            updated_db,
+            next_draft,
+            next_draft.get("selected_key"),
+            f"def::{saved_row.get('FactorName')}",
+            n_no,
+            message,
+            "green",
+            False,
+        )
+
+    if triggered == "at-factor-def-delete-btn":
+        name = str(draft.get("FactorName", "")).strip()
+        if not name:
+            return n_no, n_no, n_no, n_no, n_no, n_no, "Select or enter a factor name to delete.", "orange", False
+
+        if draft.get("source") == "db":
+            if not db_available:
+                return n_no, n_no, n_no, n_no, n_no, n_no, "Database factor tables are unavailable.", "orange", False
+            target_name = str(draft.get("original_name") or name).strip()
+            success, message = delete_factor_definition(
+                DB_ENGINE,
+                target_name,
+                expected_update_date=draft.get("selected_update_date"),
+            )
+            if not success:
+                return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+            updated_db = load_factor_definitions(DB_ENGINE)
+            return n_no, updated_db, _default_factor_draft(), None, n_no, n_no, message, "green", False
+
+        target_name = name.lower()
+        updated_local = [item for item in local_list if str(item.get("FactorName", "")).strip().lower() != target_name]
+        return (
+            updated_local,
+            n_no,
+            _default_factor_draft(),
+            None,
+            n_no,
+            n_no,
+            f"Deleted session factor `{name}`.",
+            "green",
+            False,
+        )
+
+    if triggered == "at-factor-def-use-btn":
+        factor_name = str(normalized.get("FactorName", "")).strip()
+        if not factor_name:
+            return n_no, n_no, n_no, n_no, n_no, n_no, "Factor name is required.", "red", False
+
+        next_local = local_list
+        next_draft = draft
+        if draft.get("source") == "db":
+            next_draft = _definition_to_draft(
+                {
+                    **normalized,
+                    "UPDATE_DATE": draft.get("selected_update_date"),
+                    "UPDATE_BY": draft.get("UPDATE_BY"),
+                },
+                "db",
+                selected_key=_factor_select_key("db", factor_name),
+            )
+        else:
+            now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            session_item = {
+                **normalized,
+                "source": "session",
+                "UPDATE_DATE": now_str,
+                "UPDATE_BY": update_by,
+            }
+            key_name = factor_name.lower()
+            next_local = [item for item in local_list if str(item.get("FactorName", "")).strip().lower() != key_name]
+            next_local.append(session_item)
+            next_local.sort(key=lambda item: str(item.get("FactorName", "")).lower())
+            next_draft = _definition_to_draft(session_item, "session")
+
+        return (
+            next_local,
+            n_no,
+            next_draft,
+            next_draft.get("selected_key"),
+            f"def::{factor_name}",
+            False,
+            "Factor selected for analysis.",
+            "green",
+            False,
+        )
+
+    raise PreventUpdate
 
 
 @callback(
@@ -5823,6 +6637,8 @@ def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_ser
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("at-factor-definitions-db-store", "data"),
+    State("at-factor-definitions-local-store", "data"),
     prevent_initial_call=True,
 )
 def update_factor_analysis(
@@ -5842,6 +6658,8 @@ def update_factor_analysis(
     vol_scaler,
     vol_scaling_assignments,
     theme,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
 ):
     """Render Factor Analysis charts for selected series."""
     if (
@@ -5868,6 +6686,8 @@ def update_factor_analysis(
         vol_scaler,
         vol_scaling_assignments,
         factor_transform,
+        factor_definitions_db,
+        factor_definitions_local,
     )
     if dependent_df.empty:
         return None, dmc.Text("No dependent-series data available for current settings.", size="sm", c="dimmed")
@@ -5876,10 +6696,12 @@ def update_factor_analysis(
 
     mode = factor_mode if factor_mode in {"box", "scatter"} else "box"
     quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
+    _factor_prefix, _factor_name = _split_factor_select_key(factor_series)
+    display_factor_name = _factor_name if _factor_name else str(factor_series)
     factor_label = (
-        f"{factor_series} (Z-Score)"
+        f"{display_factor_name} (Z-Score)"
         if (factor_transform or "raw") == "zscore"
-        else factor_series
+        else display_factor_name
     )
 
     charts = []
@@ -5919,7 +6741,7 @@ def update_factor_analysis(
                 )
 
             fig.update_layout(
-                title=f"Factor Scatter: {series_name} vs {factor_series}",
+                title=f"Factor Scatter: {series_name} vs {display_factor_name}",
                 xaxis_title=factor_label,
                 yaxis_title=series_name,
                 yaxis_tickformat=".2%",
@@ -5949,7 +6771,7 @@ def update_factor_analysis(
                 categoryarray=ordered_labels,
             )
             fig.update_layout(
-                title=f"Factor Box Plot: {series_name} by {factor_series} Quantiles",
+                title=f"Factor Box Plot: {series_name} by {display_factor_name} Quantiles",
                 yaxis_title=series_name,
                 yaxis_tickformat=".2%",
                 hovermode="closest",
@@ -6424,6 +7246,8 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-factor-series-select", "value"),
     State("at-factor-quantiles-input", "value"),
     State("at-factor-transform-select", "value"),
+    State("at-factor-definitions-db-store", "data"),
+    State("at-factor-definitions-local-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
@@ -6448,7 +7272,9 @@ def download_excel(
     factor_series,
     factor_quantiles,
     factor_transform,
-    saved_series_store,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
+    saved_series_store=None,
 ):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
     if n_clicks is None or raw_data is None or not selected_series:
@@ -6716,6 +7542,8 @@ def download_excel(
                 try:
                     with timed_block("analyticstool.download_excel.factor_analysis"):
                         if factor_series:
+                            _factor_prefix, _factor_name = _split_factor_select_key(factor_series)
+                            display_factor_name = _factor_name if _factor_name else str(factor_series)
                             factor_transform_value = (
                                 factor_transform if factor_transform in {"raw", "zscore"} else "raw"
                             )
@@ -6732,12 +7560,14 @@ def download_excel(
                                 bundle.vol_scaler,
                                 vol_scaling_assignments,
                                 factor_transform_value,
+                                factor_definitions_db,
+                                factor_definitions_local,
                             )
 
                             box_rows = _build_factor_box_summary_rows(
                                 bundle.selected_series,
                                 dependent_df,
-                                factor_series,
+                                display_factor_name,
                                 factor_values,
                                 quantiles,
                             )
@@ -6759,7 +7589,7 @@ def download_excel(
                             scatter_rows = _build_factor_scatter_summary_rows(
                                 bundle.selected_series,
                                 dependent_df,
-                                factor_series,
+                                display_factor_name,
                                 factor_values,
                             )
                             scatter_df = pd.DataFrame(scatter_rows)

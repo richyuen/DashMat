@@ -82,6 +82,7 @@ Automated test guidance is maintained in `tests/README.md`.
 - Add concise comments only when logic is non-obvious.
 - Do not introduce new dependencies unless necessary.
 - Do not mutate or delete database table data from web application runtime/callback code. Any table creation, backfill, truncate, delete, or reseed operation must live in explicit setup/migration scripts (e.g., `tools/db/init_local_cma_db.py`) and never in page interaction paths.
+- Exception: AnalyticsTool factor-definition CRUD is allowed at runtime for `FactorDefinitions` and `FactorDefinitionsArchive` only. Update/delete must archive the prior row first, and use optimistic concurrency based on `UPDATE_DATE`.
 - Portfolio import source rules:
   - `peer` mode reads `PeerTS` (`PortRet` + `MeanRet` benchmark logic).
   - `index` mode reads `IndexTS` (`PortRet` + `Benchmark`).
