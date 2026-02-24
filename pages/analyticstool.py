@@ -122,6 +122,23 @@ from utils.factor_definitions import (
     save_factor_definition,
     validate_factor_definition_payload,
 )
+from utils.regime_analysis import (
+    build_regime_conditioned_summary,
+    build_regime_duration_table,
+    build_regime_statistics_table,
+    build_regime_timeline_frame,
+    build_regime_transition_matrix,
+    compute_regime_assignments,
+)
+from utils.regime_definitions import (
+    REGIME_METHOD_OPTIONS,
+    REGIME_RETURN_BASIS_OPTIONS,
+    delete_regime_definition,
+    load_regime_definitions,
+    regime_tables_available,
+    save_regime_definition,
+    validate_regime_definition_payload,
+)
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -416,6 +433,191 @@ def _draft_to_definition_payload(draft: dict) -> dict:
         "UPDATE_DATE": draft_value.get("selected_update_date"),
         "UPDATE_BY": draft_value.get("UPDATE_BY"),
     }
+
+
+def _default_regime_draft() -> dict:
+    return {
+        "selected_key": None,
+        "source": "session",
+        "sync_origin": "system",
+        "original_name": None,
+        "selected_update_date": None,
+        "RegimeName": "",
+        "Description": "",
+        "MethodType": 1,
+        "ReturnBasis": "total",
+        "NumRegimes": 3,
+        "MinObservations": 60,
+        "PcaStandardize": True,
+        "UniverseSeries": [],
+        "SingleSeries": None,
+        "VolScaler": 0.0,
+        "BenchmarkAssignmentsJson": {},
+        "LongShortAssignmentsJson": {},
+        "VolScalingAssignmentsJson": {},
+    }
+
+
+def _ensure_regime_draft(value):
+    if not isinstance(value, dict):
+        return _default_regime_draft()
+    draft = _default_regime_draft()
+    draft.update(value)
+    draft["MethodType"] = int(pd.to_numeric(pd.Series([draft.get("MethodType", 1)]), errors="coerce").iloc[0] or 1)
+    draft["ReturnBasis"] = "excess" if str(draft.get("ReturnBasis", "total")).strip().lower() == "excess" else "total"
+    draft["NumRegimes"] = int(pd.to_numeric(pd.Series([draft.get("NumRegimes", 3)]), errors="coerce").iloc[0] or 3)
+    draft["NumRegimes"] = max(2, min(draft["NumRegimes"], 10))
+    draft["MinObservations"] = int(pd.to_numeric(pd.Series([draft.get("MinObservations", 60)]), errors="coerce").iloc[0] or 60)
+    draft["MinObservations"] = max(20, draft["MinObservations"])
+    draft["PcaStandardize"] = bool(draft.get("PcaStandardize", True))
+    draft["UniverseSeries"] = [str(v) for v in (draft.get("UniverseSeries") or []) if str(v).strip()]
+    single_series = str(draft.get("SingleSeries") or "").strip()
+    draft["SingleSeries"] = single_series or None
+    draft["VolScaler"] = float(pd.to_numeric(pd.Series([draft.get("VolScaler", 0.0)]), errors="coerce").iloc[0] or 0.0)
+    draft["VolScaler"] = max(0.0, draft["VolScaler"])
+    for key in ("BenchmarkAssignmentsJson", "LongShortAssignmentsJson", "VolScalingAssignmentsJson"):
+        value_map = draft.get(key, {})
+        if not isinstance(value_map, dict):
+            value_map = {}
+        draft[key] = dict(value_map)
+    return draft
+
+
+def _regime_select_key(source: str, name: str) -> str:
+    return f"{source}::{name}"
+
+
+def _split_regime_select_key(value: str | None) -> tuple[str | None, str | None]:
+    text_val = str(value or "").strip()
+    if not text_val:
+        return None, None
+    if "::" not in text_val:
+        return None, text_val
+    prefix, name = text_val.split("::", 1)
+    return prefix, name
+
+
+def _index_regime_definitions(definitions):
+    out = {}
+    for item in (definitions or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("RegimeName", "")).strip()
+        if not name:
+            continue
+        out[name.lower()] = item
+    return out
+
+
+def _lookup_regime_definition(regime_name, db_definitions, local_definitions):
+    key = str(regime_name or "").strip().lower()
+    if not key:
+        return None
+    db_idx = _index_regime_definitions(db_definitions)
+    if key in db_idx:
+        return db_idx[key]
+    local_idx = _index_regime_definitions(local_definitions)
+    return local_idx.get(key)
+
+
+def _regime_option_definitions(db_definitions, local_definitions):
+    out = []
+    seen = set()
+    for item in (db_definitions or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("RegimeName", "")).strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "source": "db"})
+    for item in (local_definitions or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("RegimeName", "")).strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "source": "session"})
+    return out
+
+
+def _normalize_regime_value_for_options(value, regime_names):
+    if not value:
+        return None
+    val = str(value).strip()
+    if not val:
+        return None
+    if val.startswith("def::"):
+        name = val.split("::", 1)[1]
+        return val if name in regime_names else None
+    if val in regime_names:
+        return f"def::{val}"
+    return None
+
+
+def _regime_definition_to_draft(definition: dict, source: str, selected_key: str | None = None) -> dict:
+    config = definition.get("Config", {}) if isinstance(definition, dict) else {}
+    if not isinstance(config, dict):
+        config = {}
+    name = str(definition.get("RegimeName", "")).strip()
+    if selected_key is None and name:
+        selected_key = _regime_select_key(source, name)
+    draft = _default_regime_draft()
+    draft.update(
+        {
+            "selected_key": selected_key,
+            "source": source,
+            "sync_origin": "system",
+            "original_name": name if source == "db" else definition.get("original_name") or name,
+            "selected_update_date": definition.get("UPDATE_DATE"),
+            "RegimeName": name,
+            "Description": definition.get("Description") or "",
+            "MethodType": definition.get("MethodType", config.get("method_type", 1)),
+            "ReturnBasis": config.get("return_basis", "total"),
+            "NumRegimes": config.get("num_regimes", 3),
+            "MinObservations": config.get("min_observations", 60),
+            "PcaStandardize": config.get("pca_standardize", True),
+            "UniverseSeries": config.get("universe_series", []),
+            "SingleSeries": config.get("single_series"),
+            "VolScaler": config.get("vol_scaler", 0.0),
+            "BenchmarkAssignmentsJson": config.get("benchmark_assignments", {}),
+            "LongShortAssignmentsJson": config.get("long_short_assignments", {}),
+            "VolScalingAssignmentsJson": config.get("vol_scaling_assignments", {}),
+            "UPDATE_BY": definition.get("UPDATE_BY"),
+        }
+    )
+    return _ensure_regime_draft(draft)
+
+
+def _regime_draft_to_definition_payload(draft: dict) -> dict:
+    draft_value = _ensure_regime_draft(draft)
+    payload = {
+        "RegimeName": draft_value.get("RegimeName"),
+        "Description": draft_value.get("Description"),
+        "MethodType": draft_value.get("MethodType"),
+        "Config": {
+            "num_regimes": draft_value.get("NumRegimes"),
+            "return_basis": draft_value.get("ReturnBasis"),
+            "min_observations": draft_value.get("MinObservations"),
+            "pca_standardize": draft_value.get("PcaStandardize"),
+            "universe_series": draft_value.get("UniverseSeries"),
+            "single_series": draft_value.get("SingleSeries"),
+            "vol_scaler": draft_value.get("VolScaler"),
+            "benchmark_assignments": draft_value.get("BenchmarkAssignmentsJson", {}),
+            "long_short_assignments": draft_value.get("LongShortAssignmentsJson", {}),
+            "vol_scaling_assignments": draft_value.get("VolScalingAssignmentsJson", {}),
+        },
+        "UPDATE_DATE": draft_value.get("selected_update_date"),
+        "UPDATE_BY": draft_value.get("UPDATE_BY"),
+    }
+    return payload
 
 
 def _prepare_factor_analysis_frames(
@@ -1447,6 +1649,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.TabsTab("Drawdown", value="drawdown"),
                         dmc.TabsTab("Correlation", value="correlogram"),
                         dmc.TabsTab("Factor Analysis", value="factor_analysis"),
+                        dmc.TabsTab("Regime Analysis", value="regime_analysis"),
                     ],
                 ),
                 dmc.TabsPanel(
@@ -1848,6 +2051,47 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     ],
                 ),
                 dmc.TabsPanel(
+                    value="regime_analysis",
+                    pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            gap="md",
+                            align="flex-end",
+                            children=[
+                                dmc.Select(
+                                    id="at-regime-definition-select",
+                                    label="Regime definition",
+                                    data=[],
+                                    value=None,
+                                    w=340,
+                                    size="sm",
+                                    searchable=True,
+                                    clearable=True,
+                                    placeholder="Select regime definition",
+                                    nothingFoundMessage="No saved regimes",
+                                ),
+                                html.Div([
+                                    dmc.Text("Definitions", size="sm", fw=500, mb=3),
+                                    dmc.Button(
+                                        "Add regime",
+                                        id="at-regime-open-modal-btn",
+                                        size="sm",
+                                        variant="light",
+                                        leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
+                                    ),
+                                ]),
+                            ],
+                        ),
+                        html.Div(id="at-regime-analysis-warning"),
+                        html.Div(
+                            id="at-regime-analysis-container",
+                            style={"flex": "1", "overflow": "auto"},
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
                     value="growth",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
@@ -2101,6 +2345,11 @@ layout = dmc.Container(
                                             id="at-menu-add-factor",
                                             leftSection=DashIconify(icon="tabler:math-function", width=14),
                                         ),
+                                        dmc.MenuItem(
+                                            "Add regime...",
+                                            id="at-menu-add-regime",
+                                            leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
+                                        ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Add series from file...",
@@ -2332,6 +2581,192 @@ layout = dmc.Container(
                 ),
             ],
         ),
+        dmc.Modal(
+            id="at-regime-def-modal",
+            title=dmc.Group(
+                gap="xs",
+                children=[
+                    dmc.ThemeIcon(DashIconify(icon="tabler:binary-tree-2"), color="teal", variant="light", size="sm"),
+                    dmc.Text("Add regime", fw=600, size="sm"),
+                ],
+            ),
+            size="980px",
+            centered=True,
+            closeOnClickOutside=False,
+            withCloseButton=True,
+            radius="lg",
+            className="dashmat-modal",
+            overlayProps={"blur": 2, "opacity": 0.45},
+            transitionProps={"transition": "fade", "duration": 180},
+            children=[
+                dmc.Alert(
+                    id="at-regime-def-status-alert",
+                    title="Regime definitions",
+                    color="blue",
+                    hide=True,
+                    mb="sm",
+                ),
+                dmc.Text(
+                    id="at-regime-def-db-available-note",
+                    size="xs",
+                    c="dimmed",
+                    mb="xs",
+                ),
+                dmc.Stack(
+                    gap="sm",
+                    children=[
+                        dmc.Select(
+                            id="at-regime-def-select",
+                            label="Saved/Session regimes",
+                            data=[],
+                            value=None,
+                            clearable=True,
+                            searchable=True,
+                            placeholder="Select existing regime definition",
+                            nothingFoundMessage="No saved regimes",
+                        ),
+                        dmc.TextInput(
+                            id="at-regime-def-name-input",
+                            label="Regime name",
+                            placeholder="Example: Equity Risk Cycle",
+                        ),
+                        dmc.Textarea(
+                            id="at-regime-def-description-input",
+                            label="Description",
+                            minRows=2,
+                            maxRows=4,
+                        ),
+                        dmc.Group(
+                            grow=True,
+                            children=[
+                                dmc.Select(
+                                    id="at-regime-def-method-type",
+                                    label="Method",
+                                    data=REGIME_METHOD_OPTIONS,
+                                    value="1",
+                                    clearable=False,
+                                ),
+                                dmc.Select(
+                                    id="at-regime-def-return-basis",
+                                    label="Return basis",
+                                    data=REGIME_RETURN_BASIS_OPTIONS,
+                                    value="total",
+                                    clearable=False,
+                                ),
+                                dmc.NumberInput(
+                                    id="at-regime-def-num-regimes",
+                                    label="Regimes",
+                                    value=3,
+                                    min=2,
+                                    max=10,
+                                    step=1,
+                                ),
+                                dmc.NumberInput(
+                                    id="at-regime-def-min-observations",
+                                    label="Min observations",
+                                    value=60,
+                                    min=20,
+                                    step=5,
+                                ),
+                            ],
+                        ),
+                        dmc.Group(
+                            grow=True,
+                            children=[
+                                dmc.Switch(
+                                    id="at-regime-def-pca-standardize",
+                                    label="PC1 standardize",
+                                    checked=True,
+                                ),
+                                dmc.NumberInput(
+                                    id="at-regime-def-vol-scaler",
+                                    label="Vol scaler (%)",
+                                    value=0,
+                                    min=0,
+                                    step=1,
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            id="at-regime-def-universe-wrapper",
+                            children=[
+                                dmc.MultiSelect(
+                                    id="at-regime-def-universe-series",
+                                    label="Universe series (for PC1 methods)",
+                                    data=[],
+                                    value=[],
+                                    searchable=True,
+                                    clearable=True,
+                                    nothingFoundMessage="No series available",
+                                )
+                            ],
+                        ),
+                        html.Div(
+                            id="at-regime-def-single-wrapper",
+                            style={"display": "none"},
+                            children=[
+                                dmc.Select(
+                                    id="at-regime-def-single-series",
+                                    label="Single series (for single-series quantiles)",
+                                    data=[],
+                                    value=None,
+                                    searchable=True,
+                                    clearable=True,
+                                    nothingFoundMessage="No series available",
+                                )
+                            ],
+                        ),
+                        dmc.Stack(
+                            gap=4,
+                            children=[
+                                dmc.Text("Preview (first 8 rows)", fw=500, size="sm"),
+                                dmc.ScrollArea(
+                                    h=160,
+                                    offsetScrollbars=True,
+                                    children=dmc.Code(
+                                        id="at-regime-def-preview-lines",
+                                        block=True,
+                                        children="Define a regime to preview assignments.",
+                                        style={
+                                            "display": "block",
+                                            "padding": "8px 10px",
+                                            "fontFamily": "Consolas, monospace",
+                                            "fontSize": "12px",
+                                            "lineHeight": "1.4",
+                                            "whiteSpace": "pre-wrap",
+                                            "color": "var(--mantine-color-text)",
+                                            "backgroundColor": "var(--mantine-color-body)",
+                                            "border": "1px solid var(--mantine-color-default-border)",
+                                        },
+                                    ),
+                                ),
+                            ],
+                        ),
+                        dmc.Group(
+                            mt="sm",
+                            justify="space-between",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Button("Save session", id="at-regime-def-save-local-btn", variant="light"),
+                                        dmc.Button("Save database", id="at-regime-def-save-db-btn", variant="outline"),
+                                        dmc.Button("Delete", id="at-regime-def-delete-btn", variant="outline", color="red"),
+                                    ],
+                                ),
+                                dmc.Group(
+                                    gap="xs",
+                                    children=[
+                                        dmc.Button("Use regime", id="at-regime-def-use-btn", color="blue"),
+                                        dmc.Button("Close", id="at-regime-def-close-btn", variant="outline", color="gray"),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
 
         # Help Modal
         dmc.Modal(
@@ -2409,7 +2844,7 @@ layout = dmc.Container(
                                                         dmc.Text("2) Configure selections and benchmark/L-S/Scale Vol in Select Series.", size="sm"),
                                                         dmc.Text("3) Set periodicity, returns type, vol scaler, and date range.", size="sm"),
                                                         dmc.Text("4) Validate setup in Statistics and Returns.", size="sm"),
-                                                        dmc.Text("5) Use Rolling, Calendar Year, Growth, Drawdown, Correlation, and Factor Analysis for deeper analysis.", size="sm"),
+                                                        dmc.Text("5) Use Rolling, Calendar Year, Growth, Drawdown, Correlation, Factor Analysis, and Regime Analysis for deeper analysis.", size="sm"),
                                                         dmc.Text("6) Export with File > Download Excel.", size="sm"),
                                                     ])),
                                                 ],
@@ -2435,6 +2870,7 @@ layout = dmc.Container(
                                                         dmc.Text("Growth of $1/Drawdown: evaluate compounded path and downside profile.", size="sm"),
                                                         dmc.Text("Correlation: analyze dependency with matrix or scatter-matrix views.", size="sm"),
                                                         dmc.Text("Factor Analysis: evaluate selected series against a factor via box plots or scatter + trendline.", size="sm"),
+                                                        dmc.Text("Regime Analysis: classify market states and evaluate per-regime performance and transitions.", size="sm"),
                                                     ])),
                                                 ],
                                             ),
@@ -2786,13 +3222,38 @@ layout = dmc.Container(
                             ],
                         ),
                         dmc.AccordionItem(
+                            value="regime-analysis-page",
+                            children=[
+                                dmc.AccordionControl("Regime Analysis Page"),
+                                dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
+                                    dmc.Text(
+                                        "Use Add regime to create session or database-backed regime definitions.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "HMM on PC1 fits a hidden Markov model on the first principal component of a selected universe.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Quantile on PC1 and Quantile on Single Series split observations into ordered state buckets.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Regime Analysis displays timeline, per-regime statistics, transition probabilities, run-duration summary, and conditioned growth/drawdown summary.",
+                                        size="sm",
+                                    ),
+                                ])),
+                            ],
+                        ),
+                        dmc.AccordionItem(
                             value="export",
                             children=[
                                 dmc.AccordionControl("Export"),
                                 dmc.AccordionPanel(dmc.Text(
                                     "Download all tabs as a multi-sheet Excel workbook via File > Download Excel. "
                                     "The export includes Statistics, Returns, Rolling, Calendar Year, Growth of $1, Drawdown, Correlation, Covariance, "
-                                    "Factor Analysis - Box, and Factor Analysis - Scatter sheets.",
+                                    "Factor Analysis - Box, Factor Analysis - Scatter, Regime - Settings, Regime - Timeline, Regime - Statistics, "
+                                    "Regime - Transition, Regime - Duration, and Regime - Conditioned sheets.",
                                     size="sm",
                                 )),
                             ],
@@ -2868,6 +3329,11 @@ layout = dmc.Container(
         dcc.Store(id="at-factor-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-def-modal-draft-store", data=None, storage_type="session"),
         dcc.Store(id="at-factor-def-db-available-store", data=False, storage_type="session"),
+        dcc.Store(id="at-regime-definition-store", data=None, storage_type="session"),
+        dcc.Store(id="at-regime-definitions-db-store", data=[], storage_type="session"),
+        dcc.Store(id="at-regime-definitions-local-store", data=[], storage_type="session"),
+        dcc.Store(id="at-regime-def-modal-draft-store", data=None, storage_type="session"),
+        dcc.Store(id="at-regime-def-db-available-store", data=False, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
@@ -3204,6 +3670,11 @@ clientside_callback(
                 'at-factor-definitions-local-store',
                 'at-factor-def-modal-draft-store',
                 'at-factor-def-db-available-store',
+                'at-regime-definition-store',
+                'at-regime-definitions-db-store',
+                'at-regime-definitions-local-store',
+                'at-regime-def-modal-draft-store',
+                'at-regime-def-db-available-store',
                 'at-monthly-view-store',
                 'at-monthly-series-store',
                 'at-date-range-store',
@@ -3710,6 +4181,31 @@ clientside_callback(
 )
 
 
+clientside_callback(
+    "function(value) { return value; }",
+    Output("at-regime-definition-store", "data"),
+    Input("at-regime-definition-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(methodType) {
+        const method = String(methodType || '1');
+        if (method === '3') {
+            return [{display: 'none'}, {display: 'block'}];
+        }
+        return [{display: 'block'}, {display: 'none'}];
+    }
+    """,
+    Output("at-regime-def-universe-wrapper", "style"),
+    Output("at-regime-def-single-wrapper", "style"),
+    Input("at-regime-def-method-type", "value"),
+    prevent_initial_call=False,
+)
+
+
 @callback(
     Output("at-factor-series-select", "data"),
     Output("at-factor-series-select", "value", allow_duplicate=True),
@@ -4152,6 +4648,523 @@ def at_manage_factor_definitions(
             f"def::{factor_name}",
             False,
             "Factor selected for analysis.",
+            "green",
+            False,
+        )
+
+    raise PreventUpdate
+
+
+@callback(
+    Output("at-regime-definition-select", "data"),
+    Output("at-regime-definition-select", "value", allow_duplicate=True),
+    Input("at-regime-definitions-db-store", "data"),
+    Input("at-regime-definitions-local-store", "data"),
+    State("at-regime-definition-store", "data"),
+    State("at-regime-definition-select", "value"),
+    prevent_initial_call="initial_duplicate",
+)
+def at_update_regime_definition_analysis_select_options(
+    db_definitions,
+    local_definitions,
+    stored_selection,
+    current_selection,
+):
+    entries = _regime_option_definitions(db_definitions, local_definitions)
+    options = []
+    names = []
+    for entry in entries:
+        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        options.append(
+            {
+                "value": f"def::{entry['name']}",
+                "label": f"{source_label} {entry['name']}",
+            }
+        )
+        names.append(entry["name"])
+
+    name_set = set(names)
+    candidate_order = [
+        current_selection,
+        stored_selection,
+        options[0]["value"] if options else None,
+    ]
+    next_value = None
+    for candidate in candidate_order:
+        normalized = _normalize_regime_value_for_options(candidate, name_set)
+        if normalized:
+            next_value = normalized
+            break
+    return options, next_value
+
+
+@callback(
+    Output("at-regime-def-modal", "opened", allow_duplicate=True),
+    Output("at-regime-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-menu-add-regime", "n_clicks"),
+    Input("at-regime-open-modal-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def at_open_regime_definition_modal(menu_clicks, tab_clicks):
+    if not menu_clicks and not tab_clicks:
+        raise PreventUpdate
+    return True, True
+
+
+@callback(
+    Output("at-regime-def-db-available-store", "data", allow_duplicate=True),
+    Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-regime-def-universe-series", "data"),
+    Output("at-regime-def-single-series", "data"),
+    Output("at-regime-def-db-available-note", "children"),
+    Output("at-regime-def-save-db-btn", "disabled"),
+    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
+    Input("at-regime-def-modal", "opened"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-series-select", "data"),
+    State("at-regime-def-modal-draft-store", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-returns-type-select", "value"),
+    prevent_initial_call=True,
+)
+def at_load_regime_modal_data(
+    opened,
+    raw_data,
+    selected_series,
+    current_draft,
+    benchmark_assignments,
+    long_short_assignments,
+    vol_scaling_assignments,
+    vol_scaler,
+    returns_type,
+):
+    if not opened:
+        raise PreventUpdate
+
+    series_order = []
+    if raw_data:
+        try:
+            df = json_to_df(raw_data)
+            all_series = list(df.columns)
+            selected_order = [s for s in (selected_series or []) if s in all_series]
+            remaining = [s for s in all_series if s not in selected_order]
+            series_order = selected_order + remaining
+        except Exception:
+            series_order = []
+    series_options = [{"value": s, "label": s} for s in series_order]
+
+    db_available = regime_tables_available(DB_ENGINE)
+    db_definitions = load_regime_definitions(DB_ENGINE) if db_available else []
+    note = "" if db_available else "Database regime tables are unavailable. Session regimes are still supported."
+
+    draft = _ensure_regime_draft(current_draft)
+    if not isinstance(current_draft, dict):
+        draft["ReturnBasis"] = "excess" if str(returns_type or "").lower() == "excess" else "total"
+        draft["BenchmarkAssignmentsJson"] = (
+            dict(benchmark_assignments) if isinstance(benchmark_assignments, dict) else {}
+        )
+        draft["LongShortAssignmentsJson"] = (
+            dict(long_short_assignments) if isinstance(long_short_assignments, dict) else {}
+        )
+        draft["VolScalingAssignmentsJson"] = (
+            dict(vol_scaling_assignments) if isinstance(vol_scaling_assignments, dict) else {}
+        )
+        draft["VolScaler"] = float(pd.to_numeric(pd.Series([vol_scaler]), errors="coerce").iloc[0] or 0.0)
+        if series_order:
+            draft["UniverseSeries"] = list(series_order[: min(8, len(series_order))])
+            draft["SingleSeries"] = series_order[0]
+
+    valid_set = set(series_order)
+    draft["UniverseSeries"] = [s for s in draft.get("UniverseSeries", []) if s in valid_set]
+    if draft.get("SingleSeries") not in valid_set:
+        draft["SingleSeries"] = series_order[0] if series_order else None
+    if not draft.get("UniverseSeries") and series_order and int(draft.get("MethodType", 1)) in {1, 2}:
+        draft["UniverseSeries"] = list(series_order[: min(8, len(series_order))])
+    draft["sync_origin"] = "system"
+
+    return (
+        db_available,
+        db_definitions,
+        series_options,
+        series_options,
+        note,
+        (not db_available),
+        draft,
+    )
+
+
+@callback(
+    Output("at-regime-def-select", "data"),
+    Input("at-regime-definitions-db-store", "data"),
+    Input("at-regime-definitions-local-store", "data"),
+)
+def at_update_regime_definition_select_options(db_definitions, local_definitions):
+    entries = _regime_option_definitions(db_definitions, local_definitions)
+    options = []
+    for entry in entries:
+        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        options.append(
+            {
+                "value": _regime_select_key(entry["source"], entry["name"]),
+                "label": f"{source_label} {entry['name']}",
+            }
+        )
+    return options
+
+
+@callback(
+    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
+    Input("at-regime-def-select", "value"),
+    State("at-regime-definitions-db-store", "data"),
+    State("at-regime-definitions-local-store", "data"),
+    State("at-regime-def-modal-draft-store", "data"),
+    prevent_initial_call=True,
+)
+def at_load_selected_regime_definition(selected_key, db_definitions, local_definitions, current_draft):
+    if not selected_key:
+        raise PreventUpdate
+    current = _ensure_regime_draft(current_draft)
+    if current.get("selected_key") == selected_key:
+        raise PreventUpdate
+
+    source, name = _split_regime_select_key(selected_key)
+    if source == "db":
+        definition = _lookup_regime_definition(name, db_definitions, [])
+        if not definition:
+            raise PreventUpdate
+        return _regime_definition_to_draft(definition, "db", selected_key=selected_key)
+    if source == "session":
+        definition = _lookup_regime_definition(name, [], local_definitions)
+        if not definition:
+            raise PreventUpdate
+        return _regime_definition_to_draft(definition, "session", selected_key=selected_key)
+    raise PreventUpdate
+
+
+@callback(
+    Output("at-regime-def-select", "value", allow_duplicate=True),
+    Output("at-regime-def-name-input", "value"),
+    Output("at-regime-def-description-input", "value"),
+    Output("at-regime-def-method-type", "value"),
+    Output("at-regime-def-return-basis", "value"),
+    Output("at-regime-def-num-regimes", "value"),
+    Output("at-regime-def-min-observations", "value"),
+    Output("at-regime-def-pca-standardize", "checked"),
+    Output("at-regime-def-universe-series", "value"),
+    Output("at-regime-def-single-series", "value"),
+    Output("at-regime-def-vol-scaler", "value"),
+    Input("at-regime-def-modal-draft-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def at_sync_regime_definition_form(draft_data):
+    draft = _ensure_regime_draft(draft_data)
+    if draft.get("sync_origin") == "form":
+        raise PreventUpdate
+    method = int(draft.get("MethodType") or 1)
+    num_regimes = int(draft.get("NumRegimes") or 3)
+    max_regimes = 6 if method == 1 else 10
+    return (
+        draft.get("selected_key"),
+        draft.get("RegimeName") or "",
+        draft.get("Description") or "",
+        str(method),
+        draft.get("ReturnBasis") or "total",
+        max(2, min(num_regimes, max_regimes)),
+        int(draft.get("MinObservations") or 60),
+        bool(draft.get("PcaStandardize", True)),
+        draft.get("UniverseSeries") or [],
+        draft.get("SingleSeries"),
+        float(draft.get("VolScaler") or 0.0),
+    )
+
+
+@callback(
+    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
+    Input("at-regime-def-name-input", "value"),
+    Input("at-regime-def-description-input", "value"),
+    Input("at-regime-def-method-type", "value"),
+    Input("at-regime-def-return-basis", "value"),
+    Input("at-regime-def-num-regimes", "value"),
+    Input("at-regime-def-min-observations", "value"),
+    Input("at-regime-def-pca-standardize", "checked"),
+    Input("at-regime-def-universe-series", "value"),
+    Input("at-regime-def-single-series", "value"),
+    Input("at-regime-def-vol-scaler", "value"),
+    State("at-regime-def-modal-draft-store", "data"),
+    prevent_initial_call=True,
+)
+def at_update_regime_definition_draft_from_form(
+    regime_name,
+    description,
+    method_type,
+    return_basis,
+    num_regimes,
+    min_observations,
+    pca_standardize,
+    universe_series,
+    single_series,
+    vol_scaler_value,
+    draft_data,
+):
+    draft = _ensure_regime_draft(draft_data)
+    next_draft = dict(draft)
+    next_draft["sync_origin"] = "form"
+    next_draft["RegimeName"] = str(regime_name or "").strip()
+    next_draft["Description"] = "" if description is None else str(description)
+    method_num = int(pd.to_numeric(pd.Series([method_type]), errors="coerce").iloc[0] or 1)
+    method_num = 3 if method_num == 3 else (2 if method_num == 2 else 1)
+    next_draft["MethodType"] = method_num
+    next_draft["ReturnBasis"] = "excess" if str(return_basis or "").strip().lower() == "excess" else "total"
+    max_regimes = 6 if method_num == 1 else 10
+    parsed_num_regimes = int(pd.to_numeric(pd.Series([num_regimes]), errors="coerce").iloc[0] or 3)
+    next_draft["NumRegimes"] = max(2, min(parsed_num_regimes, max_regimes))
+    parsed_min_obs = int(pd.to_numeric(pd.Series([min_observations]), errors="coerce").iloc[0] or 60)
+    next_draft["MinObservations"] = max(20, parsed_min_obs)
+    next_draft["PcaStandardize"] = bool(pca_standardize)
+    next_draft["UniverseSeries"] = [str(v) for v in (universe_series or []) if str(v).strip()]
+    single = str(single_series or "").strip()
+    next_draft["SingleSeries"] = single or None
+    next_draft["VolScaler"] = max(
+        0.0,
+        float(pd.to_numeric(pd.Series([vol_scaler_value]), errors="coerce").iloc[0] or 0.0),
+    )
+    if next_draft == draft:
+        raise PreventUpdate
+    return next_draft
+
+
+@callback(
+    Output("at-regime-def-preview-lines", "children"),
+    Input("at-regime-def-modal", "opened"),
+    Input("at-regime-def-modal-draft-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-date-range-store", "data"),
+    prevent_initial_call=True,
+)
+def at_update_regime_definition_preview(opened, draft_data, raw_data, periodicity, date_range):
+    if not opened:
+        raise PreventUpdate
+    if not raw_data:
+        return "Upload or load return data to preview regime assignments."
+
+    payload = _regime_draft_to_definition_payload(draft_data or {})
+    normalized, error = validate_regime_definition_payload(payload)
+    if error or not normalized:
+        return "Define a valid regime to preview assignments."
+
+    states, diagnostics = compute_regime_assignments(
+        raw_data=raw_data,
+        periodicity=periodicity or "daily",
+        definition=normalized,
+        date_range=date_range,
+    )
+    if states.empty:
+        warning = str((diagnostics or {}).get("warning") or "No assignments were produced for the current inputs.")
+        return f"No assignments returned.\nReason: {warning}"
+
+    timeline = build_regime_timeline_frame(states)
+    counts = states.value_counts().sort_index()
+    lines = [
+        f"Regime: {normalized.get('RegimeName')}",
+        f"Method: {normalized.get('MethodType')}",
+        f"Observations: {len(states)}",
+        f"Counts: {', '.join([f'R{int(idx)}={int(val)}' for idx, val in counts.items()])}",
+        "Date:Regime",
+    ]
+    for _, row in timeline.head(8).iterrows():
+        lines.append(f"{pd.Timestamp(row['Date']).strftime('%Y-%m-%d')}:{int(row['Regime'])}")
+    warning = (diagnostics or {}).get("warning")
+    if warning:
+        lines.append(f"Warning: {warning}")
+    return "\n".join(lines)
+
+
+@callback(
+    Output("at-regime-definitions-local-store", "data", allow_duplicate=True),
+    Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
+    Output("at-regime-def-select", "value", allow_duplicate=True),
+    Output("at-regime-definition-select", "value", allow_duplicate=True),
+    Output("at-regime-def-modal", "opened", allow_duplicate=True),
+    Output("at-regime-def-status-alert", "children", allow_duplicate=True),
+    Output("at-regime-def-status-alert", "color", allow_duplicate=True),
+    Output("at-regime-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-regime-def-save-local-btn", "n_clicks"),
+    Input("at-regime-def-save-db-btn", "n_clicks"),
+    Input("at-regime-def-delete-btn", "n_clicks"),
+    Input("at-regime-def-use-btn", "n_clicks"),
+    Input("at-regime-def-close-btn", "n_clicks"),
+    State("at-regime-def-modal-draft-store", "data"),
+    State("at-regime-definitions-local-store", "data"),
+    State("at-regime-definitions-db-store", "data"),
+    State("at-regime-def-db-available-store", "data"),
+    State("userinfo", "data"),
+    prevent_initial_call=True,
+)
+def at_manage_regime_definitions(
+    save_local_clicks,
+    save_db_clicks,
+    delete_clicks,
+    use_clicks,
+    close_clicks,
+    draft_data,
+    local_definitions,
+    db_definitions,
+    db_available,
+    userinfo,
+):
+    triggered = callback_context.triggered_id
+    n_no = no_update
+    draft = _ensure_regime_draft(draft_data)
+    local_list = [dict(item) for item in (local_definitions or []) if isinstance(item, dict)]
+    update_by = _factor_user_label(userinfo)
+
+    if triggered == "at-regime-def-close-btn":
+        return n_no, n_no, n_no, n_no, n_no, False, n_no, n_no, True
+
+    payload = _regime_draft_to_definition_payload(draft)
+    normalized, error = validate_regime_definition_payload(payload)
+    if triggered in {"at-regime-def-save-local-btn", "at-regime-def-save-db-btn", "at-regime-def-use-btn"}:
+        if error or not normalized:
+            return n_no, n_no, n_no, n_no, n_no, n_no, error or "Invalid regime definition.", "red", False
+    else:
+        normalized = normalized or {}
+
+    if triggered == "at-regime-def-save-local-btn":
+        now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        saved_item = dict(normalized)
+        saved_item["source"] = "session"
+        saved_item["UPDATE_DATE"] = now_str
+        saved_item["UPDATE_BY"] = update_by
+
+        target_name = str(saved_item.get("RegimeName") or "").strip().lower()
+        updated_local = [item for item in local_list if str(item.get("RegimeName", "")).strip().lower() != target_name]
+        updated_local.append(saved_item)
+        updated_local.sort(key=lambda item: str(item.get("RegimeName", "")).lower())
+
+        next_draft = _regime_definition_to_draft(saved_item, "session")
+        return (
+            updated_local,
+            n_no,
+            next_draft,
+            next_draft.get("selected_key"),
+            n_no,
+            n_no,
+            f"Saved session regime `{saved_item['RegimeName']}`.",
+            "green",
+            False,
+        )
+
+    if triggered == "at-regime-def-save-db-btn":
+        if not db_available:
+            return n_no, n_no, n_no, n_no, n_no, n_no, "Database regime tables are unavailable.", "orange", False
+
+        original_name = draft.get("original_name") if draft.get("source") == "db" else None
+        expected_update = draft.get("selected_update_date") if draft.get("source") == "db" else None
+        success, message, saved_row = save_regime_definition(
+            DB_ENGINE,
+            payload,
+            update_by=update_by,
+            original_name=original_name,
+            expected_update_date=expected_update,
+        )
+        if not success or not saved_row:
+            return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+
+        updated_db = load_regime_definitions(DB_ENGINE)
+        saved_name = str(saved_row.get("RegimeName", "")).strip().lower()
+        updated_local = [
+            item for item in local_list if str(item.get("RegimeName", "")).strip().lower() != saved_name
+        ]
+        next_draft = _regime_definition_to_draft(saved_row, "db")
+        return (
+            updated_local,
+            updated_db,
+            next_draft,
+            next_draft.get("selected_key"),
+            f"def::{saved_row.get('RegimeName')}",
+            n_no,
+            message,
+            "green",
+            False,
+        )
+
+    if triggered == "at-regime-def-delete-btn":
+        name = str(draft.get("RegimeName", "")).strip()
+        if not name:
+            return n_no, n_no, n_no, n_no, n_no, n_no, "Select or enter a regime name to delete.", "orange", False
+
+        if draft.get("source") == "db":
+            if not db_available:
+                return n_no, n_no, n_no, n_no, n_no, n_no, "Database regime tables are unavailable.", "orange", False
+            target_name = str(draft.get("original_name") or name).strip()
+            success, message = delete_regime_definition(
+                DB_ENGINE,
+                target_name,
+                expected_update_date=draft.get("selected_update_date"),
+            )
+            if not success:
+                return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+            updated_db = load_regime_definitions(DB_ENGINE)
+            return n_no, updated_db, _default_regime_draft(), None, n_no, n_no, message, "green", False
+
+        target_name = name.lower()
+        updated_local = [item for item in local_list if str(item.get("RegimeName", "")).strip().lower() != target_name]
+        return (
+            updated_local,
+            n_no,
+            _default_regime_draft(),
+            None,
+            n_no,
+            n_no,
+            f"Deleted session regime `{name}`.",
+            "green",
+            False,
+        )
+
+    if triggered == "at-regime-def-use-btn":
+        regime_name = str(normalized.get("RegimeName", "")).strip()
+        if not regime_name:
+            return n_no, n_no, n_no, n_no, n_no, n_no, "Regime name is required.", "red", False
+
+        next_local = local_list
+        next_draft = draft
+        if draft.get("source") == "db":
+            next_draft = _regime_definition_to_draft(
+                {
+                    **normalized,
+                    "UPDATE_DATE": draft.get("selected_update_date"),
+                    "UPDATE_BY": draft.get("UPDATE_BY"),
+                },
+                "db",
+                selected_key=_regime_select_key("db", regime_name),
+            )
+        else:
+            now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            session_item = {
+                **normalized,
+                "source": "session",
+                "UPDATE_DATE": now_str,
+                "UPDATE_BY": update_by,
+            }
+            key_name = regime_name.lower()
+            next_local = [item for item in local_list if str(item.get("RegimeName", "")).strip().lower() != key_name]
+            next_local.append(session_item)
+            next_local.sort(key=lambda item: str(item.get("RegimeName", "")).lower())
+            next_draft = _regime_definition_to_draft(session_item, "session")
+
+        return (
+            next_local,
+            n_no,
+            next_draft,
+            next_draft.get("selected_key"),
+            f"def::{regime_name}",
+            False,
+            "Regime selected for analysis.",
             "green",
             False,
         )
@@ -6796,6 +7809,242 @@ def update_factor_analysis(
     return warning_children, html.Div(charts, style={"height": "100%"})
 
 
+def _build_regime_grid_component(
+    title: str,
+    df: pd.DataFrame,
+    theme: str,
+    percent_cols: set[str] | None = None,
+    integer_cols: set[str] | None = None,
+    max_height: int = 320,
+):
+    if df is None or df.empty:
+        return dmc.Paper(
+            withBorder=True,
+            radius="md",
+            p="sm",
+            children=[
+                dmc.Text(title, fw=600, size="sm", mb=4),
+                dmc.Text("No data available.", size="sm", c="dimmed"),
+            ],
+        )
+
+    percent_cols = {str(c) for c in (percent_cols or set())}
+    integer_cols = {str(c) for c in (integer_cols or set())}
+    frame = df.copy()
+    frame.columns = [str(c) for c in frame.columns]
+    for col in frame.columns:
+        if pd.api.types.is_datetime64_any_dtype(frame[col]):
+            frame[col] = pd.to_datetime(frame[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    column_defs = []
+    for idx, col in enumerate(frame.columns):
+        col_def = {"field": col, "suppressHeaderMenuButton": True, "resizable": True}
+        if col in percent_cols:
+            col_def["valueFormatter"] = {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"}
+        elif col in integer_cols:
+            col_def["valueFormatter"] = {"function": "params.value != null ? d3.format(',d')(params.value) : ''"}
+        elif pd.api.types.is_numeric_dtype(frame[col]):
+            col_def["valueFormatter"] = {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}
+        if idx == 0:
+            col_def["pinned"] = "left"
+        col_def["width"] = 170 if col.lower().startswith("series") else 130
+        column_defs.append(col_def)
+
+    row_data = frame.to_dict("records")
+    grid_height = min(max_height, max(120, 52 + (len(row_data) + 1) * 26))
+    return dmc.Paper(
+        withBorder=True,
+        radius="md",
+        p="sm",
+        children=[
+            dmc.Text(title, fw=600, size="sm", mb=4),
+            dag.AgGrid(
+                enableEnterpriseModules=True,
+                licenseKey=AG_GRID_LICENSE_KEY,
+                id=f"at-regime-grid-{title.lower().replace(' ', '-')}",
+                className="ag-theme-alpine" if str(theme or "light").lower() != "dark" else "ag-theme-alpine-dark",
+                columnDefs=column_defs,
+                rowData=row_data,
+                defaultColDef={
+                    "sortable": True,
+                    "resizable": True,
+                    "cellStyle": {"textAlign": "center"},
+                    "headerClass": "dashmat-center-header",
+                },
+                style={"height": f"{grid_height}px", "width": "100%"},
+                dashGridOptions={
+                    "animateRows": True,
+                    "pagination": False,
+                    "suppressExcelExport": True,
+                    "enableRangeSelection": True,
+                    "suppressCsvExport": True,
+                },
+            ),
+        ],
+    )
+
+
+@callback(
+    Output("at-regime-analysis-warning", "children"),
+    Output("at-regime-analysis-container", "children"),
+    Input("at-main-tabs", "value"),
+    Input("at-regime-definition-select", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
+    State("at-regime-definitions-db-store", "data"),
+    State("at-regime-definitions-local-store", "data"),
+    prevent_initial_call=True,
+)
+def update_regime_analysis(
+    active_tab,
+    regime_definition_key,
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    state_ready,
+    vol_scaler,
+    vol_scaling_assignments,
+    theme,
+    regime_definitions_db=None,
+    regime_definitions_local=None,
+):
+    if (
+        active_tab != "regime_analysis"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
+        raise PreventUpdate
+
+    if not raw_data:
+        return None, dmc.Text("Load return data to run regime analysis.", size="sm", c="dimmed")
+    if not selected_series:
+        return None, dmc.Text("Select one or more series for regime statistics.", size="sm", c="dimmed")
+    if not regime_definition_key:
+        return None, dmc.Text("Select a regime definition.", size="sm", c="dimmed")
+
+    _regime_prefix, regime_name = _split_regime_select_key(regime_definition_key)
+    definition = _lookup_regime_definition(regime_name, regime_definitions_db, regime_definitions_local)
+    if not definition:
+        return None, dmc.Text("Selected regime definition is unavailable.", size="sm", c="dimmed")
+
+    states, diagnostics = compute_regime_assignments(
+        raw_data=raw_data,
+        periodicity=periodicity or "daily",
+        definition=definition,
+        date_range=date_range,
+    )
+    if states.empty:
+        warning = str((diagnostics or {}).get("warning") or "No regime assignments were produced.")
+        return dmc.Alert(warning, color="orange", variant="light"), dmc.Text("No regime assignments.", size="sm", c="dimmed")
+
+    returns_df = calculate_excess_returns(
+        raw_data,
+        periodicity or "daily",
+        tuple(selected_series),
+        _mapping_payload(benchmark_assignments),
+        returns_type or "total",
+        _mapping_payload(long_short_assignments),
+        _date_range_payload(date_range),
+        vol_scaler or 0,
+        _mapping_payload(vol_scaling_assignments),
+    )
+    if returns_df.empty:
+        return None, dmc.Text("No series returns available for current settings.", size="sm", c="dimmed")
+
+    timeline = build_regime_timeline_frame(states)
+    stats_df = build_regime_statistics_table(returns_df, states, periodicity or "daily")
+    transition_df = build_regime_transition_matrix(states)
+    duration_df = build_regime_duration_table(states)
+    conditioned_df = build_regime_conditioned_summary(returns_df, states)
+
+    timeline_fig = go.Figure()
+    timeline_fig.add_trace(
+        go.Scatter(
+            x=timeline["Date"],
+            y=timeline["Regime"],
+            mode="lines+markers",
+            name="Regime",
+            line={"shape": "hv", "width": 2},
+            marker={"size": 4},
+        )
+    )
+    timeline_fig.update_layout(
+        title=f"Regime Timeline: {definition.get('RegimeName')}",
+        xaxis_title="Date",
+        yaxis_title="Regime",
+        yaxis={"dtick": 1},
+        height=360,
+        legend={"orientation": "v", "x": 1.02, "y": 1, "xanchor": "left", "yanchor": "top"},
+    )
+    apply_chart_theme(timeline_fig, theme)
+
+    transition_display = transition_df.reset_index() if transition_df is not None and not transition_df.empty else pd.DataFrame()
+    transition_percent_cols = set(transition_display.columns[1:]) if not transition_display.empty else set()
+
+    stack_children = [
+        dcc.Graph(figure=timeline_fig, style={"height": "360px"}),
+        _build_regime_grid_component(
+            "Regime Statistics",
+            stats_df,
+            theme,
+            percent_cols={"Mean Return", "Volatility", "Min Return", "Max Return", "Hit Rate", "Max Drawdown"},
+            integer_cols={"Regime", "Observations"},
+            max_height=360,
+        ),
+        _build_regime_grid_component(
+            "Transition Matrix",
+            transition_display,
+            theme,
+            percent_cols=transition_percent_cols,
+            integer_cols={"From Regime"},
+            max_height=260,
+        ),
+        _build_regime_grid_component(
+            "Run Durations",
+            duration_df,
+            theme,
+            integer_cols={"Regime", "Runs", "Current Run Length"},
+            max_height=260,
+        ),
+        _build_regime_grid_component(
+            "Conditioned Summary",
+            conditioned_df,
+            theme,
+            percent_cols={"Max Drawdown"},
+            integer_cols={"Regime", "Observations"},
+            max_height=320,
+        ),
+    ]
+
+    warning_children = []
+    warning_text = str((diagnostics or {}).get("warning") or "").strip()
+    if warning_text:
+        warning_children.append(dmc.Alert(warning_text, color="orange", variant="light", mb="sm"))
+    warning_children.append(
+        dmc.Alert(
+            f"Method type {diagnostics.get('method_type')} | Regimes: {diagnostics.get('num_regimes')} | Observations: {diagnostics.get('observations')}",
+            color="blue",
+            variant="light",
+            mb="sm",
+        )
+    )
+
+    return html.Div(warning_children), dmc.Stack(gap="md", children=stack_children)
+
+
 @callback(
     Output("at-growth-charts-container", "children"),
     Input("at-main-tabs", "value"),
@@ -7248,6 +8497,9 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-factor-transform-select", "value"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
+    State("at-regime-definition-select", "value"),
+    State("at-regime-definitions-db-store", "data"),
+    State("at-regime-definitions-local-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
@@ -7274,6 +8526,9 @@ def download_excel(
     factor_transform,
     factor_definitions_db=None,
     factor_definitions_local=None,
+    regime_definition_key=None,
+    regime_definitions_db=None,
+    regime_definitions_local=None,
     saved_series_store=None,
 ):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
@@ -7538,7 +8793,7 @@ def download_excel(
                     index=True,
                 )
 
-                # Sheet 9/10: Factor Analysis summaries
+                # Factor Analysis summaries
                 try:
                     with timed_block("analyticstool.download_excel.factor_analysis"):
                         if factor_series:
@@ -7605,6 +8860,108 @@ def download_excel(
                                 "Factor Analysis - Scatter",
                                 index=False,
                             )
+                except Exception:
+                    pass
+
+                # Regime Analysis summaries
+                try:
+                    with timed_block("analyticstool.download_excel.regime_analysis"):
+                        if regime_definition_key:
+                            _regime_prefix, _regime_name = _split_regime_select_key(regime_definition_key)
+                            regime_definition = _lookup_regime_definition(
+                                _regime_name,
+                                regime_definitions_db,
+                                regime_definitions_local,
+                            )
+                            if regime_definition:
+                                states, diagnostics = compute_regime_assignments(
+                                    raw_data=bundle.raw_data,
+                                    periodicity=bundle.periodicity,
+                                    definition=regime_definition,
+                                    date_range=date_range,
+                                )
+                                if not states.empty:
+                                    timeline_df = build_regime_timeline_frame(states)
+                                    stats_df_regime = build_regime_statistics_table(
+                                        returns_df,
+                                        states,
+                                        bundle.periodicity,
+                                    )
+                                    transition_df = build_regime_transition_matrix(states)
+                                    duration_df = build_regime_duration_table(states)
+                                    conditioned_df = build_regime_conditioned_summary(returns_df, states)
+
+                                    settings_df = pd.DataFrame(
+                                        [
+                                            {
+                                                "RegimeName": regime_definition.get("RegimeName"),
+                                                "MethodType": diagnostics.get("method_type"),
+                                                "NumRegimes": diagnostics.get("num_regimes"),
+                                                "Observations": diagnostics.get("observations"),
+                                                "Warning": diagnostics.get("warning"),
+                                            }
+                                        ]
+                                    )
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(settings_df),
+                                        "Regime - Settings",
+                                        index=False,
+                                    )
+
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(timeline_df),
+                                        "Regime - Timeline",
+                                        index=False,
+                                    )
+
+                                    if stats_df_regime.empty:
+                                        stats_df_regime = pd.DataFrame(
+                                            [{"Note": "No overlapping observations for regime statistics."}]
+                                        )
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(stats_df_regime),
+                                        "Regime - Statistics",
+                                        index=False,
+                                    )
+
+                                    transition_out = (
+                                        transition_df.reset_index() if transition_df is not None and not transition_df.empty else pd.DataFrame()
+                                    )
+                                    if transition_out.empty:
+                                        transition_out = pd.DataFrame(
+                                            [{"Note": "No transition matrix available (requires at least two observations)."}]
+                                        )
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(transition_out),
+                                        "Regime - Transition",
+                                        index=False,
+                                    )
+
+                                    if duration_df.empty:
+                                        duration_df = pd.DataFrame(
+                                            [{"Note": "No duration summary available."}]
+                                        )
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(duration_df),
+                                        "Regime - Duration",
+                                        index=False,
+                                    )
+
+                                    if conditioned_df.empty:
+                                        conditioned_df = pd.DataFrame(
+                                            [{"Note": "No conditioned summary available."}]
+                                        )
+                                    write_excel_with_autofit(
+                                        writer,
+                                        format_excel_dates(conditioned_df),
+                                        "Regime - Conditioned",
+                                        index=False,
+                                    )
                 except Exception:
                     pass
 

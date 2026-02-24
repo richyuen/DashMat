@@ -754,7 +754,7 @@ def _build_perf_seed_rows(
     return account_rows, benchmark_rows, daily_rows, monthly_rows
 
 
-def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table]:
+def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table]:
     cma_corr = Table(
         "CMACorrelation",
         metadata,
@@ -871,6 +871,27 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
         Column("UPDATE_BY", String(128), nullable=False),
         Column("ARCHIVE_DATE", DateTime, nullable=False),
     )
+    regime_defs = Table(
+        "RegimeDefinitions",
+        metadata,
+        Column("RegimeName", String(128), primary_key=True),
+        Column("Description", String(4000), nullable=True),
+        Column("MethodType", Integer, nullable=False),
+        Column("ConfigJson", String, nullable=False),
+        Column("UPDATE_DATE", DateTime, nullable=False),
+        Column("UPDATE_BY", String(128), nullable=False),
+    )
+    regime_defs_archive = Table(
+        "RegimeDefinitionsArchive",
+        metadata,
+        Column("RegimeName", String(128), nullable=False),
+        Column("Description", String(4000), nullable=True),
+        Column("MethodType", Integer, nullable=False),
+        Column("ConfigJson", String, nullable=False),
+        Column("UPDATE_DATE", DateTime, nullable=False),
+        Column("UPDATE_BY", String(128), nullable=False),
+        Column("ARCHIVE_DATE", DateTime, nullable=False),
+    )
     return (
         cma_corr,
         cma_ret,
@@ -883,6 +904,8 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
         alt_ts,
         factor_defs,
         factor_defs_archive,
+        regime_defs,
+        regime_defs_archive,
     )
 
 
@@ -1267,6 +1290,8 @@ def main() -> None:
         alt_ts,
         factor_defs,
         factor_defs_archive,
+        regime_defs,
+        regime_defs_archive,
     ) = _build_tables(metadata)
     mrd_metadata = MetaData()
     mrd_account, mrd_factor_data, mrd_account_returns, mrd_account_returns_m = _build_mrd_tables(mrd_metadata)
@@ -1342,6 +1367,18 @@ def main() -> None:
                 text(
                     "CREATE INDEX IF NOT EXISTS idx_factor_defs_archive_name_date "
                     "ON [FactorDefinitionsArchive] (FactorName, ARCHIVE_DATE)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_regime_defs_name "
+                    "ON [RegimeDefinitions] (RegimeName)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_regime_defs_archive_name_date "
+                    "ON [RegimeDefinitionsArchive] (RegimeName, ARCHIVE_DATE)"
                 )
             )
 
@@ -1422,6 +1459,8 @@ def main() -> None:
     with engine.connect() as conn:
         factor_def_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitions")).scalar_one())
         factor_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitionsArchive")).scalar_one())
+        regime_def_count = int(conn.execute(text("SELECT COUNT(*) FROM RegimeDefinitions")).scalar_one())
+        regime_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM RegimeDefinitionsArchive")).scalar_one())
 
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
@@ -1435,6 +1474,8 @@ def main() -> None:
     print(f"AltTS rows: {len(alt_ts_rows)}")
     print(f"FactorDefinitions rows: {factor_def_count}")
     print(f"FactorDefinitionsArchive rows: {factor_archive_count}")
+    print(f"RegimeDefinitions rows: {regime_def_count}")
+    print(f"RegimeDefinitionsArchive rows: {regime_archive_count}")
     print(
         "FactorDefinitions seed stats: "
         f"inserted={factor_seed_stats['inserted']}, "

@@ -653,6 +653,53 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         "_build_factor_scatter_summary_rows",
         lambda *_args, **_kwargs: [{"Factor": "Factor_X", "Series": "Asset_A", "Observations": 5, "Slope": 1.1}],
     )
+    regime_states = pd.Series([1, 1, 2, 2, 3], index=idx, dtype="Int64", name="Regime")
+    monkeypatch.setattr(
+        analyticstool,
+        "compute_regime_assignments",
+        lambda *_args, **_kwargs: (
+            regime_states,
+            {"method_type": 2, "num_regimes": 3, "observations": 5, "warning": None},
+        ),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "build_regime_timeline_frame",
+        lambda *_args, **_kwargs: pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3]}),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "build_regime_statistics_table",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {
+                    "Regime": 1,
+                    "Series": "Asset_A",
+                    "Observations": 2,
+                    "Mean Return": 0.01,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "build_regime_transition_matrix",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [[0.5, 0.5], [0.2, 0.8]],
+            index=pd.Index([1, 2], name="From Regime"),
+            columns=[1, 2],
+        ),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "build_regime_duration_table",
+        lambda *_args, **_kwargs: pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "build_regime_conditioned_summary",
+        lambda *_args, **_kwargs: pd.DataFrame([{"Regime": 1, "Series": "Asset_A", "Observations": 2}]),
+    )
     monkeypatch.setattr(analyticstool.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
 
     payload = analyticstool.download_excel(
@@ -677,11 +724,81 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         5,
         "raw",
         None,
+        None,
+        "def::SavedRegime",
+        [{"RegimeName": "SavedRegime", "MethodType": 2, "Config": {"num_regimes": 3}}],
+        [],
+        None,
     )
 
     xl = pd.ExcelFile(BytesIO(payload["content"]))
     assert "Factor Analysis - Box" in xl.sheet_names
     assert "Factor Analysis - Scatter" in xl.sheet_names
+    assert "Regime - Settings" in xl.sheet_names
+    assert "Regime - Timeline" in xl.sheet_names
+    assert "Regime - Statistics" in xl.sheet_names
+    assert "Regime - Transition" in xl.sheet_names
+    assert "Regime - Duration" in xl.sheet_names
+    assert "Regime - Conditioned" in xl.sheet_names
+
+
+def test_update_regime_definition_select_includes_saved_and_session(page_modules):
+    analyticstool, _ = page_modules
+
+    options, value = analyticstool.at_update_regime_definition_analysis_select_options(
+        [{"RegimeName": "SavedRegime"}],
+        [{"RegimeName": "SessionRegime"}],
+        None,
+        None,
+    )
+
+    option_map = {opt["value"]: opt["label"] for opt in options}
+    assert "def::SavedRegime" in option_map
+    assert "def::SessionRegime" in option_map
+    assert option_map["def::SavedRegime"].startswith("[Saved]")
+    assert option_map["def::SessionRegime"].startswith("[Session]")
+    assert value == "def::SavedRegime"
+
+
+def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    states = pd.Series([1, 1, 2, 2, 3, 3], index=idx, dtype="Int64", name="Regime")
+    returns_df = pd.DataFrame({"Asset_A": [0.01, -0.005, 0.02, 0.0, 0.01, -0.01]}, index=idx)
+
+    monkeypatch.setattr(
+        analyticstool,
+        "compute_regime_assignments",
+        lambda *_args, **_kwargs: (
+            states,
+            {"method_type": 3, "num_regimes": 3, "observations": 6, "warning": None},
+        ),
+    )
+    monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
+
+    warning, content = analyticstool.update_regime_analysis(
+        "regime_analysis",
+        "def::SavedRegime",
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        True,
+        0,
+        {},
+        "light",
+        [{"RegimeName": "SavedRegime", "MethodType": 3, "Config": {"num_regimes": 3}}],
+        [],
+    )
+
+    assert warning is not None
+    assert content is not None
+    text_blob = " ".join(_collect_component_text(content)).lower()
+    assert "regime statistics" in text_blob
+    assert "transition matrix" in text_blob
 
 
 def test_help_modal_mentions_factor_analysis(page_modules):
@@ -694,3 +811,4 @@ def test_help_modal_mentions_factor_analysis(page_modules):
     assert "advanced guide" in text_blob
     assert "factor analysis page" in text_blob
     assert "ignores excess mode" in text_blob
+    assert "regime analysis page" in text_blob
