@@ -98,6 +98,20 @@
     padding: 16px 18px 18px;
 }
 
+[data-mantine-color-scheme="light"] .dashmat-modal .mantine-InputWrapper-label,
+[data-mantine-color-scheme="light"] .dashmat-modal .mantine-Switch-label,
+[data-mantine-color-scheme="light"] .dashmat-modal .mantine-Checkbox-label,
+[data-mantine-color-scheme="light"] .dashmat-modal .mantine-Radio-label {
+    color: var(--mantine-color-text);
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-InputWrapper-label,
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Switch-label,
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Checkbox-label,
+[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Radio-label {
+    color: var(--mantine-color-text);
+}
+
 [data-mantine-color-scheme="dark"] .dashmat-modal .mantine-Modal-content {
     border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
