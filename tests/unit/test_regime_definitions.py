@@ -77,6 +77,32 @@ def test_regime_rowcount_helpers_handle_unknown_sql_server_values():
     assert regime_defs._rowcount_is_unknown(1) is False
 
 
+def test_regime_lookup_by_name_falls_back_to_trimmed_case_insensitive_match():
+    db_engine = _seed_db_engine()
+    with db_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO RegimeDefinitions ("
+                "RegimeName, Description, MethodType, ConfigJson, UPDATE_DATE, UPDATE_BY"
+                ") VALUES ("
+                ":name, :description, :method_type, :config_json, :update_date, :update_by"
+                ")"
+            ),
+            {
+                "name": "CycleA  ",
+                "description": "desc",
+                "method_type": 1,
+                "config_json": '{"num_regimes":3,"return_basis":"total","min_observations":40,"pca_standardize":true}',
+                "update_date": "2026-02-25 00:00:00",
+                "update_by": "tester",
+            },
+        )
+    with db_engine.connect() as conn:
+        row = regime_defs._load_definition_row_by_name(conn, db_engine, "cyclea")
+    assert row is not None
+    assert str(row.get("RegimeName", "")).strip().lower() == "cyclea"
+
+
 def test_validate_regime_definition_payload():
     normalized, error = validate_regime_definition_payload(_definition_payload("QCycle", method_type=1))
     assert error is None

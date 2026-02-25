@@ -238,12 +238,21 @@ def _archive_factor_definition_row(conn, row: dict[str, Any], archive_table: str
 
 
 def _load_definition_row_by_name(conn, factor_name: str, factor_table: str) -> dict[str, Any] | None:
-    q = text(
+    select_prefix = (
         "SELECT FactorName, LongComponent, ShortComponent, Description, "
         "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY "
-        f"FROM {factor_table} WHERE LOWER(FactorName) = LOWER(:name)"
     )
-    row = conn.execute(q, {"name": factor_name}).mappings().first()
+    exact_q = text(select_prefix + f"FROM {factor_table} WHERE FactorName = :name")
+    row = conn.execute(exact_q, {"name": factor_name}).mappings().first()
+    if row:
+        return dict(row)
+
+    fallback_q = text(
+        select_prefix
+        + f"FROM {factor_table} "
+        "WHERE LOWER(LTRIM(RTRIM(FactorName))) = LOWER(LTRIM(RTRIM(:name)))"
+    )
+    row = conn.execute(fallback_q, {"name": factor_name}).mappings().first()
     return dict(row) if row else None
 
 
@@ -325,7 +334,7 @@ def save_factor_definition(
                 "OutputTransform = :OutputTransform, "
                 "UPDATE_DATE = :UPDATE_DATE, "
                 "UPDATE_BY = :UPDATE_BY "
-                "WHERE LOWER(FactorName) = LOWER(:OriginalName) "
+                "WHERE LOWER(LTRIM(RTRIM(FactorName))) = LOWER(LTRIM(RTRIM(:OriginalName))) "
                 "AND UPDATE_DATE = :ExpectedDbUpdateDate"
             )
             result = conn.execute(
@@ -416,7 +425,8 @@ def delete_factor_definition(
 
         delete_q = text(
             f"DELETE FROM {factor_table} "
-            "WHERE LOWER(FactorName) = LOWER(:name) AND UPDATE_DATE = :ExpectedDbUpdateDate"
+            "WHERE LOWER(LTRIM(RTRIM(FactorName))) = LOWER(LTRIM(RTRIM(:name))) "
+            "AND UPDATE_DATE = :ExpectedDbUpdateDate"
         )
         result = conn.execute(
             delete_q,

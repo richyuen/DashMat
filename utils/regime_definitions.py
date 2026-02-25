@@ -259,10 +259,19 @@ def regime_tables_available(db_engine: Engine) -> bool:
 
 def _load_definition_row_by_name(conn, db_engine: Engine, regime_name: str) -> dict[str, Any] | None:
     table_name = _table_name(db_engine, "RegimeDefinitions")
+    select_prefix = "SELECT RegimeName, Description, MethodType, ConfigJson, UPDATE_DATE, UPDATE_BY "
+    row = conn.execute(
+        text(select_prefix + f"FROM {table_name} WHERE RegimeName = :name"),
+        {"name": regime_name},
+    ).mappings().first()
+    if row:
+        return dict(row)
+
     row = conn.execute(
         text(
-            f"SELECT RegimeName, Description, MethodType, ConfigJson, UPDATE_DATE, UPDATE_BY "
-            f"FROM {table_name} WHERE LOWER(RegimeName) = LOWER(:name)"
+            select_prefix
+            + f"FROM {table_name} "
+            "WHERE LOWER(LTRIM(RTRIM(RegimeName))) = LOWER(LTRIM(RTRIM(:name)))"
         ),
         {"name": regime_name},
     ).mappings().first()
@@ -370,7 +379,7 @@ def save_regime_definition(
                     "ConfigJson = :ConfigJson, "
                     "UPDATE_DATE = :UPDATE_DATE, "
                     "UPDATE_BY = :UPDATE_BY "
-                    "WHERE LOWER(RegimeName) = LOWER(:OriginalName) "
+                    "WHERE LOWER(LTRIM(RTRIM(RegimeName))) = LOWER(LTRIM(RTRIM(:OriginalName))) "
                     "AND UPDATE_DATE = :ExpectedDbUpdateDate"
                 ),
                 {
@@ -446,7 +455,8 @@ def delete_regime_definition(
         result = conn.execute(
             text(
                 f"DELETE FROM {table_name} "
-                "WHERE LOWER(RegimeName) = LOWER(:name) AND UPDATE_DATE = :ExpectedDbUpdateDate"
+                "WHERE LOWER(LTRIM(RTRIM(RegimeName))) = LOWER(LTRIM(RTRIM(:name))) "
+                "AND UPDATE_DATE = :ExpectedDbUpdateDate"
             ),
             {"name": name, "ExpectedDbUpdateDate": current.get("UPDATE_DATE")},
         )

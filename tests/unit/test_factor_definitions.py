@@ -162,6 +162,25 @@ def test_factor_rowcount_helpers_handle_unknown_sql_server_values():
     assert factor_defs._rowcount_is_unknown(1) is False
 
 
+def test_factor_lookup_by_name_falls_back_to_trimmed_case_insensitive_match():
+    db_engine = _seed_db_engine()
+    with db_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO FactorDefinitions ("
+                "FactorName, LongComponent, ShortComponent, Description, "
+                "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY"
+                ") VALUES ("
+                "'Carry  ', 'ACC1 TRIndex', NULL, NULL, 2, NULL, 0, 0, '2026-02-25 00:00:00', 'tester'"
+                ")"
+            )
+        )
+    with db_engine.connect() as conn:
+        row = factor_defs._load_definition_row_by_name(conn, "carry", "FactorDefinitions")
+    assert row is not None
+    assert str(row.get("FactorName", "")).strip().lower() == "carry"
+
+
 def test_validate_factor_definition_payload():
     normalized, error = validate_factor_definition_payload(
         {
