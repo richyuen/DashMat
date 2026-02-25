@@ -5883,23 +5883,27 @@ def po_add_series_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for selected FOFBench values.")
 
-        # Database import is daily unless every selected series is monthly-only.
+        # Treat imports as daily when any selected series has a daily phase.
+        # This mirrors raw factor/fund/performance import behavior.
         new_periodicity = "daily"
-        any_start_daily = False
+        any_daily_phase = False
         all_start_daily = True
         daily_transition_notes: list[str] = []
         for series_name in new_df.columns:
             meta = db_meta.get(series_name, {}) if isinstance(db_meta, dict) else {}
             starts_daily = bool(meta.get("starts_daily", True))
-            any_start_daily = any_start_daily or starts_daily
+            daily_start_date = meta.get("daily_start_date")
+            has_daily_phase = bool(daily_start_date) or starts_daily
+            any_daily_phase = any_daily_phase or has_daily_phase
             if not starts_daily:
                 all_start_daily = False
-                daily_start_date = meta.get("daily_start_date")
                 if daily_start_date:
                     daily_transition_notes.append(f"{series_name}: {daily_start_date}")
-                else:
+                elif not has_daily_phase:
                     daily_transition_notes.append(f"{series_name}: no daily phase detected")
-        if not any_start_daily:
+                else:
+                    daily_transition_notes.append(f"{series_name}: daily phase starts after initial history")
+        if not any_daily_phase:
             new_periodicity = "monthly"
 
         if existing_data is not None:
@@ -5922,6 +5926,8 @@ def po_add_series_from_database(
 
         periodicity_options = get_available_periodicities(combined_periodicity)
         if combined_periodicity == "daily":
+            # Keep data in daily-capable form, but default selection to monthly
+            # when any imported series starts in monthly history.
             default_periodicity = "daily_trading" if all_start_daily else "monthly"
         else:
             default_periodicity = combined_periodicity

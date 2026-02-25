@@ -379,6 +379,12 @@ def load_cma_returns_for_benches_with_meta(
             mask = (out.index >= daily_start) & (out.index <= last)
             out.loc[mask, col] = out.loc[mask, col].fillna(0.0)
         out = out.dropna(how="all")
+    has_daily_phase = any(
+        bool((meta_row or {}).get("daily_start_date")) or bool((meta_row or {}).get("starts_daily"))
+        for meta_row in series_meta.values()
+        if isinstance(meta_row, dict)
+    )
+    out.attrs["periodicity_hint"] = "daily" if has_daily_phase else "monthly"
     out.index.name = "Date"
     return out, series_meta
 

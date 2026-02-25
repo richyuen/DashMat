@@ -2541,7 +2541,7 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
                     True, no_update, f"Cannot add duplicate series: {', '.join(duplicates)}", False,
                 )
 
-        new_df, _db_meta = load_cma_returns_for_benches_with_meta(DB_ENGINE, selected_benches, MRD_ENGINE)
+        new_df, db_meta = load_cma_returns_for_benches_with_meta(DB_ENGINE, selected_benches, MRD_ENGINE)
         if new_df.empty:
             return (
                 no_update, no_update, no_update, no_update,
@@ -2551,11 +2551,25 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
+        all_start_daily = True
+        if isinstance(db_meta, dict):
+            for series_name in new_df.columns:
+                meta = db_meta.get(series_name, {})
+                starts_daily = bool(meta.get("starts_daily", True)) if isinstance(meta, dict) else True
+                if not starts_daily:
+                    all_start_daily = False
+                    break
+        if merged_periodicity == "daily":
+            # Preserve Regression's existing default (daily) unless imported
+            # series start with monthly history.
+            default_periodicity = "daily" if all_start_daily else "monthly"
+        else:
+            default_periodicity = merged_periodicity
         return (
             df_to_json(merged_df),
             merged_periodicity,
-            merged_periodicity,
-            merged_periodicity,
+            default_periodicity,
+            default_periodicity,
             False,
             [],
             no_update,
