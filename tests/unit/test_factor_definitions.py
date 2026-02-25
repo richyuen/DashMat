@@ -221,6 +221,37 @@ def test_validate_factor_definition_payload():
     assert normalized["ShortAggType"] is None
 
 
+def test_validate_factor_definition_payload_supports_divide_by_100_agg_types():
+    normalized, error = validate_factor_definition_payload(
+        {
+            "FactorName": "CarryPct",
+            "LongComponent": ["ACC1 TRIndex"],
+            "ShortComponent": ["ACC2 TRIndex"],
+            "LongAggType": 8,
+            "ShortAggType": 9,
+            "LongLag": 0,
+            "OutputTransform": 0,
+        }
+    )
+    assert error is None
+    assert normalized is not None
+    assert normalized["LongAggType"] == 8
+    assert normalized["ShortAggType"] == 9
+
+
+def test_aggregate_component_series_divide_by_100_types():
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"])
+    series = pd.Series([1.0, 3.0, 5.0], index=idx)
+
+    monthly_last_div = factor_defs._aggregate_component_series(series, 8, "monthly")
+    monthly_mean_div = factor_defs._aggregate_component_series(series, 9, "monthly")
+
+    assert not monthly_last_div.empty
+    assert not monthly_mean_div.empty
+    assert monthly_last_div.iloc[-1] == pytest.approx(0.05)
+    assert monthly_mean_div.iloc[-1] == pytest.approx(0.03)
+
+
 def test_save_update_delete_factor_definition_archives_versions():
     db_engine = _seed_db_engine()
     assert factor_tables_available(db_engine) is True

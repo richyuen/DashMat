@@ -18,8 +18,8 @@ BEGIN TRY
             [UPDATE_DATE] DATETIME2(0) NOT NULL,
             [UPDATE_BY] NVARCHAR(128) NOT NULL,
             CONSTRAINT [PK_FactorDefinitions] PRIMARY KEY CLUSTERED ([FactorName] ASC),
-            CONSTRAINT [CK_FactorDefinitions_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7)),
-            CONSTRAINT [CK_FactorDefinitions_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7)),
+            CONSTRAINT [CK_FactorDefinitions_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
+            CONSTRAINT [CK_FactorDefinitions_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
             CONSTRAINT [CK_FactorDefinitions_LongLag] CHECK ([LongLag] >= 0),
             CONSTRAINT [CK_FactorDefinitions_OutputTransform] CHECK ([OutputTransform] IN (0, 1, 2))
         );
@@ -39,11 +39,65 @@ BEGIN TRY
             [UPDATE_DATE] DATETIME2(0) NOT NULL,
             [UPDATE_BY] NVARCHAR(128) NOT NULL,
             [ARCHIVE_DATE] DATETIME2(0) NOT NULL,
-            CONSTRAINT [CK_FactorDefinitionsArchive_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7)),
-            CONSTRAINT [CK_FactorDefinitionsArchive_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7)),
+            CONSTRAINT [CK_FactorDefinitionsArchive_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
+            CONSTRAINT [CK_FactorDefinitionsArchive_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
             CONSTRAINT [CK_FactorDefinitionsArchive_LongLag] CHECK ([LongLag] >= 0),
             CONSTRAINT [CK_FactorDefinitionsArchive_OutputTransform] CHECK ([OutputTransform] IN (0, 1, 2))
         );
+    END;
+
+    IF OBJECT_ID(N'[dbo].[FactorDefinitions]', N'U') IS NOT NULL
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM sys.check_constraints
+            WHERE [name] = N'CK_FactorDefinitions_LongAggType'
+              AND [parent_object_id] = OBJECT_ID(N'[dbo].[FactorDefinitions]')
+        )
+            ALTER TABLE [dbo].[FactorDefinitions] DROP CONSTRAINT [CK_FactorDefinitions_LongAggType];
+
+        IF EXISTS (
+            SELECT 1
+            FROM sys.check_constraints
+            WHERE [name] = N'CK_FactorDefinitions_ShortAggType'
+              AND [parent_object_id] = OBJECT_ID(N'[dbo].[FactorDefinitions]')
+        )
+            ALTER TABLE [dbo].[FactorDefinitions] DROP CONSTRAINT [CK_FactorDefinitions_ShortAggType];
+
+        ALTER TABLE [dbo].[FactorDefinitions]
+            ADD CONSTRAINT [CK_FactorDefinitions_LongAggType]
+            CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
+
+        ALTER TABLE [dbo].[FactorDefinitions]
+            ADD CONSTRAINT [CK_FactorDefinitions_ShortAggType]
+            CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
+    END;
+
+    IF OBJECT_ID(N'[dbo].[FactorDefinitionsArchive]', N'U') IS NOT NULL
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM sys.check_constraints
+            WHERE [name] = N'CK_FactorDefinitionsArchive_LongAggType'
+              AND [parent_object_id] = OBJECT_ID(N'[dbo].[FactorDefinitionsArchive]')
+        )
+            ALTER TABLE [dbo].[FactorDefinitionsArchive] DROP CONSTRAINT [CK_FactorDefinitionsArchive_LongAggType];
+
+        IF EXISTS (
+            SELECT 1
+            FROM sys.check_constraints
+            WHERE [name] = N'CK_FactorDefinitionsArchive_ShortAggType'
+              AND [parent_object_id] = OBJECT_ID(N'[dbo].[FactorDefinitionsArchive]')
+        )
+            ALTER TABLE [dbo].[FactorDefinitionsArchive] DROP CONSTRAINT [CK_FactorDefinitionsArchive_ShortAggType];
+
+        ALTER TABLE [dbo].[FactorDefinitionsArchive]
+            ADD CONSTRAINT [CK_FactorDefinitionsArchive_LongAggType]
+            CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
+
+        ALTER TABLE [dbo].[FactorDefinitionsArchive]
+            ADD CONSTRAINT [CK_FactorDefinitionsArchive_ShortAggType]
+            CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
     END;
 
     IF NOT EXISTS (

@@ -3218,6 +3218,10 @@ layout = dmc.Container(
                                         "For custom factors, ALREADY_PERIODIC and QUARTERLY_INTERP map values to period-end and can be forward-looking.",
                                         size="sm",
                                     ),
+                                    dmc.Text(
+                                        "LAST_VALUE_DIV_100 and PERIOD_MEAN_DIV_100 are useful when source values are percentages (for example 2.5 meaning 2.5%) and must be converted to decimals.",
+                                        size="sm",
+                                    ),
                                 ])),
                             ],
                         ),

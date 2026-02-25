@@ -23,6 +23,8 @@ FACTOR_AGG_TYPE_OPTIONS = [
     {"value": "5", "label": "5 - ALREADY_PERIODIC"},
     {"value": "6", "label": "6 - QUARTERLY_INTERP"},
     {"value": "7", "label": "7 - RETURN_FROM_LEVELS"},
+    {"value": "8", "label": "8 - LAST_VALUE_DIV_100"},
+    {"value": "9", "label": "9 - PERIOD_MEAN_DIV_100"},
 ]
 
 OUTPUT_TRANSFORM_OPTIONS = [
@@ -121,12 +123,12 @@ def validate_factor_definition_payload(payload: dict[str, Any]) -> tuple[dict[st
         return None, "At least one Long component is required."
 
     long_agg = _parse_int(payload.get("LongAggType"))
-    if long_agg not in {1, 2, 3, 4, 5, 6, 7}:
+    if long_agg not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
         return None, "Long aggregation type is invalid."
 
     short_agg = _parse_int(payload.get("ShortAggType"))
     if short_components:
-        if short_agg not in {1, 2, 3, 4, 5, 6, 7}:
+        if short_agg not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
             return None, "Short aggregation type is invalid when Short components are provided."
     else:
         short_agg = None
@@ -704,6 +706,12 @@ def _aggregate_component_series(series: pd.Series, agg_type: int, periodicity: s
     elif agg_type == 7:
         levels = values if code is None else values.resample(code).last()
         out = levels.pct_change(fill_method=None)
+    elif agg_type == 8:
+        base = values if code is None else values.resample(code).last()
+        out = base / 100.0
+    elif agg_type == 9:
+        base = values if code is None else values.resample(code).mean()
+        out = base / 100.0
     else:
         return pd.Series(dtype=float)
 
