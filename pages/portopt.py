@@ -2643,7 +2643,7 @@ layout = dmc.Container(
                             children=[
                                 dmc.MenuTarget(
                                     dmc.Button(
-                                        "Edit",
+                                        "Add",
                                         variant="subtle",
                                         color="gray",
                                         size="sm",
@@ -2694,7 +2694,27 @@ layout = dmc.Container(
                                         id="po-menu-add-series",
                                         leftSection=DashIconify(icon="tabler:upload", width=14),
                                     ),
-                                    dmc.MenuDivider(),
+                                ]),
+                            ],
+                        ),
+                        dmc.Menu(
+                            trigger="click",
+                            openDelay=100,
+                            closeDelay=200,
+                            position="bottom-start",
+                            shadow="md",
+                            offset=6,
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button(
+                                        "Edit",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        radius="sm",
+                                    )
+                                ),
+                                dmc.MenuDropdown(className="dashmat-menu-dropdown", children=[
                                     dmc.MenuItem(
                                         "Clear server cache",
                                         id="po-menu-clear-server-cache",

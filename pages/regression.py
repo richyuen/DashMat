@@ -760,7 +760,8 @@ def build_reg_help_modal():
                                     gap="xs",
                                     children=[
                                         dmc.Text("File menu: New session, Load session, Save session, Download Excel, Exit.", size="sm"),
-                                        dmc.Text("Edit menu: Add AA Tool indices, portfolio imports, raw imports, add series from file, clear server cache.", size="sm"),
+                                        dmc.Text("Add menu: Add AA Tool indices, portfolio imports, raw imports, add series from file.", size="sm"),
+                                        dmc.Text("Edit menu: Clear server cache.", size="sm"),
                                         dmc.Text("Switch buttons: move directly to Analytics Tool or Portfolio Optimization.", size="sm"),
                                         dmc.Text("Help opens this guide.", size="sm"),
                                     ],
@@ -981,7 +982,8 @@ def build_reg_help_modal():
                                                         gap="xs",
                                                         children=[
                                                             dmc.Text("File menu includes New session, Load session, Save session, Download Excel, and Exit.", size="sm"),
-                                                            dmc.Text("Edit menu includes imports and Clear server cache.", size="sm"),
+                                                            dmc.Text("Add menu includes imports.", size="sm"),
+                                                            dmc.Text("Edit menu includes Clear server cache.", size="sm"),
                                                             dmc.Text("Switch buttons move directly to Analytics Tool and Portfolio Optimization.", size="sm"),
                                                             dmc.Text(
                                                                 "Download Excel exports summary, coefficients, diagnostics, predicted/residual, and tab data sheets for returns, growth, rolling, calendar year, and drawdown.",
@@ -1934,7 +1936,7 @@ layout = dmc.Container(
                             children=[
                                 dmc.MenuTarget(
                                     dmc.Button(
-                                        "Edit",
+                                        "Add",
                                         variant="subtle",
                                         color="gray",
                                         size="sm",
@@ -1961,7 +1963,27 @@ layout = dmc.Container(
                                     dmc.MenuDivider(),
                                     dmc.MenuItem("Add series from file...", id="reg-menu-add-series",
                                                  leftSection=DashIconify(icon="tabler:upload", width=14)),
-                                    dmc.MenuDivider(),
+                                ]),
+                            ],
+                        ),
+                        dmc.Menu(
+                            trigger="click",
+                            openDelay=100,
+                            closeDelay=200,
+                            position="bottom-start",
+                            shadow="md",
+                            offset=6,
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button(
+                                        "Edit",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        radius="sm",
+                                    )
+                                ),
+                                dmc.MenuDropdown(className="dashmat-menu-dropdown", children=[
                                     dmc.MenuItem("Clear server cache", id="reg-menu-clear-server-cache",
                                                  leftSection=DashIconify(icon="tabler:server-off", width=14)),
                                 ]),

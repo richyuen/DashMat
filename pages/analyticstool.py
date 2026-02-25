@@ -2006,7 +2006,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 html.Div([
                                     dmc.Text("Definitions", size="sm", fw=500, mb=3),
                                     dmc.Button(
-                                        "Add factor",
+                                        "Edit factors",
                                         id="at-factor-open-modal-btn",
                                         size="sm",
                                         variant="light",
@@ -2075,7 +2075,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 html.Div([
                                     dmc.Text("Definitions", size="sm", fw=500, mb=3),
                                     dmc.Button(
-                                        "Add regime",
+                                        "Edit regimes",
                                         id="at-regime-open-modal-btn",
                                         size="sm",
                                         variant="light",
@@ -2282,7 +2282,7 @@ layout = dmc.Container(
                                 ),
                             ],
                         ),
-                        # Edit Menu (left)
+                        # Add Menu (left)
                         dmc.Menu(
                             trigger="click",
                             openDelay=100,
@@ -2293,7 +2293,7 @@ layout = dmc.Container(
                             children=[
                                 dmc.MenuTarget(
                                     dmc.Button(
-                                        "Edit",
+                                        "Add",
                                         variant="subtle",
                                         color="gray",
                                         size="sm",
@@ -2340,21 +2340,46 @@ layout = dmc.Container(
                                             id="at-menu-add-raw-performance",
                                             leftSection=DashIconify(icon="tabler:activity-heartbeat", width=14),
                                         ),
-                                        dmc.MenuItem(
-                                            "Add factor...",
-                                            id="at-menu-add-factor",
-                                            leftSection=DashIconify(icon="tabler:math-function", width=14),
-                                        ),
-                                        dmc.MenuItem(
-                                            "Add regime...",
-                                            id="at-menu-add-regime",
-                                            leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
-                                        ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Add series from file...",
                                             id="at-menu-add-series",
                                             leftSection=DashIconify(icon="tabler:upload", width=14),
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        # Edit Menu (left)
+                        dmc.Menu(
+                            trigger="click",
+                            openDelay=100,
+                            closeDelay=200,
+                            position="bottom-start",
+                            shadow="md",
+                            offset=6,
+                            children=[
+                                dmc.MenuTarget(
+                                    dmc.Button(
+                                        "Edit",
+                                        variant="subtle",
+                                        color="gray",
+                                        size="sm",
+                                        radius="sm",
+                                    ),
+                                ),
+                                dmc.MenuDropdown(
+                                    className="dashmat-menu-dropdown",
+                                    children=[
+                                        dmc.MenuItem(
+                                            "Edit factors...",
+                                            id="at-menu-add-factor",
+                                            leftSection=DashIconify(icon="tabler:math-function", width=14),
+                                        ),
+                                        dmc.MenuItem(
+                                            "Edit regimes...",
+                                            id="at-menu-add-regime",
+                                            leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
@@ -2425,7 +2450,7 @@ layout = dmc.Container(
                 gap="xs",
                 children=[
                     dmc.ThemeIcon(DashIconify(icon="tabler:math-function"), color="violet", variant="light", size="sm"),
-                    dmc.Text("Add factor", fw=600, size="sm"),
+                    dmc.Text("Edit factors", fw=600, size="sm"),
                 ],
             ),
             size="980px",
@@ -2587,7 +2612,7 @@ layout = dmc.Container(
                 gap="xs",
                 children=[
                     dmc.ThemeIcon(DashIconify(icon="tabler:binary-tree-2"), color="teal", variant="light", size="sm"),
-                    dmc.Text("Add regime", fw=600, size="sm"),
+                    dmc.Text("Edit regimes", fw=600, size="sm"),
                 ],
             ),
             size="980px",
@@ -2840,7 +2865,7 @@ layout = dmc.Container(
                                                 children=[
                                                     dmc.AccordionControl("Quick Start"),
                                                     dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("1) Add series using File/Edit menu options.", size="sm"),
+                                                        dmc.Text("1) Add series using File/Add menu options.", size="sm"),
                                                         dmc.Text("2) Configure selections and benchmark/L-S/Scale Vol in Select Series.", size="sm"),
                                                         dmc.Text("3) Set periodicity, returns type, vol scaler, and date range.", size="sm"),
                                                         dmc.Text("4) Validate setup in Statistics and Returns.", size="sm"),
@@ -3193,7 +3218,7 @@ layout = dmc.Container(
                                         size="sm",
                                     ),
                                     dmc.Text(
-                                        "Use Add factor to define session or database-backed factors from SEC_FACTOR components.",
+                                        "Use Edit factors to define session or database-backed factors from SEC_FACTOR components.",
                                         size="sm",
                                     ),
                                     dmc.Text(
@@ -3231,7 +3256,7 @@ layout = dmc.Container(
                                 dmc.AccordionControl("Regime Analysis Page"),
                                 dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
                                     dmc.Text(
-                                        "Use Add regime to create session or database-backed regime definitions.",
+                                        "Use Edit regimes to create session or database-backed regime definitions.",
                                         size="sm",
                                     ),
                                     dmc.Text(
