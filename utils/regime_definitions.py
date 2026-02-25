@@ -389,6 +389,7 @@ def save_regime_definition(
     now_val = _now_utc()
     update_by_val = str(update_by or "").strip() or "unknown"
     update_original = str(original_name or "").strip() or None
+    is_mssql = db_engine.dialect.name == "mssql"
 
     with db_engine.begin() as conn:
         if update_original:
@@ -404,29 +405,30 @@ def save_regime_definition(
                     return False, f"Regime `{target_name}` already exists.", None
 
             _archive_definition_row(conn, db_engine, current)
-            result = conn.execute(
-                text(
-                    f"UPDATE {table_name} SET "
-                    "RegimeName = :RegimeName, "
-                    "Description = :Description, "
-                    "MethodType = :MethodType, "
-                    "ConfigJson = :ConfigJson, "
-                    "UPDATE_DATE = :UPDATE_DATE, "
-                    "UPDATE_BY = :UPDATE_BY "
-                    "WHERE LOWER(LTRIM(RTRIM(RegimeName))) = LOWER(LTRIM(RTRIM(:OriginalName))) "
-                    "AND UPDATE_DATE = :ExpectedDbUpdateDate"
-                ),
-                {
-                    "RegimeName": target_name,
-                    "Description": normalized["Description"],
-                    "MethodType": normalized["MethodType"],
-                    "ConfigJson": normalized["ConfigJson"],
-                    "UPDATE_DATE": now_val,
-                    "UPDATE_BY": update_by_val,
-                    "OriginalName": update_original,
-                    "ExpectedDbUpdateDate": current.get("UPDATE_DATE"),
-                },
+            update_sql = (
+                f"UPDATE {table_name} SET "
+                "RegimeName = :RegimeName, "
+                "Description = :Description, "
+                "MethodType = :MethodType, "
+                "ConfigJson = :ConfigJson, "
+                "UPDATE_DATE = :UPDATE_DATE, "
+                "UPDATE_BY = :UPDATE_BY "
+                "WHERE LOWER(LTRIM(RTRIM(RegimeName))) = LOWER(LTRIM(RTRIM(:OriginalName))) "
             )
+            update_params = {
+                "RegimeName": target_name,
+                "Description": normalized["Description"],
+                "MethodType": normalized["MethodType"],
+                "ConfigJson": normalized["ConfigJson"],
+                "UPDATE_DATE": now_val,
+                "UPDATE_BY": update_by_val,
+                "OriginalName": update_original,
+            }
+            if not is_mssql:
+                update_sql += "AND UPDATE_DATE = :ExpectedDbUpdateDate"
+                update_params["ExpectedDbUpdateDate"] = current.get("UPDATE_DATE")
+
+            result = conn.execute(text(update_sql), update_params)
             if _rowcount_is_known_miss(result.rowcount):
                 return False, "Definition changed in another session. Reload before saving.", None
             if _rowcount_is_unknown(result.rowcount):
@@ -478,6 +480,7 @@ def delete_regime_definition(
         return False, "Select a regime definition to delete."
 
     table_name = _table_name(db_engine, "RegimeDefinitions")
+    is_mssql = db_engine.dialect.name == "mssql"
     with db_engine.begin() as conn:
         current = _load_definition_row_by_name(conn, db_engine, name)
         if current is None:
@@ -486,14 +489,16 @@ def delete_regime_definition(
             return False, "Definition changed in another session. Reload before deleting."
 
         _archive_definition_row(conn, db_engine, current)
-        result = conn.execute(
-            text(
-                f"DELETE FROM {table_name} "
-                "WHERE LOWER(LTRIM(RTRIM(RegimeName))) = LOWER(LTRIM(RTRIM(:name))) "
-                "AND UPDATE_DATE = :ExpectedDbUpdateDate"
-            ),
-            {"name": name, "ExpectedDbUpdateDate": current.get("UPDATE_DATE")},
+        delete_sql = (
+            f"DELETE FROM {table_name} "
+            "WHERE LOWER(LTRIM(RTRIM(RegimeName))) = LOWER(LTRIM(RTRIM(:name))) "
         )
+        delete_params: dict[str, Any] = {"name": name}
+        if not is_mssql:
+            delete_sql += "AND UPDATE_DATE = :ExpectedDbUpdateDate"
+            delete_params["ExpectedDbUpdateDate"] = current.get("UPDATE_DATE")
+
+        result = conn.execute(text(delete_sql), delete_params)
         if _rowcount_is_known_miss(result.rowcount):
             return False, "Definition changed in another session. Reload before deleting."
         if _rowcount_is_unknown(result.rowcount):

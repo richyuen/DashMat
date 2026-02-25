@@ -340,6 +340,7 @@ def save_factor_definition(
     now_val = _now_utc()
     update_by_val = str(update_by or "").strip() or "unknown"
     update_original = str(original_name or "").strip() or None
+    is_mssql = db_engine.dialect.name == "mssql"
 
     with db_engine.begin() as conn:
         if update_original:
@@ -357,7 +358,7 @@ def save_factor_definition(
 
             _archive_factor_definition_row(conn, current, archive_table)
 
-            update_q = text(
+            update_sql = (
                 f"UPDATE {factor_table} SET "
                 "FactorName = :FactorName, "
                 "LongComponent = :LongComponent, "
@@ -370,25 +371,25 @@ def save_factor_definition(
                 "UPDATE_DATE = :UPDATE_DATE, "
                 "UPDATE_BY = :UPDATE_BY "
                 "WHERE LOWER(LTRIM(RTRIM(FactorName))) = LOWER(LTRIM(RTRIM(:OriginalName))) "
-                "AND UPDATE_DATE = :ExpectedDbUpdateDate"
             )
-            result = conn.execute(
-                update_q,
-                {
-                    "FactorName": target_name,
-                    "LongComponent": normalized["LongComponent"],
-                    "ShortComponent": normalized["ShortComponent"],
-                    "Description": normalized["Description"],
-                    "LongAggType": normalized["LongAggType"],
-                    "ShortAggType": normalized["ShortAggType"],
-                    "LongLag": normalized["LongLag"],
-                    "OutputTransform": normalized["OutputTransform"],
-                    "UPDATE_DATE": now_val,
-                    "UPDATE_BY": update_by_val,
-                    "OriginalName": update_original,
-                    "ExpectedDbUpdateDate": current.get("UPDATE_DATE"),
-                },
-            )
+            update_params = {
+                "FactorName": target_name,
+                "LongComponent": normalized["LongComponent"],
+                "ShortComponent": normalized["ShortComponent"],
+                "Description": normalized["Description"],
+                "LongAggType": normalized["LongAggType"],
+                "ShortAggType": normalized["ShortAggType"],
+                "LongLag": normalized["LongLag"],
+                "OutputTransform": normalized["OutputTransform"],
+                "UPDATE_DATE": now_val,
+                "UPDATE_BY": update_by_val,
+                "OriginalName": update_original,
+            }
+            if not is_mssql:
+                update_sql += "AND UPDATE_DATE = :ExpectedDbUpdateDate"
+                update_params["ExpectedDbUpdateDate"] = current.get("UPDATE_DATE")
+
+            result = conn.execute(text(update_sql), update_params)
             if _rowcount_is_known_miss(result.rowcount):
                 return False, "Definition changed in another session. Reload before saving.", None
             if _rowcount_is_unknown(result.rowcount):
@@ -444,6 +445,7 @@ def delete_factor_definition(
 
     factor_table = _factor_table_name(db_engine, "FactorDefinitions")
     archive_table = _factor_table_name(db_engine, "FactorDefinitionsArchive")
+    is_mssql = db_engine.dialect.name == "mssql"
 
     name = str(factor_name or "").strip()
     if not name:
@@ -458,15 +460,16 @@ def delete_factor_definition(
 
         _archive_factor_definition_row(conn, current, archive_table)
 
-        delete_q = text(
+        delete_sql = (
             f"DELETE FROM {factor_table} "
             "WHERE LOWER(LTRIM(RTRIM(FactorName))) = LOWER(LTRIM(RTRIM(:name))) "
-            "AND UPDATE_DATE = :ExpectedDbUpdateDate"
         )
-        result = conn.execute(
-            delete_q,
-            {"name": name, "ExpectedDbUpdateDate": current.get("UPDATE_DATE")},
-        )
+        delete_params: dict[str, Any] = {"name": name}
+        if not is_mssql:
+            delete_sql += "AND UPDATE_DATE = :ExpectedDbUpdateDate"
+            delete_params["ExpectedDbUpdateDate"] = current.get("UPDATE_DATE")
+
+        result = conn.execute(text(delete_sql), delete_params)
         if _rowcount_is_known_miss(result.rowcount):
             return False, "Definition changed in another session. Reload before deleting."
         if _rowcount_is_unknown(result.rowcount):
