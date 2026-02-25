@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import create_engine, text
 
+import utils.regime_definitions as regime_defs
 from utils.regime_definitions import (
     delete_regime_definition,
     load_regime_definitions,
@@ -61,6 +62,11 @@ def _definition_payload(name: str, method_type: int = 1) -> dict:
         "MethodType": method_type,
         "Config": config,
     }
+
+
+def test_regime_timestamp_compare_handles_timezone_and_fractional_precision():
+    assert regime_defs._timestamps_equal("2026-02-25 12:34:56", "2026-02-25T12:34:56Z")
+    assert regime_defs._timestamps_equal("2026-02-25 12:34:56.123", "2026-02-25 12:34:56")
 
 
 def test_validate_regime_definition_payload():

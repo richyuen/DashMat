@@ -149,6 +149,11 @@ def test_factor_table_exists_checks_dbo_schema_first_for_sql_server(monkeypatch)
     assert calls == [("FactorDefinitions", "dbo"), ("FactorDefinitions", None)]
 
 
+def test_factor_timestamp_compare_handles_timezone_and_fractional_precision():
+    assert factor_defs._timestamps_equal("2026-02-25 12:34:56", "2026-02-25T12:34:56Z")
+    assert factor_defs._timestamps_equal("2026-02-25 12:34:56.123", "2026-02-25 12:34:56")
+
+
 def test_validate_factor_definition_payload():
     normalized, error = validate_factor_definition_payload(
         {

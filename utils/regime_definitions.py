@@ -43,10 +43,13 @@ def _table_exists(db_engine: Engine, table_name: str) -> bool:
 
 
 def _iso_or_none(value: Any) -> str | None:
-    ts = pd.to_datetime(value, errors="coerce")
+    ts = pd.to_datetime(value, errors="coerce", utc=True)
     if pd.isna(ts):
         return None
-    return pd.Timestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    ts_norm = pd.Timestamp(ts).tz_convert("UTC").tz_localize(None)
+    if int(ts_norm.microsecond) > 0:
+        return ts_norm.strftime("%Y-%m-%d %H:%M:%S.%f")
+    return ts_norm.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _parse_int(value: Any, default: int | None = None) -> int | None:
@@ -116,11 +119,16 @@ def _parse_config(value: Any) -> dict[str, Any]:
 
 
 def _timestamps_equal(left: Any, right: Any) -> bool:
-    left_ts = pd.to_datetime(left, errors="coerce")
-    right_ts = pd.to_datetime(right, errors="coerce")
+    left_ts = pd.to_datetime(left, errors="coerce", utc=True)
+    right_ts = pd.to_datetime(right, errors="coerce", utc=True)
     if pd.isna(left_ts) or pd.isna(right_ts):
         return False
-    return pd.Timestamp(left_ts) == pd.Timestamp(right_ts)
+    left_norm = pd.Timestamp(left_ts).tz_convert("UTC").tz_localize(None)
+    right_norm = pd.Timestamp(right_ts).tz_convert("UTC").tz_localize(None)
+    if left_norm == right_norm:
+        return True
+    # Allow second-level match for clients that truncate fractional seconds.
+    return left_norm.floor("s") == right_norm.floor("s")
 
 
 def validate_regime_definition_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
