@@ -18,8 +18,8 @@ BEGIN TRY
             [UPDATE_DATE] DATETIME2(0) NOT NULL,
             [UPDATE_BY] NVARCHAR(128) NOT NULL,
             CONSTRAINT [PK_FactorDefinitions] PRIMARY KEY CLUSTERED ([FactorName] ASC),
-            CONSTRAINT [CK_FactorDefinitions_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
-            CONSTRAINT [CK_FactorDefinitions_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
+            CONSTRAINT [CK_FactorDefinitions_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)),
+            CONSTRAINT [CK_FactorDefinitions_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)),
             CONSTRAINT [CK_FactorDefinitions_LongLag] CHECK ([LongLag] >= 0),
             CONSTRAINT [CK_FactorDefinitions_OutputTransform] CHECK ([OutputTransform] IN (0, 1, 2))
         );
@@ -39,8 +39,8 @@ BEGIN TRY
             [UPDATE_DATE] DATETIME2(0) NOT NULL,
             [UPDATE_BY] NVARCHAR(128) NOT NULL,
             [ARCHIVE_DATE] DATETIME2(0) NOT NULL,
-            CONSTRAINT [CK_FactorDefinitionsArchive_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
-            CONSTRAINT [CK_FactorDefinitionsArchive_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)),
+            CONSTRAINT [CK_FactorDefinitionsArchive_LongAggType] CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)),
+            CONSTRAINT [CK_FactorDefinitionsArchive_ShortAggType] CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)),
             CONSTRAINT [CK_FactorDefinitionsArchive_LongLag] CHECK ([LongLag] >= 0),
             CONSTRAINT [CK_FactorDefinitionsArchive_OutputTransform] CHECK ([OutputTransform] IN (0, 1, 2))
         );
@@ -66,11 +66,11 @@ BEGIN TRY
 
         ALTER TABLE [dbo].[FactorDefinitions]
             ADD CONSTRAINT [CK_FactorDefinitions_LongAggType]
-            CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
+            CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
 
         ALTER TABLE [dbo].[FactorDefinitions]
             ADD CONSTRAINT [CK_FactorDefinitions_ShortAggType]
-            CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
+            CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
     END;
 
     IF OBJECT_ID(N'[dbo].[FactorDefinitionsArchive]', N'U') IS NOT NULL
@@ -93,11 +93,11 @@ BEGIN TRY
 
         ALTER TABLE [dbo].[FactorDefinitionsArchive]
             ADD CONSTRAINT [CK_FactorDefinitionsArchive_LongAggType]
-            CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
+            CHECK ([LongAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
 
         ALTER TABLE [dbo].[FactorDefinitionsArchive]
             ADD CONSTRAINT [CK_FactorDefinitionsArchive_ShortAggType]
-            CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9));
+            CHECK ([ShortAggType] IS NULL OR [ShortAggType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
     END;
 
     IF NOT EXISTS (

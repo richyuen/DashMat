@@ -20,11 +20,13 @@ FACTOR_AGG_TYPE_OPTIONS = [
     {"value": "2", "label": "2 - LAST_VALUE"},
     {"value": "3", "label": "3 - PERIOD_MEAN"},
     {"value": "4", "label": "4 - ANNUALIZED_VOL"},
-    {"value": "5", "label": "5 - ALREADY_PERIODIC"},
-    {"value": "6", "label": "6 - QUARTERLY_INTERP"},
+    {"value": "5", "label": "5 - MTH_INTERP"},
+    {"value": "6", "label": "6 - QTR_INTERP"},
     {"value": "7", "label": "7 - RETURN_FROM_LEVELS"},
     {"value": "8", "label": "8 - LAST_VALUE_DIV_100"},
     {"value": "9", "label": "9 - PERIOD_MEAN_DIV_100"},
+    {"value": "10", "label": "10 - MTH_INTERP_DIV_100"},
+    {"value": "11", "label": "11 - QTR_INTERP_DIV_100"},
 ]
 
 OUTPUT_TRANSFORM_OPTIONS = [
@@ -123,12 +125,12 @@ def validate_factor_definition_payload(payload: dict[str, Any]) -> tuple[dict[st
         return None, "At least one Long component is required."
 
     long_agg = _parse_int(payload.get("LongAggType"))
-    if long_agg not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+    if long_agg not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}:
         return None, "Long aggregation type is invalid."
 
     short_agg = _parse_int(payload.get("ShortAggType"))
     if short_components:
-        if short_agg not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+        if short_agg not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}:
             return None, "Short aggregation type is invalid when Short components are provided."
     else:
         short_agg = None
@@ -622,12 +624,12 @@ def _resolve_window(
     else:
         buffer_days = max(8, 2 * buffer_periods)
 
-    if long_agg_type in {5, 6, 7} or short_agg_type in {5, 6, 7}:
+    if long_agg_type in {5, 6, 7, 10, 11} or short_agg_type in {5, 6, 7, 10, 11}:
         buffer_days += 370
     tail_days = 0
-    if long_agg_type == 5 or short_agg_type == 5:
+    if long_agg_type in {5, 10} or short_agg_type in {5, 10}:
         tail_days = max(tail_days, 40)
-    if long_agg_type == 6 or short_agg_type == 6:
+    if long_agg_type in {6, 11} or short_agg_type in {6, 11}:
         tail_days = max(tail_days, 100)
 
     fetch_start = (start - timedelta(days=buffer_days)).strftime("%Y-%m-%d")
@@ -712,6 +714,22 @@ def _aggregate_component_series(series: pd.Series, agg_type: int, periodicity: s
     elif agg_type == 9:
         base = values if code is None else values.resample(code).mean()
         out = base / 100.0
+    elif agg_type == 10:
+        monthly_vals = values.resample("ME").last().dropna()
+        target_idx = _target_index_for_mapping(values, periodicity)
+        mapped_idx = target_idx + pd.offsets.MonthEnd(0)
+        mapped = monthly_vals.reindex(mapped_idx)
+        mapped.index = target_idx
+        out = mapped / 100.0
+    elif agg_type == 11:
+        quarter_vals = values.resample("QE").last().dropna()
+        target_idx = _target_index_for_mapping(values, periodicity)
+        q_idx = pd.DatetimeIndex(
+            [pd.Timestamp(dt).to_period("Q").to_timestamp(how="end").normalize() for dt in target_idx]
+        )
+        mapped = quarter_vals.reindex(q_idx)
+        mapped.index = target_idx
+        out = mapped / 100.0
     else:
         return pd.Series(dtype=float)
 

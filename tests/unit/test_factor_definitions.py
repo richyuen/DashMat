@@ -239,6 +239,24 @@ def test_validate_factor_definition_payload_supports_divide_by_100_agg_types():
     assert normalized["ShortAggType"] == 9
 
 
+def test_validate_factor_definition_payload_supports_interp_divide_by_100_agg_types():
+    normalized, error = validate_factor_definition_payload(
+        {
+            "FactorName": "CarryInterpPct",
+            "LongComponent": ["ACC1 TRIndex"],
+            "ShortComponent": ["ACC2 TRIndex"],
+            "LongAggType": 10,
+            "ShortAggType": 11,
+            "LongLag": 0,
+            "OutputTransform": 0,
+        }
+    )
+    assert error is None
+    assert normalized is not None
+    assert normalized["LongAggType"] == 10
+    assert normalized["ShortAggType"] == 11
+
+
 def test_aggregate_component_series_divide_by_100_types():
     idx = pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"])
     series = pd.Series([1.0, 3.0, 5.0], index=idx)
@@ -250,6 +268,28 @@ def test_aggregate_component_series_divide_by_100_types():
     assert not monthly_mean_div.empty
     assert monthly_last_div.iloc[-1] == pytest.approx(0.05)
     assert monthly_mean_div.iloc[-1] == pytest.approx(0.03)
+
+
+def test_aggregate_component_series_interp_divide_by_100_types():
+    idx = pd.to_datetime(
+        [
+            "2024-01-31",
+            "2024-02-29",
+            "2024-03-31",
+            "2024-06-30",
+        ]
+    )
+    series = pd.Series([100.0, 200.0, 300.0, 600.0], index=idx)
+
+    mth_interp_div = factor_defs._aggregate_component_series(series, 10, "monthly")
+    qtr_interp_div = factor_defs._aggregate_component_series(series, 11, "monthly")
+
+    assert not mth_interp_div.empty
+    assert not qtr_interp_div.empty
+    assert mth_interp_div.loc[pd.Timestamp("2024-02-29")] == pytest.approx(2.0)
+    assert mth_interp_div.loc[pd.Timestamp("2024-03-31")] == pytest.approx(3.0)
+    assert qtr_interp_div.loc[pd.Timestamp("2024-02-29")] == pytest.approx(3.0)
+    assert qtr_interp_div.loc[pd.Timestamp("2024-06-30")] == pytest.approx(6.0)
 
 
 def test_save_update_delete_factor_definition_archives_versions():
