@@ -12,6 +12,12 @@ from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.engine import Engine
 
 import cache_config
+from utils.sec_factor_loader import (
+    get_sec_factor_account_rows,
+    load_sec_factor_levels,
+    normalize_sec_factor_name,
+    resolve_sec_factor_accounts_by_names,
+)
 from utils.serialization import canonical_json_dumps, normalize_date_range_payload
 
 
@@ -484,35 +490,14 @@ def delete_factor_definition(
 
 
 def _load_sec_factor_account_rows(mrd_engine: Engine) -> pd.DataFrame:
-    account_table = _mrd_account_table(mrd_engine)
-    try:
-        q = text(
-            f"SELECT ACCT_ID, ACCT_NAME, FACTOR_NAME, ACCT_CD, SOURCE_SYSTEM "
-            f"FROM {account_table} "
-            "WHERE ACCT_TYPE_CD = 'SEC_FACTOR' "
-            "AND COALESCE(SOURCE_SYSTEM, '') <> 'PERF' "
-            "ORDER BY ACCT_NAME, FACTOR_NAME, ACCT_ID"
-        )
-        with mrd_engine.connect() as conn:
-            rows = conn.execute(q).fetchall()
-    except Exception:
-        q = text(
-            f"SELECT ACCT_ID, ACCT_NAME, FACTOR_NAME, ACCT_CD, '' AS SOURCE_SYSTEM "
-            f"FROM {account_table} "
-            "WHERE ACCT_TYPE_CD = 'SEC_FACTOR' "
-            "ORDER BY ACCT_NAME, FACTOR_NAME, ACCT_ID"
-        )
-        with mrd_engine.connect() as conn:
-            rows = conn.execute(q).fetchall()
-    if not rows:
-        return pd.DataFrame(columns=["ACCT_ID", "TOKEN", "ACCT_CD", "SOURCE_SYSTEM"])
-    out = pd.DataFrame(rows, columns=["ACCT_ID", "ACCT_NAME", "FACTOR_NAME", "ACCT_CD", "SOURCE_SYSTEM"])
-    out["ACCT_ID"] = pd.to_numeric(out["ACCT_ID"], errors="coerce").astype("Int64")
-    out = out.dropna(subset=["ACCT_ID"])
+    rows = get_sec_factor_account_rows(mrd_engine, exclude_perf=True)
+    if rows.empty:
+        return pd.DataFrame(columns=["ACCT_ID", "TOKEN", "ACCT_CD", "SOURCE_SYSTEM", "SOURCE_RANK"])
+    out = rows.copy()
     out["TOKEN"] = out["ACCT_NAME"].astype(str).str.strip() + " " + out["FACTOR_NAME"].astype(str).str.strip()
     out["TOKEN"] = out["TOKEN"].str.replace(r"\s+", " ", regex=True).str.strip()
-    out = out.sort_values(["TOKEN", "ACCT_ID"])
-    return out[["ACCT_ID", "TOKEN", "ACCT_CD", "SOURCE_SYSTEM"]]
+    out = out.sort_values(["TOKEN", "SOURCE_RANK", "ACCT_ID"])
+    return out[["ACCT_ID", "TOKEN", "ACCT_CD", "SOURCE_SYSTEM", "SOURCE_RANK"]]
 
 
 @cache_config.cache.memoize(timeout=0)
@@ -522,13 +507,15 @@ def get_sec_factor_component_meta_cached(mrd_engine: Engine) -> dict[str, dict[s
         return {}
     out: dict[str, dict[str, Any]] = {}
     for token, frame in rows.groupby("TOKEN", sort=True):
-        acct_ids = [int(v) for v in frame["ACCT_ID"].tolist()]
+        sort_cols = ["SOURCE_RANK", "ACCT_ID"] if "SOURCE_RANK" in frame.columns else ["ACCT_ID"]
+        ordered_frame = frame.sort_values(sort_cols)
+        acct_ids = [int(v) for v in ordered_frame["ACCT_ID"].tolist()]
         if not acct_ids:
             continue
         out[str(token)] = {
             "token": str(token),
             "acct_ids": acct_ids,
-            "first_acct_id": int(min(acct_ids)),
+            "first_acct_id": int(acct_ids[0]),
             "count": int(len(acct_ids)),
         }
     return out
@@ -546,13 +533,28 @@ def get_sec_factor_component_options_cached(mrd_engine: Engine) -> list[dict[str
 
 
 def resolve_component_tokens_to_acct_ids(mrd_engine: Engine, tokens: list[str]) -> list[int]:
-    meta = get_sec_factor_component_meta_cached(mrd_engine)
-    ids: list[int] = []
+    canonical_tokens: list[str] = []
+    seen: set[str] = set()
     for token in _parse_components(tokens):
-        item = meta.get(token)
-        if not item:
+        canonical = normalize_sec_factor_name(token)
+        if not canonical:
             continue
-        first_id = item.get("first_acct_id")
+        key = canonical.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        canonical_tokens.append(canonical)
+    if not canonical_tokens:
+        return []
+    resolved = resolve_sec_factor_accounts_by_names(
+        mrd_engine,
+        canonical_tokens,
+        collision_policy="bb_then_lowest",
+        exclude_perf=True,
+    )
+    ids: list[int] = []
+    for canonical in canonical_tokens:
+        first_id = resolved.get(canonical)
         if first_id is None:
             continue
         ids.append(int(first_id))
@@ -566,32 +568,17 @@ def _load_sec_factor_values_cached(
     start_date: str | None,
     end_date: str | None,
 ) -> pd.DataFrame:
-    ids = [int(v) for v in acct_ids if v is not None]
-    if not ids:
+    levels = load_sec_factor_levels(
+        mrd_engine,
+        list(acct_ids),
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if levels.empty:
         return pd.DataFrame(columns=["ACCT_ID", "REFERENCE_DATE", "FACTOR_VALUE"])
-
-    factor_table = _mrd_factor_table(mrd_engine)
-    clauses = ["ACCT_ID IN :acct_ids"]
-    params: dict[str, Any] = {"acct_ids": ids}
-
-    if start_date:
-        clauses.append("REFERENCE_DATE >= :start_date")
-        params["start_date"] = pd.Timestamp(start_date).strftime("%Y-%m-%d")
-    if end_date:
-        clauses.append("REFERENCE_DATE <= :end_date")
-        params["end_date"] = pd.Timestamp(end_date).strftime("%Y-%m-%d")
-
-    q = text(
-        f"SELECT ACCT_ID, REFERENCE_DATE, FACTOR_VALUE "
-        f"FROM {factor_table} WHERE {' AND '.join(clauses)} "
-        "ORDER BY REFERENCE_DATE, ACCT_ID"
-    ).bindparams(bindparam("acct_ids", expanding=True))
-
-    with mrd_engine.connect() as conn:
-        rows = conn.execute(q, params).fetchall()
-    if not rows:
-        return pd.DataFrame(columns=["ACCT_ID", "REFERENCE_DATE", "FACTOR_VALUE"])
-    out = pd.DataFrame(rows, columns=["ACCT_ID", "REFERENCE_DATE", "FACTOR_VALUE"])
+    stacked = levels.stack().reset_index()
+    stacked.columns = ["REFERENCE_DATE", "ACCT_ID", "FACTOR_VALUE"]
+    out = stacked[["ACCT_ID", "REFERENCE_DATE", "FACTOR_VALUE"]].copy()
     out["ACCT_ID"] = pd.to_numeric(out["ACCT_ID"], errors="coerce").astype("Int64")
     out["REFERENCE_DATE"] = pd.to_datetime(out["REFERENCE_DATE"], errors="coerce")
     out["FACTOR_VALUE"] = pd.to_numeric(out["FACTOR_VALUE"], errors="coerce")

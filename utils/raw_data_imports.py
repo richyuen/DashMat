@@ -11,6 +11,11 @@ from sqlalchemy.engine import Engine
 
 import cache_config
 from utils.constants import INDEX_BENCHMARK_SUFFIX
+from utils.sec_factor_loader import (
+    get_sec_factor_account_rows,
+    load_sec_factor_levels,
+    load_sec_factor_returns_by_acct_ids_aa,
+)
 
 RawImportMode = Literal["factor", "funds", "performance"]
 
@@ -110,36 +115,19 @@ def build_preview_row_from_controls(
 
 
 def _get_factor_option_rows(mrd_engine: Engine) -> list[dict]:
-    account_table = _mrd_table_name(mrd_engine, "ACCOUNT")
-
-    try:
-        q = text(
-            f"SELECT ACCT_ID, ACCT_NAME, ACCT_CD, FACTOR_NAME, SOURCE_SYSTEM "
-            f"FROM {account_table} "
-            "WHERE ACCT_TYPE_CD = 'SEC_FACTOR' "
-            "AND COALESCE(SOURCE_SYSTEM, '') <> 'PERF' "
-            "ORDER BY ACCT_NAME, FACTOR_NAME, SOURCE_SYSTEM, ACCT_CD, ACCT_ID"
-        )
-        with mrd_engine.connect() as conn:
-            rows = conn.execute(q).fetchall()
-    except Exception:
-        # Backward-compatible fallback when SOURCE_SYSTEM is absent on ACCOUNT.
-        factor_table = _mrd_table_name(mrd_engine, "ACCOUNT_FACTOR_DATA")
-        q = text(
-            f"SELECT a.ACCT_ID, a.ACCT_NAME, a.ACCT_CD, a.FACTOR_NAME, "
-            f"MIN(COALESCE(fd.SOURCE_SYSTEM, '')) AS SOURCE_SYSTEM "
-            f"FROM {account_table} a "
-            f"LEFT JOIN {factor_table} fd ON fd.ACCT_ID = a.ACCT_ID "
-            "WHERE a.ACCT_TYPE_CD = 'SEC_FACTOR' "
-            "GROUP BY a.ACCT_ID, a.ACCT_NAME, a.ACCT_CD, a.FACTOR_NAME "
-            "HAVING MIN(COALESCE(fd.SOURCE_SYSTEM, '')) <> 'PERF' "
-            "ORDER BY a.ACCT_NAME, a.FACTOR_NAME, SOURCE_SYSTEM, a.ACCT_CD, a.ACCT_ID"
-        )
-        with mrd_engine.connect() as conn:
-            rows = conn.execute(q).fetchall()
-
+    account_rows = get_sec_factor_account_rows(mrd_engine, exclude_perf=True)
+    if account_rows.empty:
+        return []
+    account_rows = account_rows.sort_values(
+        ["ACCT_NAME", "FACTOR_NAME", "SOURCE_SYSTEM", "ACCT_CD", "ACCT_ID"]
+    )
     out: list[dict] = []
-    for acct_id, acct_name, acct_cd, factor_name, source_system in rows:
+    for _, row in account_rows.iterrows():
+        acct_id = int(row["ACCT_ID"])
+        acct_name = str(row["ACCT_NAME"])
+        acct_cd = str(row["ACCT_CD"])
+        factor_name = str(row["FACTOR_NAME"])
+        source_system = str(row["SOURCE_SYSTEM"])
         acct_id_s = str(acct_id)
         import_name = f"{str(acct_name)}_{str(factor_name)}"
         source = str(source_system or "")
@@ -664,47 +652,78 @@ def load_factor_series(
     if not rows:
         return RawImportResult(pd.DataFrame(), {}, "monthly")
 
-    acct_ids = sorted({int(str(r.get("series_key", "0"))) for r in rows if str(r.get("series_key", "")).strip()})
-    points = _load_factor_points_cached(mrd_engine, tuple(acct_ids))
-    if points.empty:
-        return RawImportResult(pd.DataFrame(), {}, "monthly")
-
     series_map: dict[str, pd.Series] = {}
     ordered_cols: list[str] = []
+    specs: list[dict] = []
+    seen_names: set[str] = set()
     for row in rows:
         series_key = str(row.get("series_key", "")).strip()
         import_name = str(row.get("import_name", "")).strip()
         if not series_key or not import_name:
             continue
-        if import_name in series_map:
+        import_key = import_name.lower()
+        if import_key in seen_names:
             raise ValueError(f"Duplicate staged series name `{import_name}`.")
+        seen_names.add(import_key)
 
         acct_id = int(series_key)
-        subset = points.loc[points["ACCT_ID"] == acct_id, ["REFERENCE_DATE", "FACTOR_VALUE"]].copy()
-        if subset.empty:
-            raise ValueError(f"No factor data rows found for ACCT_ID `{acct_id}`.")
-
-        subset = subset.sort_values("REFERENCE_DATE")
-        series = pd.Series(
-            subset["FACTOR_VALUE"].values,
-            index=pd.DatetimeIndex(subset["REFERENCE_DATE"]),
-            name=import_name,
-            dtype=float,
-        )
-        series = series[~series.index.duplicated(keep="last")]
-
         convert = bool(row.get("convert_to_returns", False))
-        if convert:
-            series = series.pct_change(fill_method=None).dropna()
+        divide_by = pd.to_numeric(pd.Series([row.get("divide_by", 100)]), errors="coerce").iloc[0]
+        specs.append(
+            {
+                "import_name": import_name,
+                "acct_id": acct_id,
+                "convert": convert,
+                "divide_by": divide_by,
+            }
+        )
+
+    if not specs:
+        return RawImportResult(pd.DataFrame(), {}, "monthly")
+
+    convert_name_to_id = {
+        spec["import_name"]: int(spec["acct_id"])
+        for spec in specs
+        if bool(spec.get("convert"))
+    }
+    converted_df = pd.DataFrame()
+    if convert_name_to_id:
+        converted_df, _converted_meta = load_sec_factor_returns_by_acct_ids_aa(
+            mrd_engine,
+            convert_name_to_id,
+        )
+
+    non_convert_ids = sorted(
+        {
+            int(spec["acct_id"])
+            for spec in specs
+            if not bool(spec.get("convert"))
+        }
+    )
+    levels_df = load_sec_factor_levels(mrd_engine, non_convert_ids) if non_convert_ids else pd.DataFrame()
+
+    for spec in specs:
+        import_name = str(spec["import_name"])
+        acct_id = int(spec["acct_id"])
+        if bool(spec.get("convert")):
+            if import_name not in converted_df.columns:
+                raise ValueError(f"No factor data rows found for ACCT_ID `{acct_id}`.")
+            series = pd.to_numeric(converted_df[import_name], errors="coerce").dropna()
         else:
-            divide_by = pd.to_numeric(pd.Series([row.get("divide_by", 100)]), errors="coerce").iloc[0]
+            divide_by = spec.get("divide_by")
             if pd.isna(divide_by) or float(divide_by) == 0.0:
                 raise ValueError(f"Invalid divide-by value for `{import_name}`.")
-            series = (series / float(divide_by)).dropna()
+            if levels_df.empty or acct_id not in levels_df.columns:
+                raise ValueError(f"No factor data rows found for ACCT_ID `{acct_id}`.")
+            level_series = pd.to_numeric(levels_df[acct_id], errors="coerce").dropna()
+            series = (level_series / float(divide_by)).dropna()
 
         if series.empty:
             raise ValueError(f"No usable factor values for `{import_name}`.")
-        series_map[import_name] = series.rename(import_name)
+        series.index = pd.to_datetime(series.index, errors="coerce")
+        series = series.loc[~pd.isna(series.index)]
+        series = series[~series.index.duplicated(keep="last")].sort_index()
+        series_map[import_name] = series.rename(import_name).astype(float)
         ordered_cols.append(import_name)
 
     if not ordered_cols:

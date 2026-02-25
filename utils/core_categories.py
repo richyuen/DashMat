@@ -7,6 +7,7 @@ import pandas as pd
 import pandas_market_calendars as mcal
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
+from utils.sec_factor_loader import load_sec_factor_returns_by_names_aa
 
 RISK_FREE_FOFBENCH = "BCTBill13_TRIndex"
 
@@ -260,133 +261,23 @@ def load_cma_returns_for_benches_with_meta(
     selected_fofbenches = [b for b in selected if b in selected_fofbench_set]
     if not selected_fofbenches:
         return pd.DataFrame(), {}
-
-    acct_names = sorted({_split_fofbench(v)[0] for v in selected_fofbenches})
-    factor_names = sorted({_split_fofbench(v)[1] for v in selected_fofbenches})
-    if not acct_names or not factor_names:
-        return pd.DataFrame(), {}
-
-    account_table = _mrd_account_table(mrd_engine)
-    factor_table = _mrd_factor_table(mrd_engine)
-    account_query = text(
-        f"SELECT ACCT_ID, ACCT_NAME, FACTOR_NAME "
-        f"FROM {account_table} "
-        f"WHERE ACCT_NAME IN :acct_names AND FACTOR_NAME IN :factor_names"
-    ).bindparams(
-        bindparam("acct_names", expanding=True),
-        bindparam("factor_names", expanding=True),
+    out, series_meta = load_sec_factor_returns_by_names_aa(
+        mrd_engine,
+        selected_fofbenches,
+        collision_policy="bb_then_lowest",
+        exclude_perf=False,
     )
-    with mrd_engine.connect() as conn:
-        account_rows = conn.execute(
-            account_query,
-            {"acct_names": acct_names, "factor_names": factor_names},
-        ).fetchall()
-    if not account_rows:
+    if out.empty:
         return pd.DataFrame(), {}
 
-    fofbench_to_acct_id: dict[str, int] = {}
-    for acct_id, acct_name, factor_name in account_rows:
-        key = f"{acct_name}_{factor_name}"
-        if key in selected_fofbench_set and key not in fofbench_to_acct_id:
-            fofbench_to_acct_id[key] = int(acct_id)
-
-    fofbench_to_acct_id = {
-        fofbench: fofbench_to_acct_id[fofbench]
-        for fofbench in selected_fofbenches
-        if fofbench in fofbench_to_acct_id
-    }
-    if not fofbench_to_acct_id:
-        return pd.DataFrame(), {}
-
-    acct_ids = sorted(set(fofbench_to_acct_id.values()))
-    factor_query = text(
-        f"SELECT ACCT_ID, REFERENCE_DATE, FACTOR_VALUE "
-        f"FROM {factor_table} "
-        f"WHERE ACCT_ID IN :acct_ids "
-        f"ORDER BY REFERENCE_DATE, ACCT_ID"
-    ).bindparams(bindparam("acct_ids", expanding=True))
-
-    with mrd_engine.connect() as conn:
-        rows = conn.execute(
-            factor_query,
-            {"acct_ids": acct_ids},
-        ).fetchall()
-
-    if not rows:
-        return pd.DataFrame(), {}
-
-    data = pd.DataFrame(rows, columns=["ACCT_ID", "REFERENCE_DATE", "FACTOR_VALUE"])
-    data["REFERENCE_DATE"] = pd.to_datetime(data["REFERENCE_DATE"])
-    index_levels = data.pivot(index="REFERENCE_DATE", columns="ACCT_ID", values="FACTOR_VALUE")
-    index_levels = index_levels.sort_index()
-
-    # MRD stores index levels; convert to arithmetic returns.
-    # Compute pct_change per series on its own non-null observation dates so
-    # mixed-frequency selections (e.g., monthly-to-daily + daily) do not erase
-    # sparse history due to intervening NaNs from other columns.
-    daily_returns = pd.DataFrame(index=index_levels.index, columns=index_levels.columns, dtype=float)
-    for acct_id in index_levels.columns:
-        levels_series = index_levels[acct_id].dropna()
-        if levels_series.empty:
-            continue
-        series_returns = levels_series.pct_change(fill_method=None)
-        daily_returns[acct_id] = series_returns.reindex(index_levels.index)
-    daily_returns = daily_returns.dropna(how="all")
-
-    acct_id_to_fofbenches: dict[int, list[str]] = {}
-    for fofbench, acct_id in fofbench_to_acct_id.items():
-        acct_id_to_fofbenches.setdefault(acct_id, []).append(fofbench)
-
-    out = pd.DataFrame(index=daily_returns.index)
-    series_meta: dict[str, dict[str, object]] = {}
-    for acct_id, benches_for_id in acct_id_to_fofbenches.items():
-        if acct_id not in daily_returns.columns:
-            continue
-        returns_series = daily_returns[acct_id]
-        first_return = returns_series.dropna().index.min()
-        obs_dates = index_levels[acct_id].dropna().index if acct_id in index_levels.columns else pd.DatetimeIndex([])
-        daily_start = _infer_daily_start_from_observation_dates(obs_dates)
-        starts_daily = bool(first_return is not None and daily_start is not None and pd.Timestamp(first_return) == pd.Timestamp(daily_start))
-        for fofbench in benches_for_id:
-            out[fofbench] = returns_series
-            series_meta[fofbench] = {
-                "first_return_date": first_return.strftime("%Y-%m-%d") if first_return is not None else None,
-                "daily_start_date": daily_start.strftime("%Y-%m-%d") if daily_start is not None else None,
-                "starts_daily": starts_daily,
-            }
-
+    periodicity_hint = out.attrs.get("periodicity_hint")
     ordered_cols = [b for b in selected if b in out.columns]
     out = out.reindex(columns=ordered_cols)
-    if not out.empty:
-        # Reindex to calendar dates; fill only from each series' inferred daily
-        # start date onward. Pre-daily history stays sparse.
-        full_index = pd.date_range(out.index.min(), out.index.max(), freq="D")
-        out = out.reindex(full_index)
-        for col in out.columns:
-            last = out[col].last_valid_index()
-            if last is None:
-                continue
-            daily_start_raw = (
-                series_meta.get(col, {}).get("daily_start_date")
-                if isinstance(series_meta.get(col, {}), dict)
-                else None
-            )
-            if not daily_start_raw:
-                continue
-            daily_start = pd.to_datetime(daily_start_raw, errors="coerce")
-            if pd.isna(daily_start):
-                continue
-            mask = (out.index >= daily_start) & (out.index <= last)
-            out.loc[mask, col] = out.loc[mask, col].fillna(0.0)
-        out = out.dropna(how="all")
-    has_daily_phase = any(
-        bool((meta_row or {}).get("daily_start_date")) or bool((meta_row or {}).get("starts_daily"))
-        for meta_row in series_meta.values()
-        if isinstance(meta_row, dict)
-    )
-    out.attrs["periodicity_hint"] = "daily" if has_daily_phase else "monthly"
+    if periodicity_hint in {"daily", "monthly"}:
+        out.attrs["periodicity_hint"] = periodicity_hint
+    meta = {name: series_meta.get(name, {}) for name in ordered_cols if name in series_meta}
     out.index.name = "Date"
-    return out, series_meta
+    return out, meta
 
 
 def load_bctbill13_returns(core_engine: Engine, mrd_engine: Engine) -> pd.DataFrame:

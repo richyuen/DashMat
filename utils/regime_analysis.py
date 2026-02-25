@@ -22,6 +22,7 @@ from utils.returns import (
     json_to_df,
     merge_returns,
 )
+from utils.sec_factor_loader import load_sec_factor_returns_by_names_aa
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.statistics import maximum_drawdown, sharpe_ratio, sortino_ratio
 
@@ -194,6 +195,27 @@ def resolve_regime_source_data(
         loaded_cols = [col for col in missing if col in loaded_df.columns]
         unresolved = [name for name in missing if name not in loaded_cols]
 
+        # Fallback: direct SEC_FACTOR lookup by ACCT_NAME_FACTOR_NAME for names
+        # that are not in CoreCategories / FOFBench.
+        direct_df = pd.DataFrame()
+        direct_cols: list[str] = []
+        if unresolved:
+            direct_df, _direct_meta = load_sec_factor_returns_by_names_aa(
+                mrd_engine,
+                unresolved,
+                collision_policy="bb_then_lowest",
+                exclude_perf=False,
+            )
+            if not direct_df.empty:
+                direct_cols = [col for col in unresolved if col in direct_df.columns]
+                if direct_cols:
+                    if loaded_df.empty:
+                        loaded_df = direct_df[direct_cols].copy()
+                    else:
+                        loaded_df = merge_returns(loaded_df, direct_df[direct_cols])
+                    loaded_cols = [*loaded_cols, *[c for c in direct_cols if c not in loaded_cols]]
+                    unresolved = [name for name in unresolved if name not in direct_cols]
+
         if loaded_cols:
             loaded_df = loaded_df[loaded_cols].sort_index()
             series_data = dict(normalized_store.get("series_data", {}) or {})
@@ -202,9 +224,12 @@ def resolve_regime_source_data(
                 col_df = loaded_df[[col]].dropna(how="all")
                 if col_df.empty:
                     continue
+                source_name = "db_core"
+                if col in direct_cols:
+                    source_name = "db_mrd_direct"
                 series_data[col] = {
                     "returns_json": df_to_json(col_df),
-                    "source": "db",
+                    "source": source_name,
                     "loaded_at": loaded_at,
                 }
             normalized_store = {"series_data": series_data}
