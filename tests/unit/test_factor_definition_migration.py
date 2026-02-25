@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from sqlalchemy import create_engine, text
 
+import tools.db.migrate_factor_definitions as factor_migration
 from tools.db.migrate_factor_definitions import (
+    _factor_table_name,
     SAMPLE_FACTOR_SPECS,
     ensure_factor_definition_tables_and_seed,
     seed_sample_factor_definitions,
@@ -35,6 +37,59 @@ def _seed_mrd_engine(with_tokens: bool = True):
                 )
             )
     return engine
+
+
+def test_migration_factor_table_name_uses_dbo_for_sql_server():
+    class _MockDialect:
+        name = "mssql"
+
+    class _MockEngine:
+        dialect = _MockDialect()
+
+    assert _factor_table_name(_MockEngine(), "FactorDefinitions") == "[dbo].[FactorDefinitions]"
+
+
+def test_migration_factor_table_exists_checks_dbo_schema_first(monkeypatch):
+    calls: list[tuple[str, str | None]] = []
+
+    class _MockInspector:
+        def has_table(self, table_name, schema=None):
+            calls.append((table_name, schema))
+            return schema is None
+
+    class _MockDialect:
+        name = "mssql"
+
+    class _MockEngine:
+        dialect = _MockDialect()
+
+    monkeypatch.setattr(factor_migration, "inspect", lambda _engine: _MockInspector())
+
+    assert factor_migration._factor_table_exists(_MockEngine(), "FactorDefinitions") is True
+    assert calls == [("FactorDefinitions", "dbo"), ("FactorDefinitions", None)]
+
+
+def test_migration_factor_table_indexes_reads_dbo_schema_first(monkeypatch):
+    calls: list[tuple[str, str | None]] = []
+
+    class _MockInspector:
+        def get_indexes(self, table_name, schema=None):
+            calls.append((table_name, schema))
+            if schema == "dbo":
+                return [{"name": "idx_factor_defs_name"}]
+            return []
+
+    class _MockDialect:
+        name = "mssql"
+
+    class _MockEngine:
+        dialect = _MockDialect()
+
+    monkeypatch.setattr(factor_migration, "inspect", lambda _engine: _MockInspector())
+
+    indexes = factor_migration._factor_table_indexes(_MockEngine(), "FactorDefinitions")
+    assert indexes == {"idx_factor_defs_name"}
+    assert calls == [("FactorDefinitions", "dbo")]
 
 
 def test_ensure_factor_definition_tables_and_seed_creates_and_inserts_samples():

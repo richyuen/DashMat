@@ -165,6 +165,29 @@ def _mrd_account_table(db_engine: Engine) -> str:
     return "[CORE_DATA].[ACCOUNT]"
 
 
+def _factor_table_name(db_engine: Engine, base: str) -> str:
+    if db_engine.dialect.name == "sqlite":
+        return f"[{base}]"
+    return f"[dbo].[{base}]"
+
+
+def _factor_table_exists(db_engine: Engine, table_name: str) -> bool:
+    inspector = inspect(db_engine)
+    if db_engine.dialect.name == "sqlite":
+        return inspector.has_table(table_name)
+    return inspector.has_table(table_name, schema="dbo") or inspector.has_table(table_name)
+
+
+def _factor_table_indexes(db_engine: Engine, table_name: str) -> set[str]:
+    inspector = inspect(db_engine)
+    if db_engine.dialect.name == "sqlite":
+        return {idx.get("name") for idx in inspector.get_indexes(table_name)}
+    indexes = inspector.get_indexes(table_name, schema="dbo")
+    if not indexes:
+        indexes = inspector.get_indexes(table_name)
+    return {idx.get("name") for idx in indexes}
+
+
 def _normalize_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -182,16 +205,17 @@ def _normalize_int(value: Any) -> int | None:
 
 
 def _create_tables_if_missing(db_engine: Engine) -> dict[str, Any]:
-    inspector = inspect(db_engine)
-    create_live = not inspector.has_table("FactorDefinitions")
-    create_archive = not inspector.has_table("FactorDefinitionsArchive")
+    create_live = not _factor_table_exists(db_engine, "FactorDefinitions")
+    create_archive = not _factor_table_exists(db_engine, "FactorDefinitionsArchive")
+    factor_table = _factor_table_name(db_engine, "FactorDefinitions")
+    archive_table = _factor_table_name(db_engine, "FactorDefinitionsArchive")
 
     with db_engine.begin() as conn:
         if create_live:
             conn.execute(
                 text(
                     """
-                    CREATE TABLE FactorDefinitions (
+                    CREATE TABLE {factor_table} (
                         FactorName VARCHAR(128) NOT NULL PRIMARY KEY,
                         LongComponent VARCHAR(4096) NOT NULL,
                         ShortComponent VARCHAR(4096) NULL,
@@ -204,6 +228,7 @@ def _create_tables_if_missing(db_engine: Engine) -> dict[str, Any]:
                         UPDATE_BY VARCHAR(128) NOT NULL
                     )
                     """
+                .format(factor_table=factor_table)
                 )
             )
 
@@ -211,7 +236,7 @@ def _create_tables_if_missing(db_engine: Engine) -> dict[str, Any]:
             conn.execute(
                 text(
                     """
-                    CREATE TABLE FactorDefinitionsArchive (
+                    CREATE TABLE {archive_table} (
                         FactorName VARCHAR(128) NOT NULL,
                         LongComponent VARCHAR(4096) NOT NULL,
                         ShortComponent VARCHAR(4096) NULL,
@@ -225,35 +250,35 @@ def _create_tables_if_missing(db_engine: Engine) -> dict[str, Any]:
                         ARCHIVE_DATE DATETIME NOT NULL
                     )
                     """
+                .format(archive_table=archive_table)
                 )
             )
 
-    inspector = inspect(db_engine)
     with db_engine.begin() as conn:
         if db_engine.dialect.name == "sqlite":
             conn.execute(
                 text(
                     "CREATE INDEX IF NOT EXISTS idx_factor_defs_name "
-                    "ON FactorDefinitions (FactorName)"
+                    f"ON {factor_table} (FactorName)"
                 )
             )
             conn.execute(
                 text(
                     "CREATE INDEX IF NOT EXISTS idx_factor_defs_archive_name_date "
-                    "ON FactorDefinitionsArchive (FactorName, ARCHIVE_DATE)"
+                    f"ON {archive_table} (FactorName, ARCHIVE_DATE)"
                 )
             )
         else:
-            existing_fd_indexes = {idx.get("name") for idx in inspector.get_indexes("FactorDefinitions")}
+            existing_fd_indexes = _factor_table_indexes(db_engine, "FactorDefinitions")
             if "idx_factor_defs_name" not in existing_fd_indexes:
-                conn.execute(text("CREATE INDEX idx_factor_defs_name ON FactorDefinitions (FactorName)"))
+                conn.execute(text(f"CREATE INDEX idx_factor_defs_name ON {factor_table} (FactorName)"))
 
-            existing_archive_indexes = {idx.get("name") for idx in inspector.get_indexes("FactorDefinitionsArchive")}
+            existing_archive_indexes = _factor_table_indexes(db_engine, "FactorDefinitionsArchive")
             if "idx_factor_defs_archive_name_date" not in existing_archive_indexes:
                 conn.execute(
                     text(
                         "CREATE INDEX idx_factor_defs_archive_name_date "
-                        "ON FactorDefinitionsArchive (FactorName, ARCHIVE_DATE)"
+                        f"ON {archive_table} (FactorName, ARCHIVE_DATE)"
                     )
                 )
 
@@ -362,12 +387,12 @@ def _build_seed_payloads(tokens: list[str]) -> tuple[list[dict[str, Any]], int]:
     return output, skipped
 
 
-def _load_factor_row_by_name(conn, factor_name: str) -> dict[str, Any] | None:
+def _load_factor_row_by_name(conn, factor_name: str, factor_table: str) -> dict[str, Any] | None:
     row = conn.execute(
         text(
             "SELECT FactorName, LongComponent, ShortComponent, Description, "
             "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY "
-            "FROM FactorDefinitions WHERE LOWER(FactorName) = LOWER(:factor_name)"
+            f"FROM {factor_table} WHERE LOWER(FactorName) = LOWER(:factor_name)"
         ),
         {"factor_name": factor_name},
     ).mappings().first()
@@ -393,10 +418,10 @@ def _seed_row_changed(existing: dict[str, Any], desired: dict[str, Any]) -> bool
     return False
 
 
-def _archive_factor_row(conn, existing: dict[str, Any], archive_date: datetime) -> None:
+def _archive_factor_row(conn, existing: dict[str, Any], archive_date: datetime, archive_table: str) -> None:
     conn.execute(
         text(
-            "INSERT INTO FactorDefinitionsArchive ("
+            f"INSERT INTO {archive_table} ("
             "FactorName, LongComponent, ShortComponent, Description, "
             "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY, ARCHIVE_DATE"
             ") VALUES ("
@@ -429,6 +454,8 @@ def seed_sample_factor_definitions(
     payloads, skipped = _build_seed_payloads(tokens)
     now_utc = _now_utc()
     update_by_val = str(update_by or "").strip() or "seed_script"
+    factor_table = _factor_table_name(db_engine, "FactorDefinitions")
+    archive_table = _factor_table_name(db_engine, "FactorDefinitionsArchive")
 
     stats: dict[str, Any] = {
         "token_count": len(tokens),
@@ -443,11 +470,11 @@ def seed_sample_factor_definitions(
 
     with db_engine.begin() as conn:
         for payload in payloads:
-            existing = _load_factor_row_by_name(conn, payload["FactorName"])
+            existing = _load_factor_row_by_name(conn, payload["FactorName"], factor_table)
             if existing is None:
                 conn.execute(
                     text(
-                        "INSERT INTO FactorDefinitions ("
+                        f"INSERT INTO {factor_table} ("
                         "FactorName, LongComponent, ShortComponent, Description, "
                         "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY"
                         ") VALUES ("
@@ -475,11 +502,11 @@ def seed_sample_factor_definitions(
                 stats["unchanged"] += 1
                 continue
 
-            _archive_factor_row(conn, existing, now_utc)
+            _archive_factor_row(conn, existing, now_utc, archive_table)
             stats["archived"] += 1
             conn.execute(
                 text(
-                    "UPDATE FactorDefinitions SET "
+                    f"UPDATE {factor_table} SET "
                     "LongComponent = :LongComponent, "
                     "ShortComponent = :ShortComponent, "
                     "Description = :Description, "

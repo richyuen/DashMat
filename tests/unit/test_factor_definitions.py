@@ -6,7 +6,9 @@ import pandas as pd
 import pytest
 from sqlalchemy import create_engine, text
 
+import utils.factor_definitions as factor_defs
 from utils.factor_definitions import (
+    _factor_table_name,
     compute_factor_preview_lines,
     compute_factor_series,
     delete_factor_definition,
@@ -115,6 +117,36 @@ def _seed_mrd_engine():
                 {"acct_id": 3, "dt": dt, "value": 0.005 + i * 0.0005},
             )
     return engine
+
+
+def test_factor_table_name_uses_dbo_for_sql_server():
+    class _MockDialect:
+        name = "mssql"
+
+    class _MockEngine:
+        dialect = _MockDialect()
+
+    assert _factor_table_name(_MockEngine(), "FactorDefinitions") == "[dbo].[FactorDefinitions]"
+
+
+def test_factor_table_exists_checks_dbo_schema_first_for_sql_server(monkeypatch):
+    calls: list[tuple[str, str | None]] = []
+
+    class _MockInspector:
+        def has_table(self, table_name, schema=None):
+            calls.append((table_name, schema))
+            return schema is None
+
+    class _MockDialect:
+        name = "mssql"
+
+    class _MockEngine:
+        dialect = _MockDialect()
+
+    monkeypatch.setattr(factor_defs, "inspect", lambda _engine: _MockInspector())
+
+    assert factor_defs._factor_table_exists(_MockEngine(), "FactorDefinitions") is True
+    assert calls == [("FactorDefinitions", "dbo"), ("FactorDefinitions", None)]
 
 
 def test_validate_factor_definition_payload():

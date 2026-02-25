@@ -53,6 +53,19 @@ def _mrd_factor_table(engine: Engine) -> str:
     return "[CORE_DATA].[ACCOUNT_FACTOR_DATA]"
 
 
+def _factor_table_name(engine: Engine, base: str) -> str:
+    if engine.dialect.name == "sqlite":
+        return f"[{base}]"
+    return f"[dbo].[{base}]"
+
+
+def _factor_table_exists(engine: Engine, table_name: str) -> bool:
+    insp = inspect(engine)
+    if engine.dialect.name == "sqlite":
+        return insp.has_table(table_name)
+    return insp.has_table(table_name, schema="dbo") or insp.has_table(table_name)
+
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
@@ -148,8 +161,9 @@ def validate_factor_definition_payload(payload: dict[str, Any]) -> tuple[dict[st
 
 
 def factor_tables_available(db_engine: Engine) -> bool:
-    insp = inspect(db_engine)
-    return insp.has_table("FactorDefinitions") and insp.has_table("FactorDefinitionsArchive")
+    return _factor_table_exists(db_engine, "FactorDefinitions") and _factor_table_exists(
+        db_engine, "FactorDefinitionsArchive"
+    )
 
 
 def _normalize_db_definition_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -176,10 +190,11 @@ def _normalize_db_definition_row(row: dict[str, Any]) -> dict[str, Any]:
 def load_factor_definitions(db_engine: Engine) -> list[dict[str, Any]]:
     if not factor_tables_available(db_engine):
         return []
+    factor_table = _factor_table_name(db_engine, "FactorDefinitions")
     q = text(
         "SELECT FactorName, LongComponent, ShortComponent, Description, "
         "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY "
-        "FROM FactorDefinitions ORDER BY FactorName"
+        f"FROM {factor_table} ORDER BY FactorName"
     )
     with db_engine.connect() as conn:
         rows = conn.execute(q).mappings().all()
@@ -191,9 +206,9 @@ def load_factor_definitions(db_engine: Engine) -> list[dict[str, Any]]:
     return output
 
 
-def _archive_factor_definition_row(conn, row: dict[str, Any]) -> None:
+def _archive_factor_definition_row(conn, row: dict[str, Any], archive_table: str) -> None:
     archive_q = text(
-        "INSERT INTO FactorDefinitionsArchive ("
+        f"INSERT INTO {archive_table} ("
         "FactorName, LongComponent, ShortComponent, Description, "
         "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY, ARCHIVE_DATE"
         ") VALUES ("
@@ -219,11 +234,11 @@ def _archive_factor_definition_row(conn, row: dict[str, Any]) -> None:
     )
 
 
-def _load_definition_row_by_name(conn, factor_name: str) -> dict[str, Any] | None:
+def _load_definition_row_by_name(conn, factor_name: str, factor_table: str) -> dict[str, Any] | None:
     q = text(
         "SELECT FactorName, LongComponent, ShortComponent, Description, "
         "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY "
-        "FROM FactorDefinitions WHERE LOWER(FactorName) = LOWER(:name)"
+        f"FROM {factor_table} WHERE LOWER(FactorName) = LOWER(:name)"
     )
     row = conn.execute(q, {"name": factor_name}).mappings().first()
     return dict(row) if row else None
@@ -247,6 +262,9 @@ def save_factor_definition(
     if not factor_tables_available(db_engine):
         return False, "Factor definition tables are unavailable.", None
 
+    factor_table = _factor_table_name(db_engine, "FactorDefinitions")
+    archive_table = _factor_table_name(db_engine, "FactorDefinitionsArchive")
+
     normalized, error = validate_factor_definition_payload(payload)
     if error:
         return False, error, None
@@ -259,7 +277,7 @@ def save_factor_definition(
 
     with db_engine.begin() as conn:
         if update_original:
-            current = _load_definition_row_by_name(conn, update_original)
+            current = _load_definition_row_by_name(conn, update_original, factor_table)
             if current is None:
                 return False, "Definition no longer exists. Reload and try again.", None
 
@@ -267,14 +285,14 @@ def save_factor_definition(
                 return False, "Definition changed in another session. Reload before saving.", None
 
             if target_name.lower() != str(current.get("FactorName", "")).lower():
-                existing_target = _load_definition_row_by_name(conn, target_name)
+                existing_target = _load_definition_row_by_name(conn, target_name, factor_table)
                 if existing_target is not None:
                     return False, f"Factor `{target_name}` already exists.", None
 
-            _archive_factor_definition_row(conn, current)
+            _archive_factor_definition_row(conn, current, archive_table)
 
             update_q = text(
-                "UPDATE FactorDefinitions SET "
+                f"UPDATE {factor_table} SET "
                 "FactorName = :FactorName, "
                 "LongComponent = :LongComponent, "
                 "ShortComponent = :ShortComponent, "
@@ -308,12 +326,12 @@ def save_factor_definition(
             if int(result.rowcount or 0) != 1:
                 return False, "Definition changed in another session. Reload before saving.", None
         else:
-            existing = _load_definition_row_by_name(conn, target_name)
+            existing = _load_definition_row_by_name(conn, target_name, factor_table)
             if existing is not None:
                 return False, f"Factor `{target_name}` already exists.", None
 
             insert_q = text(
-                "INSERT INTO FactorDefinitions ("
+                f"INSERT INTO {factor_table} ("
                 "FactorName, LongComponent, ShortComponent, Description, "
                 "LongAggType, ShortAggType, LongLag, OutputTransform, UPDATE_DATE, UPDATE_BY"
                 ") VALUES ("
@@ -337,7 +355,7 @@ def save_factor_definition(
                 },
             )
 
-        saved = _load_definition_row_by_name(conn, target_name)
+        saved = _load_definition_row_by_name(conn, target_name, factor_table)
         if saved is None:
             return False, "Unable to reload saved definition.", None
         normalized_saved = _normalize_db_definition_row(saved)
@@ -354,21 +372,24 @@ def delete_factor_definition(
     if not factor_tables_available(db_engine):
         return False, "Factor definition tables are unavailable."
 
+    factor_table = _factor_table_name(db_engine, "FactorDefinitions")
+    archive_table = _factor_table_name(db_engine, "FactorDefinitionsArchive")
+
     name = str(factor_name or "").strip()
     if not name:
         return False, "Select a factor definition to delete."
 
     with db_engine.begin() as conn:
-        current = _load_definition_row_by_name(conn, name)
+        current = _load_definition_row_by_name(conn, name, factor_table)
         if current is None:
             return False, "Definition no longer exists."
         if expected_update_date and not _timestamps_equal(current.get("UPDATE_DATE"), expected_update_date):
             return False, "Definition changed in another session. Reload before deleting."
 
-        _archive_factor_definition_row(conn, current)
+        _archive_factor_definition_row(conn, current, archive_table)
 
         delete_q = text(
-            "DELETE FROM FactorDefinitions "
+            f"DELETE FROM {factor_table} "
             "WHERE LOWER(FactorName) = LOWER(:name) AND UPDATE_DATE = :ExpectedDbUpdateDate"
         )
         result = conn.execute(
