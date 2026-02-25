@@ -260,6 +260,20 @@ def _timestamps_equal(left: Any, right: Any) -> bool:
     return left_norm.floor("s") == right_norm.floor("s")
 
 
+def _rowcount_is_known_miss(rowcount: Any) -> bool:
+    try:
+        return int(rowcount) == 0
+    except Exception:
+        return False
+
+
+def _rowcount_is_unknown(rowcount: Any) -> bool:
+    try:
+        return int(rowcount) < 0
+    except Exception:
+        return rowcount is None
+
+
 def save_factor_definition(
     db_engine: Engine,
     payload: dict[str, Any],
@@ -331,8 +345,12 @@ def save_factor_definition(
                     "ExpectedDbUpdateDate": current.get("UPDATE_DATE"),
                 },
             )
-            if int(result.rowcount or 0) != 1:
+            if _rowcount_is_known_miss(result.rowcount):
                 return False, "Definition changed in another session. Reload before saving.", None
+            if _rowcount_is_unknown(result.rowcount):
+                refreshed = _load_definition_row_by_name(conn, target_name, factor_table)
+                if refreshed is None or not _timestamps_equal(refreshed.get("UPDATE_DATE"), now_val):
+                    return False, "Definition changed in another session. Reload before saving.", None
         else:
             existing = _load_definition_row_by_name(conn, target_name, factor_table)
             if existing is not None:
@@ -404,8 +422,12 @@ def delete_factor_definition(
             delete_q,
             {"name": name, "ExpectedDbUpdateDate": current.get("UPDATE_DATE")},
         )
-        if int(result.rowcount or 0) != 1:
+        if _rowcount_is_known_miss(result.rowcount):
             return False, "Definition changed in another session. Reload before deleting."
+        if _rowcount_is_unknown(result.rowcount):
+            refreshed = _load_definition_row_by_name(conn, name, factor_table)
+            if refreshed is not None:
+                return False, "Definition changed in another session. Reload before deleting."
         return True, f"Deleted factor definition `{name}`."
 
 

@@ -154,6 +154,14 @@ def test_factor_timestamp_compare_handles_timezone_and_fractional_precision():
     assert factor_defs._timestamps_equal("2026-02-25 12:34:56.123", "2026-02-25 12:34:56")
 
 
+def test_factor_rowcount_helpers_handle_unknown_sql_server_values():
+    assert factor_defs._rowcount_is_known_miss(0) is True
+    assert factor_defs._rowcount_is_known_miss(-1) is False
+    assert factor_defs._rowcount_is_unknown(-1) is True
+    assert factor_defs._rowcount_is_unknown(None) is True
+    assert factor_defs._rowcount_is_unknown(1) is False
+
+
 def test_validate_factor_definition_payload():
     normalized, error = validate_factor_definition_payload(
         {

@@ -131,6 +131,20 @@ def _timestamps_equal(left: Any, right: Any) -> bool:
     return left_norm.floor("s") == right_norm.floor("s")
 
 
+def _rowcount_is_known_miss(rowcount: Any) -> bool:
+    try:
+        return int(rowcount) == 0
+    except Exception:
+        return False
+
+
+def _rowcount_is_unknown(rowcount: Any) -> bool:
+    try:
+        return int(rowcount) < 0
+    except Exception:
+        return rowcount is None
+
+
 def validate_regime_definition_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     """Validate and normalize a regime definition payload."""
     name = str(payload.get("RegimeName", "")).strip()
@@ -370,8 +384,12 @@ def save_regime_definition(
                     "ExpectedDbUpdateDate": current.get("UPDATE_DATE"),
                 },
             )
-            if int(result.rowcount or 0) != 1:
+            if _rowcount_is_known_miss(result.rowcount):
                 return False, "Definition changed in another session. Reload before saving.", None
+            if _rowcount_is_unknown(result.rowcount):
+                refreshed = _load_definition_row_by_name(conn, db_engine, target_name)
+                if refreshed is None or not _timestamps_equal(refreshed.get("UPDATE_DATE"), now_val):
+                    return False, "Definition changed in another session. Reload before saving.", None
         else:
             existing = _load_definition_row_by_name(conn, db_engine, target_name)
             if existing is not None:
@@ -432,6 +450,10 @@ def delete_regime_definition(
             ),
             {"name": name, "ExpectedDbUpdateDate": current.get("UPDATE_DATE")},
         )
-        if int(result.rowcount or 0) != 1:
+        if _rowcount_is_known_miss(result.rowcount):
             return False, "Definition changed in another session. Reload before deleting."
+        if _rowcount_is_unknown(result.rowcount):
+            refreshed = _load_definition_row_by_name(conn, db_engine, name)
+            if refreshed is not None:
+                return False, "Definition changed in another session. Reload before deleting."
         return True, f"Deleted regime definition `{name}`."

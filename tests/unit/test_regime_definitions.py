@@ -69,6 +69,14 @@ def test_regime_timestamp_compare_handles_timezone_and_fractional_precision():
     assert regime_defs._timestamps_equal("2026-02-25 12:34:56.123", "2026-02-25 12:34:56")
 
 
+def test_regime_rowcount_helpers_handle_unknown_sql_server_values():
+    assert regime_defs._rowcount_is_known_miss(0) is True
+    assert regime_defs._rowcount_is_known_miss(-1) is False
+    assert regime_defs._rowcount_is_unknown(-1) is True
+    assert regime_defs._rowcount_is_unknown(None) is True
+    assert regime_defs._rowcount_is_unknown(1) is False
+
+
 def test_validate_regime_definition_payload():
     normalized, error = validate_regime_definition_payload(_definition_payload("QCycle", method_type=1))
     assert error is None
