@@ -125,6 +125,9 @@ from utils.factor_definitions import (
 from utils.regime_analysis import (
     build_regime_conditioned_summary,
     build_regime_duration_table,
+    regime_required_series,
+    regime_series_store_names,
+    resolve_regime_source_data,
     build_regime_statistics_table,
     build_regime_timeline_frame,
     build_regime_transition_matrix,
@@ -3414,6 +3417,7 @@ layout = dmc.Container(
         dcc.Store(id="at-regime-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-regime-def-modal-draft-store", data=None, storage_type="session"),
         dcc.Store(id="at-regime-def-db-available-store", data=False, storage_type="session"),
+        dcc.Store(id="at-regime-series-store", data={"series_data": {}}, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
@@ -3755,6 +3759,7 @@ clientside_callback(
                 'at-regime-definitions-local-store',
                 'at-regime-def-modal-draft-store',
                 'at-regime-def-db-available-store',
+                'at-regime-series-store',
                 'at-monthly-view-store',
                 'at-monthly-series-store',
                 'at-date-range-store',
@@ -4802,6 +4807,7 @@ def at_open_regime_definition_modal(menu_clicks, tab_clicks):
     Input("at-regime-def-modal", "opened"),
     State("dashmat-raw-data-store", "data"),
     State("at-series-select", "data"),
+    State("at-regime-series-store", "data"),
     State("at-regime-def-modal-draft-store", "data"),
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
@@ -4814,6 +4820,7 @@ def at_load_regime_modal_data(
     opened,
     raw_data,
     selected_series,
+    regime_series_store,
     current_draft,
     benchmark_assignments,
     long_short_assignments,
@@ -4824,17 +4831,26 @@ def at_load_regime_modal_data(
     if not opened:
         raise PreventUpdate
 
-    series_order = []
+    raw_series_order = []
     if raw_data:
         try:
             df = json_to_df(raw_data)
             all_series = list(df.columns)
             selected_order = [s for s in (selected_series or []) if s in all_series]
             remaining = [s for s in all_series if s not in selected_order]
-            series_order = selected_order + remaining
+            raw_series_order = selected_order + remaining
         except Exception:
-            series_order = []
-    series_options = [{"value": s, "label": s} for s in series_order]
+            raw_series_order = []
+
+    cached_regime_series = [
+        name for name in regime_series_store_names(regime_series_store)
+        if name not in set(raw_series_order)
+    ]
+    series_options = (
+        [{"value": s, "label": s} for s in raw_series_order]
+        + [{"value": s, "label": f"[Loaded for Regime] {s}"} for s in cached_regime_series]
+    )
+    series_order = raw_series_order + cached_regime_series
 
     db_available = regime_tables_available(DB_ENGINE)
     db_definitions = load_regime_definitions(DB_ENGINE) if db_available else []
@@ -4853,9 +4869,9 @@ def at_load_regime_modal_data(
             dict(vol_scaling_assignments) if isinstance(vol_scaling_assignments, dict) else {}
         )
         draft["VolScaler"] = float(pd.to_numeric(pd.Series([vol_scaler]), errors="coerce").iloc[0] or 0.0)
-        if series_order:
+        if raw_series_order:
             draft["UniverseSeries"] = list(series_order[: min(8, len(series_order))])
-            draft["SingleSeries"] = series_order[0]
+            draft["SingleSeries"] = raw_series_order[0]
 
     valid_set = set(series_order)
     draft["UniverseSeries"] = [s for s in draft.get("UniverseSeries", []) if s in valid_set]
@@ -5018,33 +5034,53 @@ def at_update_regime_definition_draft_from_form(
 
 @callback(
     Output("at-regime-def-preview-lines", "children"),
+    Output("at-regime-series-store", "data", allow_duplicate=True),
     Input("at-regime-def-modal", "opened"),
     Input("at-regime-def-modal-draft-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-date-range-store", "data"),
+    State("at-regime-series-store", "data"),
     prevent_initial_call=True,
 )
-def at_update_regime_definition_preview(opened, draft_data, raw_data, periodicity, date_range):
+def at_update_regime_definition_preview(
+    opened,
+    draft_data,
+    raw_data,
+    periodicity,
+    date_range,
+    regime_series_store,
+):
     if not opened:
         raise PreventUpdate
-    if not raw_data:
-        return "Upload or load return data to preview regime assignments."
 
     payload = _regime_draft_to_definition_payload(draft_data or {})
     normalized, error = validate_regime_definition_payload(payload)
     if error or not normalized:
-        return "Define a valid regime to preview assignments."
+        return "Define a valid regime to preview assignments.", no_update
+
+    required_series = regime_required_series(normalized)
+    combined_raw_data, next_regime_series_store, _resolved, unresolved = resolve_regime_source_data(
+        raw_data=raw_data,
+        regime_series_store=regime_series_store,
+        required_series=required_series,
+        db_engine=DB_ENGINE,
+        mrd_engine=MRD_ENGINE,
+    )
+    if not combined_raw_data:
+        return "Upload or load return data to preview regime assignments.", next_regime_series_store
 
     states, diagnostics = compute_regime_assignments(
-        raw_data=raw_data,
+        raw_data=combined_raw_data,
         periodicity=periodicity or "daily",
         definition=normalized,
         date_range=date_range,
     )
     if states.empty:
         warning = str((diagnostics or {}).get("warning") or "No assignments were produced for the current inputs.")
-        return f"No assignments returned.\nReason: {warning}"
+        if unresolved:
+            warning = f"{warning} Missing source series: {', '.join(unresolved)}."
+        return f"No assignments returned.\nReason: {warning}", next_regime_series_store
 
     timeline = build_regime_timeline_frame(states)
     counts = states.value_counts().sort_index()
@@ -5060,7 +5096,9 @@ def at_update_regime_definition_preview(opened, draft_data, raw_data, periodicit
     warning = (diagnostics or {}).get("warning")
     if warning:
         lines.append(f"Warning: {warning}")
-    return "\n".join(lines)
+    if unresolved:
+        lines.append(f"Missing source series: {', '.join(unresolved)}")
+    return "\n".join(lines), next_regime_series_store
 
 
 @callback(
@@ -7994,6 +8032,7 @@ def _build_regime_grid_component(
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("at-regime-definitions-db-store", "data"),
     State("at-regime-definitions-local-store", "data"),
+    State("at-regime-series-store", "data"),
     prevent_initial_call=True,
 )
 def update_regime_analysis(
@@ -8012,6 +8051,7 @@ def update_regime_analysis(
     theme,
     regime_definitions_db=None,
     regime_definitions_local=None,
+    regime_series_store=None,
 ):
     if (
         active_tab != "regime_analysis"
@@ -8032,18 +8072,37 @@ def update_regime_analysis(
     if not definition:
         return None, dmc.Text("Selected regime definition is unavailable.", size="sm", c="dimmed")
 
-    states, diagnostics = compute_regime_assignments(
+    required_series = regime_required_series(definition)
+    combined_raw_data, _next_regime_series_store, _resolved, unresolved = resolve_regime_source_data(
         raw_data=raw_data,
+        regime_series_store=regime_series_store,
+        required_series=required_series,
+        db_engine=DB_ENGINE,
+        mrd_engine=MRD_ENGINE,
+    )
+    if not combined_raw_data:
+        return (
+            dmc.Alert("Unable to resolve required source series for regime analysis.", color="orange", variant="light"),
+            dmc.Text("No regime assignments.", size="sm", c="dimmed"),
+        )
+
+    states, diagnostics = compute_regime_assignments(
+        raw_data=combined_raw_data,
         periodicity=periodicity or "daily",
         definition=definition,
         date_range=date_range,
     )
     if states.empty:
         warning = str((diagnostics or {}).get("warning") or "No regime assignments were produced.")
-        return dmc.Alert(warning, color="orange", variant="light"), dmc.Text("No regime assignments.", size="sm", c="dimmed")
+        if unresolved:
+            warning = f"{warning} Missing source series: {', '.join(unresolved)}."
+        return (
+            dmc.Alert(warning, color="orange", variant="light"),
+            dmc.Text("No regime assignments.", size="sm", c="dimmed"),
+        )
 
     returns_df = calculate_excess_returns(
-        raw_data,
+        combined_raw_data,
         periodicity or "daily",
         tuple(selected_series),
         _mapping_payload(benchmark_assignments),
@@ -8125,6 +8184,15 @@ def update_regime_analysis(
     warning_text = str((diagnostics or {}).get("warning") or "").strip()
     if warning_text:
         warning_children.append(dmc.Alert(warning_text, color="orange", variant="light", mb="sm"))
+    if unresolved:
+        warning_children.append(
+            dmc.Alert(
+                f"Missing source series (not resolved from DB): {', '.join(unresolved)}",
+                color="orange",
+                variant="light",
+                mb="sm",
+            )
+        )
     warning_children.append(
         dmc.Alert(
             f"Method type {diagnostics.get('method_type')} | Regimes: {diagnostics.get('num_regimes')} | Observations: {diagnostics.get('observations')}",
@@ -8592,6 +8660,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-regime-definition-select", "value"),
     State("at-regime-definitions-db-store", "data"),
     State("at-regime-definitions-local-store", "data"),
+    State("at-regime-series-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
@@ -8621,6 +8690,7 @@ def download_excel(
     regime_definition_key=None,
     regime_definitions_db=None,
     regime_definitions_local=None,
+    regime_series_store=None,
     saved_series_store=None,
 ):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
@@ -8966,8 +9036,18 @@ def download_excel(
                                 regime_definitions_local,
                             )
                             if regime_definition:
-                                states, diagnostics = compute_regime_assignments(
+                                required_series = regime_required_series(regime_definition)
+                                regime_raw_data, _resolved_regime_store, _resolved, unresolved = resolve_regime_source_data(
                                     raw_data=bundle.raw_data,
+                                    regime_series_store=regime_series_store,
+                                    required_series=required_series,
+                                    db_engine=DB_ENGINE,
+                                    mrd_engine=MRD_ENGINE,
+                                )
+                                if not regime_raw_data:
+                                    regime_raw_data = bundle.raw_data
+                                states, diagnostics = compute_regime_assignments(
+                                    raw_data=regime_raw_data,
                                     periodicity=bundle.periodicity,
                                     definition=regime_definition,
                                     date_range=date_range,
@@ -8990,7 +9070,15 @@ def download_excel(
                                                 "MethodType": diagnostics.get("method_type"),
                                                 "NumRegimes": diagnostics.get("num_regimes"),
                                                 "Observations": diagnostics.get("observations"),
-                                                "Warning": diagnostics.get("warning"),
+                                                "Warning": (
+                                                    f"{diagnostics.get('warning')}; Missing source series: {', '.join(unresolved)}"
+                                                    if diagnostics.get("warning") and unresolved
+                                                    else (
+                                                        f"Missing source series: {', '.join(unresolved)}"
+                                                        if unresolved
+                                                        else diagnostics.get("warning")
+                                                    )
+                                                ),
                                             }
                                         ]
                                     )

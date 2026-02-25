@@ -8,11 +8,20 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
+from sqlalchemy.engine import Engine
 from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
 
 import cache_config
+from utils.core_categories import load_cma_returns_for_benches_with_meta
 from utils.regime_definitions import validate_regime_definition_payload
-from utils.returns import annualization_factor, calculate_excess_returns, get_working_returns
+from utils.returns import (
+    annualization_factor,
+    calculate_excess_returns,
+    df_to_json,
+    get_working_returns,
+    json_to_df,
+    merge_returns,
+)
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.statistics import maximum_drawdown, sharpe_ratio, sortino_ratio
 
@@ -33,6 +42,194 @@ def _as_tuple(series: Any) -> tuple:
     if not text_val:
         return tuple()
     return (text_val,)
+
+
+def regime_required_series(definition: dict[str, Any] | None) -> list[str]:
+    """Extract required source series names from a regime definition."""
+    normalized, error = validate_regime_definition_payload(definition or {})
+    if error or not normalized:
+        return []
+
+    method_type = int(normalized.get("MethodType", 0) or 0)
+    config = normalized.get("Config", {}) if isinstance(normalized.get("Config"), dict) else {}
+    out: list[str] = []
+    seen: set[str] = set()
+
+    if method_type in {1, 2}:
+        for item in config.get("universe_series", []) or []:
+            name = str(item or "").strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(name)
+    elif method_type == 3:
+        name = str(config.get("single_series", "") or "").strip()
+        if name:
+            out.append(name)
+    return out
+
+
+def normalize_regime_series_store(regime_series_store: Any) -> dict[str, Any]:
+    """Normalize session payload for lazily loaded regime-only source series."""
+    if not isinstance(regime_series_store, dict):
+        return {"series_data": {}}
+
+    series_data_raw = regime_series_store.get("series_data")
+    if not isinstance(series_data_raw, dict):
+        return {"series_data": {}}
+
+    normalized_series_data: dict[str, dict[str, Any]] = {}
+    for raw_name, payload in series_data_raw.items():
+        name = str(raw_name or "").strip()
+        if not name or not isinstance(payload, dict):
+            continue
+        returns_json = payload.get("returns_json")
+        if not isinstance(returns_json, str) or not returns_json:
+            continue
+        normalized_series_data[name] = {
+            "returns_json": returns_json,
+            "source": str(payload.get("source") or "db"),
+            "loaded_at": payload.get("loaded_at"),
+        }
+    return {"series_data": normalized_series_data}
+
+
+def regime_series_store_names(regime_series_store: Any) -> list[str]:
+    """List available series names currently stored in regime-series cache."""
+    normalized = normalize_regime_series_store(regime_series_store)
+    return sorted([str(name) for name in normalized.get("series_data", {}).keys()])
+
+
+def _regime_store_df(regime_series_store: Any) -> pd.DataFrame:
+    normalized = normalize_regime_series_store(regime_series_store)
+    series_data = normalized.get("series_data", {})
+    if not isinstance(series_data, dict) or not series_data:
+        return pd.DataFrame()
+
+    merged: pd.DataFrame | None = None
+    for name, payload in series_data.items():
+        if not isinstance(payload, dict):
+            continue
+        returns_json = payload.get("returns_json")
+        if not isinstance(returns_json, str) or not returns_json:
+            continue
+        try:
+            df = json_to_df(returns_json)
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        if name in df.columns:
+            series_df = df[[name]]
+        elif len(df.columns) == 1:
+            only_col = df.columns[0]
+            series_df = df.rename(columns={only_col: name})[[name]]
+        else:
+            continue
+        series_df = series_df.dropna(how="all")
+        if series_df.empty:
+            continue
+        merged = series_df if merged is None else merge_returns(merged, series_df)
+    if merged is None:
+        return pd.DataFrame()
+    return merged.sort_index()
+
+
+def resolve_regime_source_data(
+    raw_data: str | None,
+    regime_series_store: Any,
+    required_series: list[str] | tuple[str, ...] | None,
+    db_engine: Engine,
+    mrd_engine: Engine,
+) -> tuple[str | None, dict[str, Any], list[str], list[str]]:
+    """Resolve required regime source series from raw data + regime store + DB.
+
+    Returns:
+        combined_raw_data_json,
+        updated_regime_series_store,
+        available_required_series,
+        unresolved_required_series,
+    """
+    required: list[str] = []
+    seen: set[str] = set()
+    for item in required_series or []:
+        name = str(item or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        required.append(name)
+
+    normalized_store = normalize_regime_series_store(regime_series_store)
+
+    raw_df = pd.DataFrame()
+    if isinstance(raw_data, str) and raw_data:
+        try:
+            raw_df = json_to_df(raw_data)
+        except Exception:
+            raw_df = pd.DataFrame()
+    raw_df = raw_df.sort_index() if not raw_df.empty else pd.DataFrame()
+
+    cached_df = _regime_store_df(normalized_store)
+    available_now = set(raw_df.columns) | set(cached_df.columns)
+    missing = [name for name in required if name not in available_now]
+
+    unresolved: list[str] = []
+    if missing:
+        loaded_df = pd.DataFrame()
+        try:
+            loaded_df, _meta = load_cma_returns_for_benches_with_meta(
+                db_engine,
+                missing,
+                mrd_engine,
+            )
+        except Exception:
+            loaded_df = pd.DataFrame()
+
+        loaded_cols = [col for col in missing if col in loaded_df.columns]
+        unresolved = [name for name in missing if name not in loaded_cols]
+
+        if loaded_cols:
+            loaded_df = loaded_df[loaded_cols].sort_index()
+            series_data = dict(normalized_store.get("series_data", {}) or {})
+            loaded_at = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            for col in loaded_cols:
+                col_df = loaded_df[[col]].dropna(how="all")
+                if col_df.empty:
+                    continue
+                series_data[col] = {
+                    "returns_json": df_to_json(col_df),
+                    "source": "db",
+                    "loaded_at": loaded_at,
+                }
+            normalized_store = {"series_data": series_data}
+            cached_df = _regime_store_df(normalized_store)
+
+    combined_df: pd.DataFrame | None = None
+    if not raw_df.empty:
+        combined_df = raw_df.copy()
+    if not cached_df.empty:
+        if combined_df is None:
+            combined_df = cached_df.copy()
+        else:
+            add_cols = [c for c in cached_df.columns if c not in combined_df.columns]
+            if add_cols:
+                combined_df = merge_returns(combined_df, cached_df[add_cols])
+
+    combined_raw = raw_data if isinstance(raw_data, str) and raw_data else None
+    if combined_df is not None and not combined_df.empty:
+        combined_raw = df_to_json(combined_df)
+
+    available_required: list[str] = []
+    if combined_df is not None and not combined_df.empty:
+        available_required = [name for name in required if name in combined_df.columns]
+
+    return combined_raw, normalized_store, available_required, unresolved
 
 
 def prepare_regime_input_frame(
