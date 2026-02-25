@@ -623,6 +623,59 @@ def _regime_draft_to_definition_payload(draft: dict) -> dict:
     return payload
 
 
+def _build_regime_series_options(raw_data, selected_series, regime_series_store, draft_data=None):
+    raw_series_order = []
+    if raw_data:
+        try:
+            df = json_to_df(raw_data)
+            all_series = list(df.columns)
+            selected_order = [s for s in (selected_series or []) if s in all_series]
+            remaining = [s for s in all_series if s not in selected_order]
+            raw_series_order = selected_order + remaining
+        except Exception:
+            raw_series_order = []
+
+    cached_regime_series = [
+        name for name in regime_series_store_names(regime_series_store)
+        if name not in set(raw_series_order)
+    ]
+
+    draft = _ensure_regime_draft(draft_data)
+    draft_series = []
+    seen_draft = set()
+    for value in list(draft.get("UniverseSeries") or []) + [draft.get("SingleSeries")]:
+        name = str(value or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen_draft:
+            continue
+        seen_draft.add(key)
+        draft_series.append(name)
+
+    ordered_series = []
+    labels_by_name = {}
+    seen = set()
+
+    def _append(name: str, label: str):
+        key = name.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        ordered_series.append(name)
+        labels_by_name[name] = label
+
+    for name in raw_series_order:
+        _append(name, name)
+    for name in cached_regime_series:
+        _append(name, f"[Loaded for Regime] {name}")
+    for name in draft_series:
+        _append(name, f"[In Definition] {name}")
+
+    options = [{"value": name, "label": labels_by_name[name]} for name in ordered_series]
+    return options, ordered_series, raw_series_order
+
+
 def _prepare_factor_analysis_frames(
     raw_data,
     periodicity,
@@ -4831,32 +4884,18 @@ def at_load_regime_modal_data(
     if not opened:
         raise PreventUpdate
 
-    raw_series_order = []
-    if raw_data:
-        try:
-            df = json_to_df(raw_data)
-            all_series = list(df.columns)
-            selected_order = [s for s in (selected_series or []) if s in all_series]
-            remaining = [s for s in all_series if s not in selected_order]
-            raw_series_order = selected_order + remaining
-        except Exception:
-            raw_series_order = []
-
-    cached_regime_series = [
-        name for name in regime_series_store_names(regime_series_store)
-        if name not in set(raw_series_order)
-    ]
-    series_options = (
-        [{"value": s, "label": s} for s in raw_series_order]
-        + [{"value": s, "label": f"[Loaded for Regime] {s}"} for s in cached_regime_series]
+    draft = _ensure_regime_draft(current_draft)
+    series_options, series_order, raw_series_order = _build_regime_series_options(
+        raw_data,
+        selected_series,
+        regime_series_store,
+        draft,
     )
-    series_order = raw_series_order + cached_regime_series
 
     db_available = regime_tables_available(DB_ENGINE)
     db_definitions = load_regime_definitions(DB_ENGINE) if db_available else []
     note = "" if db_available else "Database regime tables are unavailable. Session regimes are still supported."
 
-    draft = _ensure_regime_draft(current_draft)
     if not isinstance(current_draft, dict):
         draft["ReturnBasis"] = "excess" if str(returns_type or "").lower() == "excess" else "total"
         draft["BenchmarkAssignmentsJson"] = (
@@ -4938,6 +4977,50 @@ def at_load_selected_regime_definition(selected_key, db_definitions, local_defin
             raise PreventUpdate
         return _regime_definition_to_draft(definition, "session", selected_key=selected_key)
     raise PreventUpdate
+
+
+@callback(
+    Output("at-regime-def-universe-series", "data", allow_duplicate=True),
+    Output("at-regime-def-single-series", "data", allow_duplicate=True),
+    Input("at-regime-def-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-series-select", "data"),
+    State("at-regime-series-store", "data"),
+    State("at-regime-definitions-db-store", "data"),
+    State("at-regime-definitions-local-store", "data"),
+    State("at-regime-def-modal-draft-store", "data"),
+    prevent_initial_call=True,
+)
+def at_refresh_regime_series_options_for_definition(
+    selected_key,
+    raw_data,
+    selected_series,
+    regime_series_store,
+    db_definitions,
+    local_definitions,
+    current_draft,
+):
+    if not selected_key:
+        raise PreventUpdate
+
+    source, name = _split_regime_select_key(selected_key)
+    definition_draft = _ensure_regime_draft(current_draft)
+    if source == "db":
+        definition = _lookup_regime_definition(name, db_definitions, [])
+        if definition:
+            definition_draft = _regime_definition_to_draft(definition, "db", selected_key=selected_key)
+    elif source == "session":
+        definition = _lookup_regime_definition(name, [], local_definitions)
+        if definition:
+            definition_draft = _regime_definition_to_draft(definition, "session", selected_key=selected_key)
+
+    series_options, _series_order, _raw_series_order = _build_regime_series_options(
+        raw_data,
+        selected_series,
+        regime_series_store,
+        definition_draft,
+    )
+    return series_options, series_options
 
 
 @callback(
