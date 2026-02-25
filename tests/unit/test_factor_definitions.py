@@ -181,6 +181,28 @@ def test_factor_lookup_by_name_falls_back_to_trimmed_case_insensitive_match():
     assert str(row.get("FactorName", "")).strip().lower() == "carry"
 
 
+def test_factor_definition_matches_payload_ignores_update_timestamp():
+    normalized, error = validate_factor_definition_payload(
+        {
+            "FactorName": "Carry",
+            "LongComponent": ["ACC1 TRIndex"],
+            "ShortComponent": ["ACC2 TRIndex"],
+            "Description": "desc",
+            "LongAggType": 2,
+            "ShortAggType": 2,
+            "LongLag": 1,
+            "OutputTransform": 2,
+        }
+    )
+    assert error is None and normalized is not None
+    row = {
+        **normalized,
+        "UPDATE_DATE": "2020-01-01 00:00:00",
+        "UPDATE_BY": "x",
+    }
+    assert factor_defs._factor_definition_matches_payload(row, normalized, "Carry") is True
+
+
 def test_validate_factor_definition_payload():
     normalized, error = validate_factor_definition_payload(
         {

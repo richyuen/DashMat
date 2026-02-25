@@ -145,6 +145,40 @@ def _rowcount_is_unknown(rowcount: Any) -> bool:
         return rowcount is None
 
 
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text_val = str(value).strip()
+    return text_val or None
+
+
+def _regime_definition_matches_payload(
+    row: dict[str, Any],
+    normalized_payload: dict[str, Any],
+    target_name: str,
+) -> bool:
+    row_normalized = _normalize_db_definition_row(row)
+    if not row_normalized:
+        return False
+
+    if str(row_normalized.get("RegimeName", "")).strip().lower() != str(target_name or "").strip().lower():
+        return False
+    if _text_or_none(row_normalized.get("Description")) != _text_or_none(normalized_payload.get("Description")):
+        return False
+    if _parse_int(row_normalized.get("MethodType")) != _parse_int(normalized_payload.get("MethodType")):
+        return False
+
+    expected_cfg = normalized_payload.get("Config")
+    row_cfg = row_normalized.get("Config")
+    if not isinstance(expected_cfg, dict):
+        expected_cfg = {}
+    if not isinstance(row_cfg, dict):
+        row_cfg = {}
+    if canonical_json_dumps(row_cfg) != canonical_json_dumps(expected_cfg):
+        return False
+    return True
+
+
 def validate_regime_definition_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     """Validate and normalize a regime definition payload."""
     name = str(payload.get("RegimeName", "")).strip()
@@ -397,7 +431,7 @@ def save_regime_definition(
                 return False, "Definition changed in another session. Reload before saving.", None
             if _rowcount_is_unknown(result.rowcount):
                 refreshed = _load_definition_row_by_name(conn, db_engine, target_name)
-                if refreshed is None or not _timestamps_equal(refreshed.get("UPDATE_DATE"), now_val):
+                if refreshed is None or not _regime_definition_matches_payload(refreshed, normalized, target_name):
                     return False, "Definition changed in another session. Reload before saving.", None
         else:
             existing = _load_definition_row_by_name(conn, db_engine, target_name)

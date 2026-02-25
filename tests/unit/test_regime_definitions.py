@@ -103,6 +103,21 @@ def test_regime_lookup_by_name_falls_back_to_trimmed_case_insensitive_match():
     assert str(row.get("RegimeName", "")).strip().lower() == "cyclea"
 
 
+def test_regime_definition_matches_payload_ignores_update_timestamp():
+    payload = _definition_payload("CycleA", method_type=1)
+    normalized, error = validate_regime_definition_payload(payload)
+    assert error is None and normalized is not None
+    row = {
+        "RegimeName": "CycleA",
+        "Description": normalized.get("Description"),
+        "MethodType": normalized.get("MethodType"),
+        "ConfigJson": normalized.get("ConfigJson"),
+        "UPDATE_DATE": "2020-01-01 00:00:00",
+        "UPDATE_BY": "x",
+    }
+    assert regime_defs._regime_definition_matches_payload(row, normalized, "CycleA") is True
+
+
 def test_validate_regime_definition_payload():
     normalized, error = validate_regime_definition_payload(_definition_payload("QCycle", method_type=1))
     assert error is None

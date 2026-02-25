@@ -283,6 +283,41 @@ def _rowcount_is_unknown(rowcount: Any) -> bool:
         return rowcount is None
 
 
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text_val = str(value).strip()
+    return text_val or None
+
+
+def _factor_definition_matches_payload(
+    row: dict[str, Any],
+    normalized_payload: dict[str, Any],
+    target_name: str,
+) -> bool:
+    row_normalized = _normalize_db_definition_row(row)
+    if not row_normalized:
+        return False
+
+    if str(row_normalized.get("FactorName", "")).strip().lower() != str(target_name or "").strip().lower():
+        return False
+    if _text_or_none(row_normalized.get("LongComponent")) != _text_or_none(normalized_payload.get("LongComponent")):
+        return False
+    if _text_or_none(row_normalized.get("ShortComponent")) != _text_or_none(normalized_payload.get("ShortComponent")):
+        return False
+    if _text_or_none(row_normalized.get("Description")) != _text_or_none(normalized_payload.get("Description")):
+        return False
+    if _parse_int(row_normalized.get("LongAggType")) != _parse_int(normalized_payload.get("LongAggType")):
+        return False
+    if _parse_int(row_normalized.get("ShortAggType")) != _parse_int(normalized_payload.get("ShortAggType")):
+        return False
+    if _parse_int(row_normalized.get("LongLag")) != _parse_int(normalized_payload.get("LongLag")):
+        return False
+    if _parse_int(row_normalized.get("OutputTransform")) != _parse_int(normalized_payload.get("OutputTransform")):
+        return False
+    return True
+
+
 def save_factor_definition(
     db_engine: Engine,
     payload: dict[str, Any],
@@ -358,7 +393,7 @@ def save_factor_definition(
                 return False, "Definition changed in another session. Reload before saving.", None
             if _rowcount_is_unknown(result.rowcount):
                 refreshed = _load_definition_row_by_name(conn, target_name, factor_table)
-                if refreshed is None or not _timestamps_equal(refreshed.get("UPDATE_DATE"), now_val):
+                if refreshed is None or not _factor_definition_matches_payload(refreshed, normalized, target_name):
                     return False, "Definition changed in another session. Reload before saving.", None
         else:
             existing = _load_definition_row_by_name(conn, target_name, factor_table)
