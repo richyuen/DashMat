@@ -71,6 +71,8 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
     js_portfolio_ok_disabled,
+    js_release_ui_blocker_on_modal_state,
+    js_set_ui_blocker_true,
 )
 from utils.sample_data import get_sample_file_path
 from utils.core_categories import clear_dropdown_caches, load_cma_returns_for_benches_with_meta
@@ -2126,6 +2128,14 @@ layout = dmc.Container(
         dcc.Download(id="reg-download-sample-monthly"),
         dcc.Location(id="reg-url-location", refresh=False),
         dcc.Interval(id="reg-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
+        dcc.Store(id="reg-ui-blocker-store", data=False),
+        dmc.LoadingOverlay(
+            id="reg-ui-blocker-overlay",
+            visible=False,
+            zIndex=2000,
+            overlayProps={"radius": "sm", "blur": 2},
+            loaderProps={"variant": "bars"},
+        ),
     ],
 )
 
@@ -2324,6 +2334,82 @@ clientside_callback(
     Output("reg-upload-data", "contents", allow_duplicate=True),
     Input("reg-welcome-add-series-btn", "n_clicks"),
     State("reg-upload-data", "contents"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(is_loading) {
+        return is_loading || false;
+    }
+    """,
+    Output("reg-ui-blocker-overlay", "visible"),
+    Input("reg-ui-blocker-store", "data"),
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-db-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-raw-db-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-portfolio-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-modal-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-db-add-modal", "opened"),
+    Input("reg-db-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-raw-db-add-modal", "opened"),
+    Input("reg-raw-db-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-portfolio-add-modal", "opened"),
+    Input("reg-portfolio-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(opened) {
+        if (opened === false) {
+            return false;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
 

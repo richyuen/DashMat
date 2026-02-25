@@ -4127,7 +4127,44 @@ clientside_callback(
 clientside_callback(
     js_set_ui_blocker_true(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-db-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-raw-db-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-portfolio-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-modal-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-db-add-modal", "opened"),
+    Input("po-alert-message", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-raw-db-add-modal", "opened"),
+    Input("po-raw-db-add-error-alert", "hide"),
     prevent_initial_call=True,
 )
 
@@ -4136,6 +4173,20 @@ clientside_callback(
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-portfolio-add-modal", "opened"),
     Input("po-portfolio-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(opened) {
+        if (opened === false) {
+            return false;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
 

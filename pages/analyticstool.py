@@ -1466,7 +1466,44 @@ clientside_callback(
 clientside_callback(
     js_set_ui_blocker_true(),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-db-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-raw-db-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-modal-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-db-add-modal", "opened"),
+    Input("at-alert-message", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-raw-db-add-modal", "opened"),
+    Input("at-raw-db-add-error-alert", "hide"),
     prevent_initial_call=True,
 )
 
@@ -1475,6 +1512,20 @@ clientside_callback(
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-modal", "opened"),
     Input("at-portfolio-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(opened) {
+        if (opened === false) {
+            return false;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
 
