@@ -123,7 +123,6 @@ from utils.factor_definitions import (
     validate_factor_definition_payload,
 )
 from utils.regime_analysis import (
-    build_regime_conditioned_summary,
     build_regime_duration_table,
     regime_required_series,
     regime_series_store_names,
@@ -135,7 +134,6 @@ from utils.regime_analysis import (
 )
 from utils.regime_definitions import (
     REGIME_METHOD_OPTIONS,
-    REGIME_RETURN_BASIS_OPTIONS,
     delete_regime_definition,
     load_regime_definitions,
     regime_tables_available,
@@ -230,6 +228,25 @@ class _AnalyticsComputeBundle:
     vol_scaling_payload: str
 
 
+@dataclass(frozen=True)
+class _RegimeAnalysisPayload:
+    definition: dict
+    diagnostics: dict
+    unresolved: tuple[str, ...]
+    settings_df: pd.DataFrame
+    timeline_df: pd.DataFrame
+    stats_df: pd.DataFrame
+    transition_df: pd.DataFrame
+    duration_df: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class _RegimeAnalysisBuildResult:
+    status: str
+    message: str | None = None
+    payload: _RegimeAnalysisPayload | None = None
+
+
 def _build_analytics_compute_bundle(
     raw_data,
     periodicity,
@@ -250,6 +267,128 @@ def _build_analytics_compute_bundle(
         date_range_payload=_date_range_payload(date_range),
         vol_scaler=vol_scaler or 0,
         vol_scaling_payload=_mapping_payload(vol_scaling_assignments),
+    )
+
+
+def _build_regime_warning_text(diagnostics, unresolved: tuple[str, ...]) -> str:
+    warning_text = str((diagnostics or {}).get("warning") or "").strip()
+    if warning_text and unresolved:
+        return f"{warning_text}; Missing source series: {', '.join(unresolved)}"
+    if unresolved:
+        return f"Missing source series: {', '.join(unresolved)}"
+    return warning_text
+
+
+def _build_regime_analysis_payload(
+    raw_data,
+    periodicity,
+    selected_series,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    regime_definition_key,
+    regime_definitions_db,
+    regime_definitions_local,
+    regime_series_store,
+) -> _RegimeAnalysisBuildResult:
+    if not regime_definition_key:
+        return _RegimeAnalysisBuildResult("missing_definition", "Select a regime definition.")
+
+    _regime_prefix, regime_name = _split_regime_select_key(regime_definition_key)
+    definition = _lookup_regime_definition(regime_name, regime_definitions_db, regime_definitions_local)
+    if not definition:
+        return _RegimeAnalysisBuildResult("definition_unavailable", "Selected regime definition is unavailable.")
+
+    required_series = regime_required_series(definition)
+    combined_raw_data, _next_regime_series_store, _resolved, unresolved = resolve_regime_source_data(
+        raw_data=raw_data,
+        regime_series_store=regime_series_store,
+        required_series=required_series,
+        db_engine=DB_ENGINE,
+        mrd_engine=MRD_ENGINE,
+    )
+    if not combined_raw_data:
+        return _RegimeAnalysisBuildResult(
+            "no_source_data",
+            "Unable to resolve required source series for regime analysis.",
+        )
+
+    bundle = _build_analytics_compute_bundle(
+        combined_raw_data,
+        periodicity,
+        selected_series,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+    )
+    states, diagnostics = compute_regime_assignments(
+        raw_data=combined_raw_data,
+        periodicity=bundle.periodicity,
+        definition=definition,
+        date_range=date_range,
+    )
+    unresolved_tuple = tuple(str(item) for item in (unresolved or []) if str(item).strip())
+    if states.empty:
+        warning = str((diagnostics or {}).get("warning") or "No regime assignments were produced.")
+        if unresolved_tuple:
+            warning = f"{warning} Missing source series: {', '.join(unresolved_tuple)}."
+        return _RegimeAnalysisBuildResult("no_assignments", warning)
+
+    working_returns_df = get_working_returns(
+        combined_raw_data,
+        bundle.periodicity,
+        bundle.selected_series,
+        bundle.benchmark_payload,
+        bundle.long_short_payload,
+        bundle.date_range_payload,
+        bundle.vol_scaler,
+        bundle.vol_scaling_payload,
+    )
+    if working_returns_df.empty:
+        return _RegimeAnalysisBuildResult("no_returns", "No series returns available for current settings.")
+
+    selected_columns = [col for col in bundle.selected_series if col in working_returns_df.columns]
+    if not selected_columns:
+        return _RegimeAnalysisBuildResult("no_selected_returns", "No selected series returns available for current settings.")
+
+    timeline_df = build_regime_timeline_frame(states)
+    stats_df = build_regime_statistics_table(
+        working_returns_df,
+        states,
+        bundle.periodicity,
+        selected_series=tuple(selected_columns),
+        benchmark_assignments=benchmark_assignments,
+        long_short_assignments=long_short_assignments,
+    )
+    transition_df = build_regime_transition_matrix(states)
+    duration_df = build_regime_duration_table(states)
+    settings_df = pd.DataFrame(
+        [
+            {
+                "RegimeName": definition.get("RegimeName"),
+                "MethodType": diagnostics.get("method_type"),
+                "NumRegimes": diagnostics.get("num_regimes"),
+                "Observations": diagnostics.get("observations"),
+                "Warning": _build_regime_warning_text(diagnostics, unresolved_tuple) or None,
+            }
+        ]
+    )
+    return _RegimeAnalysisBuildResult(
+        "ok",
+        payload=_RegimeAnalysisPayload(
+            definition=dict(definition),
+            diagnostics=dict(diagnostics or {}),
+            unresolved=unresolved_tuple,
+            settings_df=settings_df,
+            timeline_df=timeline_df,
+            stats_df=stats_df,
+            transition_df=transition_df,
+            duration_df=duration_df,
+        ),
     )
 
 
@@ -275,10 +414,15 @@ def _factor_user_label(userinfo):
     return role
 
 
+def _source_badge(source: str) -> str:
+    return "[DB]" if str(source or "").strip().lower() == "db" else "[Session]"
+
+
 def _default_factor_draft() -> dict:
     return {
         "selected_key": None,
         "source": "session",
+        "DraftMode": "new",
         "sync_origin": "system",
         "original_name": None,
         "selected_update_date": None,
@@ -307,6 +451,23 @@ def _ensure_factor_draft(value):
     draft["OutputTransform"] = int(
         pd.to_numeric(pd.Series([draft.get("OutputTransform", 0)]), errors="coerce").iloc[0] or 0
     )
+    draft_mode = str(draft.get("DraftMode") or "").strip().lower()
+    if draft_mode not in {"db", "session", "new"}:
+        if str(draft.get("source") or "").strip().lower() == "db":
+            draft_mode = "db"
+        elif draft.get("selected_key"):
+            draft_mode = "session"
+        else:
+            draft_mode = "new"
+    draft["DraftMode"] = draft_mode
+    if draft_mode == "db":
+        draft["source"] = "db"
+    else:
+        draft["source"] = "session"
+    if draft_mode == "new":
+        draft["selected_key"] = None
+        draft["original_name"] = None
+        draft["selected_update_date"] = None
     return draft
 
 
@@ -409,6 +570,49 @@ def _definition_payload_for_compute(definition: dict) -> str:
     )
 
 
+def _factor_definition_signature(definition: dict | None) -> str:
+    if not isinstance(definition, dict):
+        return ""
+    normalized, error = validate_factor_definition_payload(
+        {
+            "FactorName": definition.get("FactorName"),
+            "LongComponent": definition.get("LongComponent", definition.get("LongComponentList")),
+            "ShortComponent": definition.get("ShortComponent", definition.get("ShortComponentList")),
+            "Description": definition.get("Description"),
+            "LongAggType": definition.get("LongAggType"),
+            "ShortAggType": definition.get("ShortAggType"),
+            "LongLag": definition.get("LongLag"),
+            "OutputTransform": definition.get("OutputTransform"),
+        }
+    )
+    if error or not normalized:
+        return ""
+    return canonical_json_dumps(
+        {
+            "FactorName": normalized.get("FactorName"),
+            "LongComponent": normalized.get("LongComponent"),
+            "ShortComponent": normalized.get("ShortComponent"),
+            "Description": normalized.get("Description"),
+            "LongAggType": normalized.get("LongAggType"),
+            "ShortAggType": normalized.get("ShortAggType"),
+            "LongLag": normalized.get("LongLag"),
+            "OutputTransform": normalized.get("OutputTransform"),
+        }
+    )
+
+
+def _factor_db_name_exists(name: str, db_definitions) -> bool:
+    key = str(name or "").strip().lower()
+    if not key:
+        return False
+    for item in (db_definitions or []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("FactorName", "")).strip().lower() == key:
+            return True
+    return False
+
+
 def _definition_to_draft(definition: dict, source: str, selected_key: str | None = None) -> dict:
     base = _ensure_factor_draft(definition)
     name = str(base.get("FactorName", "")).strip()
@@ -416,6 +620,7 @@ def _definition_to_draft(definition: dict, source: str, selected_key: str | None
         selected_key = _factor_select_key(source, name)
     base["selected_key"] = selected_key
     base["source"] = source
+    base["DraftMode"] = "db" if source == "db" else "session"
     base["sync_origin"] = "system"
     base["original_name"] = name if source == "db" else base.get("original_name") or name
     base["selected_update_date"] = base.get("UPDATE_DATE")
@@ -442,6 +647,7 @@ def _default_regime_draft() -> dict:
     return {
         "selected_key": None,
         "source": "session",
+        "DraftMode": "new",
         "sync_origin": "system",
         "original_name": None,
         "selected_update_date": None,
@@ -467,7 +673,8 @@ def _ensure_regime_draft(value):
     draft = _default_regime_draft()
     draft.update(value)
     draft["MethodType"] = int(pd.to_numeric(pd.Series([draft.get("MethodType", 1)]), errors="coerce").iloc[0] or 1)
-    draft["ReturnBasis"] = "excess" if str(draft.get("ReturnBasis", "total")).strip().lower() == "excess" else "total"
+    # Return basis is temporarily fixed to total for regime definitions.
+    draft["ReturnBasis"] = "total"
     draft["NumRegimes"] = int(pd.to_numeric(pd.Series([draft.get("NumRegimes", 3)]), errors="coerce").iloc[0] or 3)
     draft["NumRegimes"] = max(2, min(draft["NumRegimes"], 10))
     draft["MinObservations"] = int(pd.to_numeric(pd.Series([draft.get("MinObservations", 60)]), errors="coerce").iloc[0] or 60)
@@ -483,6 +690,23 @@ def _ensure_regime_draft(value):
         if not isinstance(value_map, dict):
             value_map = {}
         draft[key] = dict(value_map)
+    draft_mode = str(draft.get("DraftMode") or "").strip().lower()
+    if draft_mode not in {"db", "session", "new"}:
+        if str(draft.get("source") or "").strip().lower() == "db":
+            draft_mode = "db"
+        elif draft.get("selected_key"):
+            draft_mode = "session"
+        else:
+            draft_mode = "new"
+    draft["DraftMode"] = draft_mode
+    if draft_mode == "db":
+        draft["source"] = "db"
+    else:
+        draft["source"] = "session"
+    if draft_mode == "new":
+        draft["selected_key"] = None
+        draft["original_name"] = None
+        draft["selected_update_date"] = None
     return draft
 
 
@@ -577,13 +801,14 @@ def _regime_definition_to_draft(definition: dict, source: str, selected_key: str
         {
             "selected_key": selected_key,
             "source": source,
+            "DraftMode": "db" if source == "db" else "session",
             "sync_origin": "system",
             "original_name": name if source == "db" else definition.get("original_name") or name,
             "selected_update_date": definition.get("UPDATE_DATE"),
             "RegimeName": name,
             "Description": definition.get("Description") or "",
             "MethodType": definition.get("MethodType", config.get("method_type", 1)),
-            "ReturnBasis": config.get("return_basis", "total"),
+            "ReturnBasis": "total",
             "NumRegimes": config.get("num_regimes", 3),
             "MinObservations": config.get("min_observations", 60),
             "PcaStandardize": config.get("pca_standardize", True),
@@ -607,7 +832,7 @@ def _regime_draft_to_definition_payload(draft: dict) -> dict:
         "MethodType": draft_value.get("MethodType"),
         "Config": {
             "num_regimes": draft_value.get("NumRegimes"),
-            "return_basis": draft_value.get("ReturnBasis"),
+            "return_basis": "total",
             "min_observations": draft_value.get("MinObservations"),
             "pca_standardize": draft_value.get("PcaStandardize"),
             "universe_series": draft_value.get("UniverseSeries"),
@@ -621,6 +846,42 @@ def _regime_draft_to_definition_payload(draft: dict) -> dict:
         "UPDATE_BY": draft_value.get("UPDATE_BY"),
     }
     return payload
+
+
+def _regime_definition_signature(definition: dict | None) -> str:
+    if not isinstance(definition, dict):
+        return ""
+    normalized, error = validate_regime_definition_payload(
+        {
+            "RegimeName": definition.get("RegimeName"),
+            "Description": definition.get("Description"),
+            "MethodType": definition.get("MethodType"),
+            "Config": definition.get("Config"),
+            "ConfigJson": definition.get("ConfigJson"),
+        }
+    )
+    if error or not normalized:
+        return ""
+    return canonical_json_dumps(
+        {
+            "RegimeName": normalized.get("RegimeName"),
+            "Description": normalized.get("Description"),
+            "MethodType": normalized.get("MethodType"),
+            "Config": normalized.get("Config"),
+        }
+    )
+
+
+def _regime_db_name_exists(name: str, db_definitions) -> bool:
+    key = str(name or "").strip().lower()
+    if not key:
+        return False
+    for item in (db_definitions or []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("RegimeName", "")).strip().lower() == key:
+            return True
+    return False
 
 
 def _build_regime_series_options(raw_data, selected_series, regime_series_store, draft_data=None):
@@ -2587,7 +2848,7 @@ layout = dmc.Container(
                     children=[
                         dmc.Select(
                             id="at-factor-def-select",
-                            label="Saved/Session factors",
+                            label="Database/Session factors",
                             data=[],
                             value=None,
                             clearable=True,
@@ -2695,14 +2956,15 @@ layout = dmc.Container(
                                 dmc.Group(
                                     gap="xs",
                                     children=[
-                                        dmc.Button("Save session", id="at-factor-def-save-local-btn", variant="light"),
-                                        dmc.Button("Save database", id="at-factor-def-save-db-btn", variant="outline"),
+                                        dmc.Button("Save to session", id="at-factor-def-save-local-btn", variant="light"),
+                                        dmc.Button("Save to database", id="at-factor-def-save-db-btn", variant="outline"),
                                         dmc.Button("Delete", id="at-factor-def-delete-btn", variant="outline", color="red"),
                                     ],
                                 ),
                                 dmc.Group(
                                     gap="xs",
                                     children=[
+                                        dmc.Button("New factor", id="at-factor-def-new-btn", variant="outline"),
                                         dmc.Button("Use factor", id="at-factor-def-use-btn", color="blue"),
                                         dmc.Button("Close", id="at-factor-def-close-btn", variant="outline", color="gray"),
                                     ],
@@ -2749,7 +3011,7 @@ layout = dmc.Container(
                     children=[
                         dmc.Select(
                             id="at-regime-def-select",
-                            label="Saved/Session regimes",
+                            label="Database/Session regimes",
                             data=[],
                             value=None,
                             clearable=True,
@@ -2776,13 +3038,6 @@ layout = dmc.Container(
                                     label="Method",
                                     data=REGIME_METHOD_OPTIONS,
                                     value="1",
-                                    clearable=False,
-                                ),
-                                dmc.Select(
-                                    id="at-regime-def-return-basis",
-                                    label="Return basis",
-                                    data=REGIME_RETURN_BASIS_OPTIONS,
-                                    value="total",
                                     clearable=False,
                                 ),
                                 dmc.NumberInput(
@@ -2881,14 +3136,15 @@ layout = dmc.Container(
                                 dmc.Group(
                                     gap="xs",
                                     children=[
-                                        dmc.Button("Save session", id="at-regime-def-save-local-btn", variant="light"),
-                                        dmc.Button("Save database", id="at-regime-def-save-db-btn", variant="outline"),
+                                        dmc.Button("Save to session", id="at-regime-def-save-local-btn", variant="light"),
+                                        dmc.Button("Save to database", id="at-regime-def-save-db-btn", variant="outline"),
                                         dmc.Button("Delete", id="at-regime-def-delete-btn", variant="outline", color="red"),
                                     ],
                                 ),
                                 dmc.Group(
                                     gap="xs",
                                     children=[
+                                        dmc.Button("New regime", id="at-regime-def-new-btn", variant="outline"),
                                         dmc.Button("Use regime", id="at-regime-def-use-btn", color="blue"),
                                         dmc.Button("Close", id="at-regime-def-close-btn", variant="outline", color="gray"),
                                     ],
@@ -3375,7 +3631,7 @@ layout = dmc.Container(
                                         size="sm",
                                     ),
                                     dmc.Text(
-                                        "Regime Analysis displays timeline, per-regime statistics, transition probabilities, run-duration summary, and conditioned growth/drawdown summary.",
+                                        "Regime Analysis displays settings, per-regime statistics, timeline, transition probabilities, and run-duration summary.",
                                         size="sm",
                                     ),
                                 ])),
@@ -3388,8 +3644,8 @@ layout = dmc.Container(
                                 dmc.AccordionPanel(dmc.Text(
                                     "Download all tabs as a multi-sheet Excel workbook via File > Download Excel. "
                                     "The export includes Statistics, Returns, Rolling, Calendar Year, Growth of $1, Drawdown, Correlation, Covariance, "
-                                    "Factor Analysis - Box, Factor Analysis - Scatter, Regime - Settings, Regime - Timeline, Regime - Statistics, "
-                                    "Regime - Transition, Regime - Duration, and Regime - Conditioned sheets.",
+                                    "Factor Analysis - Box, Factor Analysis - Scatter, Regime - Settings, Regime - Statistics, Regime - Timeline, "
+                                    "Regime - Transition, and Regime - Duration sheets.",
                                     size="sm",
                                 )),
                             ],
@@ -3695,6 +3951,39 @@ def restore_application_state(
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
             "box", 5, "raw", "annual", [], False
         )
+
+
+@callback(
+    Output("at-factor-def-db-available-store", "data", allow_duplicate=True),
+    Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-regime-def-db-available-store", "data", allow_duplicate=True),
+    Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
+    Input("at-page-load-trigger", "n_intervals"),
+    prevent_initial_call="initial_duplicate",
+)
+def at_preload_factor_and_regime_definitions(_n_intervals):
+    factor_available = False
+    factor_definitions = []
+    regime_available = False
+    regime_definitions = []
+
+    try:
+        factor_available = bool(factor_tables_available(DB_ENGINE))
+        if factor_available:
+            factor_definitions = load_factor_definitions(DB_ENGINE)
+    except Exception:
+        factor_available = False
+        factor_definitions = []
+
+    try:
+        regime_available = bool(regime_tables_available(DB_ENGINE))
+        if regime_available:
+            regime_definitions = load_regime_definitions(DB_ENGINE)
+    except Exception:
+        regime_available = False
+        regime_definitions = []
+
+    return factor_available, factor_definitions, regime_available, regime_definitions
 
 
 # Clientside callback to navigate to home on Exit
@@ -4384,7 +4673,7 @@ def update_factor_series_select(
     definition_entries = _factor_option_definitions(db_definitions, local_definitions)
     definition_names = [entry["name"] for entry in definition_entries]
     for entry in definition_entries:
-        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        source_label = _source_badge(entry["source"])
         options.append(
             {
                 "value": f"def::{entry['name']}",
@@ -4457,7 +4746,7 @@ def at_update_factor_definition_select_options(db_definitions, local_definitions
     entries = _factor_option_definitions(db_definitions, local_definitions)
     options = []
     for entry in entries:
-        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        source_label = _source_badge(entry["source"])
         options.append(
             {
                 "value": _factor_select_key(entry["source"], entry["name"]),
@@ -4493,6 +4782,25 @@ def at_load_selected_factor_definition(selected_key, db_definitions, local_defin
         if not definition:
             raise PreventUpdate
         return _definition_to_draft(definition, "session", selected_key=selected_key)
+    raise PreventUpdate
+
+
+@callback(
+    Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
+    Output("at-factor-def-select", "value", allow_duplicate=True),
+    Output("at-factor-def-status-alert", "children", allow_duplicate=True),
+    Output("at-factor-def-status-alert", "color", allow_duplicate=True),
+    Output("at-factor-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-factor-def-new-btn", "n_clicks"),
+    Input("at-factor-def-select", "value"),
+    prevent_initial_call=True,
+)
+def at_reset_factor_definition_draft(new_clicks, selected_key):
+    triggered = callback_context.triggered_id
+    if triggered == "at-factor-def-new-btn" and new_clicks:
+        return _default_factor_draft(), None, "New session factor draft started.", "blue", False
+    if triggered == "at-factor-def-select" and not selected_key:
+        return _default_factor_draft(), no_update, "New session factor draft started.", "blue", False
     raise PreventUpdate
 
 
@@ -4752,31 +5060,79 @@ def at_manage_factor_definitions(
         if not factor_name:
             return n_no, n_no, n_no, n_no, n_no, n_no, "Factor name is required.", "red", False
 
-        next_local = local_list
-        next_draft = draft
-        if draft.get("source") == "db":
-            next_draft = _definition_to_draft(
-                {
-                    **normalized,
-                    "UPDATE_DATE": draft.get("selected_update_date"),
-                    "UPDATE_BY": draft.get("UPDATE_BY"),
-                },
-                "db",
-                selected_key=_factor_select_key("db", factor_name),
+        draft_mode = str(draft.get("DraftMode") or "").strip().lower()
+        if draft_mode == "db":
+            baseline_name = str(draft.get("original_name") or factor_name).strip()
+            baseline = _lookup_factor_definition(baseline_name, db_definitions, [])
+            if not baseline:
+                return (
+                    n_no,
+                    n_no,
+                    _definition_to_draft(
+                        {
+                            **normalized,
+                            "UPDATE_DATE": draft.get("selected_update_date"),
+                            "UPDATE_BY": draft.get("UPDATE_BY"),
+                        },
+                        "db",
+                        selected_key=_factor_select_key("db", baseline_name or factor_name),
+                    ),
+                    _factor_select_key("db", baseline_name or factor_name),
+                    f"def::{baseline_name or factor_name}",
+                    False,
+                    "Database factor selected for analysis.",
+                    "green",
+                    False,
+                )
+
+            baseline_name_actual = str(baseline.get("FactorName", "")).strip() or baseline_name
+            unchanged_db = (
+                str(factor_name).lower() == str(baseline_name_actual).lower()
+                and _factor_definition_signature(normalized) == _factor_definition_signature(baseline)
             )
-        else:
-            now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            session_item = {
-                **normalized,
-                "source": "session",
-                "UPDATE_DATE": now_str,
-                "UPDATE_BY": update_by,
-            }
-            key_name = factor_name.lower()
-            next_local = [item for item in local_list if str(item.get("FactorName", "")).strip().lower() != key_name]
-            next_local.append(session_item)
-            next_local.sort(key=lambda item: str(item.get("FactorName", "")).lower())
-            next_draft = _definition_to_draft(session_item, "session")
+            if unchanged_db:
+                next_draft = _definition_to_draft(
+                    baseline,
+                    "db",
+                    selected_key=_factor_select_key("db", baseline_name_actual),
+                )
+                return (
+                    n_no,
+                    n_no,
+                    next_draft,
+                    next_draft.get("selected_key"),
+                    f"def::{baseline_name_actual}",
+                    False,
+                    "Database factor selected for analysis.",
+                    "green",
+                    False,
+                )
+
+            if _factor_db_name_exists(factor_name, db_definitions):
+                return (
+                    n_no,
+                    n_no,
+                    n_no,
+                    n_no,
+                    n_no,
+                    n_no,
+                    "Rename the factor to create a session copy; that name already exists in Database definitions.",
+                    "orange",
+                    False,
+                )
+
+        now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        session_item = {
+            **normalized,
+            "source": "session",
+            "UPDATE_DATE": now_str,
+            "UPDATE_BY": update_by,
+        }
+        key_name = factor_name.lower()
+        next_local = [item for item in local_list if str(item.get("FactorName", "")).strip().lower() != key_name]
+        next_local.append(session_item)
+        next_local.sort(key=lambda item: str(item.get("FactorName", "")).lower())
+        next_draft = _definition_to_draft(session_item, "session")
 
         return (
             next_local,
@@ -4785,7 +5141,7 @@ def at_manage_factor_definitions(
             next_draft.get("selected_key"),
             f"def::{factor_name}",
             False,
-            "Factor selected for analysis.",
+            "Session factor selected for analysis.",
             "green",
             False,
         )
@@ -4812,7 +5168,7 @@ def at_update_regime_definition_analysis_select_options(
     options = []
     names = []
     for entry in entries:
-        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        source_label = _source_badge(entry["source"])
         options.append(
             {
                 "value": f"def::{entry['name']}",
@@ -4866,7 +5222,6 @@ def at_open_regime_definition_modal(menu_clicks, tab_clicks):
     State("at-long-short-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
     State("at-vol-scaler-value-store", "data"),
-    State("at-returns-type-select", "value"),
     prevent_initial_call=True,
 )
 def at_load_regime_modal_data(
@@ -4879,7 +5234,6 @@ def at_load_regime_modal_data(
     long_short_assignments,
     vol_scaling_assignments,
     vol_scaler,
-    returns_type,
 ):
     if not opened:
         raise PreventUpdate
@@ -4897,7 +5251,7 @@ def at_load_regime_modal_data(
     note = "" if db_available else "Database regime tables are unavailable. Session regimes are still supported."
 
     if not isinstance(current_draft, dict):
-        draft["ReturnBasis"] = "excess" if str(returns_type or "").lower() == "excess" else "total"
+        draft["ReturnBasis"] = "total"
         draft["BenchmarkAssignmentsJson"] = (
             dict(benchmark_assignments) if isinstance(benchmark_assignments, dict) else {}
         )
@@ -4940,7 +5294,7 @@ def at_update_regime_definition_select_options(db_definitions, local_definitions
     entries = _regime_option_definitions(db_definitions, local_definitions)
     options = []
     for entry in entries:
-        source_label = "[Saved]" if entry["source"] == "db" else "[Session]"
+        source_label = _source_badge(entry["source"])
         options.append(
             {
                 "value": _regime_select_key(entry["source"], entry["name"]),
@@ -4976,6 +5330,25 @@ def at_load_selected_regime_definition(selected_key, db_definitions, local_defin
         if not definition:
             raise PreventUpdate
         return _regime_definition_to_draft(definition, "session", selected_key=selected_key)
+    raise PreventUpdate
+
+
+@callback(
+    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
+    Output("at-regime-def-select", "value", allow_duplicate=True),
+    Output("at-regime-def-status-alert", "children", allow_duplicate=True),
+    Output("at-regime-def-status-alert", "color", allow_duplicate=True),
+    Output("at-regime-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-regime-def-new-btn", "n_clicks"),
+    Input("at-regime-def-select", "value"),
+    prevent_initial_call=True,
+)
+def at_reset_regime_definition_draft(new_clicks, selected_key):
+    triggered = callback_context.triggered_id
+    if triggered == "at-regime-def-new-btn" and new_clicks:
+        return _default_regime_draft(), None, "New session regime draft started.", "blue", False
+    if triggered == "at-regime-def-select" and not selected_key:
+        return _default_regime_draft(), no_update, "New session regime draft started.", "blue", False
     raise PreventUpdate
 
 
@@ -5028,7 +5401,6 @@ def at_refresh_regime_series_options_for_definition(
     Output("at-regime-def-name-input", "value"),
     Output("at-regime-def-description-input", "value"),
     Output("at-regime-def-method-type", "value"),
-    Output("at-regime-def-return-basis", "value"),
     Output("at-regime-def-num-regimes", "value"),
     Output("at-regime-def-min-observations", "value"),
     Output("at-regime-def-pca-standardize", "checked"),
@@ -5050,7 +5422,6 @@ def at_sync_regime_definition_form(draft_data):
         draft.get("RegimeName") or "",
         draft.get("Description") or "",
         str(method),
-        draft.get("ReturnBasis") or "total",
         max(2, min(num_regimes, max_regimes)),
         int(draft.get("MinObservations") or 60),
         bool(draft.get("PcaStandardize", True)),
@@ -5065,7 +5436,6 @@ def at_sync_regime_definition_form(draft_data):
     Input("at-regime-def-name-input", "value"),
     Input("at-regime-def-description-input", "value"),
     Input("at-regime-def-method-type", "value"),
-    Input("at-regime-def-return-basis", "value"),
     Input("at-regime-def-num-regimes", "value"),
     Input("at-regime-def-min-observations", "value"),
     Input("at-regime-def-pca-standardize", "checked"),
@@ -5079,7 +5449,6 @@ def at_update_regime_definition_draft_from_form(
     regime_name,
     description,
     method_type,
-    return_basis,
     num_regimes,
     min_observations,
     pca_standardize,
@@ -5096,7 +5465,7 @@ def at_update_regime_definition_draft_from_form(
     method_num = int(pd.to_numeric(pd.Series([method_type]), errors="coerce").iloc[0] or 1)
     method_num = 3 if method_num == 3 else (2 if method_num == 2 else 1)
     next_draft["MethodType"] = method_num
-    next_draft["ReturnBasis"] = "excess" if str(return_basis or "").strip().lower() == "excess" else "total"
+    next_draft["ReturnBasis"] = "total"
     max_regimes = 6 if method_num == 1 else 10
     parsed_num_regimes = int(pd.to_numeric(pd.Series([num_regimes]), errors="coerce").iloc[0] or 3)
     next_draft["NumRegimes"] = max(2, min(parsed_num_regimes, max_regimes))
@@ -5332,31 +5701,79 @@ def at_manage_regime_definitions(
         if not regime_name:
             return n_no, n_no, n_no, n_no, n_no, n_no, "Regime name is required.", "red", False
 
-        next_local = local_list
-        next_draft = draft
-        if draft.get("source") == "db":
-            next_draft = _regime_definition_to_draft(
-                {
-                    **normalized,
-                    "UPDATE_DATE": draft.get("selected_update_date"),
-                    "UPDATE_BY": draft.get("UPDATE_BY"),
-                },
-                "db",
-                selected_key=_regime_select_key("db", regime_name),
+        draft_mode = str(draft.get("DraftMode") or "").strip().lower()
+        if draft_mode == "db":
+            baseline_name = str(draft.get("original_name") or regime_name).strip()
+            baseline = _lookup_regime_definition(baseline_name, db_definitions, [])
+            if not baseline:
+                return (
+                    n_no,
+                    n_no,
+                    _regime_definition_to_draft(
+                        {
+                            **normalized,
+                            "UPDATE_DATE": draft.get("selected_update_date"),
+                            "UPDATE_BY": draft.get("UPDATE_BY"),
+                        },
+                        "db",
+                        selected_key=_regime_select_key("db", baseline_name or regime_name),
+                    ),
+                    _regime_select_key("db", baseline_name or regime_name),
+                    f"def::{baseline_name or regime_name}",
+                    False,
+                    "Database regime selected for analysis.",
+                    "green",
+                    False,
+                )
+
+            baseline_name_actual = str(baseline.get("RegimeName", "")).strip() or baseline_name
+            unchanged_db = (
+                str(regime_name).lower() == str(baseline_name_actual).lower()
+                and _regime_definition_signature(normalized) == _regime_definition_signature(baseline)
             )
-        else:
-            now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            session_item = {
-                **normalized,
-                "source": "session",
-                "UPDATE_DATE": now_str,
-                "UPDATE_BY": update_by,
-            }
-            key_name = regime_name.lower()
-            next_local = [item for item in local_list if str(item.get("RegimeName", "")).strip().lower() != key_name]
-            next_local.append(session_item)
-            next_local.sort(key=lambda item: str(item.get("RegimeName", "")).lower())
-            next_draft = _regime_definition_to_draft(session_item, "session")
+            if unchanged_db:
+                next_draft = _regime_definition_to_draft(
+                    baseline,
+                    "db",
+                    selected_key=_regime_select_key("db", baseline_name_actual),
+                )
+                return (
+                    n_no,
+                    n_no,
+                    next_draft,
+                    next_draft.get("selected_key"),
+                    f"def::{baseline_name_actual}",
+                    False,
+                    "Database regime selected for analysis.",
+                    "green",
+                    False,
+                )
+
+            if _regime_db_name_exists(regime_name, db_definitions):
+                return (
+                    n_no,
+                    n_no,
+                    n_no,
+                    n_no,
+                    n_no,
+                    n_no,
+                    "Rename the regime to create a session copy; that name already exists in Database definitions.",
+                    "orange",
+                    False,
+                )
+
+        now_str = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        session_item = {
+            **normalized,
+            "source": "session",
+            "UPDATE_DATE": now_str,
+            "UPDATE_BY": update_by,
+        }
+        key_name = regime_name.lower()
+        next_local = [item for item in local_list if str(item.get("RegimeName", "")).strip().lower() != key_name]
+        next_local.append(session_item)
+        next_local.sort(key=lambda item: str(item.get("RegimeName", "")).lower())
+        next_draft = _regime_definition_to_draft(session_item, "session")
 
         return (
             next_local,
@@ -5365,7 +5782,7 @@ def at_manage_regime_definitions(
             next_draft.get("selected_key"),
             f"def::{regime_name}",
             False,
-            "Regime selected for analysis.",
+            "Session regime selected for analysis.",
             "green",
             False,
         )
@@ -8022,6 +8439,7 @@ def _build_regime_grid_component(
     theme: str,
     percent_cols: set[str] | None = None,
     integer_cols: set[str] | None = None,
+    pinned_cols: set[str] | None = None,
     max_height: int = 320,
 ):
     if df is None or df.empty:
@@ -8037,6 +8455,7 @@ def _build_regime_grid_component(
 
     percent_cols = {str(c) for c in (percent_cols or set())}
     integer_cols = {str(c) for c in (integer_cols or set())}
+    pinned_cols = {str(c) for c in (pinned_cols or set())}
     frame = df.copy()
     frame.columns = [str(c) for c in frame.columns]
     for col in frame.columns:
@@ -8052,7 +8471,7 @@ def _build_regime_grid_component(
             col_def["valueFormatter"] = {"function": "params.value != null ? d3.format(',d')(params.value) : ''"}
         elif pd.api.types.is_numeric_dtype(frame[col]):
             col_def["valueFormatter"] = {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}
-        if idx == 0:
+        if col in pinned_cols or (idx == 0 and not pinned_cols):
             col_def["pinned"] = "left"
         if "date" in col.lower():
             col_def["width"] = 130
@@ -8093,6 +8512,34 @@ def _build_regime_grid_component(
                     "suppressCsvExport": True,
                 },
             ),
+        ],
+    )
+
+
+def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
+    diagnostics = payload.diagnostics or {}
+    regime_name = str(payload.definition.get("RegimeName") or "").strip() or "—"
+    method_type = diagnostics.get("method_type")
+    num_regimes = diagnostics.get("num_regimes")
+    observations = diagnostics.get("observations")
+    warning_text = _build_regime_warning_text(diagnostics, payload.unresolved)
+
+    lines = [
+        dmc.Text(f"Regime: {regime_name}", size="sm"),
+        dmc.Text(f"Method type: {method_type if method_type is not None else '—'}", size="sm"),
+        dmc.Text(f"Regimes: {num_regimes if num_regimes is not None else '—'}", size="sm"),
+        dmc.Text(f"Observations: {observations if observations is not None else '—'}", size="sm"),
+    ]
+    if warning_text:
+        lines.append(dmc.Text(f"Warning: {warning_text}", size="sm", c="orange"))
+
+    return dmc.Paper(
+        withBorder=True,
+        radius="md",
+        p="sm",
+        children=[
+            dmc.Text("Regime Settings", fw=600, size="sm", mb=4),
+            dmc.Stack(gap=2, children=lines),
         ],
     )
 
@@ -8150,59 +8597,32 @@ def update_regime_analysis(
     if not regime_definition_key:
         return None, dmc.Text("Select a regime definition.", size="sm", c="dimmed")
 
-    _regime_prefix, regime_name = _split_regime_select_key(regime_definition_key)
-    definition = _lookup_regime_definition(regime_name, regime_definitions_db, regime_definitions_local)
-    if not definition:
-        return None, dmc.Text("Selected regime definition is unavailable.", size="sm", c="dimmed")
-
-    required_series = regime_required_series(definition)
-    combined_raw_data, _next_regime_series_store, _resolved, unresolved = resolve_regime_source_data(
-        raw_data=raw_data,
-        regime_series_store=regime_series_store,
-        required_series=required_series,
-        db_engine=DB_ENGINE,
-        mrd_engine=MRD_ENGINE,
+    build_result = _build_regime_analysis_payload(
+        raw_data,
+        periodicity,
+        selected_series,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+        regime_definition_key,
+        regime_definitions_db,
+        regime_definitions_local,
+        regime_series_store,
     )
-    if not combined_raw_data:
-        return (
-            dmc.Alert("Unable to resolve required source series for regime analysis.", color="orange", variant="light"),
-            dmc.Text("No regime assignments.", size="sm", c="dimmed"),
-        )
+    if build_result.status != "ok" or build_result.payload is None:
+        if build_result.status in {"no_source_data", "no_assignments"}:
+            return (
+                dmc.Alert(build_result.message or "No regime assignments were produced.", color="orange", variant="light"),
+                dmc.Text("No regime assignments.", size="sm", c="dimmed"),
+            )
+        return None, dmc.Text(build_result.message or "Unable to build regime analysis.", size="sm", c="dimmed")
 
-    states, diagnostics = compute_regime_assignments(
-        raw_data=combined_raw_data,
-        periodicity=periodicity or "daily",
-        definition=definition,
-        date_range=date_range,
-    )
-    if states.empty:
-        warning = str((diagnostics or {}).get("warning") or "No regime assignments were produced.")
-        if unresolved:
-            warning = f"{warning} Missing source series: {', '.join(unresolved)}."
-        return (
-            dmc.Alert(warning, color="orange", variant="light"),
-            dmc.Text("No regime assignments.", size="sm", c="dimmed"),
-        )
-
-    returns_df = calculate_excess_returns(
-        combined_raw_data,
-        periodicity or "daily",
-        tuple(selected_series),
-        _mapping_payload(benchmark_assignments),
-        returns_type or "total",
-        _mapping_payload(long_short_assignments),
-        _date_range_payload(date_range),
-        vol_scaler or 0,
-        _mapping_payload(vol_scaling_assignments),
-    )
-    if returns_df.empty:
-        return None, dmc.Text("No series returns available for current settings.", size="sm", c="dimmed")
-
-    timeline = build_regime_timeline_frame(states)
-    stats_df = build_regime_statistics_table(returns_df, states, periodicity or "daily")
-    transition_df = build_regime_transition_matrix(states)
-    duration_df = build_regime_duration_table(states)
-    conditioned_df = build_regime_conditioned_summary(returns_df, states)
+    payload = build_result.payload
+    timeline = payload.timeline_df
+    if timeline.empty:
+        return None, dmc.Text("No regime timeline available for current settings.", size="sm", c="dimmed")
 
     timeline_fig = go.Figure()
     timeline_fig.add_trace(
@@ -8216,7 +8636,7 @@ def update_regime_analysis(
         )
     )
     timeline_fig.update_layout(
-        title=f"Regime Timeline: {definition.get('RegimeName')}",
+        title=f"Regime Timeline: {payload.definition.get('RegimeName')}",
         xaxis_title="Date",
         yaxis_title="Regime",
         yaxis={"dtick": 1},
@@ -8225,19 +8645,35 @@ def update_regime_analysis(
     )
     apply_chart_theme(timeline_fig, theme)
 
-    transition_display = transition_df.reset_index() if transition_df is not None and not transition_df.empty else pd.DataFrame()
+    transition_display = (
+        payload.transition_df.reset_index()
+        if payload.transition_df is not None and not payload.transition_df.empty
+        else pd.DataFrame()
+    )
     transition_percent_cols = set(transition_display.columns[1:]) if not transition_display.empty else set()
 
     stack_children = [
-        dcc.Graph(figure=timeline_fig, style={"height": "360px"}),
+        _build_regime_settings_text_component(payload),
         _build_regime_grid_component(
             "Regime Statistics",
-            stats_df,
+            payload.stats_df,
             theme,
-            percent_cols={"Mean Return", "Volatility", "Min Return", "Max Return", "Hit Rate", "Max Drawdown"},
+            percent_cols={
+                "Mean Return",
+                "Volatility",
+                "Annualized Excess Return",
+                "Annualized Tracking Error",
+                "Min Return",
+                "Max Return",
+                "Hit Rate",
+                "Hit Rate (vs Benchmark)",
+                "Max Drawdown",
+            },
             integer_cols={"Regime", "Observations"},
+            pinned_cols={"Regime", "Series"},
             max_height=360,
         ),
+        dcc.Graph(figure=timeline_fig, style={"height": "360px"}),
         _build_regime_grid_component(
             "Transition Matrix",
             transition_display,
@@ -8248,42 +8684,26 @@ def update_regime_analysis(
         ),
         _build_regime_grid_component(
             "Run Durations",
-            duration_df,
+            payload.duration_df,
             theme,
             integer_cols={"Regime", "Runs", "Current Run Length"},
             max_height=260,
         ),
-        _build_regime_grid_component(
-            "Conditioned Summary",
-            conditioned_df,
-            theme,
-            percent_cols={"Max Drawdown"},
-            integer_cols={"Regime", "Observations"},
-            max_height=320,
-        ),
     ]
 
     warning_children = []
-    warning_text = str((diagnostics or {}).get("warning") or "").strip()
+    warning_text = str((payload.diagnostics or {}).get("warning") or "").strip()
     if warning_text:
         warning_children.append(dmc.Alert(warning_text, color="orange", variant="light", mb="sm"))
-    if unresolved:
+    if payload.unresolved:
         warning_children.append(
             dmc.Alert(
-                f"Missing source series (not resolved from DB): {', '.join(unresolved)}",
+                f"Missing source series (not resolved from DB): {', '.join(payload.unresolved)}",
                 color="orange",
                 variant="light",
                 mb="sm",
             )
         )
-    warning_children.append(
-        dmc.Alert(
-            f"Method type {diagnostics.get('method_type')} | Regimes: {diagnostics.get('num_regimes')} | Observations: {diagnostics.get('observations')}",
-            color="blue",
-            variant="light",
-            mb="sm",
-        )
-    )
 
     return html.Div(warning_children), dmc.Stack(gap="sm", children=stack_children)
 
@@ -9112,119 +9532,79 @@ def download_excel(
                 try:
                     with timed_block("analyticstool.download_excel.regime_analysis"):
                         if regime_definition_key:
-                            _regime_prefix, _regime_name = _split_regime_select_key(regime_definition_key)
-                            regime_definition = _lookup_regime_definition(
-                                _regime_name,
+                            regime_result = _build_regime_analysis_payload(
+                                bundle.raw_data,
+                                bundle.periodicity,
+                                bundle.selected_series,
+                                benchmark_assignments,
+                                long_short_assignments,
+                                date_range,
+                                bundle.vol_scaler,
+                                vol_scaling_assignments,
+                                regime_definition_key,
                                 regime_definitions_db,
                                 regime_definitions_local,
+                                regime_series_store,
                             )
-                            if regime_definition:
-                                required_series = regime_required_series(regime_definition)
-                                regime_raw_data, _resolved_regime_store, _resolved, unresolved = resolve_regime_source_data(
-                                    raw_data=bundle.raw_data,
-                                    regime_series_store=regime_series_store,
-                                    required_series=required_series,
-                                    db_engine=DB_ENGINE,
-                                    mrd_engine=MRD_ENGINE,
+                            if regime_result.status == "ok" and regime_result.payload is not None:
+                                regime_payload = regime_result.payload
+
+                                write_excel_with_autofit(
+                                    writer,
+                                    format_excel_dates(regime_payload.settings_df),
+                                    "Regime - Settings",
+                                    index=False,
                                 )
-                                if not regime_raw_data:
-                                    regime_raw_data = bundle.raw_data
-                                states, diagnostics = compute_regime_assignments(
-                                    raw_data=regime_raw_data,
-                                    periodicity=bundle.periodicity,
-                                    definition=regime_definition,
-                                    date_range=date_range,
+
+                                stats_df_regime = regime_payload.stats_df
+                                if stats_df_regime.empty:
+                                    stats_df_regime = pd.DataFrame(
+                                        [{"Note": "No overlapping observations for regime statistics."}]
+                                    )
+                                write_excel_with_autofit(
+                                    writer,
+                                    format_excel_dates(stats_df_regime),
+                                    "Regime - Statistics",
+                                    index=False,
                                 )
-                                if not states.empty:
-                                    timeline_df = build_regime_timeline_frame(states)
-                                    stats_df_regime = build_regime_statistics_table(
-                                        returns_df,
-                                        states,
-                                        bundle.periodicity,
-                                    )
-                                    transition_df = build_regime_transition_matrix(states)
-                                    duration_df = build_regime_duration_table(states)
-                                    conditioned_df = build_regime_conditioned_summary(returns_df, states)
 
-                                    settings_df = pd.DataFrame(
-                                        [
-                                            {
-                                                "RegimeName": regime_definition.get("RegimeName"),
-                                                "MethodType": diagnostics.get("method_type"),
-                                                "NumRegimes": diagnostics.get("num_regimes"),
-                                                "Observations": diagnostics.get("observations"),
-                                                "Warning": (
-                                                    f"{diagnostics.get('warning')}; Missing source series: {', '.join(unresolved)}"
-                                                    if diagnostics.get("warning") and unresolved
-                                                    else (
-                                                        f"Missing source series: {', '.join(unresolved)}"
-                                                        if unresolved
-                                                        else diagnostics.get("warning")
-                                                    )
-                                                ),
-                                            }
-                                        ]
-                                    )
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(settings_df),
-                                        "Regime - Settings",
-                                        index=False,
-                                    )
+                                timeline_out = regime_payload.timeline_df
+                                if timeline_out.empty:
+                                    timeline_out = pd.DataFrame([{"Note": "No timeline observations available."}])
+                                write_excel_with_autofit(
+                                    writer,
+                                    format_excel_dates(timeline_out),
+                                    "Regime - Timeline",
+                                    index=False,
+                                )
 
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(timeline_df),
-                                        "Regime - Timeline",
-                                        index=False,
+                                transition_out = (
+                                    regime_payload.transition_df.reset_index()
+                                    if regime_payload.transition_df is not None and not regime_payload.transition_df.empty
+                                    else pd.DataFrame()
+                                )
+                                if transition_out.empty:
+                                    transition_out = pd.DataFrame(
+                                        [{"Note": "No transition matrix available (requires at least two observations)."}]
                                     )
+                                write_excel_with_autofit(
+                                    writer,
+                                    format_excel_dates(transition_out),
+                                    "Regime - Transition",
+                                    index=False,
+                                )
 
-                                    if stats_df_regime.empty:
-                                        stats_df_regime = pd.DataFrame(
-                                            [{"Note": "No overlapping observations for regime statistics."}]
-                                        )
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(stats_df_regime),
-                                        "Regime - Statistics",
-                                        index=False,
+                                duration_out = regime_payload.duration_df
+                                if duration_out.empty:
+                                    duration_out = pd.DataFrame(
+                                        [{"Note": "No duration summary available."}]
                                     )
-
-                                    transition_out = (
-                                        transition_df.reset_index() if transition_df is not None and not transition_df.empty else pd.DataFrame()
-                                    )
-                                    if transition_out.empty:
-                                        transition_out = pd.DataFrame(
-                                            [{"Note": "No transition matrix available (requires at least two observations)."}]
-                                        )
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(transition_out),
-                                        "Regime - Transition",
-                                        index=False,
-                                    )
-
-                                    if duration_df.empty:
-                                        duration_df = pd.DataFrame(
-                                            [{"Note": "No duration summary available."}]
-                                        )
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(duration_df),
-                                        "Regime - Duration",
-                                        index=False,
-                                    )
-
-                                    if conditioned_df.empty:
-                                        conditioned_df = pd.DataFrame(
-                                            [{"Note": "No conditioned summary available."}]
-                                        )
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(conditioned_df),
-                                        "Regime - Conditioned",
-                                        index=False,
-                                    )
+                                write_excel_with_autofit(
+                                    writer,
+                                    format_excel_dates(duration_out),
+                                    "Regime - Duration",
+                                    index=False,
+                                )
                 except Exception:
                     pass
 

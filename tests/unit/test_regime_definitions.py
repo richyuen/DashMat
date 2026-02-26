@@ -127,6 +127,15 @@ def test_validate_regime_definition_payload():
     assert normalized["Config"]["num_regimes"] == 3
 
 
+def test_validate_regime_definition_payload_coerces_excess_return_basis_to_total():
+    payload = _definition_payload("ExcessCycle", method_type=1)
+    payload["Config"]["return_basis"] = "excess"
+    normalized, error = validate_regime_definition_payload(payload)
+    assert error is None
+    assert normalized is not None
+    assert normalized["Config"]["return_basis"] == "total"
+
+
 def test_save_update_delete_regime_definition_archives_versions():
     db_engine = _seed_db_engine()
     assert regime_tables_available(db_engine) is True

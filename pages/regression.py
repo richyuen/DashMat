@@ -4822,7 +4822,7 @@ def reg_render_anova(selected, results, selected_window):
         param_grid = dag.AgGrid(
             className="ag-theme-alpine",
             columnDefs=[
-                {"field": "Parameter", "minWidth": 170, "flex": 1},
+                {"field": "Parameter", "width": 220, "minWidth": 170, "maxWidth": 280},
                 {"field": "Coefficient", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
                 {"field": "Std Error", "width": 110, "minWidth": 100, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
                 {"field": "t-stat", "width": 100, "minWidth": 90, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},

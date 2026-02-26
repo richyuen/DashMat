@@ -63,6 +63,86 @@ def _find_component_by_id(node, target_id):
     return None
 
 
+def _stack_section_titles(stack_component):
+    def _graph_title(node):
+        fig = getattr(node, "figure", None)
+        if fig is None:
+            return None
+        if isinstance(fig, dict):
+            return (((fig.get("layout") or {}).get("title") or {}).get("text"))
+        layout = getattr(fig, "layout", None)
+        title = getattr(layout, "title", None) if layout is not None else None
+        return getattr(title, "text", None) if title is not None else None
+
+    titles = []
+    children = getattr(stack_component, "children", None)
+    if children is None:
+        return titles
+    if not isinstance(children, (list, tuple)):
+        children = [children]
+    for child in children:
+        graph_title = _graph_title(child)
+        if graph_title:
+            titles.append(str(graph_title))
+            continue
+        child_children = getattr(child, "children", None)
+        if isinstance(child_children, (list, tuple)) and child_children:
+            graph_title = _graph_title(child_children[0])
+            if graph_title:
+                titles.append(str(graph_title))
+                continue
+            title_text = _collect_component_text(child_children[0])
+            if title_text:
+                titles.append(str(title_text[0]))
+                continue
+        text = _collect_component_text(child)
+        if text:
+            titles.append(str(text[0]))
+    return titles
+
+
+def _db_factor_definition(name="DBFactor", description=None):
+    return {
+        "FactorName": name,
+        "LongComponentList": ["ACC1 TRIndex"],
+        "ShortComponentList": [],
+        "LongComponent": "ACC1 TRIndex",
+        "ShortComponent": None,
+        "Description": description,
+        "LongAggType": 1,
+        "ShortAggType": None,
+        "LongLag": 0,
+        "OutputTransform": 0,
+        "source": "db",
+        "UPDATE_DATE": "2026-02-26 00:00:00",
+        "UPDATE_BY": "Admin:tester",
+    }
+
+
+def _db_regime_definition(name="DBRegime", description=None):
+    return {
+        "RegimeName": name,
+        "Description": description,
+        "MethodType": 3,
+        "Config": {
+            "schema_version": 1,
+            "num_regimes": 3,
+            "return_basis": "total",
+            "benchmark_assignments": {},
+            "long_short_assignments": {},
+            "vol_scaling_assignments": {},
+            "vol_scaler": 0.0,
+            "min_observations": 40,
+            "pca_standardize": True,
+            "single_series": "Asset_A",
+            "quantile_window": "in_sample_full_range",
+        },
+        "source": "db",
+        "UPDATE_DATE": "2026-02-26 00:00:00",
+        "UPDATE_BY": "Admin:tester",
+    }
+
+
 def test_build_analytics_compute_bundle_normalizes_inputs(page_modules, raw_json):
     analyticstool, _ = page_modules
 
@@ -494,8 +574,129 @@ def test_update_factor_series_select_includes_saved_and_session_definitions(page
     option_map = {opt["value"]: opt["label"] for opt in options}
     assert "def::SavedFactor" in option_map
     assert "def::SessionFactor" in option_map
-    assert option_map["def::SavedFactor"].startswith("[Saved]")
+    assert option_map["def::SavedFactor"].startswith("[DB]")
     assert option_map["def::SessionFactor"].startswith("[Session]")
+
+
+def test_definition_modal_copy_uses_database_session_language(page_modules):
+    analyticstool, _ = page_modules
+
+    factor_modal = _find_component_by_id(analyticstool.layout, "at-factor-def-modal")
+    factor_select = _find_component_by_id(factor_modal, "at-factor-def-select")
+    factor_save_local = _find_component_by_id(factor_modal, "at-factor-def-save-local-btn")
+    factor_save_db = _find_component_by_id(factor_modal, "at-factor-def-save-db-btn")
+    assert getattr(factor_select, "label", None) == "Database/Session factors"
+    assert "Save to session" in " ".join(_collect_component_text(factor_save_local))
+    assert "Save to database" in " ".join(_collect_component_text(factor_save_db))
+
+    regime_modal = _find_component_by_id(analyticstool.layout, "at-regime-def-modal")
+    regime_select = _find_component_by_id(regime_modal, "at-regime-def-select")
+    regime_save_local = _find_component_by_id(regime_modal, "at-regime-def-save-local-btn")
+    regime_save_db = _find_component_by_id(regime_modal, "at-regime-def-save-db-btn")
+    assert getattr(regime_select, "label", None) == "Database/Session regimes"
+    assert "Save to session" in " ".join(_collect_component_text(regime_save_local))
+    assert "Save to database" in " ".join(_collect_component_text(regime_save_db))
+
+
+def test_reset_factor_draft_from_new_button_and_clear(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-new-btn"})())
+    draft, select_value, msg, color, hide = analyticstool.at_reset_factor_definition_draft(1, "db::DBFactor")
+    assert draft["DraftMode"] == "new"
+    assert select_value is None
+    assert color == "blue"
+    assert hide is False
+    assert "New session factor draft started." in msg
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-select"})())
+    draft2, select_value2, msg2, color2, hide2 = analyticstool.at_reset_factor_definition_draft(0, None)
+    assert draft2["DraftMode"] == "new"
+    assert select_value2 is no_update
+    assert color2 == "blue"
+    assert hide2 is False
+    assert "New session factor draft started." in msg2
+
+
+def test_use_factor_promotes_edited_db_draft_to_session(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    db_def = _db_factor_definition(name="DBFactor")
+    draft = analyticstool._definition_to_draft(db_def, "db")
+    draft["DraftMode"] = "db"
+    draft["FactorName"] = "SessionFactor"
+    draft["sync_origin"] = "form"
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-use-btn"})())
+    out = analyticstool.at_manage_factor_definitions(
+        None,
+        None,
+        None,
+        1,
+        None,
+        draft,
+        [],
+        [db_def],
+        True,
+        {"role": "Admin", "username": "tester"},
+    )
+
+    local_rows = out[0]
+    assert isinstance(local_rows, list)
+    assert any(str(item.get("FactorName")) == "SessionFactor" for item in local_rows)
+    assert out[4] == "def::SessionFactor"
+    assert "Session factor selected for analysis." in out[6]
+
+
+def test_use_factor_keeps_db_selection_when_unchanged(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    db_def = _db_factor_definition(name="DBFactor")
+    draft = analyticstool._definition_to_draft(db_def, "db")
+    draft["DraftMode"] = "db"
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-use-btn"})())
+    out = analyticstool.at_manage_factor_definitions(
+        None,
+        None,
+        None,
+        1,
+        None,
+        draft,
+        [],
+        [db_def],
+        True,
+        {"role": "Admin", "username": "tester"},
+    )
+
+    assert out[0] is no_update
+    assert out[4] == "def::DBFactor"
+    assert "Database factor selected for analysis." in out[6]
+
+
+def test_use_factor_blocks_db_name_collision_for_edited_db_draft(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    db_def = _db_factor_definition(name="DBFactor", description="original")
+    draft = analyticstool._definition_to_draft(db_def, "db")
+    draft["DraftMode"] = "db"
+    draft["Description"] = "edited"
+    draft["sync_origin"] = "form"
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-use-btn"})())
+    out = analyticstool.at_manage_factor_definitions(
+        None,
+        None,
+        None,
+        1,
+        None,
+        draft,
+        [],
+        [db_def],
+        True,
+        {"role": "Admin", "username": "tester"},
+    )
+
+    assert out[0] is no_update
+    assert out[6].startswith("Rename the factor to create a session copy")
+    assert out[7] == "orange"
 
 
 def test_sync_factor_definition_form_ignores_form_origin_updates(page_modules):
@@ -621,6 +822,7 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     returns_df.index.name = "Date"
 
     monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(
         analyticstool,
         "calculate_statistics_cached",
@@ -695,11 +897,6 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         "build_regime_duration_table",
         lambda *_args, **_kwargs: pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
     )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_conditioned_summary",
-        lambda *_args, **_kwargs: pd.DataFrame([{"Regime": 1, "Series": "Asset_A", "Observations": 2}]),
-    )
     monkeypatch.setattr(analyticstool.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
 
     payload = analyticstool.download_excel(
@@ -735,11 +932,16 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     assert "Factor Analysis - Box" in xl.sheet_names
     assert "Factor Analysis - Scatter" in xl.sheet_names
     assert "Regime - Settings" in xl.sheet_names
-    assert "Regime - Timeline" in xl.sheet_names
     assert "Regime - Statistics" in xl.sheet_names
+    assert "Regime - Timeline" in xl.sheet_names
     assert "Regime - Transition" in xl.sheet_names
     assert "Regime - Duration" in xl.sheet_names
-    assert "Regime - Conditioned" in xl.sheet_names
+    assert "Regime - Conditioned" not in xl.sheet_names
+    regime_sheet_positions = {name: xl.sheet_names.index(name) for name in xl.sheet_names if name.startswith("Regime - ")}
+    assert regime_sheet_positions["Regime - Settings"] < regime_sheet_positions["Regime - Statistics"]
+    assert regime_sheet_positions["Regime - Statistics"] < regime_sheet_positions["Regime - Timeline"]
+    assert regime_sheet_positions["Regime - Timeline"] < regime_sheet_positions["Regime - Transition"]
+    assert regime_sheet_positions["Regime - Transition"] < regime_sheet_positions["Regime - Duration"]
 
 
 def test_update_regime_definition_select_includes_saved_and_session(page_modules):
@@ -755,9 +957,139 @@ def test_update_regime_definition_select_includes_saved_and_session(page_modules
     option_map = {opt["value"]: opt["label"] for opt in options}
     assert "def::SavedRegime" in option_map
     assert "def::SessionRegime" in option_map
-    assert option_map["def::SavedRegime"].startswith("[Saved]")
+    assert option_map["def::SavedRegime"].startswith("[DB]")
     assert option_map["def::SessionRegime"].startswith("[Session]")
     assert value == "def::SavedRegime"
+
+
+def test_reset_regime_draft_from_new_button_and_clear(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-new-btn"})())
+    draft, select_value, msg, color, hide = analyticstool.at_reset_regime_definition_draft(1, "db::DBRegime")
+    assert draft["DraftMode"] == "new"
+    assert select_value is None
+    assert color == "blue"
+    assert hide is False
+    assert "New session regime draft started." in msg
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-select"})())
+    draft2, select_value2, msg2, color2, hide2 = analyticstool.at_reset_regime_definition_draft(0, None)
+    assert draft2["DraftMode"] == "new"
+    assert select_value2 is no_update
+    assert color2 == "blue"
+    assert hide2 is False
+    assert "New session regime draft started." in msg2
+
+
+def test_use_regime_promotes_edited_db_draft_to_session(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    db_def = _db_regime_definition(name="DBRegime")
+    draft = analyticstool._regime_definition_to_draft(db_def, "db")
+    draft["DraftMode"] = "db"
+    draft["RegimeName"] = "SessionRegime"
+    draft["sync_origin"] = "form"
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-use-btn"})())
+    out = analyticstool.at_manage_regime_definitions(
+        None,
+        None,
+        None,
+        1,
+        None,
+        draft,
+        [],
+        [db_def],
+        True,
+        {"role": "Admin", "username": "tester"},
+    )
+
+    local_rows = out[0]
+    assert isinstance(local_rows, list)
+    assert any(str(item.get("RegimeName")) == "SessionRegime" for item in local_rows)
+    assert out[4] == "def::SessionRegime"
+    assert "Session regime selected for analysis." in out[6]
+
+
+def test_use_regime_keeps_db_selection_when_unchanged(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    db_def = _db_regime_definition(name="DBRegime")
+    draft = analyticstool._regime_definition_to_draft(db_def, "db")
+    draft["DraftMode"] = "db"
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-use-btn"})())
+    out = analyticstool.at_manage_regime_definitions(
+        None,
+        None,
+        None,
+        1,
+        None,
+        draft,
+        [],
+        [db_def],
+        True,
+        {"role": "Admin", "username": "tester"},
+    )
+
+    assert out[0] is no_update
+    assert out[4] == "def::DBRegime"
+    assert "Database regime selected for analysis." in out[6]
+
+
+def test_use_regime_blocks_db_name_collision_for_edited_db_draft(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    db_def = _db_regime_definition(name="DBRegime", description="original")
+    draft = analyticstool._regime_definition_to_draft(db_def, "db")
+    draft["DraftMode"] = "db"
+    draft["Description"] = "edited"
+    draft["sync_origin"] = "form"
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-use-btn"})())
+    out = analyticstool.at_manage_regime_definitions(
+        None,
+        None,
+        None,
+        1,
+        None,
+        draft,
+        [],
+        [db_def],
+        True,
+        {"role": "Admin", "username": "tester"},
+    )
+
+    assert out[0] is no_update
+    assert out[6].startswith("Rename the regime to create a session copy")
+    assert out[7] == "orange"
+
+
+def test_preload_factor_and_regime_definitions_on_page_load(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    monkeypatch.setattr(analyticstool, "factor_tables_available", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(analyticstool, "regime_tables_available", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        analyticstool,
+        "load_factor_definitions",
+        lambda *_args, **_kwargs: [{"FactorName": "SavedFactor"}],
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "load_regime_definitions",
+        lambda *_args, **_kwargs: [{"RegimeName": "SavedRegime"}],
+    )
+
+    factor_available, factor_rows, regime_available, regime_rows = analyticstool.at_preload_factor_and_regime_definitions(1)
+    assert factor_available is True
+    assert regime_available is True
+    assert factor_rows == [{"FactorName": "SavedFactor"}]
+    assert regime_rows == [{"RegimeName": "SavedRegime"}]
+
+
+def test_regime_definition_modal_hides_return_basis_control(page_modules):
+    analyticstool, _ = page_modules
+    modal = _find_component_by_id(analyticstool.layout, "at-regime-def-modal")
+    assert modal is not None
+    assert _find_component_by_id(modal, "at-regime-def-return-basis") is None
 
 
 def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
@@ -774,7 +1106,7 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
             {"method_type": 3, "num_regimes": 3, "observations": 6, "warning": None},
         ),
     )
-    monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
 
     warning, content = analyticstool.update_regime_analysis(
         "regime_analysis",
@@ -796,7 +1128,14 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
 
     assert warning is not None
     assert content is not None
+    section_titles = _stack_section_titles(content)
+    assert section_titles[0] == "Regime Settings"
+    assert section_titles[1] == "Regime Statistics"
+    assert section_titles[2].startswith("Regime Timeline:")
+    assert section_titles[3] == "Transition Matrix"
+    assert section_titles[4] == "Run Durations"
     text_blob = " ".join(_collect_component_text(content)).lower()
+    assert "regime settings" in text_blob
     assert "regime statistics" in text_blob
     assert "transition matrix" in text_blob
 

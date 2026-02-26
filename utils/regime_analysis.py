@@ -15,7 +15,6 @@ import cache_config
 from utils.core_categories import load_cma_returns_for_benches_with_meta
 from utils.regime_definitions import validate_regime_definition_payload
 from utils.returns import (
-    annualization_factor,
     calculate_excess_returns,
     df_to_json,
     get_working_returns,
@@ -24,7 +23,8 @@ from utils.returns import (
 )
 from utils.sec_factor_loader import load_sec_factor_returns_by_names_aa
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
-from utils.statistics import maximum_drawdown, sharpe_ratio, sortino_ratio
+from utils.serialization import parse_mapping_payload
+from utils.statistics import calculate_statistics
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -627,40 +627,135 @@ def compute_regime_assignments(
     return states, diagnostics
 
 
-def build_regime_statistics_table(returns_df: pd.DataFrame, states: pd.Series, periodicity: str) -> pd.DataFrame:
+def _merge_regime_returns_and_states(returns_df: pd.DataFrame, states: pd.Series) -> pd.DataFrame:
+    """Align working returns to regime assignments on their common date range."""
     if returns_df is None or returns_df.empty or states is None or states.empty:
         return pd.DataFrame()
+
     aligned = returns_df.copy()
     aligned.index = pd.to_datetime(aligned.index, errors="coerce")
+    aligned = aligned[~aligned.index.isna()]
+    if aligned.empty:
+        return pd.DataFrame()
+    aligned = aligned[~aligned.index.duplicated(keep="last")]
+
     states_aligned = pd.Series(states.copy())
     states_aligned.index = pd.to_datetime(states_aligned.index, errors="coerce")
-    merged = aligned.join(states_aligned.rename("Regime"), how="inner")
-    merged = merged.dropna(subset=["Regime"])
+    states_aligned = states_aligned[~states_aligned.index.isna()]
+    if states_aligned.empty:
+        return pd.DataFrame()
+    states_aligned = states_aligned[~states_aligned.index.duplicated(keep="last")]
+    states_aligned = pd.to_numeric(states_aligned, errors="coerce").astype("Int64")
+    states_aligned = states_aligned.dropna()
+    if states_aligned.empty:
+        return pd.DataFrame()
+
+    common_idx = aligned.index.intersection(states_aligned.index)
+    if common_idx.empty:
+        return pd.DataFrame()
+
+    merged = aligned.reindex(common_idx).join(
+        states_aligned.reindex(common_idx).rename("Regime"),
+        how="inner",
+    )
+    merged = merged.dropna(subset=["Regime"]).sort_index()
+    if merged.empty:
+        return pd.DataFrame()
+    merged["Regime"] = pd.to_numeric(merged["Regime"], errors="coerce").astype("Int64")
+    return merged.dropna(subset=["Regime"])
+
+
+def build_regime_statistics_table(
+    returns_df: pd.DataFrame,
+    states: pd.Series,
+    periodicity: str,
+    selected_series: list[str] | tuple[str, ...] | None = None,
+    benchmark_assignments: dict | str | None = None,
+    long_short_assignments: dict | str | None = None,
+) -> pd.DataFrame:
+    if returns_df is None or returns_df.empty or states is None or states.empty:
+        return pd.DataFrame()
+
+    merged = _merge_regime_returns_and_states(returns_df, states)
     if merged.empty:
         return pd.DataFrame()
 
-    periods_per_year = annualization_factor(periodicity or "daily")
+    selected = _as_tuple(selected_series)
+    series_columns = [c for c in selected if c in merged.columns] if selected else [c for c in merged.columns if c != "Regime"]
+    if not series_columns:
+        return pd.DataFrame()
+
+    benchmark_map = parse_mapping_payload(benchmark_assignments)
+    long_short_map = parse_mapping_payload(long_short_assignments)
+    merged = merged.copy()
+    merged["RegimeInt"] = pd.to_numeric(merged["Regime"], errors="coerce").astype("Int64")
+    merged = merged.dropna(subset=["RegimeInt"])
+    if merged.empty:
+        return pd.DataFrame()
+
     rows: list[dict[str, Any]] = []
-    regimes = sorted(int(v) for v in merged["Regime"].dropna().astype(int).unique())
-    for regime in regimes:
-        subset = merged[merged["Regime"].astype(int) == regime]
-        for col in [c for c in subset.columns if c != "Regime"]:
-            series = pd.to_numeric(subset[col], errors="coerce").dropna()
-            if series.empty:
+    for regime, subset in merged.groupby("RegimeInt", sort=True):
+        regime_int = int(regime)
+        for col in series_columns:
+            if col not in subset.columns:
                 continue
+
+            series = pd.to_numeric(subset[col], errors="coerce")
+            benchmark_name = str(benchmark_map.get(col, "None") or "None")
+            if benchmark_name == "None":
+                working_series = series.dropna()
+                if working_series.empty:
+                    continue
+                benchmark_series = pd.Series(0.0, index=working_series.index, name="None")
+            else:
+                if benchmark_name not in subset.columns:
+                    benchmark_name = col
+                benchmark_candidate = pd.to_numeric(subset[benchmark_name], errors="coerce")
+                aligned_pair = pd.concat([series.rename(col), benchmark_candidate.rename(benchmark_name)], axis=1).dropna()
+                if aligned_pair.empty:
+                    continue
+                working_series = pd.to_numeric(aligned_pair.iloc[:, 0], errors="coerce").dropna()
+                if working_series.empty:
+                    continue
+                benchmark_series = pd.to_numeric(aligned_pair.iloc[:, 1], errors="coerce").dropna()
+                benchmark_series.index = working_series.index
+                benchmark_series.name = benchmark_name
+
+            stats_row = calculate_statistics(
+                working_series.rename(col),
+                benchmark_series,
+                periodicity or "daily",
+                col,
+                is_long_short=bool(long_short_map.get(col, False)),
+                risk_free_returns=None,
+                spx_returns=None,
+            )
+            if not isinstance(stats_row, dict):
+                continue
+            observations = int(stats_row.get("Number of Periods") or 0)
+            if observations <= 0:
+                continue
+
+            growth_end = (1.0 + working_series).cumprod().iloc[-1] if not working_series.empty else np.nan
             rows.append(
                 {
-                    "Regime": regime,
+                    "Regime": regime_int,
                     "Series": col,
-                    "Observations": int(len(series)),
-                    "Mean Return": float(series.mean()),
-                    "Volatility": float(series.std(ddof=1) * np.sqrt(periods_per_year)) if len(series) > 1 else np.nan,
-                    "Sharpe": float(sharpe_ratio(series, periods_per_year, rf=0.0)),
-                    "Sortino": float(sortino_ratio(series, periods_per_year, rf=0.0)),
-                    "Min Return": float(series.min()),
-                    "Max Return": float(series.max()),
-                    "Hit Rate": float((series > 0).mean()),
-                    "Max Drawdown": float(maximum_drawdown(series)),
+                    "Observations": observations,
+                    "Mean Return": float(working_series.mean()),
+                    "Volatility": stats_row.get("Annualized Volatility"),
+                    "Sharpe": stats_row.get("Sharpe Ratio"),
+                    "Sortino": stats_row.get("Sortino Ratio"),
+                    "Annualized Excess Return": stats_row.get("Annualized Excess Return"),
+                    "Annualized Tracking Error": stats_row.get("Annualized Tracking Error"),
+                    "Information Ratio": stats_row.get("Information Ratio"),
+                    "Correlation": stats_row.get("Correlation"),
+                    "Min Return": stats_row.get("Worst Period Return"),
+                    "Max Return": stats_row.get("Best Period Return"),
+                    "Hit Rate": stats_row.get("Hit Rate"),
+                    "Hit Rate (vs Benchmark)": stats_row.get("Hit Rate (vs Benchmark)"),
+                    "Max Drawdown": stats_row.get("Maximum Drawdown"),
+                    "Growth End": float(growth_end),
                 }
             )
     out = pd.DataFrame(rows)
@@ -731,38 +826,3 @@ def build_regime_timeline_frame(states: pd.Series) -> pd.DataFrame:
     out["Regime"] = pd.to_numeric(out["Regime"], errors="coerce").astype("Int64")
     out = out.dropna(subset=["Date", "Regime"]).sort_values("Date")
     return out.reset_index(drop=True)
-
-
-def build_regime_conditioned_summary(returns_df: pd.DataFrame, states: pd.Series) -> pd.DataFrame:
-    if returns_df is None or returns_df.empty or states is None or states.empty:
-        return pd.DataFrame()
-    aligned = returns_df.copy()
-    aligned.index = pd.to_datetime(aligned.index, errors="coerce")
-    states_aligned = pd.Series(states.copy())
-    states_aligned.index = pd.to_datetime(states_aligned.index, errors="coerce")
-    merged = aligned.join(states_aligned.rename("Regime"), how="inner").dropna(subset=["Regime"])
-    if merged.empty:
-        return pd.DataFrame()
-
-    rows: list[dict[str, Any]] = []
-    regimes = sorted(int(v) for v in merged["Regime"].dropna().astype(int).unique())
-    for regime in regimes:
-        subset = merged[merged["Regime"].astype(int) == regime]
-        for col in [c for c in subset.columns if c != "Regime"]:
-            series = pd.to_numeric(subset[col], errors="coerce").dropna()
-            if series.empty:
-                continue
-            growth = (1.0 + series).cumprod()
-            rows.append(
-                {
-                    "Regime": regime,
-                    "Series": col,
-                    "Observations": int(len(series)),
-                    "Growth End": float(growth.iloc[-1]) if not growth.empty else np.nan,
-                    "Max Drawdown": float(maximum_drawdown(series)),
-                }
-            )
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out
-    return out.sort_values(["Regime", "Series"]).reset_index(drop=True)

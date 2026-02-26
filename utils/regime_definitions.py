@@ -192,13 +192,15 @@ def validate_regime_definition_payload(payload: dict[str, Any]) -> tuple[dict[st
     config_payload = _parse_config(payload.get("ConfigJson"))
     config_payload.update(_parse_config(payload.get("Config")))
 
-    return_basis = str(
+    parsed_return_basis = str(
         config_payload.get("return_basis")
         or payload.get("ReturnBasis")
         or "total"
     ).strip().lower()
-    if return_basis not in {"total", "excess"}:
+    if parsed_return_basis not in {"total", "excess"}:
         return None, "Return basis must be total or excess."
+    # Current regime-definition UX is total-only; keep field for forward compatibility.
+    return_basis = "total"
 
     num_regimes = _parse_int(
         config_payload.get("num_regimes", payload.get("NumRegimes")),
