@@ -62,6 +62,7 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
+from utils.ui_tooltips import apply_tooltips_to_layout
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -3794,6 +3795,8 @@ layout = dmc.Container(
         dcc.Interval(id="at-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
     ],
 )
+
+layout = apply_tooltips_to_layout(layout, page_key="analyticstool")
 
 
 # Toggle welcome/main visibility based on dashmat-raw-data-store.

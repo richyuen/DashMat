@@ -50,6 +50,7 @@ from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
+from utils.ui_tooltips import apply_tooltips_to_layout
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -2138,6 +2139,8 @@ layout = dmc.Container(
         ),
     ],
 )
+
+layout = apply_tooltips_to_layout(layout, page_key="regression")
 
 
 # ===========================================================================

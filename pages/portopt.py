@@ -65,6 +65,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
+from utils.ui_tooltips import apply_tooltips_to_layout
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
@@ -3383,6 +3384,8 @@ layout = dmc.Container(
         ),
     ],
 )
+
+layout = apply_tooltips_to_layout(layout, page_key="portopt")
 
 
 # ===========================================================================
