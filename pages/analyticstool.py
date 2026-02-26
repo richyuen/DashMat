@@ -1924,9 +1924,15 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         html.Div([
                                             dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
                                             dmc.Tooltip(
-                                                label="A value of 0% disables the volatility scaling.",
+                                                label=(
+                                                    "Sets the annualized volatility target applied to selected analytics series before calculation. "
+                                                    "A value of 0 disables scaling and keeps raw return volatility, while positive values normalize series magnitude. "
+                                                    "Use this when you want statistics and charts to be less dominated by cross-series volatility differences."
+                                                ),
                                                 position="top",
                                                 withArrow=True,
+                                                multiline=True,
+                                                w=360,
                                                 children=dmc.NumberInput(
                                                     id="at-vol-scaler-input",
                                                     value=vol_scaler,
@@ -2290,7 +2296,11 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     dmc.Text("Half-Life", size="sm", fw=500, mb=3),
                                     html.Div(
                                         dmc.Tooltip(
-                                            label="If value is < 1, it is interpreted as lambda. If value is >= 1, it is interpreted as half-life in periods.",
+                                            label=(
+                                                "Controls exponential decay for correlation or correlogram calculations when Exp Wt is enabled. "
+                                                "Values below 1 are treated as lambda, while values of 1 or higher are interpreted as half-life in periods. "
+                                                "Use shorter decay for faster adaptation or longer decay for smoother dependence estimates."
+                                            ),
                                             multiline=True,
                                             w=300,
                                             withArrow=True,

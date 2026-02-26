@@ -16,17 +16,41 @@ TOOLTIP_STYLE_DEFAULT = {
     "multiline": True,
     "w": 280,
     "openDelay": 450,
-    "closeDelay": 90,
+    "closeDelay": 180,
 }
 
 
 _EXPLICIT_TOOLTIPS: dict[str, str] = {
-    "at-menu-download-excel": "Export the current Analytics Tool state to Excel.",
-    "po-menu-download-excel": "Export the current optimization state to Excel.",
-    "reg-menu-download-excel": "Export current regression outputs to Excel.",
-    "at-open-series-modal-button": "Choose the return series used by analytics and charts.",
-    "po-open-modal-button": "Choose the return series used by portfolio optimization.",
-    "reg-open-modal-button": "Choose dependent and explanatory return series.",
+    "at-menu-download-excel": (
+        "Exports the current Analytics Tool outputs to a multi-sheet Excel workbook. "
+        "The export includes tables derived from your active controls, selected series, and date range. "
+        "Use this after finalizing settings so the workbook reflects the same assumptions shown on screen."
+    ),
+    "po-menu-download-excel": (
+        "Exports the current Portfolio Optimization results and diagnostics to Excel. "
+        "The workbook structure reflects the active portfolio selections, model assumptions, and tab outputs. "
+        "Run optimization first and verify portfolio selection before exporting for reporting."
+    ),
+    "reg-menu-download-excel": (
+        "Exports regression settings and result tabs to an Excel workbook. "
+        "Sheet content is built from the selected result, model configuration, and active diagnostics. "
+        "Use this after confirming the intended result name/window so exported analysis matches your review context."
+    ),
+    "at-open-series-modal-button": (
+        "Opens the series selection modal for Analytics workflows. "
+        "The selected rows determine which return streams feed statistics, charts, and downstream analyses. "
+        "Review benchmark, long-short, and scaling flags in the modal before closing to avoid inconsistent outputs."
+    ),
+    "po-open-modal-button": (
+        "Opens the Portfolio Optimization series selection modal. "
+        "Selections here define the investable universe and affect constraints, expected inputs, and model feasibility. "
+        "Validate benchmark/CMA mappings and per-series flags before running optimization."
+    ),
+    "reg-open-modal-button": (
+        "Opens the Regression series selection modal for Y/X setup and per-series options. "
+        "Your dependent variable, regressors, and optional bounds in that grid directly drive model estimation. "
+        "Confirm series roles and constraint flags there before launching a regression run."
+    ),
     "at-vol-scaler-input": (
         "Sets the annualized volatility target used to scale selected return series. "
         "Set to 0 to disable scaling entirely and use raw return magnitudes. "
@@ -367,8 +391,9 @@ GRID_COLUMN_TOOLTIP_OVERRIDES: dict[str, dict[str, str]] = {
 
 GRID_TOOLTIP_DASH_OPTIONS_DEFAULTS = {
     "tooltipShowDelay": 500,
-    "tooltipHideDelay": 120,
+    "tooltipHideDelay": 5000,
     "tooltipMouseTrack": False,
+    "tooltipInteraction": True,
 }
 
 
@@ -398,6 +423,224 @@ def tooltip_text(control_id: str, fallback_label: str | None = None) -> str:
     return text
 
 
+_APP_ID_PREFIXES = ("at-", "po-", "reg-")
+
+
+def _workflow_name_for_id(control_id: str) -> str:
+    lowered = str(control_id or "").strip().lower()
+    if lowered.startswith("at-"):
+        return "Analytics"
+    if lowered.startswith("po-"):
+        return "Portfolio Optimization"
+    if lowered.startswith("reg-"):
+        return "Regression"
+    return "DashMat"
+
+
+def _humanize_control_subject(control_id: str, fallback_label: str | None = None) -> str:
+    if fallback_label and str(fallback_label).strip():
+        return str(fallback_label).strip()
+    label = re.sub(r"^(at|po|reg)-", "", str(control_id or "").strip(), flags=re.IGNORECASE)
+    label = re.sub(r"[-_]+", " ", label).strip()
+    label = re.sub(
+        (
+            r"\b(button|btn|input|select|switch|toggle|modal|dialog|tabs?|tab|panel|store|container|"
+            r"wrapper|dummy|upload|grid|content|value|state|data|rows|row|columns|column)\b"
+        ),
+        " ",
+        label,
+        flags=re.IGNORECASE,
+    )
+    label = re.sub(r"\s+", " ", label).strip()
+    return label if label else "this control"
+
+
+def _is_dashmat_control_id(control_id: str) -> bool:
+    lowered = str(control_id or "").strip().lower()
+    return lowered.startswith(_APP_ID_PREFIXES)
+
+
+def _generated_explicit_tooltip(control_id: str, fallback_label: str | None = None) -> str:
+    lowered = str(control_id or "").strip().lower()
+    workflow = _workflow_name_for_id(control_id)
+    subject = _humanize_control_subject(control_id, fallback_label=fallback_label)
+
+    if "robust" in lowered and "se" in lowered:
+        return (
+            "Enables heteroskedasticity-robust standard errors for regression inference. "
+            "This setting does not change fitted coefficients, but it can materially change t-stats, p-values, and confidence intervals when residual variance is not constant. "
+            "Use it when you expect heteroskedastic noise or want more conservative significance diagnostics."
+        )
+    if "force-zero" in lowered or ("intercept" in lowered and "force" in lowered):
+        return (
+            "Constrains the regression intercept to zero during model fitting. "
+            "Forcing zero can materially change factor loadings and residual behavior, especially when the dependent series has non-zero drift. "
+            "Enable only when theory or mandate requires a no-intercept specification."
+        )
+    if ("exp-wt" in lowered or "exp_wt" in lowered or "exponential" in lowered) and "switch" in lowered:
+        return (
+            "Turns exponential weighting on for time-series estimation in this workflow. "
+            "When enabled, recent observations receive higher influence than older data, which can improve responsiveness but reduce stability in noisy regimes. "
+            "Pair this with a deliberate half-life choice so decay speed matches your use case."
+        )
+    if "halflife" in lowered or "half-life" in lowered:
+        return (
+            "Sets the decay speed for exponential weighting. "
+            "Smaller values emphasize very recent observations, while larger values smooth estimates by retaining more historical influence. "
+            "Choose a value consistent with the update frequency and horizon of your decision process."
+        )
+    if "vol-scaler" in lowered:
+        return (
+            f"Sets the annualized volatility target applied in the {workflow} pipeline before downstream calculations. "
+            "A value of 0 disables scaling and keeps raw series volatility, while positive values normalize magnitude across selected series. "
+            "Use this to make cross-series comparisons more stable when base volatility levels differ materially."
+        )
+    if "periodicity" in lowered:
+        return (
+            f"Selects the working data frequency for {workflow} calculations. "
+            "Changing periodicity can alter annualization, sample counts, and window interpretation across statistics and model outputs. "
+            "Keep this aligned with your source data quality and the horizon you want to analyze."
+        )
+    if "returns-type" in lowered:
+        return (
+            "Chooses whether calculations use total returns or benchmark-relative excess returns. "
+            "This directly changes return levels, risk metrics, and interpretation of performance diagnostics. "
+            "Confirm benchmark mappings before selecting excess mode so relative calculations are meaningful."
+        )
+    if "start-date" in lowered or "end-date" in lowered:
+        return (
+            f"Defines one boundary of the active date range used by the {workflow} workflow. "
+            "The chosen range controls which observations are eligible for statistics, rolling windows, and model estimation. "
+            "Adjust start and end together to avoid unintentionally shrinking sample size."
+        )
+    if "common-range" in lowered or "common-daily" in lowered or "maximum-range" in lowered:
+        return (
+            "Applies a predefined date-range shortcut based on available data overlap. "
+            "These shortcuts help avoid manual range errors when series coverage differs across assets or frequencies. "
+            "Use them before running analyses to ensure consistent sample alignment."
+        )
+    if "model-select" in lowered or (lowered.endswith("-model") and "select" in lowered):
+        return (
+            f"Selects the core model family used for {workflow} computations. "
+            "The model choice changes estimation method, required inputs, and which diagnostics are reported. "
+            "Choose the model first, then review all model-specific controls before running."
+        )
+    if "objective" in lowered:
+        return (
+            "Sets the optimization objective for portfolio construction. "
+            "Changing objective alters the trade-off between return, risk, and concentration and can produce substantially different allocations. "
+            "Confirm this matches your mandate before applying constraints and expected inputs."
+        )
+    if "alpha" in lowered or "l1-ratio" in lowered:
+        return (
+            "Controls regularization strength and penalty mix for shrinkage-based estimation. "
+            "These parameters govern the bias-variance tradeoff and can change coefficient stability, sparsity, and out-of-sample behavior. "
+            "Tune gradually and compare diagnostics across runs rather than making large jumps."
+        )
+    if "window" in lowered or "opt-step" in lowered or "fill-in-sample" in lowered:
+        return (
+            "Configures how estimation and application windows move through time. "
+            "Window mode, size, and step determine effective sample depth and rebalancing cadence, which directly affects stability and responsiveness. "
+            "Set these controls as a coherent group to match your intended decision horizon."
+        )
+    if "missing-data" in lowered:
+        return (
+            "Defines how missing observations are handled before modeling or optimization. "
+            "Different handling modes can bias estimates, alter variance, and change comparability across series. "
+            "Use the least distortive option compatible with your data quality and required sample continuity."
+        )
+    if "arima" in lowered or "garch" in lowered:
+        return (
+            "Configures residual time-series model parameters used for ARIMA/GARCH diagnostics. "
+            "These settings affect residual-process fit quality and the interpretation of AIC/BIC and related outputs. "
+            "Adjust only when you intentionally want to test alternative lag/volatility structures."
+        )
+    if "series-selection" in lowered or "series-select" in lowered or "open-modal" in lowered:
+        return (
+            f"Controls which series are included in the active {workflow} context. "
+            "Inclusion and assignment choices here propagate to downstream calculations, diagnostics, and exports. "
+            "Review selections carefully before running or saving results."
+        )
+    if "benchmark" in lowered or "cmabench" in lowered:
+        return (
+            "Sets benchmark linkage used for relative calculations or assumption mapping. "
+            "Incorrect mappings can distort excess-return metrics, attribution, and optimizer assumptions. "
+            "Keep benchmark assignments synchronized with portfolio or factor definitions."
+        )
+    if "long-short" in lowered or lowered.endswith("-ls") or "ls-" in lowered:
+        return (
+            "Marks whether a series should be treated as long-short rather than long-only. "
+            "This changes interpretation of spreads and can influence risk and attribution metrics. "
+            "Enable only for true spread-style inputs."
+        )
+    if "scale-vol" in lowered or "vol-scaling" in lowered:
+        return (
+            "Controls series-level eligibility for global volatility scaling. "
+            "This allows selective normalization where some series are rescaled and others retain native volatility. "
+            "Use consistent rules so comparisons across included series remain interpretable."
+        )
+    if "constraint" in lowered:
+        return (
+            "Controls creation or editing of constraint definitions used during optimization or bounded estimation. "
+            "Constraint settings directly determine the feasible solution space and can materially alter final outputs. "
+            "Review bounds and coefficients together to avoid unintended infeasibility."
+        )
+    if "ex-ante" in lowered or "bl-" in lowered or "tau" in lowered:
+        return (
+            "Configures ex-ante assumptions used by mean-variance or Black-Litterman workflows. "
+            "Expected returns, covariance/correlation inputs, and view confidence can dominate resulting allocations. "
+            "Treat these settings as primary assumptions and validate them before running."
+        )
+    if "run-button" in lowered or lowered.endswith("-run") or lowered.endswith("-run-button"):
+        return (
+            f"Runs the current {workflow} workflow using active controls and selected data. "
+            "Execution reads current assumptions exactly as configured, so stale selections can propagate directly into outputs. "
+            "Confirm key settings first when reproducibility matters."
+        )
+    if "download" in lowered or "save-session" in lowered or "load-session" in lowered:
+        return (
+            "Controls export or session persistence behavior for the current workflow state. "
+            "Saved and exported artifacts reflect active selections, model inputs, and date boundaries at trigger time. "
+            "Use these actions after final checks to preserve a clean and reproducible snapshot."
+        )
+    if "clear" in lowered or "delete" in lowered or "reset" in lowered:
+        return (
+            "Clears or removes part of the current working state. "
+            "This action can drop selections or results and may require reconfiguration before the next run. "
+            "Use it intentionally when you want a clean slate or to remove stale rows."
+        )
+    if "factor" in lowered:
+        return (
+            "Configures factor-analysis inputs, definitions, or presentation settings. "
+            "Changes here alter grouping logic and interpretation of factor-conditioned outputs. "
+            "Keep factor definitions and transforms consistent with your intended analytical framework."
+        )
+    if "regime" in lowered:
+        return (
+            "Configures regime-definition selection, creation, or regime-analysis display controls. "
+            "Regime choices determine state assignment and therefore affect conditioned statistics, transitions, and timeline outputs. "
+            "Verify regime definition source and parameters before applying it broadly."
+        )
+    if "rolling" in lowered or "calendar" in lowered or "growth" in lowered or "drawdown" in lowered:
+        return (
+            "Controls how derived performance views are calculated or displayed over time. "
+            "These settings can change annualization, aggregation, and interpretation of path-dependent behavior. "
+            "Align them with your reporting horizon before comparing outputs."
+        )
+    if "correlation" in lowered or "covariance" in lowered or "correlogram" in lowered or "scatter" in lowered:
+        return (
+            "Controls matrix or relationship-view settings for dependence analysis. "
+            "View mode and weighting choices can materially change visual structure and inferred relationships. "
+            "Use consistent settings when comparing snapshots across runs."
+        )
+
+    return (
+        f"This control manages {subject} in the {workflow} workflow. "
+        "Updating it can change data inclusion, model assumptions, execution behavior, or output formatting used by downstream tabs and exports. "
+        "Set it deliberately with related controls before running calculations so results remain coherent and reproducible."
+    )
+
+
 def tooltip_text_and_source(control_id: str, fallback_label: str | None = None) -> tuple[str, str]:
     key = str(control_id or "").strip()
     if not key:
@@ -406,6 +649,9 @@ def tooltip_text_and_source(control_id: str, fallback_label: str | None = None) 
     exact = _EXPLICIT_TOOLTIPS.get(key)
     if exact:
         return exact, "explicit"
+
+    if _is_dashmat_control_id(key):
+        return _generated_explicit_tooltip(key, fallback_label=fallback_label), "explicit"
 
     lowered = key.lower()
     for pattern, text in _PATTERN_TOOLTIPS:

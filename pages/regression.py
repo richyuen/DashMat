@@ -1252,9 +1252,15 @@ def build_reg_main_layout():
                                         html.Div([
                                             dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
                                             dmc.Tooltip(
-                                                label="A value of 0% disables the volatility scaling.",
+                                                label=(
+                                                    "Sets the annualized volatility target applied to selected series before regression fitting. "
+                                                    "A value of 0 disables scaling and keeps raw return magnitudes, while positive values normalize volatility across selected inputs. "
+                                                    "Use this when you want coefficient comparisons that are less driven by raw volatility differences."
+                                                ),
                                                 position="top",
                                                 withArrow=True,
+                                                multiline=True,
+                                                w=340,
                                                 children=dmc.NumberInput(
                                                     id="reg-vol-scaler-input",
                                                     value=0,

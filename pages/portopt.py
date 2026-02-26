@@ -1486,9 +1486,15 @@ def build_po_main_layout():
                                         html.Div([
                                             dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
                                             dmc.Tooltip(
-                                                label="A value of 0% disables the volatility scaling.",
+                                                label=(
+                                                    "Sets the annualized volatility target applied before optimization and reporting calculations. "
+                                                    "A value of 0 disables scaling and keeps native return volatility, while positive targets normalize magnitude across selected assets. "
+                                                    "Use this when you want more comparable optimization inputs across assets with very different baseline volatility."
+                                                ),
                                                 position="top",
                                                 withArrow=True,
+                                                multiline=True,
+                                                w=360,
                                                 children=dmc.NumberInput(
                                                     id="po-vol-scaler-input",
                                                     value=0,
@@ -1728,7 +1734,11 @@ def build_po_main_layout():
                                         html.Div([
                                             dmc.Text("Half-Life", size="sm", fw=500, mb=3),
                                             dmc.Tooltip(
-                                                label="If value is < 1, it is interpreted as lambda. If value is >= 1, it is interpreted as half-life in periods.",
+                                                label=(
+                                                    "Controls decay for exponential weighting when Exp Wt is enabled. "
+                                                    "Values below 1 are interpreted as lambda, while values of 1 or higher are treated as half-life in periods. "
+                                                    "Choose a faster decay for responsiveness or a longer decay for smoother, more stable estimates."
+                                                ),
                                                 multiline=True,
                                                 w=300,
                                                 withArrow=True,
@@ -2077,9 +2087,15 @@ def build_po_main_layout():
                                 # Row 3: Run button
                                 dmc.Tooltip(
                                     id="po-run-button-tooltip",
-                                    label="Load data and complete required inputs.",
+                                    label=(
+                                        "Runs portfolio optimization using the currently selected universe, assumptions, and constraints. "
+                                        "This action uses all active inputs exactly as shown, including expected-return/matrix overrides and window settings. "
+                                        "Confirm required fields are complete before running to avoid unintended validation failures or stale outputs."
+                                    ),
                                     withArrow=True,
                                     position="top-start",
+                                    multiline=True,
+                                    w=380,
                                     disabled=False,
                                     children=html.Div(
                                         style={"display": "inline-block"},
