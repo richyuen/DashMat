@@ -27,6 +27,26 @@ _EXPLICIT_TOOLTIPS: dict[str, str] = {
     "at-open-series-modal-button": "Choose the return series used by analytics and charts.",
     "po-open-modal-button": "Choose the return series used by portfolio optimization.",
     "reg-open-modal-button": "Choose dependent and explanatory return series.",
+    "at-vol-scaler-input": (
+        "Sets the annualized volatility target used to scale selected return series. "
+        "Set to 0 to disable scaling entirely and use raw return magnitudes. "
+        "When enabled, only series with Scale Vol checked are adjusted."
+    ),
+    "reg-vol-scaler-input": (
+        "Sets the annualized volatility target for the regression input stream before model fitting. "
+        "Set to 0 to disable scaling and run on raw return levels. "
+        "Use this mainly to normalize series magnitudes when comparing coefficient stability across windows."
+    ),
+    "po-vol-scaler-input": (
+        "Sets the annualized volatility target used before optimization and downstream analytics. "
+        "Set to 0 to disable scaling and preserve original return volatility. "
+        "Series-level Scale Vol toggles determine which assets this global target is applied to."
+    ),
+    "at-regime-def-vol-scaler": (
+        "Sets volatility scaling for series used in regime assignment inputs. "
+        "Set to 0 to disable scaling during regime-state construction. "
+        "Use a positive value only when regime detection should be less driven by raw volatility differences."
+    ),
 }
 
 
@@ -125,6 +145,230 @@ _SKIP_ANCESTOR_COMPONENTS = {
 
 _SKIP_WRAP_COMPONENTS = {
     "MenuItem",
+}
+
+
+INPUT_GRID_ALLOWLIST = {
+    "at-series-selection-grid",
+    "reg-series-selection-grid",
+    "reg-linear-constraints-grid",
+    "po-series-selection-grid",
+    "po-linear-constraints-grid",
+    "po-ex-ante-returns-grid",
+    "po-ex-ante-matrix-grid",
+    "po-bl-views-grid",
+    "at-portfolio-add-grid",
+    "reg-portfolio-add-grid",
+    "po-portfolio-add-grid",
+    "at-raw-db-add-grid",
+    "reg-raw-db-add-grid",
+    "po-raw-db-add-grid",
+}
+
+
+OUTPUT_GRID_ALLOWLIST = {
+    "reg-anova-decomposition-grid",
+    "reg-anova-parameter-grid",
+}
+
+
+GRID_HEADER_TOOLTIP_TARGETS = INPUT_GRID_ALLOWLIST.union(OUTPUT_GRID_ALLOWLIST)
+
+
+CANONICAL_COLUMN_TOOLTIPS: dict[str, str] = {
+    "series": (
+        "Name of the series row being configured. "
+        "Edits to this row apply to this exact series in the active workflow."
+    ),
+    "benchmark": (
+        "Benchmark series used for excess-return and relative risk statistics. "
+        "Choose None to disable benchmark-relative calculations for this row."
+    ),
+    "cmabench": (
+        "CMA benchmark mapping used for optimization assumptions and reporting alignment. "
+        "Leave blank only when no CMA benchmark should be linked."
+    ),
+    "l s": (
+        "Marks this series as a long-short spread instead of a long-only stream. "
+        "This affects interpretation of relative metrics and some reporting conventions."
+    ),
+    "scale vol": (
+        "Controls whether the global Vol Scaler target is applied to this series. "
+        "Turn off when a series should keep original volatility while others are scaled."
+    ),
+    "delete": (
+        "Marks the row for removal from the working selection list. "
+        "Deleted rows are excluded from analysis until re-enabled."
+    ),
+    "del": (
+        "Marks this row for deletion from the active selection set. "
+        "Use carefully because deleted rows are excluded from subsequent runs."
+    ),
+    "y": (
+        "Sets this row as the dependent variable (Y) for regression. "
+        "Only one row should normally be selected as Y at a time."
+    ),
+    "x": (
+        "Includes this series as an explanatory variable (X) in regression. "
+        "Enable multiple X rows to fit multi-factor models."
+    ),
+    "lag": (
+        "Applies an integer lag to the explanatory series before fitting. "
+        "Positive lags shift X backward in time to model delayed relationships."
+    ),
+    "min beta": (
+        "Lower bound on the coefficient for this variable when constraints are enabled. "
+        "Ignored unless Enable is checked for the row."
+    ),
+    "max beta": (
+        "Upper bound on the coefficient for this variable when constraints are enabled. "
+        "Ignored unless Enable is checked for the row."
+    ),
+    "enable": (
+        "Turns per-variable beta bounds on or off for this row. "
+        "When disabled, Min/Max Beta values are not enforced."
+    ),
+    "portfolio": (
+        "Portfolio identifier to import into the working dataset. "
+        "Use one row per portfolio import request."
+    ),
+    "type": (
+        "Defines the return interpretation used for this imported portfolio row. "
+        "Choose the type matching the source benchmarking convention."
+    ),
+    "include benchmark": (
+        "Controls whether the benchmark companion series is imported with the portfolio row. "
+        "Enable when relative metrics or spread comparisons are needed."
+    ),
+    "benchmark type": (
+        "Benchmark family used when including benchmark series for this row. "
+        "Pick the benchmark type consistent with the portfolio import mode."
+    ),
+    "table": (
+        "Database table frequency source used for import (daily or monthly). "
+        "Select the table matching the desired periodicity."
+    ),
+    "fee": (
+        "Gross or net return flavor for imported database series. "
+        "Choose net unless gross returns are intentionally required."
+    ),
+    "convert": (
+        "Controls whether level-like source values are converted into returns. "
+        "Use only when source data is not already a return series."
+    ),
+    "convert to returns": (
+        "Controls whether source values are transformed into return increments. "
+        "Leave off when imported data is already in return form."
+    ),
+    "divide by": (
+        "Scaling divisor applied after conversion when source values are percent-like. "
+        "Common use is 100 for values such as 2.5 meaning 2.5%."
+    ),
+    "constraint": (
+        "Human-readable name for the linear constraint row. "
+        "Used for identification and review; math is driven by coefficients and bounds."
+    ),
+    "min": (
+        "Lower bound for the linear constraint expression. "
+        "The weighted sum must remain above this value."
+    ),
+    "max": (
+        "Upper bound for the linear constraint expression. "
+        "The weighted sum must remain below this value."
+    ),
+    "min wt": (
+        "Minimum allowed portfolio weight for this asset row (percent). "
+        "Ignored when Force is enabled for exact max behavior."
+    ),
+    "max wt": (
+        "Maximum allowed portfolio weight for this asset row (percent). "
+        "Used as a hard cap during optimization."
+    ),
+    "force": (
+        "When enabled, forces this row toward the configured maximum-weight behavior. "
+        "Use sparingly because it can dominate optimization flexibility."
+    ),
+    "source": (
+        "ANOVA component source used in decomposition. "
+        "Shows how total variance is partitioned across model and residual terms."
+    ),
+    "df": (
+        "Degrees of freedom associated with the ANOVA source row. "
+        "Used in mean-square and F-statistic calculations."
+    ),
+    "ss": (
+        "Sum of squares for the ANOVA source row. "
+        "Higher values indicate larger contribution to total variation."
+    ),
+    "ms": (
+        "Mean square computed as SS divided by df for this ANOVA row. "
+        "Used directly in the F-statistic ratio."
+    ),
+    "f": (
+        "F-statistic comparing explained variance to residual variance. "
+        "Larger values generally indicate stronger model explanatory power."
+    ),
+    "p value": (
+        "Significance probability associated with the row statistic. "
+        "Lower values indicate stronger evidence against the null hypothesis."
+    ),
+    "parameter": (
+        "Model coefficient name or diagnostic parameter label. "
+        "Interpret alongside coefficient magnitude and uncertainty columns."
+    ),
+    "coefficient": (
+        "Estimated parameter value for the selected model window. "
+        "Sign and magnitude describe direction and strength of relationship."
+    ),
+    "std error": (
+        "Standard error of the coefficient estimate. "
+        "Lower values indicate tighter parameter uncertainty."
+    ),
+    "t stat": (
+        "t-statistic for testing whether a coefficient differs from zero. "
+        "Larger absolute values indicate stronger evidence of non-zero effect."
+    ),
+    "ci low 95": (
+        "Lower bound of the 95% confidence interval for the parameter. "
+        "Use with CI High to assess estimate uncertainty range."
+    ),
+    "ci high 95": (
+        "Upper bound of the 95% confidence interval for the parameter. "
+        "Use with CI Low to assess estimate uncertainty range."
+    ),
+}
+
+
+GRID_COLUMN_TOOLTIP_OVERRIDES: dict[str, dict[str, str]] = {
+    "at-series-selection-grid": {
+        "Benchmark": (
+            "Benchmark used for this series in excess-return and relative statistics. "
+            "Choose None to keep calculations absolute for this row."
+        ),
+    },
+    "reg-series-selection-grid": {
+        "Y": (
+            "Set this row as the dependent variable for regression estimation. "
+            "Only one Y should be active in a standard regression run."
+        ),
+        "X": (
+            "Include this row as an explanatory regressor. "
+            "You can enable multiple X rows for multi-variable models."
+        ),
+    },
+    "po-series-selection-grid": {
+        "CMABench": (
+            "CMA benchmark tag used for optimizer assumptions and output comparison. "
+            "Keep mappings consistent with your selected portfolio universe."
+        ),
+    },
+}
+
+
+GRID_TOOLTIP_DASH_OPTIONS_DEFAULTS = {
+    "tooltipShowDelay": 500,
+    "tooltipHideDelay": 120,
+    "tooltipMouseTrack": False,
 }
 
 
@@ -282,3 +526,82 @@ def _fallback_tooltip_text(control_id: str, fallback_label: str | None = None) -
     if not label:
         return "Configure this setting."
     return f"Configure {label.lower()}."
+
+
+def _normalize_header_key(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"[_\-]+", " ", text)
+    text = text.replace("/", " ")
+    text = re.sub(r"[^a-z0-9\s]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _grid_specific_fallback(grid_id: str, field: str, header_name: str) -> str | None:
+    token = field or header_name
+    if not token:
+        return None
+    if grid_id.endswith("linear-constraints-grid"):
+        return (
+            f"Coefficient for {token} in the linear constraint expression. "
+            "This value is multiplied by the asset weight when enforcing Min/Max bounds."
+        )
+    if grid_id.endswith("ex-ante-returns-grid"):
+        return (
+            f"Ex-ante expected return input for {token}. "
+            "This value overrides or supplements estimated return assumptions used by the optimizer."
+        )
+    if grid_id.endswith("ex-ante-matrix-grid"):
+        return (
+            f"Ex-ante matrix input for {token}. "
+            "Edit only when you intend to override estimated covariance/correlation structure."
+        )
+    if grid_id.endswith("bl-views-grid"):
+        return (
+            f"Black-Litterman view setting for {token}. "
+            "This field controls view direction, magnitude, or confidence for blending prior and views."
+        )
+    return (
+        f"Configuration field for {token}. "
+        "Review this column before running calculations that depend on the current grid."
+    )
+
+
+def _resolve_header_tooltip(grid_id: str, field: str, header_name: str) -> str | None:
+    overrides = GRID_COLUMN_TOOLTIP_OVERRIDES.get(grid_id, {})
+    for key in (field, header_name, _normalize_header_key(field), _normalize_header_key(header_name)):
+        if key and key in overrides:
+            return overrides[key]
+
+    for key in (_normalize_header_key(field), _normalize_header_key(header_name)):
+        if key and key in CANONICAL_COLUMN_TOOLTIPS:
+            return CANONICAL_COLUMN_TOOLTIPS[key]
+
+    return _grid_specific_fallback(grid_id, field, header_name)
+
+
+def apply_header_tooltips(column_defs: list[dict] | tuple[dict, ...] | None, grid_id: str, include_blank_headers: bool = False) -> list[dict]:
+    if not column_defs:
+        return []
+    out: list[dict] = []
+    for item in column_defs:
+        col = dict(item or {})
+        field = str(col.get("field") or "").strip()
+        header_name = str(col.get("headerName") or "").strip()
+        if not include_blank_headers and not field and not header_name:
+            out.append(col)
+            continue
+        text = _resolve_header_tooltip(str(grid_id or "").strip(), field, header_name)
+        if text:
+            col["headerTooltip"] = text
+        out.append(col)
+    return out
+
+
+def grid_tooltip_dash_options(existing: dict | None = None) -> dict:
+    payload = dict(GRID_TOOLTIP_DASH_OPTIONS_DEFAULTS)
+    if isinstance(existing, dict):
+        payload.update(existing)
+    return payload

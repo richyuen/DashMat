@@ -210,6 +210,82 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert row_data[0]["Date"] == "2024-01-01"
 
 
+def test_po_populate_returns_grid_adds_header_tooltips(page_modules):
+    _, portopt = page_modules
+
+    rows, cols = portopt.po_populate_returns_grid(
+        ["Asset_A"],
+        "ret_cov",
+        {"Asset_A": 0.03},
+        {"Asset_A": 0.15},
+    )
+
+    assert rows and rows[0]["Asset"] == "Asset_A"
+    col_map = {c["field"]: c for c in cols}
+    assert col_map["Asset"].get("headerTooltip")
+    assert col_map["Return"].get("headerTooltip")
+    assert col_map["Volatility"].get("headerTooltip")
+
+
+def test_po_populate_matrix_grid_adds_header_tooltips(page_modules):
+    _, portopt = page_modules
+
+    cov_store = {
+        "Asset_A": {"Asset_A": 0.1, "Asset_B": 0.02},
+        "Asset_B": {"Asset_A": 0.02, "Asset_B": 0.3},
+    }
+    rows, cols = portopt.po_populate_matrix_grid(["Asset_A", "Asset_B"], "ret_cov", cov_store, None)
+
+    assert len(rows) == 2
+    col_map = {c["field"]: c for c in cols}
+    assert col_map["Asset"].get("headerTooltip")
+    assert col_map["Asset_A"].get("headerTooltip")
+    assert col_map["Asset_B"].get("headerTooltip")
+
+
+def test_po_populate_linear_constraints_columns_adds_header_tooltips(page_modules):
+    _, portopt = page_modules
+
+    cols = portopt.po_populate_linear_constraints_columns(["Asset_A", "Asset_B"])
+    col_map = {c["field"]: c for c in cols}
+
+    assert col_map["Constraint"].get("headerTooltip")
+    assert col_map["Min"].get("headerTooltip")
+    assert col_map["Max"].get("headerTooltip")
+    assert col_map["Asset_A"].get("headerTooltip")
+    assert col_map["Asset_B"].get("headerTooltip")
+
+
+def test_po_update_series_selectors_adds_header_tooltips_and_grid_tooltip_options(
+    monkeypatch, page_modules, raw_json
+):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "get_cmabench_map_for_fofbench", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(portopt, "get_unique_cmabench_values_cached", lambda *_args, **_kwargs: [])
+
+    children, series_order = portopt.po_update_series_selectors(
+        raw_json,
+        ["Asset_A"],
+        None,
+        [],
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+    )
+
+    grid = children[0]
+    col_map = {c.get("field"): c for c in getattr(grid, "columnDefs", []) if c.get("field")}
+    assert series_order
+    assert col_map["Series"].get("headerTooltip")
+    assert col_map["Benchmark"].get("headerTooltip")
+    assert col_map["CMABench"].get("headerTooltip")
+    assert getattr(grid, "dashGridOptions", {}).get("tooltipShowDelay") == 500
+
+
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
     _, portopt = page_modules
 

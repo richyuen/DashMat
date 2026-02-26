@@ -4,6 +4,19 @@
 def apply_chart_theme(fig, theme):
     """Apply dark or light theme to a Plotly figure."""
     template = "plotly_dark" if theme == "dark" else "plotly_white"
+    hoverlabel = (
+        {
+            "bgcolor": "#111827",
+            "font": {"color": "#F8FAFC"},
+            "bordercolor": "#64748B",
+        }
+        if theme == "dark"
+        else {
+            "bgcolor": "#FFFFFF",
+            "font": {"color": "#111827"},
+            "bordercolor": "#CBD5E1",
+        }
+    )
     margin = {}
     if fig.layout and fig.layout.margin:
         margin = fig.layout.margin.to_plotly_json()
@@ -24,6 +37,7 @@ def apply_chart_theme(fig, theme):
             "y": 1.0,
             "yanchor": "top",
         },
+        hoverlabel=hoverlabel,
         margin=margin,
     )
     return fig

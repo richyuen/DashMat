@@ -3,7 +3,9 @@ from __future__ import annotations
 import dash_mantine_components as dmc
 
 from utils.ui_tooltips import (
+    apply_header_tooltips,
     apply_tooltips_to_layout,
+    grid_tooltip_dash_options,
     has_custom_tooltip,
     tooltip_text_and_source,
 )
@@ -113,3 +115,36 @@ def test_apply_tooltips_respects_feature_flag(monkeypatch):
     )
     decorated = apply_tooltips_to_layout(layout, page_key="regression")
     assert _tree_has_tooltip_for_id(decorated, "reg-exp-wt-switch") is False
+
+
+def test_apply_header_tooltips_maps_known_grid_columns():
+    cols = [
+        {"field": "Series"},
+        {"field": "Benchmark"},
+        {"headerName": "", "width": 20},
+    ]
+
+    out = apply_header_tooltips(cols, "at-series-selection-grid")
+
+    assert out[0].get("headerTooltip")
+    assert "series" in out[0]["headerTooltip"].lower()
+    assert out[1].get("headerTooltip")
+    assert "benchmark" in out[1]["headerTooltip"].lower()
+    assert "headerTooltip" not in out[2]
+
+
+def test_grid_tooltip_dash_options_merges_defaults():
+    out = grid_tooltip_dash_options({"singleClickEdit": True, "tooltipShowDelay": 250})
+
+    assert out["singleClickEdit"] is True
+    assert out["tooltipShowDelay"] == 250
+    assert out["tooltipHideDelay"] == 120
+    assert out["tooltipMouseTrack"] is False
+
+
+def test_vol_scaler_tooltip_copy_is_detailed():
+    text, source = tooltip_text_and_source("po-vol-scaler-input")
+
+    assert source == "explicit"
+    assert "annualized volatility target" in text.lower()
+    assert "set to 0 to disable" in text.lower()

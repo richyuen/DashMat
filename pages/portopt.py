@@ -65,7 +65,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
-from utils.ui_tooltips import apply_tooltips_to_layout
+from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
@@ -1607,17 +1607,19 @@ def build_po_main_layout():
                                         licenseKey=AG_GRID_LICENSE_KEY,
                                         id="po-linear-constraints-grid",
                                         className='ag-theme-alpine',
-                                        columnDefs=[
+                                        columnDefs=apply_header_tooltips([
                                             {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
                                             {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
                                              "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
                                             {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
                                              "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
-                                        ],
+                                        ], "po-linear-constraints-grid"),
                                         rowData=[],
                                         defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "200px"},
-                                        dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                        dashGridOptions=grid_tooltip_dash_options(
+                                            {"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}
+                                        ),
                                     ),
                                 ],
                             ),
@@ -1894,7 +1896,7 @@ def build_po_main_layout():
                                                     licenseKey=AG_GRID_LICENSE_KEY,
                                                     id="po-ex-ante-returns-grid",
                                                     className='ag-theme-alpine',
-                                                    columnDefs=[
+                                                    columnDefs=apply_header_tooltips([
                                                         {"field": "Asset", "editable": False, "width": 140},
                                                         {"field": "Return", "editable": True, "width": 110,
                                                          "type": "numericColumn",
@@ -1905,11 +1907,13 @@ def build_po_main_layout():
                                                          "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
                                                          "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
                                                          "hide": True}, # Hidden by default
-                                                    ],
+                                                    ], "po-ex-ante-returns-grid"),
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "200px"},
-                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                                    dashGridOptions=grid_tooltip_dash_options(
+                                                        {"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}
+                                                    ),
                                                 ),
                                             ],
                                             style={"marginBottom": "12px"},
@@ -1976,7 +1980,9 @@ def build_po_main_layout():
                                                     defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100, "suppressHeaderMenuButton": True,
                                                     "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format('.4f')(Number(params.value)) : ''"}, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "300px"},
-                                                    dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                                    dashGridOptions=grid_tooltip_dash_options(
+                                                        {"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}
+                                                    ),
                                                 ),
                                             ],
                                             style={"marginBottom": "12px"},
@@ -2022,7 +2028,7 @@ def build_po_main_layout():
                                                     licenseKey=AG_GRID_LICENSE_KEY,
                                                     id="po-bl-views-grid",
                                                     className='ag-theme-alpine',
-                                                    columnDefs=[
+                                                    columnDefs=apply_header_tooltips([
                                                         {"field": "Type", "editable": True, "width": 100,
                                                          "cellEditor": "agSelectCellEditor",
                                                          "cellEditorParams": {"values": ["absolute", "relative"]},
@@ -2041,11 +2047,13 @@ def build_po_main_layout():
                                                          "type": "numericColumn",
                                                          "valueFormatter": {"function": "d3.format('.2f')(params.value)"},
                                                          "headerClass": "dashmat-center-header"},
-                                                    ],
+                                                    ], "po-bl-views-grid"),
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "200px"},
-                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                                    dashGridOptions=grid_tooltip_dash_options(
+                                                        {"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}
+                                                    ),
                                                 ),
                                                 dmc.NumberInput(
                                                     id="po-bl-tau-input",
@@ -4461,7 +4469,7 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
     # Hide volatility column unless in Vol/Corr mode
     hide_vol = (mode != "ret_vol_corr")
     
-    column_defs = [
+    column_defs = apply_header_tooltips([
         {"field": "Asset", "editable": False, "width": 140, "headerClass": "dashmat-center-header"},
         {"field": "Return", "editable": True, "width": 110,
          "type": "numericColumn",
@@ -4474,7 +4482,7 @@ def po_populate_returns_grid(selected_series, mode, existing_returns, existing_v
          "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
          "hide": hide_vol,
          "headerClass": "dashmat-center-header"},
-    ]
+    ], "po-ex-ante-returns-grid")
 
     rows = []
     for s in selected_series:
@@ -4808,7 +4816,7 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
             row[c_name] = val
         rows.append(row)
     
-    return rows, matrix_defs
+    return rows, apply_header_tooltips(matrix_defs, "po-ex-ante-matrix-grid")
 
 # Estimate matrix from data button
 @callback(
@@ -5258,7 +5266,7 @@ def po_populate_linear_constraints_columns(selected_series):
             "headerClass": "dashmat-center-header",
         })
         
-    return cols
+    return apply_header_tooltips(cols, "po-linear-constraints-grid")
 
 
 # Add Linear Constraint Row
@@ -6850,7 +6858,7 @@ def po_update_series_selectors(
         id="po-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
         getRowId="params.data.Series",
-        columnDefs=[
+        columnDefs=apply_header_tooltips([
             {
                 "headerName": "",
                 "rowDrag": True,
@@ -6973,7 +6981,7 @@ def po_update_series_selectors(
                 "width": 74,
                 "cellClass": "dashmat-series-center-cell",
             },
-        ],
+        ], "po-series-selection-grid"),
         rowData=row_data,
         selectedRows=selected_rows,
         defaultColDef={
@@ -6986,19 +6994,21 @@ def po_update_series_selectors(
             "headerClass": "dashmat-center-header",
         },
         style={"height": "46vh", "width": "100%"},
-        dashGridOptions={
-            "rowSelection": "multiple",
-            "rowMultiSelectWithClick": False,
-            "suppressRowClickSelection": True,
-            "suppressRowDeselection": True,
-            "suppressMovableColumns": True,
-            "rowDragManaged": True,
-            "animateRows": True,
-            "singleClickEdit": True,
-            "stopEditingWhenCellsLoseFocus": True,
-            "suppressExcelExport": True,
-            "suppressCsvExport": True,
-        },
+        dashGridOptions=grid_tooltip_dash_options(
+            {
+                "rowSelection": "multiple",
+                "rowMultiSelectWithClick": False,
+                "suppressRowClickSelection": True,
+                "suppressRowDeselection": True,
+                "suppressMovableColumns": True,
+                "rowDragManaged": True,
+                "animateRows": True,
+                "singleClickEdit": True,
+                "stopEditingWhenCellsLoseFocus": True,
+                "suppressExcelExport": True,
+                "suppressCsvExport": True,
+            }
+        ),
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )

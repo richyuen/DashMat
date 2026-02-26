@@ -452,14 +452,20 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
     assert opts.get("suppressMovableColumns") is True
     assert opts.get("stopEditingWhenCellsLoseFocus") is True
     assert opts.get("singleClickEdit") is True
+    assert opts.get("tooltipShowDelay") == 500
 
     cols = getattr(grid, "columnDefs", []) or []
     x_col = next((c for c in cols if c.get("field") == "X"), None)
+    series_col = next((c for c in cols if c.get("field") == "Series"), None)
     scale_col = next((c for c in cols if c.get("field") == "ScaleVol"), None)
     assert x_col is not None
+    assert series_col is not None
     assert scale_col is not None
     assert x_col.get("cellRenderer") == "agCheckboxCellRenderer"
+    assert x_col.get("headerTooltip")
+    assert series_col.get("headerTooltip")
     assert scale_col.get("cellRenderer") == "agCheckboxCellRenderer"
+    assert scale_col.get("headerTooltip")
 
 
 def _collect_component_text(node):
@@ -510,6 +516,29 @@ def _collect_ag_grids(node):
     if isinstance(props, dict):
         for value in props.values():
             out.extend(_collect_ag_grids(value))
+    return out
+
+
+def _collect_components_by_class(node, class_name: str):
+    if node is None:
+        return []
+    if isinstance(node, (str, int, float, bool, dict)):
+        return []
+    if isinstance(node, (list, tuple, set)):
+        out = []
+        for item in node:
+            out.extend(_collect_components_by_class(item, class_name))
+        return out
+
+    out = []
+    if node.__class__.__name__ == class_name:
+        out.append(node)
+    children = getattr(node, "children", None)
+    out.extend(_collect_components_by_class(children, class_name))
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            out.extend(_collect_components_by_class(value, class_name))
     return out
 
 
@@ -1113,15 +1142,19 @@ def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regres
         None,
     )
     assert anova_grid is not None
+    assert getattr(anova_grid, "id", None) == "reg-anova-decomposition-grid"
     assert (getattr(anova_grid, "style", {}) or {}).get("height") == "132px"
     anova_sources = [row.get("Source") for row in (getattr(anova_grid, "rowData", []) or [])]
     assert set(anova_sources) == {"Model", "Residual", "Total"}
+    assert all(c.get("headerTooltip") for c in (getattr(anova_grid, "columnDefs", []) or []))
 
     param_grid = next(
         (g for g in grids if {"Parameter", "Coefficient"}.issubset({c.get("field") for c in (getattr(g, "columnDefs", []) or [])})),
         None,
     )
     assert param_grid is not None
+    assert getattr(param_grid, "id", None) == "reg-anova-parameter-grid"
+    assert all(c.get("headerTooltip") for c in (getattr(param_grid, "columnDefs", []) or []))
     param_names = [row.get("Parameter") for row in (getattr(param_grid, "rowData", []) or [])]
     assert "intercept" in param_names
     assert "X1" in param_names
@@ -1137,6 +1170,9 @@ def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regres
     assert "ARIMA Fit" in text_blob
     assert "AIC" in text_blob
     assert "GARCH Fit" in text_blob
+
+    tooltip_labels = [getattr(t, "label", "") for t in _collect_components_by_class(comp, "Tooltip")]
+    assert any("fraction of dependent-series variance explained" in str(label).lower() for label in tooltip_labels)
 
 
 def test_reg_render_rolling_table_merges_arima_garch_columns(regression_page):

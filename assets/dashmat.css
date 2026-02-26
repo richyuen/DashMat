@@ -31,6 +31,22 @@
     --ag-secondary-foreground-color: #909296;
 }
 
+[data-mantine-color-scheme="light"] .dashmat-page-container .ag-theme-alpine .ag-tooltip,
+[data-mantine-color-scheme="light"] .dashmat-modal .ag-theme-alpine .ag-tooltip {
+    background: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
+}
+
+[data-mantine-color-scheme="dark"] .dashmat-page-container .ag-theme-alpine .ag-tooltip,
+[data-mantine-color-scheme="dark"] .dashmat-modal .ag-theme-alpine .ag-tooltip {
+    background: #111827;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    box-shadow: 0 10px 24px rgba(2, 6, 23, 0.52);
+}
+
 .dashmat-page-container .ag-theme-alpine .dashmat-center-header .ag-header-cell-label,
 .dashmat-modal .ag-theme-alpine .dashmat-center-header .ag-header-cell-label {
     justify-content: center;

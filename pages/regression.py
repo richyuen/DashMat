@@ -50,7 +50,7 @@ from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
-from utils.ui_tooltips import apply_tooltips_to_layout
+from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -124,6 +124,33 @@ _MODEL_DEFAULT_NAME = {
     "lasso": "Lasso",
     "elastic_net": "Elastic Net",
 }
+
+_OVERALL_FIT_METRIC_TOOLTIPS: dict[str, str] = {
+    "Estimation Start": "First date used to estimate this window's model parameters. Data before this point is excluded from coefficient fitting for this window.",
+    "Estimation End": "Last date included in model estimation for this window. This is the cutoff before any out-of-sample application period.",
+    "Apply Start": "First date where estimated parameters are applied to generate predictions and diagnostics for this window.",
+    "Apply End": "Last date covered by this window's application period. Use together with Apply Start to understand window timing.",
+    "R-Squared": "Fraction of dependent-series variance explained by model predictors in this window. Higher values indicate stronger in-sample explanatory fit.",
+    "Adj R-Squared": "R-squared adjusted for number of predictors and sample size. Use this for fairer comparison across models with different feature counts.",
+    "Residual Std": "Standard deviation of regression residuals in this window. Lower values indicate tighter model errors.",
+    "Observations": "Number of observations used for this window's regression estimation. Small samples can make fit metrics unstable.",
+    "Durbin-Watson": "Autocorrelation diagnostic on residuals; values near 2 imply limited serial correlation. Values far from 2 suggest residual dependence.",
+    "Jarque-Bera": "Normality test statistic for residual distribution shape. Larger values often indicate departures from normality assumptions.",
+    "JB p-value": "P-value for Jarque-Bera residual normality test. Lower values indicate stronger evidence against normal residual distribution.",
+    "AIC": "Information criterion balancing fit quality and model complexity. Lower values are preferred when comparing candidate specifications.",
+    "BIC": "Complexity-penalized information criterion stronger than AIC. Lower values indicate better fit-complexity tradeoff under BIC assumptions.",
+    "Order": "Configured ARIMA or GARCH model order used for the residual process. Confirm this matches intended lag/volatility dynamics.",
+    "Error": "Modeling error captured during ARIMA/GARCH fitting. Review this when residual-model fields are missing or suspicious.",
+}
+
+
+def _overall_fit_label_component(metric: str):
+    text = str(metric or "").strip()
+    tooltip = _OVERALL_FIT_METRIC_TOOLTIPS.get(text)
+    label = dmc.Text(text if text else "Metric", size="xs", c="dimmed")
+    if not tooltip:
+        return label
+    return dmc.Tooltip(label=tooltip, position="top-start", withArrow=True, multiline=True, w=300, openDelay=360, children=label)
 
 _MISSING_DATA_OPTIONS = [
     {"value": "fill_na", "label": "Fill NA"},
@@ -1329,15 +1356,20 @@ def build_reg_main_layout():
                                 dag.AgGrid(
                                     id="reg-linear-constraints-grid",
                                     className="ag-theme-alpine",
-                                    columnDefs=[
-                                        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
-                                        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
-                                        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
-                                    ],
+                                    columnDefs=apply_header_tooltips(
+                                        [
+                                            {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
+                                            {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
+                                            {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
+                                        ],
+                                        "reg-linear-constraints-grid",
+                                    ),
                                     rowData=[],
                                     defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}},
                                     style={"height": "160px"},
-                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "suppressCsvExport": True},
+                                    dashGridOptions=grid_tooltip_dash_options(
+                                        {"singleClickEdit": True, "suppressExcelExport": True, "suppressCsvExport": True}
+                                    ),
                                 ),
                             ]),
                         ],
@@ -3608,7 +3640,7 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
         id="reg-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
         getRowId="params.data.Series",
-        columnDefs=[
+        columnDefs=apply_header_tooltips([
             {"headerName": "", "rowDrag": True, "editable": False, "sortable": False, "filter": False,
              "resizable": False, "width": 36, "pinned": "left", "valueGetter": {"function": "''"},
              "cellClass": "dashmat-series-center-cell"},
@@ -3647,7 +3679,7 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
             {"field": "Delete", "headerName": "Del", "editable": True,
              "cellRenderer": "agCheckboxCellRenderer", "cellEditor": "agCheckboxCellEditor",
              "width": 60, "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
-        ],
+        ], "reg-series-selection-grid"),
         rowData=row_data,
         defaultColDef={
             "resizable": True,
@@ -3658,15 +3690,17 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
             "cellStyle": {"textAlign": "center"},
             "headerClass": "dashmat-center-header",
         },
-        dashGridOptions={
-            "suppressMovableColumns": True,
-            "rowDragManaged": True,
-            "animateRows": True,
-            "singleClickEdit": True,
-            "stopEditingWhenCellsLoseFocus": True,
-            "suppressExcelExport": True,
-            "suppressCsvExport": True,
-        },
+        dashGridOptions=grid_tooltip_dash_options(
+            {
+                "suppressMovableColumns": True,
+                "rowDragManaged": True,
+                "animateRows": True,
+                "singleClickEdit": True,
+                "stopEditingWhenCellsLoseFocus": True,
+                "suppressExcelExport": True,
+                "suppressCsvExport": True,
+            }
+        ),
         style={"height": "400px"},
     )
     return [grid], series_order
@@ -4796,19 +4830,22 @@ def reg_render_anova(selected, results, selected_window):
 
     if anova_rows:
         anova_grid = dag.AgGrid(
+            id="reg-anova-decomposition-grid",
             className="ag-theme-alpine",
-            columnDefs=[
+            columnDefs=apply_header_tooltips([
                 {"field": "Source", "width": 100, "minWidth": 90},
                 {"field": "df", "width": 70, "minWidth": 60},
                 {"field": "SS", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
                 {"field": "MS", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
                 {"field": "F", "width": 85, "minWidth": 75, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
                 {"field": "p-value", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
-            ],
+            ], "reg-anova-decomposition-grid"),
             rowData=anova_rows,
             defaultColDef={"resizable": True, "sortable": False},
             style={"height": "132px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=grid_tooltip_dash_options(
+                {"suppressExcelExport": True, "suppressCsvExport": True}
+            ),
         )
         blocks.extend([dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"), anova_grid])
     else:
@@ -4823,8 +4860,9 @@ def reg_render_anova(selected, results, selected_window):
         param_df = pd.DataFrame(param_rows)
         param_df = _reg_drop_empty_columns(param_df, keep_fields=["Parameter", "Coefficient"])
         param_grid = dag.AgGrid(
+            id="reg-anova-parameter-grid",
             className="ag-theme-alpine",
-            columnDefs=[
+            columnDefs=apply_header_tooltips([
                 {"field": "Parameter", "width": 220, "minWidth": 170, "maxWidth": 280},
                 {"field": "Coefficient", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
                 {"field": "Std Error", "width": 110, "minWidth": 100, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
@@ -4832,11 +4870,13 @@ def reg_render_anova(selected, results, selected_window):
                 {"field": "p-value", "width": 100, "minWidth": 90, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
                 {"field": "CI Low (95%)", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
                 {"field": "CI High (95%)", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
-            ],
+            ], "reg-anova-parameter-grid"),
             rowData=param_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": f"{max(150, 36 + 30 * len(param_df))}px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=grid_tooltip_dash_options(
+                {"suppressExcelExport": True, "suppressCsvExport": True}
+            ),
         )
         blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), param_grid])
     else:
@@ -4875,7 +4915,7 @@ def reg_render_anova(selected, results, selected_window):
                     dmc.Stack(
                         gap=2,
                         children=[
-                            dmc.Text(metric, size="xs", c="dimmed"),
+                            _overall_fit_label_component(metric),
                             value_comp,
                         ],
                     )

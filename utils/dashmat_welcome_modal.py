@@ -26,6 +26,7 @@ from utils.raw_data_imports import (
     get_fund_options_cached,
     get_performance_options_cached,
 )
+from utils.ui_tooltips import apply_header_tooltips, grid_tooltip_dash_options
 
 
 def _sid(prefix: str, suffix: str) -> str:
@@ -543,12 +544,15 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                         className="ag-theme-alpine",
                         enableEnterpriseModules=True,
                         licenseKey=ag_grid_license_key,
-                        columnDefs=[
-                            {"field": "Portfolio", "headerName": "Portfolio", "width": 220, "headerClass": "dashmat-center-header"},
-                            {"field": "Type", "headerName": "Type", "width": 160, "headerClass": "dashmat-center-header"},
-                            {"field": "Include Benchmark", "headerName": "Include Benchmark", "width": 180, "headerClass": "dashmat-center-header"},
-                            {"field": "Benchmark Type", "headerName": "Benchmark Type", "width": 180, "headerClass": "dashmat-center-header"},
-                        ],
+                        columnDefs=apply_header_tooltips(
+                            [
+                                {"field": "Portfolio", "headerName": "Portfolio", "width": 220, "headerClass": "dashmat-center-header"},
+                                {"field": "Type", "headerName": "Type", "width": 160, "headerClass": "dashmat-center-header"},
+                                {"field": "Include Benchmark", "headerName": "Include Benchmark", "width": 180, "headerClass": "dashmat-center-header"},
+                                {"field": "Benchmark Type", "headerName": "Benchmark Type", "width": 180, "headerClass": "dashmat-center-header"},
+                            ],
+                            _sid(prefix, "portfolio-add-grid"),
+                        ),
                         rowData=[],
                         defaultColDef={
                             "resizable": True,
@@ -558,13 +562,15 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                             "headerClass": "dashmat-center-header",
                         },
                         style={"height": "230px"},
-                        dashGridOptions={
-                            "rowSelection": "single",
-                            "suppressRowClickSelection": False,
-                            "animateRows": True,
-                            "suppressExcelExport": True,
-                            "suppressCsvExport": True,
-                        },
+                        dashGridOptions=grid_tooltip_dash_options(
+                            {
+                                "rowSelection": "single",
+                                "suppressRowClickSelection": False,
+                                "animateRows": True,
+                                "suppressExcelExport": True,
+                                "suppressCsvExport": True,
+                            }
+                        ),
                     ),
                     dmc.Group(
                         mt="sm",
@@ -752,14 +758,17 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                         className="ag-theme-alpine",
                         enableEnterpriseModules=True,
                         licenseKey=ag_grid_license_key,
-                        columnDefs=[
-                            {"field": "Series", "headerName": "Series", "minWidth": 260, "flex": 2, "headerClass": "dashmat-center-header"},
-                            {"field": "Table", "headerName": "Table", "width": 110, "headerClass": "dashmat-center-header"},
-                            {"field": "Fee", "headerName": "Fee", "width": 110, "headerClass": "dashmat-center-header"},
-                            {"field": "Include Benchmark", "headerName": "Include Benchmark", "width": 170, "headerClass": "dashmat-center-header"},
-                            {"field": "Convert to Returns", "headerName": "Convert", "width": 110, "headerClass": "dashmat-center-header"},
-                            {"field": "Divide By", "headerName": "Divide By", "width": 110, "headerClass": "dashmat-center-header"},
-                        ],
+                        columnDefs=apply_header_tooltips(
+                            [
+                                {"field": "Series", "headerName": "Series", "minWidth": 260, "flex": 2, "headerClass": "dashmat-center-header"},
+                                {"field": "Table", "headerName": "Table", "width": 110, "headerClass": "dashmat-center-header"},
+                                {"field": "Fee", "headerName": "Fee", "width": 110, "headerClass": "dashmat-center-header"},
+                                {"field": "Include Benchmark", "headerName": "Include Benchmark", "width": 170, "headerClass": "dashmat-center-header"},
+                                {"field": "Convert to Returns", "headerName": "Convert", "width": 110, "headerClass": "dashmat-center-header"},
+                                {"field": "Divide By", "headerName": "Divide By", "width": 110, "headerClass": "dashmat-center-header"},
+                            ],
+                            _sid(prefix, "raw-db-add-grid"),
+                        ),
                         rowData=[],
                         defaultColDef={
                             "resizable": True,
@@ -769,13 +778,15 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                             "headerClass": "dashmat-center-header",
                         },
                         style={"height": "220px"},
-                        dashGridOptions={
-                            "rowSelection": "single",
-                            "suppressRowClickSelection": False,
-                            "animateRows": True,
-                            "suppressExcelExport": True,
-                            "suppressCsvExport": True,
-                        },
+                        dashGridOptions=grid_tooltip_dash_options(
+                            {
+                                "rowSelection": "single",
+                                "suppressRowClickSelection": False,
+                                "animateRows": True,
+                                "suppressExcelExport": True,
+                                "suppressCsvExport": True,
+                            }
+                        ),
                     ),
                     dmc.Stack(
                         gap=4,

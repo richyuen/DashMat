@@ -62,7 +62,7 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
-from utils.ui_tooltips import apply_tooltips_to_layout
+from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -6720,7 +6720,7 @@ def update_series_selectors(
         id="at-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
         getRowId="params.data.Series",
-        columnDefs=[
+        columnDefs=apply_header_tooltips([
             {
                 "headerName": "",
                 "rowDrag": True,
@@ -6793,7 +6793,7 @@ def update_series_selectors(
                 "width": 78,
                 "cellClass": "dashmat-series-center-cell",
             },
-        ],
+        ], "at-series-selection-grid"),
         rowData=row_data,
         selectedRows=selected_rows,
         defaultColDef={
@@ -6806,7 +6806,7 @@ def update_series_selectors(
             "headerClass": "dashmat-center-header",
         },
         style={"height": "46vh", "width": "100%"},
-        dashGridOptions={
+        dashGridOptions=grid_tooltip_dash_options({
             "rowSelection": "multiple",
             "rowMultiSelectWithClick": False,
             "suppressRowClickSelection": True,
@@ -6818,7 +6818,7 @@ def update_series_selectors(
             "stopEditingWhenCellsLoseFocus": True,
             "suppressExcelExport": True,
             "suppressCsvExport": True,
-        },
+        }),
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
