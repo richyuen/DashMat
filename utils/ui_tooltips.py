@@ -625,19 +625,35 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
             "This changes coefficient estimates and residual behavior compared with an unconstrained intercept model. "
             "Use it only when your model specification requires a no-intercept assumption."
         )
-    if suffix in {"arima-p-input", "arima-d-input", "arima-q-input"}:
-        order_name = {"arima-p-input": "AR order (p)", "arima-d-input": "difference order (d)", "arima-q-input": "MA order (q)"}[suffix]
+    if suffix == "arima-p-input":
         return (
-            f"Sets ARIMA residual-model {order_name}. "
-            "These orders control autoregressive, differencing, and moving-average structure applied to regression residual diagnostics. "
-            "Use small orders first and increase only when diagnostics justify added complexity."
+            "Sets the ARIMA autoregressive order, p. "
+            "This is the number of lagged residual terms included in the ARIMA model, so larger values let the fit absorb longer autocorrelation patterns in regression residuals. "
+            "Increase p only when residual autocorrelation remains after lower-order fits."
         )
-    if suffix in {"garch-p-input", "garch-q-input"}:
-        order_name = "ARCH order (p)" if suffix == "garch-p-input" else "GARCH order (q)"
+    if suffix == "arima-d-input":
         return (
-            f"Sets GARCH residual-volatility {order_name}. "
-            "Higher orders add flexibility for volatility clustering but increase estimation complexity and instability risk on short samples. "
-            "Use the lowest order that captures residual volatility behavior."
+            "Sets the ARIMA differencing order, d. "
+            "This is the number of times the residual series is differenced before fitting the AR and MA terms, which helps remove residual trend or other non-stationary level behavior. "
+            "In most regression-residual use cases this stays low, often 0 or 1."
+        )
+    if suffix == "arima-q-input":
+        return (
+            "Sets the ARIMA moving-average order, q. "
+            "This is the number of lagged forecast-error terms included in the model, so it controls how short-run shocks carry through the residual process. "
+            "Raise q only when residual diagnostics suggest moving-average structure beyond lower-order fits."
+        )
+    if suffix == "garch-p-input":
+        return (
+            "Sets the GARCH ARCH order, p. "
+            "This is the number of lagged squared residual terms used in the conditional-volatility equation, so it controls how strongly recent shocks feed into current volatility. "
+            "Higher p can fit richer shock-memory patterns but usually needs more data to estimate reliably."
+        )
+    if suffix == "garch-q-input":
+        return (
+            "Sets the GARCH order, q. "
+            "This is the number of lagged conditional-variance terms used in the volatility equation, so it controls volatility persistence from one period to the next. "
+            "Higher q increases persistence flexibility but can become unstable on short samples."
         )
     if suffix == "result-select":
         return (
@@ -944,9 +960,8 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
         )
     if suffix == "db-add-series-select":
         return (
-            "Selects AA Tool index categories to import from the database. "
-            "Each selected category appends its return history and CMA mapping to the working dataset so the series can be used immediately in selectors and models. "
-            "Select all needed categories in one pass so imports stay consistent."
+            "Select one or more AA Tool index categories to import. "
+            "Each selected series adds its returns for analysis, as well as capital market assumptions for ex ante optimization inputs."
         )
     if suffix == "portfolio-add-series-select":
         return (
@@ -1881,6 +1896,36 @@ def _generated_explicit_tooltip(control_id: str, fallback_label: str | None = No
             "Defines how missing observations are handled before modeling or optimization. "
             "Different handling modes can bias estimates, alter variance, and change comparability across series. "
             "Use the least distortive option compatible with your data quality and required sample continuity."
+        )
+    if "arima-p" in lowered:
+        return (
+            "Sets the ARIMA autoregressive order, p. "
+            "This is the number of lagged residual terms included in the residual model, so it controls how much serial dependence is absorbed through autoregressive structure. "
+            "Raise it only when lower-order fits leave residual autocorrelation behind."
+        )
+    if "arima-d" in lowered:
+        return (
+            "Sets the ARIMA differencing order, d. "
+            "This is the number of differences applied before fitting AR and MA terms, which helps remove non-stationary level behavior in the residual series. "
+            "Keep it low unless diagnostics clearly show the need for additional differencing."
+        )
+    if "arima-q" in lowered:
+        return (
+            "Sets the ARIMA moving-average order, q. "
+            "This is the number of lagged forecast-error terms included, so it captures how recent shocks echo through the residual process. "
+            "Increase it only when residual diagnostics support extra moving-average structure."
+        )
+    if "garch-p" in lowered:
+        return (
+            "Sets the GARCH ARCH order, p. "
+            "This is the number of lagged squared residual terms used in the conditional-volatility equation, so it controls how strongly recent shocks affect current volatility. "
+            "Higher orders add flexibility but require more data for stable estimation."
+        )
+    if "garch-q" in lowered:
+        return (
+            "Sets the GARCH order, q. "
+            "This is the number of lagged conditional-variance terms used in the volatility equation, so it controls volatility persistence over time. "
+            "Higher orders can fit longer volatility memory but may be unstable on short samples."
         )
     if "arima" in lowered or "garch" in lowered:
         return (

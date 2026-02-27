@@ -493,6 +493,23 @@ def test_opt_step_and_exp_wt_cov_tooltips_are_not_generic():
             assert phrase not in text_lower, (control_id, phrase, text)
 
 
+def test_arima_and_garch_order_tooltips_explain_each_parameter_individually():
+    expected = {
+        "reg-arima-p-input": ("autoregressive order", "lagged residual terms"),
+        "reg-arima-d-input": ("differencing order", "differenced"),
+        "reg-arima-q-input": ("moving-average order", "forecast-error terms"),
+        "reg-garch-p-input": ("arch order", "lagged squared residual terms"),
+        "reg-garch-q-input": ("conditional-variance terms", "volatility persistence"),
+    }
+
+    for control_id, required_tokens in expected.items():
+        text, source = tooltip_text_and_source(control_id)
+        text_lower = text.lower()
+        assert source == "explicit"
+        for token in required_tokens:
+            assert token in text_lower, (control_id, token, text)
+
+
 def test_portfolio_delete_and_portfolio_selector_tooltips_are_specific():
     delete_text, delete_source = tooltip_text_and_source("po-delete-portfolio-button")
     select_text, select_source = tooltip_text_and_source("po-weight-portfolio-select")

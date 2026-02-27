@@ -137,10 +137,16 @@ _OVERALL_FIT_METRIC_TOOLTIPS: dict[str, str] = {
     "Durbin-Watson": "Autocorrelation diagnostic on residuals; values near 2 imply limited serial correlation. Values far from 2 suggest residual dependence.",
     "Jarque-Bera": "Normality test statistic for residual distribution shape. Larger values often indicate departures from normality assumptions.",
     "JB p-value": "P-value for Jarque-Bera residual normality test. Lower values indicate stronger evidence against normal residual distribution.",
+    "Jarque-Bera Stat": "Normality test statistic for residual distribution shape. Larger values often indicate departures from normality assumptions.",
+    "Jarque-Bera p-value": "P-value for the Jarque-Bera residual normality test. Lower values indicate stronger evidence against a normal residual distribution.",
     "AIC": "Information criterion balancing fit quality and model complexity. Lower values are preferred when comparing candidate specifications.",
     "BIC": "Complexity-penalized information criterion stronger than AIC. Lower values indicate better fit-complexity tradeoff under BIC assumptions.",
     "Order": "Configured ARIMA or GARCH model order used for the residual process. Confirm this matches intended lag/volatility dynamics.",
     "Error": "Modeling error captured during ARIMA/GARCH fitting. Review this when residual-model fields are missing or suspicious.",
+}
+
+_OVERALL_FIT_SECTION_TOOLTIPS: dict[str, str] = {
+    "VIF": "Variance inflation factor for each explanatory variable. Higher VIF values indicate stronger multicollinearity among predictors and can make coefficient estimates less stable.",
 }
 
 
@@ -148,6 +154,14 @@ def _overall_fit_label_component(metric: str):
     text = str(metric or "").strip()
     tooltip = _OVERALL_FIT_METRIC_TOOLTIPS.get(text)
     label = dmc.Text(text if text else "Metric", size="xs", c="dimmed")
+    if not tooltip:
+        return label
+    return dmc.Tooltip(label=tooltip, position="top-start", withArrow=True, multiline=True, w=300, openDelay=360, children=label)
+
+
+def _overall_fit_section_component(section: str, label_text: str):
+    tooltip = _OVERALL_FIT_SECTION_TOOLTIPS.get(section)
+    label = dmc.Text(label_text, size="xs", fw=700, c="dimmed")
     if not tooltip:
         return label
     return dmc.Tooltip(label=tooltip, position="top-start", withArrow=True, multiline=True, w=300, openDelay=360, children=label)
@@ -4930,7 +4944,7 @@ def reg_render_anova(selected, results, selected_window):
                 dmc.Stack(
                     gap=4,
                     children=[
-                        dmc.Text(section_title_map.get(section, section), size="xs", fw=700, c="dimmed"),
+                        _overall_fit_section_component(section, section_title_map.get(section, section)),
                         dmc.SimpleGrid(
                             cols={"base": 1, "sm": 3, "lg": 6},
                             spacing="sm",
