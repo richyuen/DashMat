@@ -302,29 +302,26 @@
 }
 
 /* Defensive dark-mode overrides for Mantine DateInput calendar chrome.
-   Remote deployments can end up with header text/icons inheriting weak colors. */
-[data-mantine-color-scheme="dark"] .dashmat-page-container .mantine-DateInput-calendarHeaderLevel,
-[data-mantine-color-scheme="dark"] .dashmat-page-container .mantine-DateInput-calendarHeaderControl,
-[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-DateInput-calendarHeaderLevel,
-[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-DateInput-calendarHeaderControl {
+   DateInput popovers are portaled under <body>, so these selectors must be global. */
+[data-mantine-color-scheme="dark"] .mantine-DateInput-calendarHeaderLevel,
+[data-mantine-color-scheme="dark"] .mantine-DateInput-calendarHeaderControl {
     color: #e9ecef !important;
 }
 
-[data-mantine-color-scheme="dark"] .dashmat-page-container .mantine-DateInput-calendarHeaderControl svg,
-[data-mantine-color-scheme="dark"] .dashmat-page-container .mantine-DateInput-calendarHeaderLevel svg,
-[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-DateInput-calendarHeaderControl svg,
-[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-DateInput-calendarHeaderLevel svg {
+[data-mantine-color-scheme="dark"] .mantine-DateInput-calendarHeaderControl svg,
+[data-mantine-color-scheme="dark"] .mantine-DateInput-calendarHeaderLevel svg,
+[data-mantine-color-scheme="dark"] .mantine-DateInput-calendarHeaderControl svg *,
+[data-mantine-color-scheme="dark"] .mantine-DateInput-calendarHeaderLevel svg * {
     color: currentColor !important;
     stroke: currentColor !important;
+    fill: currentColor !important;
 }
 
-[data-mantine-color-scheme="dark"] .dashmat-page-container .mantine-DateInput-weekday,
-[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-DateInput-weekday {
+[data-mantine-color-scheme="dark"] .mantine-DateInput-weekday {
     color: #adb5bd !important;
 }
 
-[data-mantine-color-scheme="dark"] .dashmat-page-container .mantine-DateInput-calendarHeaderControl:hover,
-[data-mantine-color-scheme="dark"] .dashmat-modal .mantine-DateInput-calendarHeaderControl:hover {
+[data-mantine-color-scheme="dark"] .mantine-DateInput-calendarHeaderControl:hover {
     background: rgba(255, 255, 255, 0.06);
 }
 
