@@ -3919,11 +3919,17 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
             {"field": "X", "headerName": "X", "editable": True, "cellRenderer": "agCheckboxCellRenderer",
              "cellEditor": "agCheckboxCellEditor", "width": 54, "pinned": "left",
              "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
-            {"field": "Series", "editable": True, "minWidth": 150,
+            {"field": "Series", "editable": False, "minWidth": 150,
              "cellStyle": {"textAlign": "left", "fontFamily": "monospace"},
              "headerClass": "dashmat-left-header"},
-            {"field": "Benchmark", "editable": True, "cellEditor": "agSelectCellEditor",
-             "cellEditorParams": {"values": benchmark_values}, "minWidth": 140,
+            {"field": "Benchmark", "editable": True, "cellEditor": "agRichSelectCellEditor",
+             "cellEditorPopup": True,
+             "cellEditorParams": {
+                 "values": benchmark_values,
+                 "allowTyping": True,
+                 "filterList": True,
+                 "highlightMatch": True,
+             }, "minWidth": 150,
              "cellStyle": {"textAlign": "left"}, "headerClass": "dashmat-left-header"},
             {"field": "LongShort", "headerName": "L/S", "editable": True,
              "cellRenderer": "agCheckboxCellRenderer", "cellEditor": "agCheckboxCellEditor",
@@ -3971,6 +3977,8 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
             }
         ),
         style={"height": "400px"},
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
     )
     return [grid], series_order
 
@@ -3978,6 +3986,105 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
 # ---------------------------------------------------------------------------
 # Sync grid cell changes to temp stores
 # ---------------------------------------------------------------------------
+
+def _reg_latest_series_grid_change(cell_change):
+    change = cell_change
+    if isinstance(change, list):
+        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
+    return change if isinstance(change, dict) else None
+
+
+def _reg_valid_series_set(raw_data) -> set[str]:
+    if raw_data is None:
+        return set()
+    try:
+        return {str(col) for col in json_to_df(raw_data).columns}
+    except Exception:
+        return set()
+
+
+def _reg_series_rows(row_data) -> list[dict]:
+    return [dict(row) for row in (row_data or []) if isinstance(row, dict) and row.get("Series")]
+
+
+def _reg_y_value(row) -> bool:
+    return bool((row or {}).get("Y", False))
+
+
+def _reg_x_values(rows: list[dict]) -> list[str]:
+    return [str(row["Series"]) for row in rows if bool(row.get("X", False))]
+
+
+def _reg_dependent_var_from_rows(rows: list[dict], changed_series: str | None, current_dep):
+    if changed_series:
+        changed_row = next((row for row in rows if str(row.get("Series")) == changed_series), None)
+        if changed_row and _reg_y_value(changed_row):
+            return changed_series
+        if current_dep and str(current_dep) == changed_series:
+            for row in rows:
+                series = str(row.get("Series") or "")
+                if series and series != changed_series and _reg_y_value(row):
+                    return series
+            return None
+    for row in rows:
+        series = str(row.get("Series") or "")
+        if series and _reg_y_value(row):
+            return series
+    return None
+
+
+def _reg_benchmark_assignments_from_rows(rows: list[dict], valid_series: set[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for row in rows:
+        series = str(row.get("Series") or "")
+        if not series or series not in valid_series:
+            continue
+        benchmark = str(row.get("Benchmark") or "None").strip() or "None"
+        if benchmark not in valid_series and benchmark != "None":
+            benchmark = "None"
+        out[series] = benchmark
+    return out
+
+
+def _reg_bool_assignments_from_rows(rows: list[dict], field: str, valid_series: set[str], default: bool) -> dict[str, bool]:
+    out: dict[str, bool] = {}
+    for row in rows:
+        series = str(row.get("Series") or "")
+        if not series or series not in valid_series:
+            continue
+        out[series] = bool(row.get(field, default))
+    return out
+
+
+def _reg_int_assignments_from_rows(rows: list[dict], field: str, default: int) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for row in rows:
+        series = str(row.get("Series") or "")
+        if not series:
+            continue
+        try:
+            out[series] = int(row.get(field, default) or default)
+        except (TypeError, ValueError):
+            out[series] = int(default)
+    return out
+
+
+def _reg_float_assignments_from_rows(rows: list[dict], field: str, default: float) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for row in rows:
+        series = str(row.get("Series") or "")
+        if not series:
+            continue
+        try:
+            out[series] = float(row.get(field, default) or default)
+        except (TypeError, ValueError):
+            out[series] = float(default)
+    return out
+
+
+def _reg_deleted_series_from_rows(rows: list[dict]) -> list[str]:
+    return [str(row["Series"]) for row in rows if bool(row.get("Delete", False))]
+
 
 @callback(
     Output("reg-temp-series-select", "data", allow_duplicate=True),
@@ -3990,111 +4097,115 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
     Output("reg-temp-long-short-store", "data", allow_duplicate=True),
     Output("reg-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("reg-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("reg-temp-series-order-store", "data", allow_duplicate=True),
-    Input("reg-series-selection-grid", "cellValueChanged"),
-    Input("reg-series-selection-grid", "cellClicked", allow_optional=True),
-    Input("reg-series-selection-grid", "rowData"),
+    Input("reg-series-selection-grid", "cellValueChanged", allow_optional=True),
+    State("reg-series-selection-grid", "rowData", allow_optional=True),
+    State("reg-temp-series-select", "data"),
     State("reg-temp-dependent-var-store", "data"),
+    State("reg-temp-lag-store", "data"),
+    State("reg-temp-min-beta-store", "data"),
+    State("reg-temp-max-beta-store", "data"),
+    State("reg-temp-enable-constraint-store", "data"),
+    State("reg-temp-benchmark-assignments-store", "data"),
+    State("reg-temp-long-short-store", "data"),
+    State("reg-temp-vol-scaling-assignments-store", "data"),
+    State("reg-temp-deleted-series-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
-    if not row_data:
+def reg_sync_grid_edit(
+    cell_change,
+    row_data,
+    current_x,
+    current_dep,
+    current_lag,
+    current_min,
+    current_max,
+    current_enable,
+    current_bench,
+    current_ls,
+    current_vol,
+    current_deleted,
+    raw_data,
+):
+    change = _reg_latest_series_grid_change(cell_change)
+    rows = _reg_series_rows(row_data)
+    if not change or not rows:
         raise PreventUpdate
-    rows = [dict(r) for r in row_data if isinstance(r, dict)]
-    if not rows:
+
+    changed_field = change.get("colId")
+    if changed_field is None:
+        changed_field = ((change.get("column") or {}).get("colId"))
+    changed_field = str(changed_field or "").strip()
+    if not changed_field or changed_field == "Series":
         raise PreventUpdate
 
-    def _latest_event(payload):
-        evt = payload
-        if isinstance(evt, list):
-            evt = next((item for item in reversed(evt) if isinstance(item, dict)), None)
-        return evt if isinstance(evt, dict) else None
-
-    def _event_col(evt):
-        if not evt:
-            return None
-        col = evt.get("colId")
-        if col is None:
-            col = (evt.get("column") or {}).get("colId")
-        return col
-
-    def _event_series(evt):
-        if not evt:
-            return None
-        data = evt.get("data")
-        if isinstance(data, dict):
-            series = data.get("Series")
-            if series:
-                return series
-        idx = evt.get("rowIndex")
+    changed_series = None
+    data = change.get("data")
+    if isinstance(data, dict):
+        changed_series = str(data.get("Series") or "").strip() or None
+    if not changed_series:
+        idx = change.get("rowIndex")
         if isinstance(idx, int) and 0 <= idx < len(rows):
-            return rows[idx].get("Series")
-        return None
+            changed_series = str(rows[idx].get("Series") or "").strip() or None
 
-    trigger_props = []
-    try:
-        trigger_props = [item.get("prop_id", "") for item in callback_context.triggered]
-    except Exception:
-        trigger_props = []
-    triggered_by_value_change = any(prop.endswith(".cellValueChanged") for prop in trigger_props)
-    triggered_by_click_only = (
-        any(prop.endswith(".cellClicked") for prop in trigger_props)
-        and not triggered_by_value_change
-    )
+    outputs = [no_update] * 10
+    valid_series = _reg_valid_series_set(raw_data)
 
-    value_event = _latest_event(cell_change)
-    click_event = _latest_event(cell_click)
-    changed_field = _event_col(value_event) if triggered_by_value_change else None
-    changed_series = _event_series(value_event) if triggered_by_value_change else None
+    if changed_field == "X":
+        new_x = _reg_x_values(rows)
+        outputs[0] = new_x if new_x != (current_x or []) else no_update
+    elif changed_field == "Y":
+        new_dep = _reg_dependent_var_from_rows(rows, changed_series, current_dep)
+        outputs[1] = new_dep if new_dep != current_dep else no_update
+    elif changed_field == "Lag":
+        new_lag = _reg_int_assignments_from_rows(rows, "Lag", 0)
+        outputs[2] = new_lag if new_lag != (current_lag or {}) else no_update
+    elif changed_field == "MinBeta":
+        new_min = _reg_float_assignments_from_rows(rows, "MinBeta", -999.0)
+        outputs[3] = new_min if new_min != (current_min or {}) else no_update
+    elif changed_field == "MaxBeta":
+        new_max = _reg_float_assignments_from_rows(rows, "MaxBeta", 999.0)
+        outputs[4] = new_max if new_max != (current_max or {}) else no_update
+    elif changed_field == "Enable":
+        new_enable = _reg_bool_assignments_from_rows(rows, "Enable", valid_series, False)
+        outputs[5] = new_enable if new_enable != (current_enable or {}) else no_update
+    elif changed_field == "Benchmark":
+        new_bench = _reg_benchmark_assignments_from_rows(rows, valid_series)
+        outputs[6] = new_bench if new_bench != (current_bench or {}) else no_update
+    elif changed_field == "LongShort":
+        new_ls = _reg_bool_assignments_from_rows(rows, "LongShort", valid_series, False)
+        outputs[7] = new_ls if new_ls != (current_ls or {}) else no_update
+    elif changed_field == "ScaleVol":
+        new_vol = _reg_bool_assignments_from_rows(rows, "ScaleVol", valid_series, True)
+        outputs[8] = new_vol if new_vol != (current_vol or {}) else no_update
+    elif changed_field == "Delete":
+        new_deleted = _reg_deleted_series_from_rows(rows)
+        outputs[9] = new_deleted if new_deleted != (current_deleted or []) else no_update
+    else:
+        raise PreventUpdate
 
-    checkbox_fields = {"Y", "X", "LongShort", "ScaleVol", "Enable", "Delete"}
-    if triggered_by_click_only and click_event:
-        click_field = _event_col(click_event)
-        click_series = _event_series(click_event)
-        if click_field in checkbox_fields and click_series:
-            for row in rows:
-                if row.get("Series") == click_series:
-                    row[click_field] = not bool(row.get(click_field, False))
-                    break
-            changed_field = click_field
-            changed_series = click_series
+    if all(value is no_update for value in outputs):
+        raise PreventUpdate
+    return tuple(outputs)
 
-    new_x, new_dep, new_lag, new_min, new_max = [], None, {}, {}, {}
-    new_enable, new_bench, new_ls, new_vol, new_deleted, new_order = {}, {}, {}, {}, [], []
-    for row in rows:
-        series = row.get("Series", "")
-        new_order.append(series)
-        y_val = bool(row.get("Y", False))
-        # Enforce single-select for Y
-        if changed_field == "Y":
-            if series == changed_series and y_val:
-                new_dep = series
-            elif series != changed_series and y_val:
-                y_val = False  # clear others (will be re-set on next grid rebuild)
-        elif y_val:
-            new_dep = series
-        if bool(row.get("X", False)):
-            new_x.append(series)
-        new_bench[series] = row.get("Benchmark") or "None"
-        new_ls[series] = bool(row.get("LongShort", False))
-        new_vol[series] = bool(row.get("ScaleVol", True))
-        try:
-            new_lag[series] = int(row.get("Lag", 0) or 0)
-        except (ValueError, TypeError):
-            new_lag[series] = 0
-        try:
-            new_min[series] = float(row.get("MinBeta", -999.0) or -999.0)
-        except (ValueError, TypeError):
-            new_min[series] = -999.0
-        try:
-            new_max[series] = float(row.get("MaxBeta", 999.0) or 999.0)
-        except (ValueError, TypeError):
-            new_max[series] = 999.0
-        new_enable[series] = bool(row.get("Enable", False))
-        if bool(row.get("Delete", False)):
-            new_deleted.append(series)
-    return (new_x, new_dep, new_lag, new_min, new_max, new_enable,
-            new_bench, new_ls, new_vol, new_deleted, new_order)
+
+@callback(
+    Output("reg-temp-series-order-store", "data", allow_duplicate=True),
+    Input("reg-series-selection-grid", "virtualRowData", allow_optional=True),
+    State("reg-temp-series-order-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_reorder_series(virtual_rows, current_order):
+    ordered_series = [
+        str(row.get("Series"))
+        for row in (virtual_rows or [])
+        if isinstance(row, dict) and row.get("Series")
+    ]
+    if not ordered_series:
+        raise PreventUpdate
+    if ordered_series == (current_order or []):
+        raise PreventUpdate
+    return ordered_series
 
 
 # ---------------------------------------------------------------------------

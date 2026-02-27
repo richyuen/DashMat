@@ -414,18 +414,68 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert value == "monthly"
 
 
-def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):
+def test_reg_sync_grid_edit_handles_list_cell_change_payload_for_y(regression_page):
     row_data = [
         {"Series": "A", "Y": True, "X": True},
         {"Series": "B", "Y": True, "X": True},
     ]
-    cell_change = [{"colId": "Y", "rowIndex": 1}]
+    cell_change = [{"colId": "Y", "rowIndex": 1, "data": {"Series": "B"}}]
 
-    out = regression_page.reg_sync_grid_to_temp(cell_change, None, row_data, None)
+    out = regression_page.reg_sync_grid_edit(
+        cell_change,
+        row_data,
+        ["A", "B"],
+        None,
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        [],
+        df_to_json(pd.DataFrame({"A": [0.1], "B": [0.2]})),
+    )
     new_x, new_dep = out[0], out[1]
 
     assert new_dep == "B"
-    assert new_x == ["A", "B"]
+    assert new_x is no_update
+
+
+def test_reg_sync_grid_edit_updates_benchmark_assignments(regression_page):
+    row_data = [
+        {"Series": "A", "Benchmark": "B"},
+        {"Series": "B", "Benchmark": "None"},
+    ]
+
+    out = regression_page.reg_sync_grid_edit(
+        {"colId": "Benchmark", "rowIndex": 0, "data": {"Series": "A"}},
+        row_data,
+        [],
+        None,
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        [],
+        df_to_json(pd.DataFrame({"A": [0.1], "B": [0.2]})),
+    )
+
+    assert out[6] == {"A": "B", "B": "None"}
+    assert out[0] is no_update
+    assert out[1] is no_update
+
+
+def test_reg_reorder_series_uses_virtual_row_data(regression_page):
+    out = regression_page.reg_reorder_series(
+        [{"Series": "B"}, {"Series": "A"}, {"Series": "C"}],
+        ["A", "B", "C"],
+    )
+
+    assert out == ["B", "A", "C"]
 
 
 def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_page):
@@ -458,12 +508,19 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
     x_col = next((c for c in cols if c.get("field") == "X"), None)
     series_col = next((c for c in cols if c.get("field") == "Series"), None)
     scale_col = next((c for c in cols if c.get("field") == "ScaleVol"), None)
+    benchmark_col = next((c for c in cols if c.get("field") == "Benchmark"), None)
     assert x_col is not None
     assert series_col is not None
     assert scale_col is not None
+    assert benchmark_col is not None
     assert x_col.get("cellRenderer") == "agCheckboxCellRenderer"
     assert x_col.get("headerTooltip")
     assert series_col.get("headerTooltip")
+    assert series_col.get("editable") is False
+    assert benchmark_col.get("cellEditor") == "agRichSelectCellEditor"
+    assert benchmark_col.get("cellEditorPopup") is True
+    assert benchmark_col.get("cellEditorParams", {}).get("allowTyping") is True
+    assert getattr(grid, "enableEnterpriseModules", False) is True
     assert scale_col.get("cellRenderer") == "agCheckboxCellRenderer"
     assert scale_col.get("headerTooltip")
 
