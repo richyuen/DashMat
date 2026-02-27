@@ -378,7 +378,7 @@ def build_series_selection_modal(cfg: PagePrefixConfig):
         children=[
             dmc.Alert(
                 id=_sid(cfg.prefix, "alert-message"),
-                title="Info",
+                title="Status",
                 color="blue",
                 hide=True,
                 mb="md",

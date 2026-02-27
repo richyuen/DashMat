@@ -3344,6 +3344,7 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-min-wt-store", data={}),
         dcc.Store(id="po-temp-max-wt-store", data={}),
         dcc.Store(id="po-temp-force-max-store", data={}),
+        dcc.Store(id="po-series-modal-commit-store", data=None),
         dcc.Store(id="po-portfolio-add-mode-store", data=None),
         dcc.Store(id="po-portfolio-add-rows-store", data=[]),
         dcc.Store(id="po-underlying-add-rows-store", data=[]),
@@ -4344,6 +4345,27 @@ clientside_callback(
 )
 
 clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        try {
+            if (document.activeElement && typeof document.activeElement.blur === "function") {
+                document.activeElement.blur();
+            }
+        } catch (e) {
+            // No-op; commit token still advances.
+        }
+        return n_clicks;
+    }
+    """,
+    Output("po-series-modal-commit-store", "data"),
+    Input("po-modal-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     js_release_ui_blocker_on_modal_state(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-db-add-modal", "opened"),
@@ -4376,16 +4398,10 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(opened) {
-        if (opened === false) {
-            return false;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    js_release_ui_blocker_on_modal_state(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-series-selection-modal", "opened"),
+    Input("po-alert-message", "hide"),
     prevent_initial_call=True,
 )
 
@@ -7062,34 +7078,21 @@ clientside_callback(
 
 @callback(
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
-    Output("po-temp-series-select", "data", allow_duplicate=True),
-    Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
-    Output("po-temp-long-short-store", "data", allow_duplicate=True),
-    Output("po-temp-series-order-store", "data", allow_duplicate=True),
-    Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("po-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("po-temp-min-wt-store", "data", allow_duplicate=True),
-    Output("po-temp-max-wt-store", "data", allow_duplicate=True),
-    Output("po-temp-force-max-store", "data", allow_duplicate=True),
+    Output("po-alert-message", "children", allow_duplicate=True),
+    Output("po-alert-message", "color", allow_duplicate=True),
+    Output("po-alert-message", "hide", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
-    State("po-series-select", "data"),
-    State("po-benchmark-assignments-store", "data"),
-    State("po-cmabench-assignments-store", "data"),
-    State("po-long-short-store", "data"),
-    State("po-series-order-store", "data"),
-    State("po-vol-scaling-assignments-store", "data"),
-    State("po-min-wt-store", "data"),
-    State("po-max-wt-store", "data"),
-    State("po-force-max-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_modal(n_clicks, current_select, current_bench, current_cmabench, current_ls, current_order,
-                  current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
+def po_open_modal(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return (True, current_select, current_bench, current_cmabench, current_ls, current_order, [],
-            current_vol_scaling, current_min_wt, current_max_wt, current_force_max)
+    return (
+        True,
+        "",
+        "blue",
+        True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -7098,25 +7101,33 @@ def po_open_modal(n_clicks, current_select, current_bench, current_cmabench, cur
 
 @callback(
     Output("po-series-selection-container", "children"),
-    Output("po-temp-series-order-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("po-temp-series-select", "data"),
-    Input("po-temp-series-order-store", "data"),
-    Input("po-temp-deleted-series-store", "data"),
-    Input("po-temp-benchmark-assignments-store", "data"),
-    Input("po-temp-cmabench-assignments-store", "data"),
-    Input("po-temp-long-short-store", "data"),
-    Input("po-temp-vol-scaling-assignments-store", "data"),
-    Input("po-temp-min-wt-store", "data"),
-    Input("po-temp-max-wt-store", "data"),
-    Input("po-temp-force-max-store", "data"),
-    prevent_initial_call="initial_duplicate",
+    Input("po-series-selection-modal", "opened"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-series-select", "data"),
+    State("po-series-order-store", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-min-wt-store", "data"),
+    State("po-max-wt-store", "data"),
+    State("po-force-max-store", "data"),
+    State("po-temp-series-select", "data"),
+    State("po-temp-series-order-store", "data"),
+    State("po-temp-benchmark-assignments-store", "data"),
+    State("po-temp-cmabench-assignments-store", "data"),
+    State("po-temp-long-short-store", "data"),
+    State("po-temp-vol-scaling-assignments-store", "data"),
+    State("po-temp-min-wt-store", "data"),
+    State("po-temp-max-wt-store", "data"),
+    State("po-temp-force-max-store", "data"),
+    prevent_initial_call=True,
 )
 def po_update_series_selectors(
+    opened,
     raw_data,
     selected_series,
     series_order,
-    deleted_series,
     current_assignments,
     current_cmabench_assignments,
     long_short_assignments,
@@ -7124,15 +7135,36 @@ def po_update_series_selectors(
     min_wt,
     max_wt,
     force_max,
+    temp_selected_series,
+    temp_series_order,
+    temp_assignments,
+    temp_cmabench_assignments,
+    temp_long_short_assignments,
+    temp_vol_scaling_assignments,
+    temp_min_wt,
+    temp_max_wt,
+    temp_force_max,
 ):
+    if not opened:
+        raise PreventUpdate
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
 
     df = json_to_df(raw_data)
     all_series = list(df.columns)
 
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
+
+    selected_series = selected_series or temp_selected_series or []
+    series_order = series_order or temp_series_order or []
+    current_assignments = current_assignments or temp_assignments or {}
+    current_cmabench_assignments = current_cmabench_assignments or temp_cmabench_assignments or {}
+    long_short_assignments = long_short_assignments or temp_long_short_assignments or {}
+    vol_scaling_assignments = vol_scaling_assignments or temp_vol_scaling_assignments or {}
+    min_wt = min_wt or temp_min_wt or {}
+    max_wt = max_wt or temp_max_wt or {}
+    force_max = force_max or temp_force_max or {}
 
     if not series_order:
         series_order = list(all_series)
@@ -7143,14 +7175,6 @@ def po_update_series_selectors(
         series_order = [s for s in series_order if s in all_series]
 
     selected_set = set(selected_series or [])
-    deleted_set = set(deleted_series or [])
-    current_assignments = current_assignments or {}
-    current_cmabench_assignments = current_cmabench_assignments or {}
-    long_short_assignments = long_short_assignments or {}
-    vol_scaling_assignments = vol_scaling_assignments or {}
-    min_wt = min_wt or {}
-    max_wt = max_wt or {}
-    force_max = force_max or {}
     missing_cmabench = [s for s in all_series if not str(current_cmabench_assignments.get(s, "")).strip()]
     core_cmabench_defaults = (
         get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)
@@ -7173,6 +7197,7 @@ def po_update_series_selectors(
         force_max_val = force_max.get(series, False)
         row_data.append(
             {
+                "__orig_series": series,
                 "Series": series,
                 "Benchmark": bench_val,
                 "CMABench": cmabench_val,
@@ -7181,20 +7206,20 @@ def po_update_series_selectors(
                 "MinWt": min_wt_val,
                 "MaxWt": max_wt_val,
                 "ForceMax": bool(force_max_val),
-                "Delete": series in deleted_set,
+                "Delete": False,
             }
         )
 
     selected_rows = [
         row
         for row in row_data
-        if row["Series"] in selected_set and not row["Delete"]
+        if row["__orig_series"] in selected_set and not row["Delete"]
     ]
 
     grid = dag.AgGrid(
         id="po-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
-        getRowId="params.data.Series",
+        getRowId="params.data.__orig_series",
         columnDefs=apply_header_tooltips([
             {
                 "headerName": "",
@@ -7349,405 +7374,66 @@ def po_update_series_selectors(
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid], series_order
+    return [grid]
 
 
-def _po_latest_series_grid_change(cell_change):
-    """Normalize AG Grid cellValueChanged payload to the latest dict event."""
-    change = cell_change
-    if isinstance(change, list):
-        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
-    return change if isinstance(change, dict) else None
+def _po_modal_series_rows(rows):
+    return [dict(row) for row in (rows or []) if isinstance(row, dict)]
 
 
-# ---------------------------------------------------------------------------
-# Modal: collect benchmark assignments
-# ---------------------------------------------------------------------------
+def _po_modal_orig_series(row):
+    orig = str((row or {}).get("__orig_series") or "").strip()
+    if orig:
+        return orig
+    return str((row or {}).get("Series") or "").strip()
 
-@callback(
-    Output("po-temp-benchmark-assignments-store", "data"),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    State("dashmat-raw-data-store", "data"),
-    prevent_initial_call=True,
-)
-def po_update_benchmarks(cell_change, row_data, raw_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not change:
-        raise PreventUpdate
-    if change.get("colId") == "Series":
-        raise PreventUpdate
-    if raw_data is None or not row_data:
-        return {}
-    valid_series = set(json_to_df(raw_data).columns)
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
+
+def _po_ordered_modal_rows(row_data, virtual_rows):
+    current_rows = _po_modal_series_rows(row_data)
+    row_by_orig = {}
+    for row in current_rows:
+        orig = _po_modal_orig_series(row)
+        if orig and orig not in row_by_orig:
+            row_by_orig[orig] = row
+
+    ordered = []
+    seen = set()
+    for row in _po_modal_series_rows(virtual_rows):
+        orig = _po_modal_orig_series(row)
+        if orig and orig in row_by_orig and orig not in seen:
+            ordered.append(row_by_orig[orig])
+            seen.add(orig)
+    for row in current_rows:
+        orig = _po_modal_orig_series(row)
+        if orig and orig not in seen:
+            ordered.append(row)
+            seen.add(orig)
+    return ordered
+
+
+def _po_validate_modal_names(rows):
+    final_name_by_orig = {}
+    seen_names = {}
+    for row in rows:
+        orig = _po_modal_orig_series(row)
+        final_name = str((row or {}).get("Series") or "").strip()
+        if not orig:
             continue
-        series = row.get("Series")
-        benchmark = row.get("Benchmark", "None")
-        if not series or series not in valid_series:
-            continue
-        if benchmark not in valid_series and benchmark != "None":
-            benchmark = "None"
-        assignments[series] = benchmark
-    return assignments
+        if not final_name:
+            return None, "Series name cannot be blank."
+        existing_orig = seen_names.get(final_name)
+        if existing_orig and existing_orig != orig:
+            return None, f"Series names must be unique. Duplicate: {final_name}"
+        seen_names[final_name] = orig
+        final_name_by_orig[orig] = final_name
+    return final_name_by_orig, None
 
 
-# ---------------------------------------------------------------------------
-# Modal: collect CMABench assignments
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-temp-cmabench-assignments-store", "data"),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    prevent_initial_call=True,
-)
-def po_update_cmabench(cell_change, row_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not change:
-        raise PreventUpdate
-    if change.get("colId") == "Series":
-        raise PreventUpdate
-    if not row_data:
-        return {}
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        val = row.get("CMABench")
-        if isinstance(val, str):
-            val = val.strip()
-        if series and val:
-            assignments[series] = val
-    return assignments
-
-
-# ---------------------------------------------------------------------------
-# Modal: collect long-short assignments
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-temp-long-short-store", "data"),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    State("dashmat-raw-data-store", "data"),
-    prevent_initial_call=True,
-)
-def po_update_ls(cell_change, row_data, raw_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not change:
-        raise PreventUpdate
-    if change.get("colId") == "Series":
-        raise PreventUpdate
-    if raw_data is None or not row_data:
-        return {}
-    valid_series = set(json_to_df(raw_data).columns)
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        if series and series in valid_series:
-            assignments[series] = bool(row.get("LongShort", False))
-    return assignments
-
-
-# ---------------------------------------------------------------------------
-# Modal: collect vol scaling assignments
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-temp-vol-scaling-assignments-store", "data"),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    State("dashmat-raw-data-store", "data"),
-    prevent_initial_call=True,
-)
-def po_update_vol_scaling(cell_change, row_data, raw_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not change:
-        raise PreventUpdate
-    if change.get("colId") == "Series":
-        raise PreventUpdate
-    if raw_data is None or not row_data:
-        return {}
-    valid_series = set(json_to_df(raw_data).columns)
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        if series and series in valid_series:
-            assignments[series] = bool(row.get("ScaleVol", True))
-    return assignments
-
-
-# ---------------------------------------------------------------------------
-# Modal: collect min/max/force_max weights
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-temp-min-wt-store", "data"),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    prevent_initial_call=True,
-)
-def po_update_min_wt(cell_change, row_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not change:
-        raise PreventUpdate
-    if change.get("colId") == "Series":
-        raise PreventUpdate
-    if not row_data:
-        return {}
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        if not series:
-            continue
-        if bool(row.get("ForceMax", False)):
-            assignments[series] = 0
-            continue
-        try:
-            val = float(row.get("MinWt", 0) or 0)
-            assignments[series] = max(0.0, min(100.0, val))
-        except (TypeError, ValueError):
-            assignments[series] = 0
-    return assignments
-
-
-@callback(
-    Output("po-temp-max-wt-store", "data"),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    prevent_initial_call=True,
-)
-def po_update_max_wt(cell_change, row_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not change:
-        raise PreventUpdate
-    if change.get("colId") == "Series":
-        raise PreventUpdate
-    if not row_data:
-        return {}
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        if not series:
-            continue
-        try:
-            val = float(row.get("MaxWt", 100) or 100)
-            assignments[series] = max(0.0, min(100.0, val))
-        except (TypeError, ValueError):
-            assignments[series] = 100
-    return assignments
-
-
-@callback(
-    Output("po-temp-force-max-store", "data"),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    prevent_initial_call=True,
-)
-def po_update_force_max(cell_change, row_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not change:
-        raise PreventUpdate
-    if change.get("colId") == "Series":
-        raise PreventUpdate
-    if not row_data:
-        return {}
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        if series:
-            assignments[series] = bool(row.get("ForceMax", False))
-    return assignments
-
-
-# ---------------------------------------------------------------------------
-# Modal: delete series
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-temp-deleted-series-store", "data", allow_duplicate=True),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("po-series-selection-grid", "rowData", allow_optional=True),
-    prevent_initial_call=True,
-)
-def po_delete_series(cell_change, row_data):
-    change = _po_latest_series_grid_change(cell_change)
-    if not isinstance(change, dict) or change.get("colId") != "Delete":
-        raise PreventUpdate
-
-    rows = row_data or []
-    deleted = [
-        row.get("Series")
-        for row in rows
-        if isinstance(row, dict) and row.get("Series") and bool(row.get("Delete"))
-    ]
-    return deleted
-
-
-# ---------------------------------------------------------------------------
-# Modal: save in-grid Series rename
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
-    Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
-    Output("po-temp-long-short-store", "data", allow_duplicate=True),
-    Output("po-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("po-temp-min-wt-store", "data", allow_duplicate=True),
-    Output("po-temp-max-wt-store", "data", allow_duplicate=True),
-    Output("po-temp-force-max-store", "data", allow_duplicate=True),
-    Output("po-temp-series-select", "data", allow_duplicate=True),
-    Output("po-temp-series-order-store", "data", allow_duplicate=True),
-    Output("po-series-select-value-store", "data", allow_duplicate=True),
-    Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("dashmat-raw-data-store", "data"),
-    State("po-temp-benchmark-assignments-store", "data"),
-    State("po-temp-cmabench-assignments-store", "data"),
-    State("po-temp-long-short-store", "data"),
-    State("po-temp-vol-scaling-assignments-store", "data"),
-    State("po-temp-min-wt-store", "data"),
-    State("po-temp-max-wt-store", "data"),
-    State("po-temp-force-max-store", "data"),
-    State("po-temp-series-select", "data"),
-    State("po-temp-series-order-store", "data"),
-    prevent_initial_call=True,
-)
-def po_save_edit(
-    cell_change,
-    raw_data,
-    benchmark_assignments,
-    cmabench_assignments,
-    long_short_assignments,
-    vol_scaling_assignments,
-    min_wt,
-    max_wt,
-    force_max,
-    selected_series,
-    series_order,
-):
-    change = _po_latest_series_grid_change(cell_change)
-    if not isinstance(change, dict) or change.get("colId") != "Series":
-        raise PreventUpdate
-
-    old_name = str(change.get("oldValue", "")).strip()
-    new_name = str(change.get("newValue", "")).strip()
-    if not old_name or not new_name or new_name == old_name:
-        raise PreventUpdate
-
-    df = json_to_df(raw_data)
-    if old_name not in df.columns or new_name in df.columns:
-        raise PreventUpdate
-    df = df.rename(columns={old_name: new_name})
-    new_raw_data = df_to_json(df)
-
-    def _rename_keys(mapping, rename_values=False):
-        mapping = mapping or {}
-        updated = {}
-        for key, value in mapping.items():
-            updated_key = new_name if key == old_name else key
-            updated_value = new_name if rename_values and value == old_name else value
-            updated[updated_key] = updated_value
-        return updated
-
-    new_benchmark_assignments = _rename_keys(benchmark_assignments, rename_values=True)
-    new_cmabench_assignments = _rename_keys(cmabench_assignments)
-    new_long_short_assignments = _rename_keys(long_short_assignments)
-    new_vol_scaling_assignments = _rename_keys(vol_scaling_assignments)
-    new_min_wt = _rename_keys(min_wt)
-    new_max_wt = _rename_keys(max_wt)
-    new_force_max = _rename_keys(force_max)
-
-    selected_series = list(selected_series or [])
-    new_series_select = [new_name if s == old_name else s for s in selected_series]
-
-    series_order = list(series_order or list(df.columns))
-    new_series_order = [new_name if s == old_name else s for s in series_order]
-
-    return (
-        new_raw_data,
-        new_benchmark_assignments,
-        new_cmabench_assignments,
-        new_long_short_assignments,
-        new_vol_scaling_assignments,
-        new_min_wt,
-        new_max_wt,
-        new_force_max,
-        new_series_select,
-        new_series_order,
-        new_series_select,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Modal: reorder series
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-temp-series-order-store", "data", allow_duplicate=True),
-    Output("po-temp-series-select", "data", allow_duplicate=True),
-    Input("po-series-selection-grid", "virtualRowData", allow_optional=True),
-    Input("po-series-selection-grid", "selectedRows", allow_optional=True),
-    State("po-temp-series-order-store", "data"),
-    State("po-temp-series-select", "data"),
-    prevent_initial_call=True,
-)
-def po_reorder_series(virtual_rows, selected_rows, current_order, current_selected):
-    ordered_series = []
-    if isinstance(virtual_rows, (list, tuple)):
-        ordered_series = [
-            row.get("Series")
-            for row in virtual_rows
-            if isinstance(row, dict) and row.get("Series")
-        ]
-    elif current_order:
-        ordered_series = list(current_order)
-    if not ordered_series:
-        raise PreventUpdate
-
-    triggered_props = []
+def _po_clamp_weight(value, default):
     try:
-        if callback_context and callback_context.triggered:
-            triggered_props = [t.get("prop_id", "") for t in callback_context.triggered]
-    except Exception:
-        triggered_props = []
-
-    if isinstance(selected_rows, (list, tuple)):
-        selected_set = {
-            row.get("Series")
-            for row in selected_rows
-            if isinstance(row, dict) and row.get("Series")
-        }
-        selected_series = [s for s in ordered_series if s in selected_set]
-        # Guard against transient empty selectedRows payloads during grid hydration.
-        selected_rows_triggered = any(
-            prop.startswith("po-series-selection-grid.selectedRows")
-            for prop in triggered_props
-        )
-        if not selected_series and (current_selected or []) and not selected_rows_triggered:
-            selected_fallback = set(current_selected or [])
-            selected_series = [s for s in ordered_series if s in selected_fallback]
-    else:
-        selected_fallback = set(current_selected or [])
-        selected_series = [s for s in ordered_series if s in selected_fallback]
-
-    if ordered_series == (current_order or []) and selected_series == (current_selected or []):
-        raise PreventUpdate
-    return ordered_series, selected_series
+        return max(0.0, min(100.0, float(value)))
+    except (TypeError, ValueError):
+        return float(default)
 
 
 # ---------------------------------------------------------------------------
@@ -7768,99 +7454,198 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     Output("po-max-wt-store", "data"),
     Output("po-force-max-store", "data"),
     Output("po-results-store", "data", allow_duplicate=True),
-    Input("po-modal-ok-button", "n_clicks"),
-    State("po-temp-series-select", "data"),
-    State("po-temp-benchmark-assignments-store", "data"),
-    State("po-temp-cmabench-assignments-store", "data"),
-    State("po-temp-long-short-store", "data"),
-    State("po-temp-series-order-store", "data"),
-    State("po-temp-deleted-series-store", "data"),
+    Output("po-alert-message", "children", allow_duplicate=True),
+    Output("po-alert-message", "color", allow_duplicate=True),
+    Output("po-alert-message", "hide", allow_duplicate=True),
+    Input("po-series-modal-commit-store", "data"),
     State("dashmat-raw-data-store", "data"),
-    State("po-temp-vol-scaling-assignments-store", "data"),
-    State("po-temp-min-wt-store", "data"),
-    State("po-temp-max-wt-store", "data"),
-    State("po-temp-force-max-store", "data"),
     State("po-results-store", "data"),
+    State("po-series-selection-grid", "rowData", allow_optional=True),
+    State("po-series-selection-grid", "selectedRows", allow_optional=True),
+    State("po-series-selection-grid", "virtualRowData", allow_optional=True),
     prevent_initial_call=True,
 )
 def po_on_modal_ok(
-    n_clicks,
-    temp_select,
-    temp_bench,
-    temp_cmabench,
-    temp_ls,
-    temp_order,
-    temp_deleted,
+    commit_token,
     raw_data,
-    temp_vol_scaling,
-    temp_min_wt,
-    temp_max_wt,
-    temp_force_max,
     current_results,
+    row_data,
+    selected_rows,
+    virtual_rows,
 ):
-    if not n_clicks:
+    if not commit_token:
         raise PreventUpdate
+    if not raw_data:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            "Upload data before committing series changes.",
+            "red",
+            False,
+        )
 
-    temp_select = list(temp_select or [])
-    if temp_order:
-        selected_set = set(temp_select)
-        temp_select = [s for s in temp_order if s in selected_set]
+    rows = _po_modal_series_rows(row_data)
+    if not rows:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            "Series grid is not ready yet.",
+            "red",
+            False,
+        )
 
-    temp_cmabench = temp_cmabench or {}
-    series_for_defaults = temp_order if temp_order else temp_select
-    missing_cmabench = [s for s in series_for_defaults if not str(temp_cmabench.get(s, "")).strip()]
-    if missing_cmabench:
-        defaults = get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)
-        for s in missing_cmabench:
-            mapped = defaults.get(s)
-            if mapped:
-                temp_cmabench[s] = mapped
+    df = json_to_df(raw_data)
+    valid_orig = [str(col) for col in df.columns]
+    valid_orig_set = set(valid_orig)
+    ordered_rows = _po_ordered_modal_rows(row_data, virtual_rows)
+    deleted_orig = {
+        orig
+        for row in rows
+        if bool(row.get("Delete", False))
+        for orig in [_po_modal_orig_series(row)]
+        if orig in valid_orig_set
+    }
+    surviving_rows = [
+        row
+        for row in ordered_rows
+        if (orig := _po_modal_orig_series(row)) in valid_orig_set and orig not in deleted_orig
+    ]
+    final_name_by_orig, validation_error = _po_validate_modal_names(surviving_rows)
+    if validation_error:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            validation_error,
+            "red",
+            False,
+        )
 
-    updated_raw_data = raw_data
+    rename_map = {
+        orig: final_name
+        for orig, final_name in final_name_by_orig.items()
+        if orig != final_name
+    }
+    selected_orig = {
+        orig
+        for row in _po_modal_series_rows(selected_rows)
+        for orig in [_po_modal_orig_series(row)]
+        if orig in final_name_by_orig
+    }
+
+    updated_df = df.drop(columns=[orig for orig in valid_orig if orig in deleted_orig])
+    if rename_map:
+        updated_df = updated_df.rename(columns=rename_map)
+
+    final_order = [
+        final_name_by_orig[orig]
+        for row in ordered_rows
+        for orig in [_po_modal_orig_series(row)]
+        if orig in final_name_by_orig
+    ]
+    final_selected = [
+        final_name_by_orig[orig]
+        for row in ordered_rows
+        for orig in [_po_modal_orig_series(row)]
+        if orig in selected_orig and orig in final_name_by_orig
+    ]
+
+    missing_cmabench_orig = [
+        orig
+        for row in ordered_rows
+        for orig in [_po_modal_orig_series(row)]
+        if orig in final_name_by_orig and not str((row or {}).get("CMABench") or "").strip()
+    ]
+    cmabench_defaults = (
+        get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench_orig)
+        if missing_cmabench_orig
+        else {}
+    )
+
+    final_bench = {}
+    final_cmabench = {}
+    final_ls = {}
+    final_vol_scaling = {}
+    final_min_wt = {}
+    final_max_wt = {}
+    final_force_max = {}
+    for row in rows:
+        orig = _po_modal_orig_series(row)
+        if orig not in final_name_by_orig:
+            continue
+        final_name = final_name_by_orig[orig]
+        benchmark = str(row.get("Benchmark") or "None").strip() or "None"
+        if benchmark != "None":
+            benchmark = final_name_by_orig.get(benchmark, "None")
+        force_max = bool(row.get("ForceMax", False))
+        final_bench[final_name] = benchmark
+        final_cmabench[final_name] = str(row.get("CMABench") or "").strip() or cmabench_defaults.get(orig, "")
+        final_ls[final_name] = bool(row.get("LongShort", False))
+        final_vol_scaling[final_name] = bool(row.get("ScaleVol", True))
+        final_force_max[final_name] = force_max
+        final_min_wt[final_name] = 0.0 if force_max else _po_clamp_weight(row.get("MinWt"), 0.0)
+        final_max_wt[final_name] = _po_clamp_weight(row.get("MaxWt"), 100.0)
+
     updated_results = no_update
-    if temp_deleted and raw_data:
-        df = json_to_df(raw_data)
-        to_drop = [s for s in temp_deleted if s in df.columns]
-        if to_drop:
-            df = df.drop(columns=to_drop)
-            updated_raw_data = df_to_json(df)
-            if temp_bench:
-                temp_bench = {k: v for k, v in temp_bench.items() if k not in to_drop}
-                remaining_cols = set(df.columns)
-                cleaned_bench = {}
-                for series, bench in temp_bench.items():
-                    if series not in remaining_cols:
-                        continue
-                    bench_value = bench if isinstance(bench, str) else "None"
-                    if bench_value != "None" and bench_value not in remaining_cols:
-                        bench_value = "None"
-                    cleaned_bench[series] = bench_value
-                temp_bench = cleaned_bench
-            if temp_ls:
-                temp_ls = {k: v for k, v in temp_ls.items() if k not in to_drop}
-            if temp_cmabench:
-                temp_cmabench = {k: v for k, v in temp_cmabench.items() if k not in to_drop}
-            if temp_order:
-                temp_order = [s for s in temp_order if s not in to_drop]
-            if temp_vol_scaling:
-                temp_vol_scaling = {k: v for k, v in temp_vol_scaling.items() if k not in to_drop}
-            if temp_min_wt:
-                temp_min_wt = {k: v for k, v in temp_min_wt.items() if k not in to_drop}
-            if temp_max_wt:
-                temp_max_wt = {k: v for k, v in temp_max_wt.items() if k not in to_drop}
-            if temp_force_max:
-                temp_force_max = {k: v for k, v in temp_force_max.items() if k not in to_drop}
-            temp_select = [s for s in temp_select if s not in to_drop]
-            # Remove deleted portfolios from results store
-            if current_results:
-                deleted_portfolios = [s for s in to_drop if s in current_results]
-                if deleted_portfolios:
-                    updated_results = {k: v for k, v in current_results.items()
-                                       if k not in deleted_portfolios}
+    if current_results:
+        deleted_portfolios = [orig for orig in deleted_orig if orig in current_results]
+        if deleted_portfolios:
+            updated_results = {
+                key: value for key, value in current_results.items() if key not in deleted_portfolios
+            }
 
-    return (temp_select, temp_bench, temp_cmabench, temp_ls, temp_order, False, temp_select,
-            updated_raw_data, temp_vol_scaling, temp_min_wt, temp_max_wt, temp_force_max,
-            updated_results)
+    updated_raw_data = df_to_json(updated_df)
+    raw_data_output = updated_raw_data if updated_raw_data != raw_data else no_update
+    return (
+        final_selected,
+        final_bench,
+        final_cmabench,
+        final_ls,
+        final_order,
+        False,
+        final_selected,
+        raw_data_output,
+        final_vol_scaling,
+        final_min_wt,
+        final_max_wt,
+        final_force_max,
+        updated_results,
+        "",
+        "blue",
+        True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -7869,14 +7654,16 @@ def po_on_modal_ok(
 
 @callback(
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-alert-message", "children", allow_duplicate=True),
+    Output("po-alert-message", "color", allow_duplicate=True),
+    Output("po-alert-message", "hide", allow_duplicate=True),
     Input("po-modal-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def po_on_modal_cancel(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return False
-
+    return False, "", "blue", True
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -10678,3 +10465,4 @@ def po_render_frontier_rf_warning(
     if warning:
         return dmc.Alert(warning, color="orange", variant="light", withCloseButton=False), shown
     return "", hidden
+

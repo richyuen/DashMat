@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from io import StringIO
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -403,6 +404,29 @@ def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules)
     assert fig.layout.margin.r >= 160
 
 
+def test_at_ordered_modal_rows_prefers_virtual_row_order(page_modules):
+    analyticstool, _ = page_modules
+
+    ordered = analyticstool._at_ordered_modal_rows(
+        [
+            {"__orig_series": "Asset_A", "Series": "Asset_A"},
+            {"__orig_series": "Asset_B", "Series": "Asset_B"},
+            {"__orig_series": "Asset_C", "Series": "Asset_C"},
+        ],
+        [
+            {"__orig_series": "Asset_C"},
+            {"__orig_series": "Asset_A"},
+            {"__orig_series": "Asset_B"},
+        ],
+    )
+
+    assert [analyticstool._at_modal_orig_series(row) for row in ordered] == [
+        "Asset_C",
+        "Asset_A",
+        "Asset_B",
+    ]
+
+
 def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules):
     analyticstool, _ = page_modules
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "growth") is no_update
@@ -476,18 +500,96 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
     )
 
 
+def test_on_modal_ok_commits_local_series_modal_state(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.on_modal_ok(
+        1,
+        raw_json,
+        [
+            {
+                "__orig_series": "Asset_A",
+                "Series": "Renamed_A",
+                "Benchmark": "Asset_B",
+                "LongShort": True,
+                "ScaleVol": False,
+                "Delete": False,
+            },
+            {
+                "__orig_series": "Asset_B",
+                "Series": "Asset_B",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            },
+        ],
+        [{"__orig_series": "Asset_B", "Series": "Asset_B"}],
+        [{"__orig_series": "Asset_B"}, {"__orig_series": "Asset_A"}],
+    )
+
+    assert result[0] == ["Asset_B"]
+    assert result[1] == {"Renamed_A": "Asset_B", "Asset_B": "None"}
+    assert result[2] == {"Renamed_A": True, "Asset_B": False}
+    assert result[3] == ["Asset_B", "Renamed_A"]
+    assert result[7] == {"Renamed_A": False, "Asset_B": True}
+
+    updated_df = pd.read_json(StringIO(result[6]), orient="split")
+    assert "Renamed_A" in updated_df.columns
+    assert "Asset_A" not in updated_df.columns
+
+
+def test_on_modal_ok_blocks_duplicate_series_names(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.on_modal_ok(
+        1,
+        raw_json,
+        [
+            {
+                "__orig_series": "Asset_A",
+                "Series": "Asset_B",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            },
+            {
+                "__orig_series": "Asset_B",
+                "Series": "Asset_B",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            },
+        ],
+        [],
+        None,
+    )
+
+    assert result[4] is True
+    assert "duplicate" in str(result[8]).lower()
+    assert result[10] is False
+
+
 def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_json):
     analyticstool, _ = page_modules
 
     result = analyticstool.on_modal_ok(
         1,
-        ["Asset_A"],
-        {},
-        {},
-        ["Asset_A"],
-        [],
         raw_json,
-        {},
+        [
+            {
+                "__orig_series": "Asset_A",
+                "Series": "Asset_A",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            }
+        ],
+        [{"__orig_series": "Asset_A", "Series": "Asset_A"}],
+        [{"__orig_series": "Asset_A"}],
     )
 
     assert result[6] is no_update

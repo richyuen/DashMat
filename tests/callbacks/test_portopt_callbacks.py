@@ -256,6 +256,29 @@ def test_po_populate_linear_constraints_columns_adds_header_tooltips(page_module
     assert col_map["Asset_B"].get("headerTooltip")
 
 
+def test_po_ordered_modal_rows_prefers_virtual_row_order(page_modules):
+    _, portopt = page_modules
+
+    ordered = portopt._po_ordered_modal_rows(
+        [
+            {"__orig_series": "Asset_A", "Series": "Asset_A"},
+            {"__orig_series": "Asset_B", "Series": "Asset_B"},
+            {"__orig_series": "Asset_C", "Series": "Asset_C"},
+        ],
+        [
+            {"__orig_series": "Asset_C"},
+            {"__orig_series": "Asset_A"},
+            {"__orig_series": "Asset_B"},
+        ],
+    )
+
+    assert [portopt._po_modal_orig_series(row) for row in ordered] == [
+        "Asset_C",
+        "Asset_A",
+        "Asset_B",
+    ]
+
+
 def test_po_update_series_selectors_adds_header_tooltips_and_grid_tooltip_options(
     monkeypatch, page_modules, raw_json
 ):
@@ -263,11 +286,11 @@ def test_po_update_series_selectors_adds_header_tooltips_and_grid_tooltip_option
     monkeypatch.setattr(portopt, "get_cmabench_map_for_fofbench", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(portopt, "get_unique_cmabench_values_cached", lambda *_args, **_kwargs: [])
 
-    children, series_order = portopt.po_update_series_selectors(
+    children = portopt.po_update_series_selectors(
+        True,
         raw_json,
         ["Asset_A"],
         None,
-        [],
         {},
         {},
         {},
@@ -275,15 +298,125 @@ def test_po_update_series_selectors_adds_header_tooltips_and_grid_tooltip_option
         {},
         {},
         {},
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
 
     grid = children[0]
     col_map = {c.get("field"): c for c in getattr(grid, "columnDefs", []) if c.get("field")}
-    assert series_order
+    assert getattr(grid, "getRowId", None) == "params.data.__orig_series"
     assert col_map["Series"].get("headerTooltip")
     assert col_map["Benchmark"].get("headerTooltip")
     assert col_map["CMABench"].get("headerTooltip")
     assert getattr(grid, "dashGridOptions", {}).get("tooltipShowDelay") == 500
+
+
+def test_po_on_modal_ok_commits_local_series_modal_state(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    monkeypatch.setattr(
+        portopt,
+        "get_cmabench_map_for_fofbench",
+        lambda *_args, **_kwargs: {"Asset_A": "DefaultBench"},
+    )
+
+    result = portopt.po_on_modal_ok(
+        1,
+        raw_json,
+        {"Asset_B": {"x": 1}, "KeepMe": {"x": 2}},
+        [
+            {
+                "__orig_series": "Asset_A",
+                "Series": "Renamed_A",
+                "Benchmark": "Asset_B",
+                "CMABench": "",
+                "LongShort": True,
+                "ScaleVol": False,
+                "MinWt": 5,
+                "MaxWt": 60,
+                "ForceMax": False,
+                "Delete": False,
+            },
+            {
+                "__orig_series": "Asset_B",
+                "Series": "Asset_B",
+                "Benchmark": "None",
+                "CMABench": "KeepBench",
+                "LongShort": False,
+                "ScaleVol": True,
+                "MinWt": 0,
+                "MaxWt": 100,
+                "ForceMax": False,
+                "Delete": True,
+            },
+        ],
+        [{"__orig_series": "Asset_A", "Series": "Renamed_A"}],
+        [{"__orig_series": "Asset_B"}, {"__orig_series": "Asset_A"}],
+    )
+
+    assert result[0] == ["Renamed_A"]
+    assert result[1] == {"Renamed_A": "None"}
+    assert result[2] == {"Renamed_A": "DefaultBench"}
+    assert result[3] == {"Renamed_A": True}
+    assert result[4] == ["Renamed_A"]
+    assert result[8] == {"Renamed_A": False}
+    assert result[9] == {"Renamed_A": 5.0}
+    assert result[10] == {"Renamed_A": 60.0}
+    assert result[11] == {"Renamed_A": False}
+    assert result[12] == {"KeepMe": {"x": 2}}
+
+    updated_df = pd.read_json(StringIO(result[7]), orient="split")
+    assert "Renamed_A" in updated_df.columns
+    assert "Asset_A" not in updated_df.columns
+    assert "Asset_B" not in updated_df.columns
+
+
+def test_po_on_modal_ok_blocks_duplicate_series_names(page_modules, raw_json):
+    _, portopt = page_modules
+
+    result = portopt.po_on_modal_ok(
+        1,
+        raw_json,
+        {},
+        [
+            {
+                "__orig_series": "Asset_A",
+                "Series": "Asset_B",
+                "Benchmark": "None",
+                "CMABench": "",
+                "LongShort": False,
+                "ScaleVol": True,
+                "MinWt": 0,
+                "MaxWt": 100,
+                "ForceMax": False,
+                "Delete": False,
+            },
+            {
+                "__orig_series": "Asset_B",
+                "Series": "Asset_B",
+                "Benchmark": "None",
+                "CMABench": "",
+                "LongShort": False,
+                "ScaleVol": True,
+                "MinWt": 0,
+                "MaxWt": 100,
+                "ForceMax": False,
+                "Delete": False,
+            },
+        ],
+        [],
+        None,
+    )
+
+    assert result[5] is True
+    assert "duplicate" in str(result[13]).lower()
+    assert result[15] is False
 
 
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from io import BytesIO
+from io import BytesIO, StringIO
 
 import numpy as np
 import pandas as pd
@@ -414,79 +414,69 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert value == "monthly"
 
 
-def test_reg_sync_grid_edit_handles_list_cell_change_payload_for_y(regression_page):
-    row_data = [
-        {"Series": "A", "Y": True, "X": True},
-        {"Series": "B", "Y": True, "X": True},
-    ]
-    cell_change = [{"colId": "Y", "rowIndex": 1, "data": {"Series": "B"}}]
+def test_reg_on_modal_ok_commits_local_series_modal_state(regression_page):
+    idx = pd.date_range("2024-01-01", periods=3, freq="B")
+    raw_json = df_to_json(pd.DataFrame({"A": [0.01, 0.0, -0.01], "B": [0.0, 0.01, 0.02]}, index=idx))
 
-    out = regression_page.reg_sync_grid_edit(
-        cell_change,
-        row_data,
-        ["A", "B"],
-        None,
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        [],
-        df_to_json(pd.DataFrame({"A": [0.1], "B": [0.2]})),
-    )
-    new_x, new_dep = out[0], out[1]
-
-    assert new_dep == "B"
-    assert new_x is no_update
-
-
-def test_reg_sync_grid_edit_updates_benchmark_assignments(regression_page):
-    row_data = [
-        {"Series": "A", "Benchmark": "B"},
-        {"Series": "B", "Benchmark": "None"},
-    ]
-
-    out = regression_page.reg_sync_grid_edit(
-        {"colId": "Benchmark", "rowIndex": 0, "data": {"Series": "A"}},
-        row_data,
-        [],
-        None,
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        [],
-        df_to_json(pd.DataFrame({"A": [0.1], "B": [0.2]})),
+    out = regression_page.reg_on_modal_ok(
+        1,
+        raw_json,
+        [
+            {
+                "__orig_series": "A",
+                "Series": "A",
+                "Y": True,
+                "X": True,
+                "Benchmark": "B",
+                "LongShort": True,
+                "ScaleVol": False,
+                "Lag": 2,
+                "MinBeta": -0.5,
+                "MaxBeta": 0.8,
+                "Enable": True,
+                "Delete": False,
+            },
+            {
+                "__orig_series": "B",
+                "Series": "B",
+                "Y": False,
+                "X": True,
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Lag": 0,
+                "MinBeta": -999,
+                "MaxBeta": 999,
+                "Enable": False,
+                "Delete": True,
+            },
+        ],
+        [{"__orig_series": "B"}, {"__orig_series": "A"}],
     )
 
-    assert out[6] == {"A": "B", "B": "None"}
-    assert out[0] is no_update
-    assert out[1] is no_update
+    assert out[0] == ["A"]
+    assert out[1] == {"A": "None"}
+    assert out[2] == {"A": True}
+    assert out[3] == ["A"]
+    assert out[8] == "A"
+    assert out[9] == {"A": 2}
+    assert out[10] == {"A": -0.5}
+    assert out[11] == {"A": 0.8}
+    assert out[12] == {"A": True}
 
-
-def test_reg_reorder_series_uses_virtual_row_data(regression_page):
-    out = regression_page.reg_reorder_series(
-        [{"Series": "B"}, {"Series": "A"}, {"Series": "C"}],
-        ["A", "B", "C"],
-    )
-
-    assert out == ["B", "A", "C"]
+    updated_df = pd.read_json(StringIO(out[6]), orient="split")
+    assert list(updated_df.columns) == ["A"]
 
 
 def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_page):
     idx = pd.date_range("2024-01-01", periods=3, freq="B")
     raw = df_to_json(pd.DataFrame({"A": [0.01, 0.0, -0.01], "B": [0.0, 0.01, 0.02]}, index=idx))
 
-    children, _order = regression_page.reg_update_series_grid(
+    children = regression_page.reg_update_series_grid(
+        True,
         raw,
         ["A"],
         ["A", "B"],
-        [],
         {},
         {},
         {},
@@ -506,14 +496,18 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
 
     cols = getattr(grid, "columnDefs", []) or []
     x_col = next((c for c in cols if c.get("field") == "X"), None)
+    y_col = next((c for c in cols if c.get("field") == "Y"), None)
     series_col = next((c for c in cols if c.get("field") == "Series"), None)
     scale_col = next((c for c in cols if c.get("field") == "ScaleVol"), None)
     benchmark_col = next((c for c in cols if c.get("field") == "Benchmark"), None)
     assert x_col is not None
+    assert y_col is not None
     assert series_col is not None
     assert scale_col is not None
     assert benchmark_col is not None
+    assert getattr(grid, "getRowId", None) == "params.data.__orig_series"
     assert x_col.get("cellRenderer") == "agCheckboxCellRenderer"
+    assert y_col.get("valueSetter")
     assert x_col.get("headerTooltip")
     assert series_col.get("headerTooltip")
     assert series_col.get("editable") is False
