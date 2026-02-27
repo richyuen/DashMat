@@ -609,6 +609,7 @@ def test_welcome_tooltips_are_action_specific():
         "at-welcome-add-portfolios-peer-btn": ("portfolio", "aa return", "peer", "mean return", "benchmark"),
         "at-welcome-add-portfolios-index-btn": ("portfolio", "aa return", "index", "benchmark"),
         "at-welcome-add-portfolios-other-btn": ("alternative", "portfolio", "benchmark"),
+        "at-welcome-add-portfolios-underlying-btn": ("underlying", "peerts", "core", "base", "returns"),
         "at-welcome-add-raw-factor-btn": (
             "mrd factor data",
             "table",
@@ -633,6 +634,23 @@ def test_welcome_tooltips_are_action_specific():
     }
 
     for control_id, required_tokens in expected_substrings.items():
+        text, source = tooltip_text_and_source(control_id)
+        text_lower = text.lower()
+        assert source == "explicit"
+        for token in required_tokens:
+            assert token in text_lower, (control_id, token, text)
+
+
+def test_underlying_category_tooltips_explain_portfolio_code_and_level_conversion():
+    checks = {
+        "at-menu-add-portfolios-underlying": ("underlying", "peerts", "levels", "returns"),
+        "at-underlying-add-base-select": ("core", "base", "coretd", "base529"),
+        "at-underlying-add-type-multiselect": ("td", "alloc", "529", "model"),
+        "at-underlying-add-desc-multiselect": ("peerret", "portfolio", "descriptions", "returns"),
+        "at-underlying-add-row-btn": ("matching", "portfolio", "desc", "grid"),
+    }
+
+    for control_id, required_tokens in checks.items():
         text, source = tooltip_text_and_source(control_id)
         text_lower = text.lower()
         assert source == "explicit"

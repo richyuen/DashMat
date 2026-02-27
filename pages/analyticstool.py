@@ -70,11 +70,14 @@ from utils.dashmat_welcome_modal import (
     build_raw_db_add_modal,
     build_series_selection_modal,
     build_sheet_select_modal,
+    build_underlying_add_modal,
     build_welcome_screen as build_shared_welcome_screen,
     compute_close_db_add_modal,
+    compute_close_underlying_add_modal,
     compute_close_portfolio_add_modal,
     compute_close_raw_db_add_modal,
     compute_open_db_add_modal,
+    compute_open_underlying_add_modal,
     compute_open_portfolio_add_modal,
     compute_open_raw_db_add_modal,
     compute_sync_include_benchmark_enabled,
@@ -87,6 +90,7 @@ from utils.dashmat_welcome_modal import (
     js_release_ui_blocker_on_modal_state,
     js_set_ui_blocker_true,
     js_trigger_upload_with_cancel,
+    js_underlying_delete_row,
 )
 from dbengine import (
     AG_GRID_LICENSE_KEY,
@@ -100,6 +104,11 @@ from utils.core_categories import (
     load_cma_returns_for_benches_with_meta,
 )
 from utils.portfolio_series import load_portfolio_series
+from utils.underlying_category_imports import (
+    expand_underlying_category_rows,
+    get_underlying_category_desc_options,
+    load_underlying_category_series,
+)
 from utils.raw_data_imports import (
     build_preview_row_from_controls,
     factor_defaults_to_returns,
@@ -1702,6 +1711,101 @@ def at_open_portfolio_add_modal(
     )
 
 
+@callback(
+    Output("at-underlying-add-modal", "opened", allow_duplicate=True),
+    Output("at-underlying-add-modal", "title", allow_duplicate=True),
+    Output("at-underlying-add-base-select", "value", allow_duplicate=True),
+    Output("at-underlying-add-type-multiselect", "value", allow_duplicate=True),
+    Output("at-underlying-add-desc-multiselect", "data", allow_duplicate=True),
+    Output("at-underlying-add-desc-multiselect", "value", allow_duplicate=True),
+    Output("at-underlying-add-desc-multiselect", "disabled", allow_duplicate=True),
+    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
+    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-menu-add-portfolios-underlying", "n_clicks"),
+    Input("at-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def at_open_underlying_add_modal(menu_clicks, welcome_clicks):
+    return compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+
+
+@callback(
+    Output("at-underlying-add-desc-multiselect", "data"),
+    Output("at-underlying-add-desc-multiselect", "value"),
+    Output("at-underlying-add-desc-multiselect", "disabled"),
+    Input("at-underlying-add-base-select", "value"),
+    Input("at-underlying-add-type-multiselect", "value"),
+    Input("at-underlying-add-modal", "opened"),
+    State("at-underlying-add-desc-multiselect", "value"),
+    prevent_initial_call=True,
+)
+def at_sync_underlying_desc_options(base_value, type_values, opened, current_values):
+    if not opened:
+        raise PreventUpdate
+
+    if not base_value or not type_values:
+        return [], [], True
+
+    options = get_underlying_category_desc_options(DB_ENGINE, base_value, type_values)
+    valid_values = {str(option.get("value", "")).strip() for option in options}
+    selected = [
+        value
+        for value in (current_values or [])
+        if str(value or "").strip() in valid_values
+    ]
+    return options, selected, False
+
+
+@callback(
+    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
+    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-underlying-add-row-btn", "n_clicks"),
+    State("at-underlying-add-rows-store", "data"),
+    State("at-underlying-add-base-select", "value"),
+    State("at-underlying-add-type-multiselect", "value"),
+    State("at-underlying-add-desc-multiselect", "value"),
+    prevent_initial_call=True,
+)
+def at_stage_underlying_rows(n_clicks, staged_rows, base_value, type_values, desc_values):
+    if not n_clicks:
+        raise PreventUpdate
+
+    rows = [dict(row) for row in (staged_rows or []) if isinstance(row, dict)]
+    if not str(base_value or "").strip():
+        return rows, rows, "Select Core or Base before staging underlying categories.", False
+    if not type_values:
+        return rows, rows, "Select at least one type before staging underlying categories.", False
+    if not desc_values:
+        return rows, rows, "Select at least one underlying category description.", False
+
+    requested_rows = expand_underlying_category_rows(DB_ENGINE, base_value, type_values, desc_values)
+    if not requested_rows:
+        return rows, rows, "No matching underlying category rows were found for the selected Base, Type, and Desc values.", False
+
+    existing_pairs = {
+        (
+            str(row.get("portfolio") or row.get("Portfolio") or "").strip(),
+            str(row.get("desc") or row.get("Desc") or "").strip(),
+        )
+        for row in rows
+    }
+    new_rows = [
+        row for row in requested_rows
+        if (
+            str(row.get("portfolio") or "").strip(),
+            str(row.get("desc") or "").strip(),
+        ) not in existing_pairs
+    ]
+    if not new_rows:
+        return rows, rows, "All selected underlying category rows are already staged.", False
+
+    updated_rows = rows + new_rows
+    return updated_rows, updated_rows, no_update, True
+
+
 clientside_callback(
     js_portfolio_benchmark_toggle(),
     Output("at-portfolio-add-benchmark-type-select", "disabled", allow_duplicate=True),
@@ -1763,6 +1867,29 @@ clientside_callback(
 )
 
 
+clientside_callback(
+    js_underlying_delete_row(),
+    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
+    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-underlying-delete-row-btn", "n_clicks"),
+    State("at-underlying-add-rows-store", "data"),
+    State("at-underlying-add-grid", "selectedRows"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_portfolio_clear_rows(),
+    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
+    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-underlying-clear-rows-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
 @callback(
     Output("at-portfolio-add-modal", "opened", allow_duplicate=True),
     Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
@@ -1774,11 +1901,34 @@ def at_close_portfolio_add_modal(n_clicks):
     return compute_close_portfolio_add_modal(n_clicks)
 
 
+@callback(
+    Output("at-underlying-add-modal", "opened", allow_duplicate=True),
+    Output("at-underlying-add-base-select", "value", allow_duplicate=True),
+    Output("at-underlying-add-type-multiselect", "value", allow_duplicate=True),
+    Output("at-underlying-add-desc-multiselect", "data", allow_duplicate=True),
+    Output("at-underlying-add-desc-multiselect", "value", allow_duplicate=True),
+    Output("at-underlying-add-desc-multiselect", "disabled", allow_duplicate=True),
+    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
+    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
+    Input("at-underlying-add-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def at_close_underlying_add_modal(n_clicks):
+    return compute_close_underlying_add_modal(n_clicks)
+
+
 clientside_callback(
     js_portfolio_ok_disabled(),
     Output("at-portfolio-add-ok-button", "disabled"),
     Input("at-portfolio-add-rows-store", "data"),
     Input("at-portfolio-add-modal", "opened"),
+)
+
+clientside_callback(
+    js_portfolio_ok_disabled(),
+    Output("at-underlying-add-ok-button", "disabled"),
+    Input("at-underlying-add-rows-store", "data"),
+    Input("at-underlying-add-modal", "opened"),
 )
 
 clientside_callback(
@@ -1799,6 +1949,13 @@ clientside_callback(
     js_set_ui_blocker_true(),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_set_ui_blocker_true(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-underlying-add-ok-button", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -1830,6 +1987,14 @@ clientside_callback(
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-modal", "opened"),
     Input("at-portfolio-add-error-alert", "hide"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    js_release_ui_blocker_on_modal_state(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-underlying-add-modal", "opened"),
+    Input("at-underlying-add-error-alert", "hide"),
     prevent_initial_call=True,
 )
 
@@ -2703,6 +2868,11 @@ layout = dmc.Container(
                                             id="at-menu-add-portfolios-other",
                                             leftSection=DashIconify(icon="tabler:stack", width=14),
                                         ),
+                                        dmc.MenuItem(
+                                            "Add underlying categories...",
+                                            id="at-menu-add-portfolios-underlying",
+                                            leftSection=DashIconify(icon="tabler:hierarchy-2", width=14),
+                                        ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
                                             "Add raw factor data...",
@@ -2821,6 +2991,7 @@ layout = dmc.Container(
         build_series_selection_modal(AT_WELCOME_MODAL_CONFIG),
         build_db_add_modal("at"),
         build_portfolio_add_modal("at", AG_GRID_LICENSE_KEY),
+        build_underlying_add_modal("at", AG_GRID_LICENSE_KEY),
         build_raw_db_add_modal("at", AG_GRID_LICENSE_KEY),
         build_sheet_select_modal("at"),
         dmc.Modal(
@@ -3754,6 +3925,7 @@ layout = dmc.Container(
         dcc.Store(id="at-temp-deleted-series-store", data=[]),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
+        dcc.Store(id="at-underlying-add-rows-store", data=[]),
         dcc.Store(id="at-raw-db-add-mode-store", data=None),
         dcc.Store(id="at-raw-db-add-rows-store", data=[]),
         # Temp stores for sheet selection (stash upload while user picks a tab)
@@ -6143,6 +6315,152 @@ def at_add_raw_series_from_database(
             f"Error loading raw database series: {str(e)}",
             False,
             n_no,
+        )
+
+
+@callback(
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "value", allow_duplicate=True),
+    Output("at-periodicity-select", "disabled", allow_duplicate=True),
+    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-alert-message", "children", allow_duplicate=True),
+    Output("at-alert-message", "color", allow_duplicate=True),
+    Output("at-alert-message", "hide", allow_duplicate=True),
+    Output("at-periodicity-value-store", "data", allow_duplicate=True),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-temp-long-short-store", "data", allow_duplicate=True),
+    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-first-load-store", "data", allow_duplicate=True),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-underlying-add-modal", "opened", allow_duplicate=True),
+    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
+    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
+    Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Input("at-underlying-add-ok-button", "n_clicks"),
+    State("at-underlying-add-rows-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-first-load-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+def at_add_underlying_categories_from_database(
+    n_clicks,
+    staged_rows,
+    existing_data,
+    existing_periodicity,
+    current_selection,
+    current_bench,
+    current_ls,
+    current_order,
+    first_load,
+    current_vol_scaling,
+):
+    if not n_clicks:
+        raise PreventUpdate
+
+    n_no = no_update
+    rows = [dict(row) for row in (staged_rows or []) if isinstance(row, dict)]
+    if not rows:
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            "Stage at least one underlying category row before importing.",
+            "orange",
+            False,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            True,
+            rows,
+            rows,
+            "Stage at least one underlying category row before importing.",
+            False,
+        )
+
+    try:
+        load_result = load_underlying_category_series(DB_ENGINE, rows)
+        new_df = load_result.returns_df
+        if new_df.empty:
+            raise ValueError("No rows returned for staged underlying category requests.")
+
+        if existing_data:
+            existing_cols = set(json_to_df(existing_data).columns)
+            duplicates = [series_name for series_name in new_df.columns if series_name in existing_cols]
+            if duplicates:
+                duplicate_text = f"Cannot add duplicate series: {', '.join(duplicates)}"
+                return (
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no,
+                    duplicate_text,
+                    "red",
+                    False,
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no,
+                    True,
+                    rows,
+                    rows,
+                    duplicate_text,
+                    False,
+                )
+
+        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = merge_result.default_periodicity
+        imported_df = merge_result.imported_df
+
+        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
+        updated_selection = (current_selection or []) + new_series
+
+        return (
+            df_to_json(merged_df),
+            combined_periodicity,
+            periodicity_options,
+            default_periodicity,
+            False,
+            updated_selection,
+            f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from underlying categories.",
+            "green",
+            False,
+            default_periodicity,
+            True,
+            current_bench or {},
+            current_ls or {},
+            current_order or [],
+            True if first_load is not None else True,
+            [],
+            current_vol_scaling or {},
+            False,
+            [],
+            [],
+            no_update,
+            True,
+        )
+    except Exception as exc:
+        error_text = f"Error loading underlying category series: {exc}"
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            error_text,
+            "red",
+            False,
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            True,
+            rows,
+            rows,
+            error_text,
+            False,
         )
 
 

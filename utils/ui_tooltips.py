@@ -138,6 +138,14 @@ portfolio-add-type-select|at,po,reg
 portfolio-clear-rows-btn|at,po,reg
 portfolio-delete-row-btn|at,po,reg
 portfolio-name-input|po
+underlying-add-base-select|at,po,reg
+underlying-add-cancel-button|at,po,reg
+underlying-add-desc-multiselect|at,po,reg
+underlying-add-ok-button|at,po,reg
+underlying-add-row-btn|at,po,reg
+underlying-add-type-multiselect|at,po,reg
+underlying-clear-rows-btn|at,po,reg
+underlying-delete-row-btn|at,po,reg
 raw-db-add-cancel-button|at,po,reg
 raw-db-add-convert-returns|at,po,reg
 raw-db-add-divide-by|at,po,reg
@@ -196,6 +204,7 @@ welcome-add-db-btn|at,po,reg
 welcome-add-portfolios-index-btn|at,po,reg
 welcome-add-portfolios-other-btn|at,po,reg
 welcome-add-portfolios-peer-btn|at,po,reg
+welcome-add-portfolios-underlying-btn|at,po,reg
 welcome-add-raw-factor-btn|at,po,reg
 welcome-add-raw-funds-btn|at,po,reg
 welcome-add-raw-performance-btn|at,po,reg
@@ -975,6 +984,42 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
             "Options vary by mode and typically include Actual and Calculated; in peer workflows, benchmark settings can also target peer mean return behavior for relative comparisons. "
             "Keep return type consistent across rows when you want clean peer, index, or alternative comparisons."
         )
+    if suffix == "underlying-add-base-select":
+        return (
+            "Select whether the source portfolios come from the Core or Base family. "
+            "This value is combined with the selected TD, Alloc, 529, or Model types to build Portfolio filters such as CoreTD or Base529. "
+            "Change this first because it determines which underlying category descriptions are available in the Desc list."
+        )
+    if suffix == "underlying-add-type-multiselect":
+        return (
+            "Select one or more underlying portfolio groups to import from the chosen Core or Base family. "
+            "Each selected value is appended to the Base choice to form Portfolio filters such as CoreTD, CoreAlloc, Base529, or BaseModel. "
+            "The Desc list is built from the union of matching PeerTS rows, and each selected desc can stage rows across multiple portfolio codes at once."
+        )
+    if suffix == "underlying-add-desc-multiselect":
+        return (
+            "Select one or more underlying category descriptions after Base and Type are chosen. "
+            "The available list is filtered to PeerTS rows with Item equal to PeerRet whose Portfolio matches the constructed codes, so one desc can stage multiple source portfolios when more than one type is selected. "
+            "Imported values are converted from levels to returns before they are appended to the working dataset."
+        )
+    if suffix == "underlying-add-row-btn":
+        return (
+            "Stage the selected underlying categories in the grid below. "
+            "One row is added for each matching Portfolio and Desc combination, using a final series name like Large Cap [CoreTD], so duplicate descriptions from different portfolio codes remain distinct. "
+            "Use the grid to review the batch before importing."
+        )
+    if suffix == "underlying-delete-row-btn":
+        return (
+            "Remove the selected staged underlying-category row from the import grid. "
+            "This only changes the current staging batch and does not affect series that are already loaded into the dataset. "
+            "Use it when you want to keep some desc and portfolio combinations but drop one staged row."
+        )
+    if suffix == "underlying-clear-rows-btn":
+        return (
+            "Clear all staged underlying-category rows from the import grid. "
+            "This resets the current batch without changing the Base, Type, or Desc selectors above and does not remove already imported series. "
+            "Use it when you want to rebuild the staged batch from scratch."
+        )
     if suffix == "portfolio-add-benchmark-type-select":
         return (
             "Selects which benchmark flavor is imported when Include Benchmark is enabled. "
@@ -1185,6 +1230,12 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
             "This mode supports the alternative source set and can import each portfolio's benchmark companion for relative analytics. "
             "Choose this when the portfolios you need are maintained in the alternatives universe."
         )
+    if suffix == "welcome-add-portfolios-underlying-btn":
+        return (
+            "Import underlying peer-category series from PeerTS. "
+            "Choose Core or Base, select one or more TD, Alloc, 529, or Model groups, and then pick the underlying category descriptions available for those combinations. "
+            "PeerTS values are stored as levels, so this import converts them to returns before appending the staged series to the dataset."
+        )
     if suffix == "welcome-add-raw-factor-btn":
         return (
             "Add one or more series from MRD Factor Data. "
@@ -1294,6 +1345,11 @@ def _build_explicit_tooltips() -> dict[str, str]:
             "Import alternative portfolio return streams from the alternative workflow. "
             "This mode supports the alternative source set and can import each portfolio's benchmark companion for relative analytics. "
             "Choose this when the portfolios you need are maintained in the alternatives universe."
+        )
+        tips[f"{prefix}-menu-add-portfolios-underlying"] = (
+            "Import underlying peer-category series from PeerTS. "
+            "Choose Core or Base, select one or more TD, Alloc, 529, or Model groups, and then pick the underlying category descriptions available for those combinations. "
+            "PeerTS values are stored as levels, so this import converts them to returns before appending the staged series to the dataset."
         )
         tips[f"{prefix}-menu-add-raw-factor"] = (
             "Add one or more series from MRD Factor Data. "
@@ -1468,6 +1524,8 @@ _SUPPRESSED_TOOLTIP_SUFFIXES = {
     "db-add-cancel-button",
     "portfolio-add-ok-button",
     "portfolio-add-cancel-button",
+    "underlying-add-ok-button",
+    "underlying-add-cancel-button",
     "raw-db-add-ok-button",
     "raw-db-add-cancel-button",
     "sheet-select-ok-button",
@@ -1497,6 +1555,9 @@ INPUT_GRID_ALLOWLIST = {
     "at-portfolio-add-grid",
     "reg-portfolio-add-grid",
     "po-portfolio-add-grid",
+    "at-underlying-add-grid",
+    "reg-underlying-add-grid",
+    "po-underlying-add-grid",
     "at-raw-db-add-grid",
     "reg-raw-db-add-grid",
     "po-raw-db-add-grid",
@@ -1570,6 +1631,11 @@ CANONICAL_COLUMN_TOOLTIPS: dict[str, str] = {
     "portfolio": (
         "Portfolio identifier to import into the working dataset. "
         "Use one row per portfolio import request."
+    ),
+    "desc": (
+        "Source description field for the staged import row. "
+        "This value identifies the underlying category or database series description that will be read for the selected source portfolio. "
+        "Use it together with Portfolio to distinguish similarly named categories from different source codes."
     ),
     "type": (
         "Defines the return interpretation used for this imported portfolio row. "
@@ -1732,6 +1798,48 @@ GRID_COLUMN_TOOLTIP_OVERRIDES: dict[str, dict[str, str]] = {
             "Marks this series to be removed from the working dataset when Series Selection changes are saved. "
             "Removal drops the series from active data and can also invalidate saved portfolio results that depend on it. "
             "To bring it back later, add or import the series again."
+        ),
+    },
+    "at-underlying-add-grid": {
+        "Series": (
+            "Final imported series name for this staged row. "
+            "The name is built from Desc and Portfolio, such as Large Cap [CoreTD], and is the label that will appear in selectors and outputs after import."
+        ),
+        "Portfolio": (
+            "Source PeerTS portfolio code used for this staged row. "
+            "The code is built from the selected Base and Type values, such as CoreTD or Base529."
+        ),
+        "Desc": (
+            "Source PeerTS description field used to pull the underlying category series. "
+            "This identifies which underlying category is imported for the selected portfolio code."
+        ),
+    },
+    "po-underlying-add-grid": {
+        "Series": (
+            "Final imported series name for this staged row. "
+            "The name is built from Desc and Portfolio, such as Large Cap [CoreTD], and is the label that will appear in selectors and outputs after import."
+        ),
+        "Portfolio": (
+            "Source PeerTS portfolio code used for this staged row. "
+            "The code is built from the selected Base and Type values, such as CoreTD or Base529."
+        ),
+        "Desc": (
+            "Source PeerTS description field used to pull the underlying category series. "
+            "This identifies which underlying category is imported for the selected portfolio code."
+        ),
+    },
+    "reg-underlying-add-grid": {
+        "Series": (
+            "Final imported series name for this staged row. "
+            "The name is built from Desc and Portfolio, such as Large Cap [CoreTD], and is the label that will appear in selectors and outputs after import."
+        ),
+        "Portfolio": (
+            "Source PeerTS portfolio code used for this staged row. "
+            "The code is built from the selected Base and Type values, such as CoreTD or Base529."
+        ),
+        "Desc": (
+            "Source PeerTS description field used to pull the underlying category series. "
+            "This identifies which underlying category is imported for the selected portfolio code."
         ),
     },
 }
