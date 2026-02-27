@@ -263,9 +263,27 @@
     color: #64748b;
 }
 
+.dashmat-welcome-section-actions {
+    width: 100%;
+}
+
+.dashmat-welcome-section-actions > * {
+    width: 100%;
+}
+
 .dashmat-welcome-section-actions .mantine-Button-root {
+    width: 100%;
     justify-content: flex-start;
     padding-left: 12px;
+}
+
+.dashmat-welcome-section-actions .mantine-UnstyledButton-root {
+    width: 100%;
+}
+
+.dashmat-tooltip-trigger-width {
+    display: block;
+    max-width: 100%;
 }
 
 [data-mantine-color-scheme="dark"] .dashmat-welcome-section-card {
