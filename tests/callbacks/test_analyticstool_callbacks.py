@@ -473,6 +473,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         "correlation",
         False,
         63,
+        "none",
         120,
         None,
     )
@@ -491,6 +492,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         "correlation",
         True,
         0.94,
+        "none",
         120,
         None,
     )
@@ -514,11 +516,179 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
             "correlation",
             True,
             0.94,
+            "none",
             120,
             key_weighted,
         )
         is no_update
     )
+
+
+def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(page_modules):
+    analyticstool, _ = page_modules
+    date_range = {"start": "2024-01-01", "end": "2024-12-31"}
+
+    key_none = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "correlation",
+        False,
+        63,
+        "none",
+        120,
+        None,
+    )
+    key_shrunk = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "correlation",
+        False,
+        63,
+        "ledoit_wolf",
+        120,
+        None,
+    )
+
+    assert isinstance(key_none, str)
+    assert isinstance(key_shrunk, str)
+    assert key_none != key_shrunk
+
+
+def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_modules):
+    analyticstool, _ = page_modules
+    date_range = {"start": "2024-01-01", "end": "2024-12-31"}
+
+    key_scatter = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "correlogram",
+        False,
+        63,
+        "none",
+        120,
+        None,
+    )
+
+    assert (
+        analyticstool.update_correlogram_target_key(
+            "correlogram",
+            None,
+            "daily",
+            ["Asset_A", "Asset_B"],
+            "total",
+            {},
+            {},
+            date_range,
+            True,
+            0,
+            {},
+            "correlogram",
+            False,
+            63,
+            "oas",
+            120,
+            key_scatter,
+        )
+        is no_update
+    )
+
+
+def test_update_correlogram_heatmap_title_includes_shrinkage(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    result = {
+        "display_df": pd.DataFrame({"Asset_A": [0.01, 0.02], "Asset_B": [0.00, 0.03]}),
+        "corr_matrix": pd.DataFrame([[1.0, 0.5], [0.5, 1.0]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+        "cov_matrix": pd.DataFrame([[0.04, 0.01], [0.01, 0.09]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+        "available_series": ["Asset_A", "Asset_B"],
+        "n": 2,
+    }
+    monkeypatch.setattr(analyticstool, "generate_correlogram_cached", lambda *_args, **_kwargs: result)
+
+    graph, rendered_key = analyticstool.update_correlogram(
+        "req-key",
+        "correlogram",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        False,
+        63,
+        "ledoit_wolf",
+        "correlation",
+        120,
+        "light",
+    )
+
+    assert rendered_key == "req-key"
+    assert "Ledoit-Wolf" in graph.figure.layout.title.text
+
+
+def test_update_correlogram_shrinkage_error_renders_annotation(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    monkeypatch.setattr(
+        analyticstool,
+        "generate_correlogram_cached",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("Insufficient overlapping observations for shrinkage covariance estimate.")
+        ),
+    )
+
+    graph, rendered_key = analyticstool.update_correlogram(
+        "req-key",
+        "correlogram",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        False,
+        63,
+        "oas",
+        "correlation",
+        120,
+        "light",
+    )
+
+    assert rendered_key == "req-key"
+    assert graph.figure.layout.annotations[0].text == "Insufficient overlapping observations for shrinkage covariance estimate."
 
 
 def test_on_modal_ok_commits_local_series_modal_state(page_modules, raw_json):
@@ -1469,6 +1639,7 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         {},
         False,
         63,
+        "none",
         "Factor_X",
         5,
         "raw",
@@ -1494,6 +1665,83 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     assert regime_sheet_positions["Regime - Statistics"] < regime_sheet_positions["Regime - Timeline"]
     assert regime_sheet_positions["Regime - Timeline"] < regime_sheet_positions["Regime - Transition"]
     assert regime_sheet_positions["Regime - Transition"] < regime_sheet_positions["Regime - Duration"]
+
+
+def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+    returns_df = pd.DataFrame(
+        {
+            "Asset_A": [0.01, 0.0, -0.01, 0.02, 0.005],
+            "Asset_B": [0.0, 0.01, 0.0, -0.005, 0.002],
+        },
+        index=idx,
+    )
+    returns_df.index.name = "Date"
+
+    monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(
+        analyticstool,
+        "calculate_statistics_cached",
+        lambda *_args, **_kwargs: [
+            {"Series": "Asset_A", "Cumulative Return": 0.1},
+            {"Series": "Asset_B", "Cumulative Return": 0.05},
+        ],
+    )
+    monkeypatch.setattr(analyticstool, "calculate_rolling_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(
+        analyticstool,
+        "calculate_calendar_year_returns",
+        lambda *_args, **_kwargs: pd.DataFrame({"Asset_A": [0.1], "Asset_B": [0.05]}, index=[2024]),
+    )
+    monkeypatch.setattr(analyticstool, "calculate_growth_of_dollar", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(
+        analyticstool,
+        "generate_correlogram_cached",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("Insufficient overlapping observations for shrinkage covariance estimate.")
+        ),
+    )
+    monkeypatch.setattr(analyticstool.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
+
+    payload = analyticstool.download_excel(
+        1,
+        "raw-json",
+        "daily",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        "1y",
+        "annualized",
+        "annual",
+        None,
+        0,
+        {},
+        False,
+        63,
+        "ledoit_wolf",
+        None,
+        5,
+        "raw",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+    xl = pd.ExcelFile(BytesIO(payload["content"]))
+    corr_df = xl.parse("Correlation", index_col=0)
+    cov_df = xl.parse("Covariance", index_col=0)
+
+    pd.testing.assert_frame_equal(corr_df, returns_df.corr(), check_names=False)
+    pd.testing.assert_frame_equal(cov_df, returns_df.cov(), check_names=False)
 
 
 def test_update_regime_definition_select_includes_saved_and_session(page_modules):

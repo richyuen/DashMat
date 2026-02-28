@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import riskfolio as rp
+from utils.covariance import estimate_covariance_matrix, normalize_cov_shrinkage
 from utils.exponential_weighting import normalize_decay_input, resolve_ewm_params
 
 # Suppress cvxpy deprecation warning from riskfolio-lib internals
@@ -387,7 +388,7 @@ def _extract_pca_factors(returns_df, n_factors=None):
 def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
                          forced_weights, free_series,
                          ex_ante_returns, ex_ante_cov, objective,
-        window_data=None, exp_wt_cov=False, halflife=63,
+        window_data=None, exp_wt_cov=False, halflife=63, cov_shrinkage="none",
         ex_ante_vol=None, ex_ante_corr=None, linear_constraints=None, rf=0.0):
     """Run ex ante mean-variance optimization.
 
@@ -457,12 +458,13 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
             # Not enough clean data — use fillna(0) as fallback
             clean_data = window_data[asset_names].fillna(0)
         
-        if exp_wt_cov:
-            # Estimate using exponential weighting
-            n_assets = len(asset_names)
-            cov_df = clean_data.ewm(**resolve_ewm_params(halflife)).cov().iloc[-n_assets:]
-        else:
-            cov_df = clean_data.cov()
+        cov_df = estimate_covariance_matrix(
+            clean_data,
+            asset_order=asset_names,
+            exp_weighted=exp_wt_cov,
+            decay_value=halflife,
+            shrinkage=cov_shrinkage,
+        )
     else:
         raise ValueError("No covariance matrix provided and no historical data to estimate from.")
 
@@ -568,7 +570,8 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
 def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_bounds,
                               forced_weights, free_series,
                               bl_views, bl_tau, objective,
-                              exp_wt_cov=False, halflife=63, linear_constraints=None, rf=0.0):
+                              exp_wt_cov=False, halflife=63, cov_shrinkage="none",
+                              linear_constraints=None, rf=0.0):
     """Run Black-Litterman optimization.
 
     Uses historical returns for the equilibrium prior, then blends with user views.
@@ -609,8 +612,14 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
     port = rp.Portfolio(returns=port_data)
     port.assets_stats(method_mu="hist", method_cov="hist")
 
-    if exp_wt_cov:
-        port.cov = port_data.ewm(**resolve_ewm_params(halflife)).cov().iloc[-n_assets:]
+    if exp_wt_cov or normalize_cov_shrinkage(cov_shrinkage) != "none":
+        port.cov = estimate_covariance_matrix(
+            port_data,
+            asset_order=asset_names,
+            exp_weighted=exp_wt_cov,
+            decay_value=halflife,
+            shrinkage=cov_shrinkage,
+        )
 
     # Build P (views matrix) and Q (views vector)
     n_views = len(bl_views)
@@ -747,6 +756,7 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
 
 def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper_bounds,
                              forced_weights, free_series, exp_wt_cov=False, halflife=63,
+                             cov_shrinkage="none",
                              ex_ante_returns=None, ex_ante_cov=None,
                              ex_ante_vol=None, ex_ante_corr=None,
                              bl_views=None, bl_tau=0.05, objective="maximize_sharpe",
@@ -793,7 +803,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             forced_weights, free_series,
             ex_ante_returns or {}, ex_ante_cov or {},
             objective, window_data,
-            exp_wt_cov, halflife,
+            exp_wt_cov, halflife, cov_shrinkage,
             ex_ante_vol, ex_ante_corr,
             linear_constraints,
             rf,
@@ -804,7 +814,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             window_data, asset_names, lower_bounds, upper_bounds,
             forced_weights, free_series,
             bl_views or [], bl_tau, objective,
-            exp_wt_cov, halflife,
+            exp_wt_cov, halflife, cov_shrinkage,
             linear_constraints=linear_constraints,
             rf=rf,
         )
@@ -824,8 +834,15 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
         port.factors_stats(method_mu="hist", method_cov="hist")
 
     # Override covariance if exponentially weighted
+    if exp_wt_cov or normalize_cov_shrinkage(cov_shrinkage) != "none":
+        port.cov = estimate_covariance_matrix(
+            port_data,
+            asset_order=asset_names,
+            exp_weighted=exp_wt_cov,
+            decay_value=halflife,
+            shrinkage=cov_shrinkage,
+        )
     if exp_wt_cov:
-        port.cov = port_data.ewm(**resolve_ewm_params(halflife)).cov().iloc[-len(asset_names):]
         # Also override mu with exponentially weighted mean
         port.mu = port_data.ewm(**resolve_ewm_params(halflife)).mean().iloc[-1:].T
         port.mu.columns = ["mu"]
@@ -974,6 +991,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     opt_step_unit = config.get("opt_step_unit", "periods")
     exp_wt_cov = config.get("exp_wt_cov", False)
     halflife = normalize_decay_input(config.get("halflife", 63), 63.0)
+    cov_shrinkage = normalize_cov_shrinkage(config.get("cov_shrinkage", "none"))
     missing_data = config.get("missing_data", "fill_na")
     fill_in_sample = config.get("fill_in_sample", False)
     selected_series = config.get("selected_series", list(returns_df.columns))
@@ -1093,6 +1111,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
             "free_series": free_series,
             "exp_wt_cov": exp_wt_cov,
             "halflife": halflife,
+            "cov_shrinkage": cov_shrinkage,
         }
         params.update({
             "ex_ante_returns": ex_ante_returns,
@@ -1206,7 +1225,7 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
             # Run optimization
             w_result = _optimize_single_window(
                 est_data, model, window_assets, window_lower, window_upper,
-                window_forced, window_free, exp_wt_cov, halflife,
+                window_forced, window_free, exp_wt_cov, halflife, cov_shrinkage,
                 linear_constraints=linear_constraints,
                 rf=rf_window,
             )
@@ -1256,19 +1275,28 @@ def run_portfolio_optimization(returns_df, config, progress_callback=None):
     return window_results, portfolio_returns, run_meta
 
 
-def compute_risk_contributions(weights_dict, returns_df):
+def compute_risk_contributions(weights_dict, returns_df, custom_cov=None):
     """Compute percentage risk contribution of each asset.
 
     Args:
         weights_dict: Dict of {asset_name: weight}
         returns_df: DataFrame of returns for assets in weights_dict
+        custom_cov: Optional covariance DataFrame aligned to returns_df columns
 
     Returns:
         Dict of {asset_name: pct_contribution} where values sum to 1.0
     """
     cols = [c for c in returns_df.columns if c in weights_dict]
+    if not cols:
+        return {}
     w = np.array([weights_dict[c] for c in cols])
-    cov = returns_df[cols].cov().values
+    if custom_cov is None:
+        cov = returns_df[cols].cov().values
+    else:
+        if isinstance(custom_cov, pd.DataFrame):
+            cov = custom_cov.reindex(index=cols, columns=cols).to_numpy(dtype=float, copy=False)
+        else:
+            cov = np.asarray(custom_cov, dtype=float)
     marginal = cov @ w
     total_var = w @ cov @ w
     if total_var == 0:

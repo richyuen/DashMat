@@ -47,6 +47,14 @@ from utils.returns import (
     annualization_factor,
     is_daily,
 )
+from utils.covariance import (
+    covariance_to_correlation,
+    estimate_covariance_matrix,
+    estimate_mean_vector,
+    format_cov_shrinkage_label,
+    normalize_cov_shrinkage,
+    VALID_COV_SHRINKAGE,
+)
 from utils.exponential_weighting import decay_input_mode, normalize_decay_input, resolve_ewm_params
 from utils.excel_export import format_excel_dates, format_mdy_date, write_excel_with_autofit
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
@@ -393,6 +401,7 @@ def _compute_window_risk_contributions(
     working_df: pd.DataFrame,
     selected_series,
     window_weights,
+    config=None,
 ):
     """Compute risk-contribution rows for each optimization window."""
     series_tuple = tuple(selected_series or ())
@@ -401,6 +410,10 @@ def _compute_window_risk_contributions(
 
     working_subset = working_df.loc[:, list(series_tuple)]
     index = working_subset.index
+    cfg = config or {}
+    exp_wt_cov = bool(cfg.get("exp_wt_cov", False))
+    decay_value = normalize_decay_input(cfg.get("halflife", 63), 63.0)
+    cov_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(cfg.get("cov_shrinkage", "none"))
     rows = []
     for ww in window_weights:
         weights = ww.get("weights", {})
@@ -433,9 +446,19 @@ def _compute_window_risk_contributions(
             continue
 
         window_returns = window_returns[valid_assets].fillna(0)
+        custom_cov = None
+        if exp_wt_cov or cov_shrinkage != "none":
+            custom_cov = estimate_covariance_matrix(
+                window_returns,
+                asset_order=valid_assets,
+                exp_weighted=exp_wt_cov,
+                decay_value=decay_value,
+                shrinkage=cov_shrinkage,
+            )
         rc = compute_risk_contributions(
             {name: float(weights.get(name, 0) or 0) for name in valid_assets},
             window_returns,
+            custom_cov=custom_cov,
         )
         rows.append(
             {
@@ -799,6 +822,7 @@ def _validate_optimization_inputs(
     opt_step_unit,
     exp_wt_cov,
     halflife,
+    cov_shrinkage,
     min_wt,
     max_wt,
     force_max,
@@ -850,6 +874,10 @@ def _validate_optimization_inputs(
         hl = _coerce_float(halflife)
         if hl is None or hl <= 0:
             return "Decay input must be greater than 0 when exponential weighting is enabled."
+
+    raw_shrinkage = "none" if cov_shrinkage in (None, "") else str(cov_shrinkage).strip().lower()
+    if raw_shrinkage not in VALID_COV_SHRINKAGE:
+        return "Select a valid covariance shrinkage option."
 
     min_map = min_wt or {}
     max_map = max_wt or {}
@@ -976,13 +1004,16 @@ def _build_black_litterman_mu_cov(est_data, config, asset_cols):
     port = rp.Portfolio(returns=est_data.copy())
     port.assets_stats(method_mu="hist", method_cov="hist")
 
-    if config.get("exp_wt_cov", False):
-        decay_value = normalize_decay_input(config.get("halflife", 63), 63.0)
-        ewm_cov = est_data.ewm(**resolve_ewm_params(decay_value)).cov().iloc[-len(asset_cols):]
-        if isinstance(ewm_cov.index, pd.MultiIndex):
-            ewm_cov.index = ewm_cov.index.get_level_values(-1)
-        ewm_cov = ewm_cov.reindex(index=asset_cols, columns=asset_cols)
-        port.cov = ewm_cov
+    exp_wt_cov = bool(config.get("exp_wt_cov", False))
+    cov_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(config.get("cov_shrinkage", "none"))
+    if exp_wt_cov or cov_shrinkage != "none":
+        port.cov = estimate_covariance_matrix(
+            est_data,
+            asset_order=asset_cols,
+            exp_weighted=exp_wt_cov,
+            decay_value=normalize_decay_input(config.get("halflife", 63), 63.0),
+            shrinkage=cov_shrinkage,
+        )
 
     bl_views = config.get("bl_views", []) or []
     n_assets = len(asset_cols)
@@ -1120,6 +1151,9 @@ def _build_frontier_snapshot(
 
     custom_mu = None
     custom_cov = None
+    exp_wt_cov = bool(config.get("exp_wt_cov", False))
+    decay_value = normalize_decay_input(config.get("halflife", 63), 63.0)
+    cov_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(config.get("cov_shrinkage", "none"))
     if model == "ex_ante_mv":
         custom_mu, custom_cov, error_msg = _build_ex_ante_mu_cov(config, actual_cols, ann)
         if error_msg:
@@ -1128,6 +1162,20 @@ def _build_frontier_snapshot(
         custom_mu, custom_cov, error_msg = _build_black_litterman_mu_cov(est_data, config, actual_cols)
         if error_msg:
             raise ValueError(error_msg)
+    elif exp_wt_cov or cov_shrinkage != "none":
+        custom_mu = estimate_mean_vector(
+            est_data,
+            asset_order=actual_cols,
+            exp_weighted=exp_wt_cov,
+            decay_value=decay_value,
+        )
+        custom_cov = estimate_covariance_matrix(
+            est_data,
+            asset_order=actual_cols,
+            exp_weighted=exp_wt_cov,
+            decay_value=decay_value,
+            shrinkage=cov_shrinkage,
+        )
 
     frontier_pts, asset_pts, frontier_portfolios = compute_efficient_frontier(
         returns_df=est_data,
@@ -1763,6 +1811,31 @@ def build_po_main_layout():
                                                     size="sm",
                                                     disabled=True,
                                                     style={"whiteSpace": "nowrap"},
+                                                ),
+                                            ),
+                                        ]),
+                                        html.Div([
+                                            dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
+                                            dmc.Tooltip(
+                                                label=(
+                                                    "Chooses covariance shrinkage when Exp Wt is off. "
+                                                    "Shrinkage applies to covariance estimation, and correlation views derive correlation from that covariance."
+                                                ),
+                                                multiline=True,
+                                                w=300,
+                                                withArrow=True,
+                                                children=dmc.Select(
+                                                    id="po-cov-shrinkage-select",
+                                                    data=[
+                                                        {"value": "none", "label": "None"},
+                                                        {"value": "ledoit_wolf", "label": "Ledoit-Wolf"},
+                                                        {"value": "oas", "label": "OAS"},
+                                                    ],
+                                                    value="none",
+                                                    searchable=False,
+                                                    clearable=False,
+                                                    w=130,
+                                                    size="sm",
                                                 ),
                                             ),
                                         ]),
@@ -3047,6 +3120,7 @@ layout = dmc.Container(
                                                         dmc.Text("Portfolio Name is the key used to store and select results.", size="sm"),
                                                         dmc.Text("Model chooses risk-based, mean-variance, ex-ante, or Black-Litterman optimization.", size="sm"),
                                                         dmc.Text("Exp Wt enables exponential weighting for historical parameter estimates.", size="sm"),
+                                                        dmc.Text("Cov Shrinkage offers Ledoit-Wolf or OAS covariance estimates when Exp Wt is off.", size="sm"),
                                                         dmc.Text("Decay input behavior: values >= 1 are half-life periods; values < 1 are lambda (for example 0.94).", size="sm"),
                                                         dmc.Text("Smaller half-life or lambda further from 1.0 puts more emphasis on recent data.", size="sm"),
                                                         dmc.Text("Window options: Expanding, Rolling, or Full.", size="sm"),
@@ -3374,6 +3448,7 @@ layout = dmc.Container(
         dcc.Store(id="po-portfolio-name-store", data=_po_default_name_for_model("risk_parity"), storage_type="session"),
         dcc.Store(id="po-exp-wt-cov-store", data=False, storage_type="session"),
         dcc.Store(id="po-halflife-store", data=63, storage_type="session"),
+        dcc.Store(id="po-cov-shrinkage-store", data="none", storage_type="session"),
         dcc.Store(id="po-missing-data-store", data="fill_na", storage_type="session"),
         dcc.Store(id="po-fill-in-sample-store", data="off", storage_type="session"),
         # Ex ante stores
@@ -3586,6 +3661,7 @@ clientside_callback(
                 'po-portfolio-name-store',
                 'po-exp-wt-cov-store',
                 'po-halflife-store',
+                'po-cov-shrinkage-store',
                 'po-missing-data-store',
                 'po-fill-in-sample-store',
                 'po-results-store',
@@ -4550,8 +4626,9 @@ clientside_callback(
 
 # Toggle halflife disabled based on exp wt cov switch
 clientside_callback(
-    "function(checked) { return !checked; }",
+    "function(checked) { return [!checked, !!checked]; }",
     Output("po-halflife-input", "disabled"),
+    Output("po-cov-shrinkage-select", "disabled"),
     Input("po-exp-wt-cov-switch", "checked"),
     prevent_initial_call=True,
 )
@@ -4635,6 +4712,14 @@ clientside_callback(
     "function(value) { return value; }",
     Output("po-halflife-store", "data"),
     Input("po-halflife-input", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: covariance shrinkage
+clientside_callback(
+    "function(value) { return value || 'none'; }",
+    Output("po-cov-shrinkage-store", "data"),
+    Input("po-cov-shrinkage-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -5096,9 +5181,10 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
     State("po-periodicity-select", "value"),
     State("po-exp-wt-cov-switch", "checked"),
     State("po-halflife-input", "value"),
+    State("po-cov-shrinkage-select", "value"),
     prevent_initial_call=True,
 )
-def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity, exp_wt_cov, halflife):
+def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity, exp_wt_cov, halflife, cov_shrinkage):
     if not n_clicks or not data or not selected_series:
         raise PreventUpdate
         
@@ -5114,37 +5200,31 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
             raise PreventUpdate
             
         sub_df = df[valid_series].dropna()
-        
+        effective_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(cov_shrinkage)
+
         if is_corr:
-            if exp_wt_cov:
-                n_assets = len(valid_series)
-                decay_value = normalize_decay_input(halflife, 63.0)
-                cov_df = sub_df.ewm(**resolve_ewm_params(decay_value)).cov().iloc[-n_assets:]
-                cov_df.index = valid_series
-                cov_df = cov_df.reindex(index=valid_series, columns=valid_series)
-                cov_values = cov_df.to_numpy(dtype=float, copy=False)
-                std = np.sqrt(np.clip(np.diag(cov_values), a_min=0.0, a_max=None))
-                denom = np.outer(std, std)
-                corr_values = np.divide(
-                    cov_values,
-                    denom,
-                    out=np.full_like(cov_values, np.nan, dtype=float),
-                    where=denom > 0,
-                )
-                np.fill_diagonal(corr_values, 1.0)
-                est_df = pd.DataFrame(corr_values, index=valid_series, columns=valid_series)
-            else:
-                est_df = sub_df.corr()
+            cov_df = estimate_covariance_matrix(
+                sub_df,
+                asset_order=valid_series,
+                exp_weighted=bool(exp_wt_cov),
+                decay_value=normalize_decay_input(halflife, 63.0),
+                shrinkage=effective_shrinkage,
+            )
+            est_df = (
+                covariance_to_correlation(cov_df)
+                if exp_wt_cov or effective_shrinkage != "none"
+                else sub_df.corr()
+            )
         else:
             ann = _annualization_for_periodicity(periodicity)
-            if exp_wt_cov:
-                n_assets = len(valid_series)
-                decay_value = normalize_decay_input(halflife, 63.0)
-                est_df = sub_df.ewm(**resolve_ewm_params(decay_value)).cov().iloc[-n_assets:]
-                est_df.index = valid_series  # Reset MultiIndex to simple asset names
-                est_df = est_df * ann
-            else:
-                est_df = sub_df.cov() * ann
+            est_df = estimate_covariance_matrix(
+                sub_df,
+                asset_order=valid_series,
+                exp_weighted=bool(exp_wt_cov),
+                decay_value=normalize_decay_input(halflife, 63.0),
+                shrinkage=effective_shrinkage,
+                annualization_factor=ann,
+            )
             
         # Convert to dict
         matrix = {}
@@ -5918,7 +5998,7 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
 
 clientside_callback(
     """
-    function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, missing, fillIS) {
+    function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, missing, fillIS) {
         var safeModel = model || "risk_parity";
         var defaults = {
             "risk_parity": "RP",
@@ -5934,7 +6014,7 @@ clientside_callback(
         };
         var defaultName = defaults[safeModel] || "Port";
         return [optWindow, windowSize, optStep, optStepUnit, safeModel, name || defaultName,
-                expWt || false, halflife, !expWt, missing, fillIS];
+                expWt || false, halflife, covShrinkage || "none", !expWt, missing, fillIS];
     }
     """,
     Output("po-opt-window-select", "value"),
@@ -5945,6 +6025,7 @@ clientside_callback(
     Output("po-portfolio-name-input", "value"),
     Output("po-exp-wt-cov-switch", "checked"),
     Output("po-halflife-input", "value", allow_duplicate=True),
+    Output("po-cov-shrinkage-select", "value"),
     Output("po-halflife-input", "disabled", allow_duplicate=True),
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
@@ -5957,6 +6038,7 @@ clientside_callback(
     State("po-portfolio-name-store", "data"),
     State("po-exp-wt-cov-store", "data"),
     State("po-halflife-store", "data"),
+    State("po-cov-shrinkage-store", "data"),
     State("po-missing-data-store", "data"),
     State("po-fill-in-sample-store", "data"),
     prevent_initial_call=True,
@@ -6001,6 +6083,7 @@ clientside_callback(
     Input("po-opt-step-unit-select", "value"),
     Input("po-exp-wt-cov-switch", "checked"),
     Input("po-halflife-input", "value"),
+    Input("po-cov-shrinkage-select", "value"),
     Input("po-min-wt-store", "data"),
     Input("po-max-wt-store", "data"),
     Input("po-force-max-store", "data"),
@@ -6025,6 +6108,7 @@ def po_toggle_ui_elements(
     opt_step_unit,
     exp_wt_cov,
     halflife,
+    cov_shrinkage,
     min_wt,
     max_wt,
     force_max,
@@ -6049,6 +6133,7 @@ def po_toggle_ui_elements(
         opt_step_unit=opt_step_unit,
         exp_wt_cov=exp_wt_cov,
         halflife=halflife,
+        cov_shrinkage=cov_shrinkage,
         min_wt=min_wt,
         max_wt=max_wt,
         force_max=force_max,
@@ -7948,6 +8033,7 @@ def po_update_date_range_store(start, end):
     State("po-force-max-store", "data"),
     State("po-exp-wt-cov-switch", "checked"),
     State("po-halflife-input", "value"),
+    State("po-cov-shrinkage-select", "value"),
     State("po-portfolio-name-input", "value"),
     State("po-opt-window-select", "value"),
     State("po-window-size-input", "value"),
@@ -7975,6 +8061,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         selected_series, benchmark_assignments, cmabench_assignments, long_short_assignments,
                         date_range, vol_scaler, vol_scaling_assignments,
                         min_wt, max_wt, force_max, exp_wt_cov, halflife,
+                        cov_shrinkage,
                         portfolio_name, opt_window, window_size, opt_step,
                         opt_step_unit_value,
                         opt_model, missing_data, fill_in_sample_value, current_results,
@@ -8003,6 +8090,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             opt_step_unit=opt_step_unit_value,
             exp_wt_cov=exp_wt_cov,
             halflife=halflife,
+            cov_shrinkage=cov_shrinkage,
             min_wt=min_wt,
             max_wt=max_wt,
             force_max=force_max,
@@ -8094,6 +8182,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             opt_step_unit=opt_step_unit_value,
             exp_wt_cov=exp_wt_cov,
             halflife=halflife,
+            cov_shrinkage=cov_shrinkage,
             min_wt=min_wt,
             max_wt=max_wt,
             force_max=force_max,
@@ -8123,6 +8212,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "opt_step_unit": opt_step_unit_value or "months",
             "exp_wt_cov": bool(exp_wt_cov),
             "halflife": normalize_decay_input(halflife, 63.0),
+            "cov_shrinkage": normalize_cov_shrinkage(cov_shrinkage),
             "missing_data": missing_data or "fill_na",
             "fill_in_sample": fill_in_sample_value == "on",
             "selected_series": opt_cols,
@@ -9607,6 +9697,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         _add_setting("Exponential Weighting (Cov)", exp_weighted)
         _add_setting("Decay Input", float(decay_value))
         _add_setting("Decay Mode", decay_input_mode(decay_value, 63.0))
+        _add_setting("Covariance Shrinkage", format_cov_shrinkage_label(cfg.get("cov_shrinkage", "none")))
         _add_setting("Vol Scaler", float(vol_scaler or 0))
         _add_setting("Benchmark Assignments", _safe_json_text(bench or {}))
         _add_setting("CMA Benchmark Assignments", _safe_json_text(cmabench or {}))
@@ -9853,7 +9944,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
             if working_df.empty:
                 continue
 
-            for rr in _compute_window_risk_contributions(working_df, opt_series, window_weights):
+            for rr in _compute_window_risk_contributions(working_df, opt_series, window_weights, config):
                 row = {
                     "Portfolio": pname,
                     "Window Start": format_mdy_date(rr["apply_start"]),
@@ -10016,7 +10107,7 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
         )
         working_df = _po_get_working_returns(working_bundle, opt_series)
 
-        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights)
+        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights, config)
         if not risk_rows:
             return dmc.Text("No risk data available.", c="dimmed")
 
@@ -10102,7 +10193,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
             raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
         )
         working_df = _po_get_working_returns(working_bundle, opt_series)
-        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights)
+        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights, config)
         if not risk_rows:
             return [], []
 

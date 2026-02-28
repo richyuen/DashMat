@@ -50,6 +50,7 @@ from utils.statistics import (
     calculate_statistics_cached,
     generate_correlogram_cached,
 )
+from utils.covariance import format_cov_shrinkage_label, normalize_cov_shrinkage
 from utils.exponential_weighting import normalize_decay_input
 from utils.charting import apply_chart_theme
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
@@ -208,6 +209,7 @@ def _correlogram_request_key(
     block_width,
     exp_weighted,
     decay_value,
+    shrinkage,
 ):
     payload = "|".join(
         [
@@ -224,6 +226,7 @@ def _correlogram_request_key(
             str(block_width if block_width is not None else ""),
             str(bool(exp_weighted)),
             str(normalize_decay_input(decay_value, 63.0)),
+            str(normalize_cov_shrinkage(shrinkage)),
         ]
     )
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
@@ -2541,6 +2544,34 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     ),
                                 ]),
                                 html.Div([
+                                    dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
+                                    html.Div(
+                                        dmc.Tooltip(
+                                            label=(
+                                                "Chooses covariance shrinkage for matrix views. "
+                                                "Correlation is derived from the shrunk covariance, and this control is unavailable when Exp Wt is enabled."
+                                            ),
+                                            multiline=True,
+                                            w=300,
+                                            withArrow=True,
+                                            children=dmc.Select(
+                                                id="at-correlation-shrinkage-select",
+                                                data=[
+                                                    {"value": "none", "label": "None"},
+                                                    {"value": "ledoit_wolf", "label": "Ledoit-Wolf"},
+                                                    {"value": "oas", "label": "OAS"},
+                                                ],
+                                                value="none",
+                                                searchable=False,
+                                                clearable=False,
+                                                w=130,
+                                                size="sm",
+                                            ),
+                                        ),
+                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                    ),
+                                ]),
+                                html.Div([
                                     dmc.Text("Block Size", size="sm", fw=500, mb=3),
                                     dmc.NumberInput(
                                         id="at-correlogram-block-width",
@@ -3800,6 +3831,10 @@ layout = dmc.Container(
                                     ),
                                     dmc.Text(
                                         "Exp Wt applies exponential weighting to matrix estimates. Decay input >= 1 is half-life in periods; < 1 is lambda.",
+                                        size="sm",
+                                    ),
+                                    dmc.Text(
+                                        "Cov Shrinkage offers Ledoit-Wolf or OAS covariance estimates for matrix views when Exp Wt is off.",
                                         size="sm",
                                     ),
                                     dmc.Text(
@@ -8462,8 +8497,9 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 
 clientside_callback(
-    "function(checked) { return !checked; }",
+    "function(checked) { return [!checked, !!checked]; }",
     Output("at-correlation-halflife-input", "disabled"),
+    Output("at-correlation-shrinkage-select", "disabled"),
     Input("at-correlation-exp-wt-switch", "checked"),
     prevent_initial_call=False,
 )
@@ -8505,6 +8541,7 @@ def update_correlogram_meta(selected_series, active_tab):
     Input("at-correlation-view-switch", "value"),
     Input("at-correlation-exp-wt-switch", "checked"),
     Input("at-correlation-halflife-input", "value"),
+    Input("at-correlation-shrinkage-select", "value"),
     Input("at-correlogram-block-width", "value"),
     State("at-correlogram-target-key-store", "data"),
     prevent_initial_call=True,
@@ -8524,6 +8561,7 @@ def update_correlogram_target_key(
     correlation_view,
     exp_weighted,
     decay_value,
+    shrinkage,
     block_width,
     current_target_key,
 ):
@@ -8551,6 +8589,11 @@ def update_correlogram_target_key(
     use_weighted_matrix = bool(
         exp_weighted and correlation_view in {"correlation", "covariance"}
     )
+    effective_shrinkage = (
+        normalize_cov_shrinkage(shrinkage)
+        if correlation_view in {"correlation", "covariance"} and not use_weighted_matrix
+        else "none"
+    )
     next_key = _correlogram_request_key(
         raw_data,
         periodicity,
@@ -8565,6 +8608,7 @@ def update_correlogram_target_key(
         block_width,
         use_weighted_matrix,
         decay_value if use_weighted_matrix else 63.0,
+        effective_shrinkage,
     )
     if next_key == current_target_key:
         return no_update
@@ -8639,12 +8683,13 @@ clientside_callback(
     State("at-vol-scaling-assignments-store", "data"),
     State("at-correlation-exp-wt-switch", "checked"),
     State("at-correlation-halflife-input", "value"),
+    State("at-correlation-shrinkage-select", "value"),
     State("at-correlation-view-switch", "value"),
     State("at-correlogram-block-width", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, correlation_view, block_width, theme):
+def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, correlation_view, block_width, theme):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -8678,6 +8723,11 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
     use_weighted_matrix = bool(
         exp_weighted and correlation_view in {"correlation", "covariance"}
     )
+    effective_shrinkage = (
+        normalize_cov_shrinkage(shrinkage)
+        if correlation_view in {"correlation", "covariance"} and not use_weighted_matrix
+        else "none"
+    )
     try:
         result = generate_correlogram_cached(
             raw_data,
@@ -8691,21 +8741,43 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
             _mapping_payload(vol_scaling_assignments),
             use_weighted_matrix,
             normalize_decay_input(decay_value, 63.0),
+            effective_shrinkage,
         )
 
         if result is None:
             return empty_graph, request_key
 
-        available_series = result['available_series']
-        corr_matrix = result['corr_matrix']
-        cov_matrix = result['cov_matrix']
+    except ValueError as exc:
+        error_fig = go.Figure()
+        error_fig.add_annotation(
+            text=str(exc),
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16, color="gray"),
+        )
+        error_fig.update_layout(
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            template="plotly_white",
+        )
+        apply_chart_theme(error_fig, theme)
+        return dcc.Graph(figure=error_fig, style={"height": "100%"}), request_key
 
+    available_series = result['available_series']
+    corr_matrix = result['corr_matrix']
+    cov_matrix = result['cov_matrix']
+
+    try:
         # 1. Correlation/Covariance Matrix (Heatmap)
         if correlation_view in {"correlation", "covariance"}:
             is_covariance = correlation_view == "covariance"
             matrix_df = cov_matrix if is_covariance else corr_matrix
             matrix_label = "Covariance" if is_covariance else "Correlation"
-            weighted_suffix = " (Exp Weighted)" if use_weighted_matrix else ""
+            weighted_suffix = ""
+            if use_weighted_matrix:
+                weighted_suffix = " (Exp Weighted)"
+            elif effective_shrinkage != "none":
+                weighted_suffix = f" ({format_cov_shrinkage_label(effective_shrinkage)})"
 
             heatmap_kwargs = {
                 "z": matrix_df.values,
@@ -8728,7 +8800,6 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
 
             heatmap_fig = go.Figure(data=go.Heatmap(**heatmap_kwargs))
 
-            height = max(500, 30 * len(available_series) + 150)
             heatmap_fig.update_layout(
                 title=f"{matrix_label} Matrix{weighted_suffix} ({returns_type.title()} Returns)",
                 xaxis=dict(tickangle=45),
@@ -8740,124 +8811,120 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
             return dcc.Graph(figure=heatmap_fig, style={"height": "100%"}), request_key
 
         # 2. Correlogram (Scatter Matrix)
-        else:
-            display_df = result['display_df']
-            n = result['n']
+        display_df = result['display_df']
+        n = result['n']
 
-            if n < 2:
-                return empty_graph, request_key
+        if n < 2:
+            return empty_graph, request_key
 
-            # Create subplots
-            fig = make_subplots(
-                rows=n, cols=n,
-                horizontal_spacing=0.02,
-                vertical_spacing=0.02,
-                print_grid=False,
-            )
+        # Create subplots
+        fig = make_subplots(
+            rows=n, cols=n,
+            horizontal_spacing=0.02,
+            vertical_spacing=0.02,
+            print_grid=False,
+        )
+        # Populate the grid
+        for i, row_series in enumerate(available_series):
+            for j, col_series in enumerate(available_series):
+                row_idx = i + 1
+                col_idx = j + 1
 
-            # Populate the grid
-            for i, row_series in enumerate(available_series):
-                for j, col_series in enumerate(available_series):
-                    row_idx = i + 1
-                    col_idx = j + 1
+                if i == j:
+                    # Diagonal: density chart (histogram with KDE-like appearance)
+                    fig.add_trace(
+                        go.Histogram(
+                            x=display_df[row_series].dropna(),
+                            histnorm='probability density',
+                            marker_color='#228be6',
+                            opacity=0.7,
+                            showlegend=False,
+                            nbinsx=30,  # Limit bins for performance
+                        ),
+                        row=row_idx, col=col_idx
+                    )
+                elif i > j:
+                    # Lower triangle: scatter plot with sampling for large datasets
+                    series_data = display_df[[col_series, row_series]].dropna()
+                    if len(series_data) > 1000:
+                        # Sample for performance if > 1000 points
+                        series_data = series_data.sample(n=1000, random_state=42)
 
-                    if i == j:
-                        # Diagonal: density chart (histogram with KDE-like appearance)
-                        fig.add_trace(
-                            go.Histogram(
-                                x=display_df[row_series].dropna(),
-                                histnorm='probability density',
-                                marker_color='#228be6',
-                                opacity=0.7,
-                                showlegend=False,
-                                nbinsx=30,  # Limit bins for performance
-                            ),
-                            row=row_idx, col=col_idx
-                        )
-                    elif i > j:
-                        # Lower triangle: scatter plot with sampling for large datasets
-                        series_data = display_df[[col_series, row_series]].dropna()
-                        if len(series_data) > 1000:
-                            # Sample for performance if > 1000 points
-                            series_data = series_data.sample(n=1000, random_state=42)
-
-                        fig.add_trace(
-                            go.Scattergl(  # Use Scattergl for better performance
-                                x=series_data[col_series],
-                                y=series_data[row_series],
-                                mode='markers',
-                                marker=dict(size=3, opacity=0.5, color='#228be6'),
-                                showlegend=False,
-                            ),
-                            row=row_idx, col=col_idx
-                        )
+                    fig.add_trace(
+                        go.Scattergl(  # Use Scattergl for better performance
+                            x=series_data[col_series],
+                            y=series_data[row_series],
+                            mode='markers',
+                            marker=dict(size=3, opacity=0.5, color='#228be6'),
+                            showlegend=False,
+                        ),
+                        row=row_idx, col=col_idx
+                    )
+                else:
+                    # Upper triangle: correlation value
+                    corr_val = corr_matrix.loc[row_series, col_series]
+                    # Color based on correlation
+                    if corr_val >= 0.7:
+                        color = '#1971c2'
+                    elif corr_val >= 0.3:
+                        color = '#228be6'
+                    elif corr_val <= -0.7:
+                        color = '#c92a2a'
+                    elif corr_val <= -0.3:
+                        color = '#e03131'
                     else:
-                        # Upper triangle: correlation value
-                        corr_val = corr_matrix.loc[row_series, col_series]
-                        # Color based on correlation
-                        if corr_val >= 0.7:
-                            color = '#1971c2'
-                        elif corr_val >= 0.3:
-                            color = '#228be6'
-                        elif corr_val <= -0.7:
-                            color = '#c92a2a'
-                        elif corr_val <= -0.3:
-                            color = '#e03131'
-                        else:
-                            color = '#868e96'
+                        color = '#868e96'
 
-                        fig.add_trace(
-                            go.Scatter(
-                                x=[0.5], y=[0.5],
-                                mode='text',
-                                text=[f'{corr_val:.2f}'],
-                                textfont=dict(size=14, color=color),
-                                showlegend=False,
-                                hoverinfo='skip',
-                            ),
-                            row=row_idx, col=col_idx
-                        )
-                        # Hide axes for upper triangle
-                        fig.update_xaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
-                        fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[0.5], y=[0.5],
+                            mode='text',
+                            text=[f'{corr_val:.2f}'],
+                            textfont=dict(size=14, color=color),
+                            showlegend=False,
+                            hoverinfo='skip',
+                        ),
+                        row=row_idx, col=col_idx
+                    )
+                    # Hide axes for upper triangle
+                    fig.update_xaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
+                    fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, row=row_idx, col=col_idx)
 
-            # Scaling logic: Fixed size based on user input
-            # Always square blocks (N * block_width)
-            user_block_width = block_width if block_width else 100
-            total_size_px = len(available_series) * user_block_width
-            
-            graph_style = {
-                "width": f"{total_size_px}px",
-                "height": f"{total_size_px}px",
-            }
-            
-            # Set explicit size on figure layout
-            fig.update_layout(width=total_size_px, height=total_size_px, autosize=False)
+        # Scaling logic: Fixed size based on user input
+        # Always square blocks (N * block_width)
+        user_block_width = block_width if block_width else 100
+        total_size_px = len(available_series) * user_block_width
 
-            fig.update_layout(
-                title=f"Scatter Matrix ({returns_type.title()} Returns)",
-                showlegend=False,
-                template="plotly_white",
-                margin=dict(l=20, r=20, t=50, b=20),
-            )
-            
-            # Update axes labels only on edges
-            for i in range(n):
-                # Bottom row x-axes
-                fig.update_xaxes(title_text=available_series[i], row=n, col=i+1, title_font=dict(size=10))
-                # Left col y-axes
-                fig.update_yaxes(title_text=available_series[i], row=i+1, col=1, title_font=dict(size=10))
-                
-                # Hide internal tick labels
-                if i < n-1:
-                     fig.update_xaxes(showticklabels=False, row=i+1)
-                if i > 0:
-                     fig.update_yaxes(showticklabels=False, col=i+1)
+        graph_style = {
+            "width": f"{total_size_px}px",
+            "height": f"{total_size_px}px",
+        }
 
+        # Set explicit size on figure layout
+        fig.update_layout(width=total_size_px, height=total_size_px, autosize=False)
 
-            apply_chart_theme(fig, theme)
-            return dcc.Graph(figure=fig, style=graph_style), request_key
+        fig.update_layout(
+            title=f"Scatter Matrix ({returns_type.title()} Returns)",
+            showlegend=False,
+            template="plotly_white",
+            margin=dict(l=20, r=20, t=50, b=20),
+        )
 
+        # Update axes labels only on edges
+        for i in range(n):
+            # Bottom row x-axes
+            fig.update_xaxes(title_text=available_series[i], row=n, col=i + 1, title_font=dict(size=10))
+            # Left col y-axes
+            fig.update_yaxes(title_text=available_series[i], row=i + 1, col=1, title_font=dict(size=10))
+
+            # Hide internal tick labels
+            if i < n - 1:
+                fig.update_xaxes(showticklabels=False, row=i + 1)
+            if i > 0:
+                fig.update_yaxes(showticklabels=False, col=i + 1)
+
+        apply_chart_theme(fig, theme)
+        return dcc.Graph(figure=fig, style=graph_style), request_key
     except Exception:
         return empty_graph, request_key
 
@@ -9870,6 +9937,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-vol-scaling-assignments-store", "data"),
     State("at-correlation-exp-wt-switch", "checked"),
     State("at-correlation-halflife-input", "value"),
+    State("at-correlation-shrinkage-select", "value"),
     State("at-factor-series-select", "value"),
     State("at-factor-quantiles-input", "value"),
     State("at-factor-transform-select", "value"),
@@ -9900,6 +9968,7 @@ def download_excel(
     vol_scaling_assignments,
     correlation_exp_wt,
     correlation_halflife,
+    correlation_shrinkage,
     factor_series,
     factor_quantiles,
     factor_transform,
@@ -9971,19 +10040,23 @@ def download_excel(
         stats_df = pd.DataFrame(stats_data)
 
         # Prepare correlation/covariance data (supports optional exponential weighting)
-        matrix_result = generate_correlogram_cached(
-            bundle.raw_data,
-            bundle.periodicity,
-            bundle.selected_series,
-            returns_type,
-            bundle.benchmark_payload,
-            bundle.long_short_payload,
-            bundle.date_range_payload,
-            bundle.vol_scaler,
-            bundle.vol_scaling_payload,
-            bool(correlation_exp_wt),
-            normalize_decay_input(correlation_halflife, 63.0),
-        )
+        try:
+            matrix_result = generate_correlogram_cached(
+                bundle.raw_data,
+                bundle.periodicity,
+                bundle.selected_series,
+                returns_type,
+                bundle.benchmark_payload,
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
+                bool(correlation_exp_wt),
+                normalize_decay_input(correlation_halflife, 63.0),
+                "none" if correlation_exp_wt else normalize_cov_shrinkage(correlation_shrinkage),
+            )
+        except ValueError:
+            matrix_result = None
         if matrix_result is not None:
             corr_df = matrix_result["corr_matrix"]
             cov_df = matrix_result["cov_matrix"]

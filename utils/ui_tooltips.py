@@ -556,11 +556,21 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
             "When enabled, recent observations receive more weight in covariance estimates; when disabled, covariance uses equal weighting over the selected window. "
             "Set the Half-Life control to define the decay speed when this switch is on."
         )
+    if suffix == "cov-shrinkage-select":
+        return (
+            "Chooses covariance shrinkage for optimization when exponential weighting is off. "
+            "Ledoit-Wolf and OAS can stabilize noisy covariance estimates, and downstream frontier and risk views use the same selected estimator."
+        )
     if suffix == "correlation-exp-wt-switch":
         return (
             "Enables exponential weighting for correlation or covariance estimates in the Analytics dependence view. "
             "When enabled, recent observations are weighted more heavily; when disabled, all observations in the window are weighted equally. "
             "Use the correlation half-life input to control decay speed when weighting is enabled."
+        )
+    if suffix == "correlation-shrinkage-select":
+        return (
+            "Chooses covariance shrinkage for Analytics matrix views when exponential weighting is off. "
+            "Correlation is derived from the estimated covariance matrix, so shrinkage affects both covariance and correlation heatmaps."
         )
     if suffix == "fill-in-sample-select":
         return (
