@@ -84,6 +84,17 @@ from utils.dashmat_welcome_modal import (
     js_underlying_delete_row,
 )
 from utils.sample_data import get_sample_file_path
+from utils.page_paths import REGRESSION_PATH, landing_href
+from utils.route_intent import (
+    ACTION_CONFIGURE_AFTER_IMPORT,
+    ACTION_OPEN_IMPORT_MODAL,
+    FLOW_DB,
+    FLOW_PORTFOLIO,
+    FLOW_RAW,
+    FLOW_UNDERLYING,
+    route_intent_token_to_consume,
+    route_intent_value,
+)
 from utils.core_categories import clear_dropdown_caches, load_cma_returns_for_benches_with_meta
 from dbengine import AG_GRID_LICENSE_KEY, engine as DB_ENGINE, engine_MRD as MRD_ENGINE, engine_PERFORMANCE as PERF_ENGINE
 from utils.portfolio_series import load_portfolio_series
@@ -104,7 +115,7 @@ from utils.underlying_category_imports import (
     load_underlying_category_series,
 )
 
-register_page(__name__, path="/regression", name="Regression", title="Regression")
+register_page(__name__, path=REGRESSION_PATH, name="Regression", title="Regression")
 
 REG_CONFIG = PagePrefixConfig(
     prefix="reg",
@@ -119,6 +130,24 @@ REG_CONFIG = PagePrefixConfig(
         ("welcome-view-portfolio", "Switch to Optimization", "grommet-icons:optimize"),
     ),
 )
+
+
+def _safe_triggered_id():
+    try:
+        return callback_context.triggered_id
+    except Exception:
+        return None
+
+
+def _reg_route_intent_token_to_consume(route_intent, action, consumed_token, *, flow=None):
+    return route_intent_token_to_consume(
+        route_intent,
+        "regression",
+        action,
+        consumed_token,
+        flow=flow,
+    )
+
 
 _MODEL_OPTIONS = [
     {"value": "ols", "label": "OLS"},
@@ -2108,7 +2137,7 @@ layout = dmc.Container(
         html.Div(
             id="reg-welcome-screen",
             children=build_reg_welcome_screen(),
-            style={"display": "block"},
+            style={"display": "none"},
         ),
 
         # Main container
@@ -2155,6 +2184,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-series-modal-commit-store", data=None),
         dcc.Store(id="reg-series-selection-open-request-store", data=None),
         dcc.Store(id="reg-series-selection-grid-status-store", data=None),
+        dcc.Store(id="reg-route-intent-consumed-token-store", data=None, storage_type="session"),
         dcc.Store(id="reg-portfolio-add-mode-store", data=None),
         dcc.Store(id="reg-portfolio-add-rows-store", data=[]),
         dcc.Store(id="reg-underlying-add-rows-store", data=[]),
@@ -2211,6 +2241,8 @@ layout = dmc.Container(
         dcc.Download(id="reg-download-sample-daily"),
         dcc.Download(id="reg-download-sample-monthly"),
         dcc.Location(id="reg-url-location", refresh=False),
+        dcc.Store(id="reg-nav-effect-dummy", data=None),
+        dcc.Store(id="reg-route-intent-clear-dummy", data=None),
         dcc.Interval(id="reg-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
         dcc.Store(id="reg-base-controls-ready-store", data=False),
         dcc.Store(id="reg-page-ready-store", data=False),
@@ -2692,13 +2724,32 @@ def reg_clear_server_cache(n_clicks):
     Output("reg-db-add-series-select", "data", allow_duplicate=True),
     Output("reg-db-add-series-select", "value", allow_duplicate=True),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-from-db", "n_clicks"),
     Input("reg-welcome-add-db-btn", "n_clicks"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_db_add_modal(menu_clicks=None, welcome_clicks=None):
+def reg_open_db_add_modal(menu_clicks=None, welcome_clicks=None, page_load_intervals=None, route_intent=None, consumed_token=None):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "reg-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _reg_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_DB,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        result = compute_open_db_add_modal(1, None, DB_ENGINE)
+        return (*result, False, intent_token)
+
     result = compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -2814,12 +2865,16 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
     Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("reg-raw-db-add-ok-button", "disabled", allow_duplicate=True),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-raw-factor", "n_clicks"),
     Input("reg-menu-add-raw-funds", "n_clicks"),
     Input("reg-menu-add-raw-performance", "n_clicks"),
     Input("reg-welcome-add-raw-factor-btn", "n_clicks"),
     Input("reg-welcome-add-raw-funds-btn", "n_clicks"),
     Input("reg-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
 def reg_open_raw_db_add_modal(
@@ -2829,10 +2884,48 @@ def reg_open_raw_db_add_modal(
     welcome_factor_clicks,
     welcome_funds_clicks,
     welcome_performance_clicks,
+    page_load_intervals=None,
+    route_intent=None,
+    consumed_token=None,
 ):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "reg-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _reg_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_RAW,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        intent_trigger_map = {
+            "factor": "reg-welcome-add-raw-factor-btn",
+            "funds": "reg-welcome-add-raw-funds-btn",
+            "performance": "reg-welcome-add-raw-performance-btn",
+        }
+        intent_trigger_id = intent_trigger_map.get(mode)
+        if not intent_trigger_id:
+            raise PreventUpdate
+        result = compute_open_raw_db_add_modal(
+            prefix="reg",
+            triggered_id=intent_trigger_id,
+            factor_clicks=1 if mode == "factor" else None,
+            funds_clicks=1 if mode == "funds" else None,
+            performance_clicks=1 if mode == "performance" else None,
+            welcome_factor_clicks=1 if mode == "factor" else None,
+            welcome_funds_clicks=1 if mode == "funds" else None,
+            welcome_performance_clicks=1 if mode == "performance" else None,
+            mrd_engine=MRD_ENGINE,
+            perf_engine=PERF_ENGINE,
+        )
+        return (*result, False, intent_token)
+
     result = compute_open_raw_db_add_modal(
         prefix="reg",
-        triggered_id=callback_context.triggered_id,
+        triggered_id=triggered_id,
         factor_clicks=factor_clicks,
         funds_clicks=funds_clicks,
         performance_clicks=performance_clicks,
@@ -2842,7 +2935,7 @@ def reg_open_raw_db_add_modal(
         mrd_engine=MRD_ENGINE,
         perf_engine=PERF_ENGINE,
     )
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -2882,7 +2975,7 @@ def reg_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_i
     if not opened:
         raise PreventUpdate
 
-    triggered_id = callback_context.triggered_id
+    triggered_id = _safe_triggered_id()
     preserve_series_selection_state = triggered_id == "reg-raw-db-add-series-select"
     mode_key = str(mode or "").strip().lower()
     if mode_key == "factor":
@@ -3208,12 +3301,16 @@ def reg_update_raw_db_preview(
     Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-peer", "n_clicks"),
     Input("reg-menu-add-portfolios-index", "n_clicks"),
     Input("reg-menu-add-portfolios-other", "n_clicks"),
     Input("reg-welcome-add-portfolios-peer-btn", "n_clicks"),
     Input("reg-welcome-add-portfolios-index-btn", "n_clicks"),
     Input("reg-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
 def reg_open_portfolio_add_modal(
@@ -3223,10 +3320,47 @@ def reg_open_portfolio_add_modal(
     welcome_peer_clicks,
     welcome_index_clicks,
     welcome_other_clicks,
+    page_load_intervals=None,
+    route_intent=None,
+    consumed_token=None,
 ):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "reg-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _reg_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_PORTFOLIO,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        intent_trigger_map = {
+            "peer": "reg-welcome-add-portfolios-peer-btn",
+            "index": "reg-welcome-add-portfolios-index-btn",
+            "other": "reg-welcome-add-portfolios-other-btn",
+        }
+        intent_trigger_id = intent_trigger_map.get(mode)
+        if not intent_trigger_id:
+            raise PreventUpdate
+        result = compute_open_portfolio_add_modal(
+            prefix="reg",
+            triggered_id=intent_trigger_id,
+            peer_clicks=1 if mode == "peer" else None,
+            index_clicks=1 if mode == "index" else None,
+            other_clicks=1 if mode == "other" else None,
+            welcome_peer_clicks=1 if mode == "peer" else None,
+            welcome_index_clicks=1 if mode == "index" else None,
+            welcome_other_clicks=1 if mode == "other" else None,
+            db_engine=DB_ENGINE,
+        )
+        return (*result, False, intent_token)
+
     result = compute_open_portfolio_add_modal(
         prefix="reg",
-        triggered_id=callback_context.triggered_id,
+        triggered_id=triggered_id,
         peer_clicks=peer_clicks,
         index_clicks=index_clicks,
         other_clicks=other_clicks,
@@ -3235,7 +3369,7 @@ def reg_open_portfolio_add_modal(
         welcome_other_clicks=welcome_other_clicks,
         db_engine=DB_ENGINE,
     )
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -3250,13 +3384,32 @@ def reg_open_portfolio_add_modal(
     Output("reg-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("reg-underlying-add-error-alert", "hide", allow_duplicate=True),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-underlying", "n_clicks"),
     Input("reg-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_underlying_add_modal(menu_clicks, welcome_clicks):
+def reg_open_underlying_add_modal(menu_clicks, welcome_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "reg-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _reg_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_UNDERLYING,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        result = compute_open_underlying_add_modal(1, None)
+        return (*result, False, intent_token)
+
     result = compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -3841,12 +3994,11 @@ def reg_handle_sheet_select_ok(
 )
 def reg_toggle_welcome(raw_data, n_intervals, original_periodicity, stored_periodicity):
     hide_welcome = {"display": "none"}
-    show_welcome = {"display": "block"}
     show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     hide_main = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     base_ready = bool(n_intervals and n_intervals >= 1)
     if not raw_data:
-        return show_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily", base_ready
+        return hide_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily", base_ready
 
     period_data = get_available_periodicities(original_periodicity or "daily")
     valid_values = [option["value"] for option in period_data]
@@ -3861,6 +4013,66 @@ def reg_toggle_welcome(raw_data, n_intervals, original_periodicity, stored_perio
         else default_value
     )
     return hide_welcome, show_main, period_data, period_value, base_ready
+
+
+clientside_callback(
+    f"""
+    function(rawData, nIntervals, pathname, routeIntent, consumedToken) {{
+        if (!nIntervals || nIntervals < 1) {{
+            return window.dash_clientside.no_update;
+        }}
+        const currentPath = (pathname || '').split('?')[0].replace(/\/+$/, '') || '/';
+        if (currentPath !== '{REGRESSION_PATH}') {{
+            return window.dash_clientside.no_update;
+        }}
+        if (rawData) {{
+            return window.dash_clientside.no_update;
+        }}
+        if (
+            routeIntent &&
+            routeIntent.target_module === 'regression' &&
+            routeIntent.action === 'open_import_modal' &&
+            String(routeIntent.token || '') &&
+            String(routeIntent.token || '') !== String(consumedToken || '')
+        ) {{
+            return window.dash_clientside.no_update;
+        }}
+        window.location.assign('{landing_href("regression")}');
+        return '{landing_href("regression")}';
+    }}
+    """,
+    Output("reg-nav-effect-dummy", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("reg-url-location", "pathname"),
+    State("dashmat-route-intent-store", "data"),
+    State("reg-route-intent-consumed-token-store", "data"),
+    prevent_initial_call=False,
+)
+
+
+clientside_callback(
+    """
+    function(consumedToken, routeIntent) {
+        if (!consumedToken || !routeIntent || String(routeIntent.token || '') !== String(consumedToken || '')) {
+            return window.dash_clientside.no_update;
+        }
+        try {
+            sessionStorage.removeItem('dashmat-route-intent-store');
+        } catch (e) {
+            // no-op
+        }
+        if (window.dash_clientside && window.dash_clientside.set_props) {
+            window.dash_clientside.set_props('dashmat-route-intent-store', {data: null});
+        }
+        return consumedToken;
+    }
+    """,
+    Output("reg-route-intent-clear-dummy", "data"),
+    Input("reg-route-intent-consumed-token-store", "data"),
+    State("dashmat-route-intent-store", "data"),
+    prevent_initial_call=True,
+)
 
 
 _REG_SERIES_GRID_FINAL_STATUSES = {"ready", "empty", "error", "timeout"}
@@ -3896,6 +4108,7 @@ def _reg_series_status_is_final(status_data, token=None):
     Output("reg-alert-message", "color", allow_duplicate=True),
     Output("reg-alert-message", "hide", allow_duplicate=True),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
@@ -3905,6 +4118,8 @@ def _reg_series_status_is_final(status_data, token=None):
     State("reg-dependent-var-store", "data"),
     State("reg-series-selection-open-request-store", "data"),
     State("reg-series-selection-grid-status-store", "data"),
+    State("dashmat-route-intent-store", "data"),
+    State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
 def reg_open_modal(
@@ -3917,8 +4132,11 @@ def reg_open_modal(
     dep_var,
     current_request_token,
     current_status,
+    route_intent,
+    consumed_token,
 ):
-    triggered_id = callback_context.triggered_id
+    triggered_id = _safe_triggered_id()
+    consumed_route_intent = no_update
 
     if current_request_token and not _reg_series_status_is_final(current_status, current_request_token):
         raise PreventUpdate
@@ -3938,16 +4156,24 @@ def reg_open_modal(
     elif triggered_id == "reg-page-load-trigger":
         if page_load_intervals is None:
             raise PreventUpdate
-        page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-        if page_path == "/regression" and raw_data:
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
-            selected = set(sel or [])
-            has_selected = bool(selected.intersection(columns))
-            has_dependent = bool(dep_var and dep_var in columns)
-            should_open = bool(columns) and not (has_selected or has_dependent)
+        consumed_route_intent = _reg_route_intent_token_to_consume(
+            route_intent,
+            ACTION_CONFIGURE_AFTER_IMPORT,
+            consumed_token,
+        )
+        if consumed_route_intent and raw_data:
+            should_open = True
+        else:
+            page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+            if page_path == REGRESSION_PATH and raw_data:
+                try:
+                    columns = list(json_to_df(raw_data).columns)
+                except Exception:
+                    columns = []
+                selected = set(sel or [])
+                has_selected = bool(selected.intersection(columns))
+                has_dependent = bool(dep_var and dep_var in columns)
+                should_open = bool(columns) and not (has_selected or has_dependent)
 
     if not should_open:
         raise PreventUpdate
@@ -3958,6 +4184,7 @@ def reg_open_modal(
         "blue",
         True,
         True,
+        consumed_route_intent,
     )
 
 
@@ -4025,6 +4252,7 @@ def reg_update_series_grid(request_token, raw_data, selected_x, series_order,
             if s not in series_order:
                 series_order.append(s)
         series_order = [s for s in series_order if s in all_series]
+    use_first_open_defaults = not selected_x and not dep_var
     x_set = set(selected_x or [])
     bench_assign = bench_assign or {}
     ls_assign = ls_assign or {}
@@ -4042,10 +4270,10 @@ def reg_update_series_grid(request_token, raw_data, selected_x, series_order,
         row_data.append({
             "__orig_series": series,
             "Series": series,
-            "Y": bool(series == dep_var),
-            "X": bool(series in x_set),
+            "Y": bool(series == dep_var) if dep_var else False,
+            "X": True if use_first_open_defaults else bool(series in x_set),
             "Benchmark": bench_val,
-            "LongShort": bool(ls_assign.get(series, False)),
+            "LongShort": bool(ls_assign.get(series, True if use_first_open_defaults else False)),
             "ScaleVol": bool(vol_assign.get(series, True)),
             "Lag": int(lag_assign.get(series, 0) or 0),
             "MinBeta": float(min_b_assign.get(series, -999.0) or -999.0),

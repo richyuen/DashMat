@@ -205,16 +205,17 @@ def _sentence_count(text: str) -> int:
 def _rendered_page_tooltip_entries() -> dict[str, str]:
     import app  # noqa: F401
     import pages.analyticstool as analyticstool
+    import pages.dashmat as dashmat
     import pages.portopt as portopt
     import pages.regression as regression
 
     entries = []
-    for layout in (analyticstool.layout, portopt.layout, regression.layout):
+    for layout in (analyticstool.layout, dashmat.layout, portopt.layout, regression.layout):
         entries.extend(_collect_tooltip_entries(layout))
 
     out: dict[str, str] = {}
     for control_id, label in entries:
-        if isinstance(control_id, str) and control_id.startswith(("at-", "po-", "reg-")):
+        if isinstance(control_id, str) and control_id.startswith(("at-", "dm-", "po-", "reg-")):
             out[control_id] = str(label or "")
     return out
 
@@ -650,10 +651,15 @@ def test_rendered_tooltips_do_not_use_default_template_copy():
 def test_welcome_tooltips_are_action_specific():
     expected_substrings = {
         "at-welcome-add-db-btn": ("import", "returns", "cma", "indices", "aa tool"),
+        "dm-welcome-add-db-btn": ("import", "returns", "cma", "indices", "aa tool"),
         "at-welcome-add-portfolios-peer-btn": ("portfolio", "aa return", "peer", "mean return", "benchmark"),
+        "dm-welcome-add-portfolios-peer-btn": ("portfolio", "aa return", "peer", "mean return", "benchmark"),
         "at-welcome-add-portfolios-index-btn": ("portfolio", "aa return", "index", "benchmark"),
+        "dm-welcome-add-portfolios-index-btn": ("portfolio", "aa return", "index", "benchmark"),
         "at-welcome-add-portfolios-other-btn": ("alternative", "portfolio", "benchmark"),
+        "dm-welcome-add-portfolios-other-btn": ("alternative", "portfolio", "benchmark"),
         "at-welcome-add-portfolios-underlying-btn": ("underlying", "peerts", "core", "base", "returns"),
+        "dm-welcome-add-portfolios-underlying-btn": ("underlying", "peerts", "core", "base", "returns"),
         "at-welcome-add-raw-factor-btn": (
             "mrd factor data",
             "table",
@@ -663,9 +669,28 @@ def test_welcome_tooltips_are_action_specific():
             "convert",
             "divide by",
         ),
+        "dm-welcome-add-raw-factor-btn": (
+            "mrd factor data",
+            "table",
+            "disabled",
+            "fee",
+            "include benchmark",
+            "convert",
+            "divide by",
+        ),
         "at-welcome-add-raw-funds-btn": ("raw", "fund"),
+        "dm-welcome-add-raw-funds-btn": ("raw", "fund"),
         "at-welcome-add-raw-performance-btn": ("raw", "performance"),
+        "dm-welcome-add-raw-performance-btn": ("raw", "performance"),
         "at-welcome-add-series-btn": (
+            "import",
+            "csv",
+            "excel",
+            "sample",
+            "morningstar",
+            "performance reporting",
+        ),
+        "dm-welcome-add-series-btn": (
             "import",
             "csv",
             "excel",
@@ -723,6 +748,7 @@ def test_raw_import_tooltips_describe_mode_specific_availability():
 def test_aa_tool_indices_tooltips_are_intent_first():
     ids = (
         "at-welcome-add-db-btn",
+        "dm-welcome-add-db-btn",
         "at-menu-add-from-db",
         "po-welcome-add-db-btn",
         "po-menu-add-from-db",

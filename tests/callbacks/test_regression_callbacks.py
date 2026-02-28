@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO, StringIO
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,7 @@ from dash.exceptions import PreventUpdate
 
 from utils.regression import RegressionWindowResult
 from utils.returns import df_to_json
+from utils.route_intent import ACTION_OPEN_IMPORT_MODAL, FLOW_DB, build_route_intent
 from utils.shared_metrics import STATS_CONFIG
 
 
@@ -398,7 +400,16 @@ def test_reg_run_regression_handles_blank_linear_constraints(monkeypatch, regres
 def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(regression_page, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
-    assert regression_page.reg_open_db_add_modal(1) == (*expected, False)
+    assert regression_page.reg_open_db_add_modal(1) == (*expected, False, regression_page.no_update)
+
+
+def test_reg_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, regression_page):
+    route_intent = build_route_intent("regression", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
+    route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
+    monkeypatch.setattr(regression_page, "callback_context", SimpleNamespace(triggered_id="reg-page-load-trigger"))
+
+    with pytest.raises(PreventUpdate):
+        regression_page.reg_open_db_add_modal(None, None, 1, route_intent, None)
 
 
 def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, regression_page):
@@ -666,10 +677,10 @@ def _collect_components_by_class(node, class_name: str):
     return out
 
 
-def test_reg_toggle_welcome_no_data_shows_top_aligned_welcome(regression_page):
+def test_reg_toggle_welcome_no_data_hides_embedded_welcome(regression_page):
     welcome_style, main_style, options, value, base_ready = regression_page.reg_toggle_welcome(None, 1, None, None)
 
-    assert welcome_style == {"display": "block"}
+    assert welcome_style == {"display": "none"}
     assert main_style["display"] == "none"
     assert options == [{"value": "daily", "label": "Daily"}]
     assert value == "daily"
@@ -691,7 +702,7 @@ def test_regression_layout_includes_page_ready_stores_and_visible_overlay(regres
 def test_reg_toggle_welcome_keeps_base_ready_false_before_page_load(regression_page):
     welcome_style, main_style, options, value, base_ready = regression_page.reg_toggle_welcome(None, 0, None, None)
 
-    assert welcome_style == {"display": "block"}
+    assert welcome_style == {"display": "none"}
     assert main_style["display"] == "none"
     assert options == [{"value": "daily", "label": "Daily"}]
     assert value == "daily"

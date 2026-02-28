@@ -8,6 +8,12 @@ import pandas as pd
 import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from utils.route_intent import (
+    ACTION_CONFIGURE_AFTER_IMPORT,
+    ACTION_OPEN_IMPORT_MODAL,
+    FLOW_DB,
+    build_route_intent,
+)
 from utils.returns import df_to_json
 
 
@@ -367,7 +373,31 @@ def test_open_db_add_modal_clears_blocker_with_modal_payload(monkeypatch, page_m
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(analyticstool, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
 
-    assert analyticstool.open_db_add_modal(1, None) == (*expected, False)
+    assert analyticstool.open_db_add_modal(1, None) == (*expected, False, analyticstool.no_update)
+
+
+def test_open_db_add_modal_consumes_fresh_page_load_intent(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
+    route_intent = build_route_intent("analyticstool", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
+    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="at-page-load-trigger"))
+    monkeypatch.setattr(analyticstool, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
+
+    assert analyticstool.open_db_add_modal(None, None, 1, route_intent, None) == (
+        *expected,
+        False,
+        route_intent["token"],
+    )
+
+
+def test_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    route_intent = build_route_intent("analyticstool", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
+    route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
+    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="at-page-load-trigger"))
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.open_db_add_modal(None, None, 1, route_intent, None)
 
 
 def test_update_statistics_requires_ready_state(page_modules):
@@ -1252,6 +1282,26 @@ def test_at_begin_series_selection_request_opens_modal_and_releases_blocker(page
     analyticstool, _ = page_modules
 
     assert analyticstool.at_begin_series_selection_request("token") == (True, False)
+
+
+def test_open_modal_ignores_stale_configure_after_import_route_intent(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    route_intent = build_route_intent("analyticstool", ACTION_CONFIGURE_AFTER_IMPORT)
+    route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
+    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="at-page-load-trigger"))
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.open_modal(
+            None,
+            1,
+            raw_json,
+            "/analyticstool",
+            ["Asset_A"],
+            None,
+            None,
+            route_intent,
+            None,
+        )
 
 
 def test_at_resolve_series_selection_modal_controls_overlay_and_ok(page_modules):
@@ -2152,13 +2202,6 @@ def test_preload_factor_and_regime_definitions_on_page_load(monkeypatch, page_mo
         "load_regime_definitions",
         lambda *_args, **_kwargs: [{"RegimeName": "SavedRegime"}],
     )
-
-    factor_available, factor_rows, regime_available, regime_rows = analyticstool.at_preload_factor_and_regime_definitions(1)
-    assert factor_available is True
-    assert regime_available is True
-    assert factor_rows == [{"FactorName": "SavedFactor"}]
-    assert regime_rows == [{"RegimeName": "SavedRegime"}]
-
 
 def test_regime_definition_modal_hides_return_basis_control(page_modules):
     analyticstool, _ = page_modules

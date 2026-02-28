@@ -11,6 +11,7 @@ from dash import no_update
 from dash.exceptions import PreventUpdate
 
 from utils.returns import df_to_json
+from utils.route_intent import ACTION_OPEN_IMPORT_MODAL, FLOW_DB, build_route_intent
 
 
 def _sample_window_weights() -> list[dict]:
@@ -228,7 +229,17 @@ def test_po_open_db_add_modal_clears_blocker_with_modal_payload(monkeypatch, pag
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(portopt, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
 
-    assert portopt.po_open_db_add_modal(1, None) == (*expected, False)
+    assert portopt.po_open_db_add_modal(1, None) == (*expected, False, portopt.no_update)
+
+
+def test_po_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, page_modules):
+    _, portopt = page_modules
+    route_intent = build_route_intent("portopt", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
+    route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
+    monkeypatch.setattr(portopt, "callback_context", SimpleNamespace(triggered_id="po-page-load-trigger"))
+
+    with pytest.raises(PreventUpdate):
+        portopt.po_open_db_add_modal(None, None, 1, route_intent, None)
 
 
 def test_po_populate_returns_grid_adds_header_tooltips(page_modules):

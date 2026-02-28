@@ -1,11 +1,18 @@
 """DashMat - Market Returns Time Series Dashboard."""
 
-import dash
 import dash_mantine_components as dmc
 from dash import Dash, Input, Output, dcc, page_container
 from dash_iconify import DashIconify
 from dash.exceptions import PreventUpdate
 from cache_config import init_cache
+from utils.page_paths import (
+    ANALYTICS_PATH,
+    HOME_PATH,
+    LANDING_PATH,
+    PORTOPT_PATH,
+    REGRESSION_PATH,
+    landing_href,
+)
 
 # Initialize the app with multi-page support
 app = Dash(
@@ -21,18 +28,12 @@ USERINFO_DATA = {"role": "Admin"}
 dmc.pre_render_color_scheme()
 
 
-def _registry_path(page_key: str, fallback: str) -> str:
-    page_meta = dash.page_registry.get(page_key, {})
-    path = page_meta.get("path") if isinstance(page_meta, dict) else None
-    if isinstance(path, str) and path:
-        return path
-    return fallback
-
-
 def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> str | None:
     if (userinfo or {}).get("role") != "Test":
         return None
 
+    if pathname in (LANDING_PATH, f"{LANDING_PATH}/"):
+        return "/restricted?target=DashMat"
     if pathname in ("/analyticstool", "/analyticstool/"):
         return "/restricted?target=Analytics%20Tool"
     if pathname in ("/portopt", "/portopt/"):
@@ -41,11 +42,6 @@ def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> st
         return "/restricted?target=Regression"
     return None
 
-HOME_PATH = _registry_path("pages.home", "/")
-ANALYTICS_PATH = _registry_path("pages.analyticstool", "/analyticstool")
-PORTOPT_PATH = _registry_path("pages.portopt", "/portopt")
-REGRESSION_PATH = _registry_path("pages.regression", "/regression")
-
 # Layout wraps page content with MantineProvider
 # Shared stores are defined here so they are accessible across all pages
 _provider_kwargs = {"id": "mantine-provider", "children": [
@@ -53,6 +49,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-route-intent-store", data=None, storage_type="session"),
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     dmc.AppShell(
         header={"height": 45},
@@ -106,17 +103,17 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
                                                 dmc.MenuItem(
                                                     "Analytics Tool",
                                                     id="app-nav-analytics",
-                                                    href=ANALYTICS_PATH,
+                                                    href=landing_href("analyticstool"),
                                                 ),
                                                 dmc.MenuItem(
                                                     "Portfolio Optimization",
                                                     id="app-nav-portopt",
-                                                    href=PORTOPT_PATH,
+                                                    href=landing_href("portopt"),
                                                 ),
                                                 dmc.MenuItem(
                                                     "Regression",
                                                     id="app-nav-regression",
-                                                    href=REGRESSION_PATH,
+                                                    href=landing_href("regression"),
                                                 ),
                                             ],
                                         ),
@@ -144,23 +141,27 @@ app.layout = dmc.MantineProvider(**_provider_kwargs)
     Output("app-nav-portopt", "href"),
     Output("app-nav-regression", "href"),
     Input("userinfo", "data"),
+    Input("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_app_nav_links(userinfo):
-    home_path = _registry_path("pages.home", "/")
-    analytics_path = _registry_path("pages.analyticstool", "/analyticstool")
-    portopt_path = _registry_path("pages.portopt", "/portopt")
-    regression_path = _registry_path("pages.regression", "/regression")
-
+def update_app_nav_links(userinfo, raw_data):
     if (userinfo or {}).get("role") == "Test":
         return (
-            home_path,
+            HOME_PATH,
             "/restricted?target=Analytics%20Tool",
             "/restricted?target=Portfolio%20Optimization",
             "/restricted?target=Regression",
         )
 
-    return home_path, analytics_path, portopt_path, regression_path
+    if raw_data:
+        return HOME_PATH, ANALYTICS_PATH, PORTOPT_PATH, REGRESSION_PATH
+
+    return (
+        HOME_PATH,
+        landing_href("analyticstool"),
+        landing_href("portopt"),
+        landing_href("regression"),
+    )
 
 
 @app.callback(

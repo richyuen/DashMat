@@ -2,8 +2,9 @@
 
 import dash_mantine_components as dmc
 from dash import register_page, callback, Input, Output
+from utils.page_paths import HOME_PATH, landing_href
 
-register_page(__name__, path="/", name="Home", title="DashMat")
+register_page(__name__, path=HOME_PATH, name="Home", title="DashMat")
 
 layout = dmc.Container(
     size="lg",
@@ -52,7 +53,7 @@ layout = dmc.Container(
                                                 variant="filled",
                                             ),
                                             id="home-analytics-link",
-                                            href="/analyticstool",
+                                            href=landing_href("analyticstool"),
                                         ),
                                         dmc.Anchor(
                                             dmc.Button(
@@ -61,7 +62,16 @@ layout = dmc.Container(
                                                 variant="outline",
                                             ),
                                             id="home-portopt-link",
-                                            href="/portopt",
+                                            href=landing_href("portopt"),
+                                        ),
+                                        dmc.Anchor(
+                                            dmc.Button(
+                                                "Regression",
+                                                size="lg",
+                                                variant="subtle",
+                                            ),
+                                            id="home-regression-link",
+                                            href=landing_href("regression"),
                                         ),
                                     ],
                                 ),
@@ -77,6 +87,7 @@ layout = dmc.Container(
 @callback(
     Output("home-analytics-link", "href"),
     Output("home-portopt-link", "href"),
+    Output("home-regression-link", "href"),
     Input("userinfo", "data"),
     prevent_initial_call=True,
 )
@@ -85,5 +96,10 @@ def update_home_nav_links(userinfo):
         return (
             "/restricted?target=Analytics%20Tool",
             "/restricted?target=Portfolio%20Optimization",
+            "/restricted?target=Regression",
         )
-    return "/analyticstool", "/portopt"
+    return (
+        landing_href("analyticstool"),
+        landing_href("portopt"),
+        landing_href("regression"),
+    )

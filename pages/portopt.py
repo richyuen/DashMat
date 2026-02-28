@@ -138,8 +138,19 @@ from utils.raw_data_imports import (
     load_fund_series,
     load_performance_series,
 )
+from utils.page_paths import PORTOPT_PATH, landing_href
+from utils.route_intent import (
+    ACTION_CONFIGURE_AFTER_IMPORT,
+    ACTION_OPEN_IMPORT_MODAL,
+    FLOW_DB,
+    FLOW_PORTFOLIO,
+    FLOW_RAW,
+    FLOW_UNDERLYING,
+    route_intent_token_to_consume,
+    route_intent_value,
+)
 
-register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
+register_page(__name__, path=PORTOPT_PATH, name="Portfolio Optimization", title="Portfolio Optimization")
 
 PO_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     prefix="po",
@@ -167,6 +178,23 @@ _PO_MODEL_DEFAULT_NAME = {
     "ex_ante_mv": "ExAnteMV",
     "black_litterman": "BL",
 }
+
+
+def _safe_triggered_id():
+    try:
+        return callback_context.triggered_id
+    except Exception:
+        return None
+
+
+def _po_route_intent_token_to_consume(route_intent, action, consumed_token, *, flow=None):
+    return route_intent_token_to_consume(
+        route_intent,
+        "portopt",
+        action,
+        consumed_token,
+        flow=flow,
+    )
 
 
 def _po_default_name_for_model(model: str) -> str:
@@ -3433,7 +3461,7 @@ layout = dmc.Container(
         html.Div(
             id="po-welcome-screen",
             children=build_po_welcome_screen(),
-            style={"display": "block"},
+            style={"display": "none"},
         ),
 
         # Main container (hidden until data loaded)
@@ -3468,6 +3496,7 @@ layout = dmc.Container(
         dcc.Store(id="po-series-modal-commit-store", data=None),
         dcc.Store(id="po-series-selection-open-request-store", data=None),
         dcc.Store(id="po-series-selection-grid-status-store", data=None),
+        dcc.Store(id="po-route-intent-consumed-token-store", data=None, storage_type="session"),
         dcc.Store(id="po-portfolio-add-mode-store", data=None),
         dcc.Store(id="po-portfolio-add-rows-store", data=[]),
         dcc.Store(id="po-underlying-add-rows-store", data=[]),
@@ -3536,6 +3565,8 @@ layout = dmc.Container(
         dcc.Download(id="po-download-sample-monthly"),
         # Navigation
         dcc.Location(id="po-url-location", refresh=False),
+        dcc.Store(id="po-nav-effect-dummy", data=None),
+        dcc.Store(id="po-route-intent-clear-dummy", data=None),
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
 
@@ -3753,13 +3784,32 @@ def po_clear_server_cache(n_clicks):
     Output("po-db-add-series-select", "data", allow_duplicate=True),
     Output("po-db-add-series-select", "value", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-menu-add-from-db", "n_clicks"),
     Input("po-welcome-add-db-btn", "n_clicks"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("po-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_db_add_modal(menu_clicks, welcome_clicks):
+def po_open_db_add_modal(menu_clicks, welcome_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "po-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _po_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_DB,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        result = compute_open_db_add_modal(1, None, DB_ENGINE)
+        return (*result, False, intent_token)
+
     result = compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -3789,12 +3839,16 @@ def po_close_db_add_modal(n_clicks):
     Output("po-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("po-raw-db-add-ok-button", "disabled", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-menu-add-raw-factor", "n_clicks"),
     Input("po-menu-add-raw-funds", "n_clicks"),
     Input("po-menu-add-raw-performance", "n_clicks"),
     Input("po-welcome-add-raw-factor-btn", "n_clicks"),
     Input("po-welcome-add-raw-funds-btn", "n_clicks"),
     Input("po-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("po-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
 def po_open_raw_db_add_modal(
@@ -3804,10 +3858,48 @@ def po_open_raw_db_add_modal(
     welcome_factor_clicks,
     welcome_funds_clicks,
     welcome_performance_clicks,
+    page_load_intervals=None,
+    route_intent=None,
+    consumed_token=None,
 ):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "po-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _po_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_RAW,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        intent_trigger_map = {
+            "factor": "po-welcome-add-raw-factor-btn",
+            "funds": "po-welcome-add-raw-funds-btn",
+            "performance": "po-welcome-add-raw-performance-btn",
+        }
+        intent_trigger_id = intent_trigger_map.get(mode)
+        if not intent_trigger_id:
+            raise PreventUpdate
+        result = compute_open_raw_db_add_modal(
+            prefix="po",
+            triggered_id=intent_trigger_id,
+            factor_clicks=1 if mode == "factor" else None,
+            funds_clicks=1 if mode == "funds" else None,
+            performance_clicks=1 if mode == "performance" else None,
+            welcome_factor_clicks=1 if mode == "factor" else None,
+            welcome_funds_clicks=1 if mode == "funds" else None,
+            welcome_performance_clicks=1 if mode == "performance" else None,
+            mrd_engine=MRD_ENGINE,
+            perf_engine=PERF_ENGINE,
+        )
+        return (*result, False, intent_token)
+
     result = compute_open_raw_db_add_modal(
         prefix="po",
-        triggered_id=callback_context.triggered_id,
+        triggered_id=triggered_id,
         factor_clicks=factor_clicks,
         funds_clicks=funds_clicks,
         performance_clicks=performance_clicks,
@@ -3817,7 +3909,7 @@ def po_open_raw_db_add_modal(
         mrd_engine=MRD_ENGINE,
         perf_engine=PERF_ENGINE,
     )
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -4195,12 +4287,16 @@ def po_validate_db_add_selection(selected_benches, raw_data, opened):
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "hide", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-menu-add-portfolios-peer", "n_clicks"),
     Input("po-menu-add-portfolios-index", "n_clicks"),
     Input("po-menu-add-portfolios-other", "n_clicks"),
     Input("po-welcome-add-portfolios-peer-btn", "n_clicks"),
     Input("po-welcome-add-portfolios-index-btn", "n_clicks"),
     Input("po-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("po-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
 def po_open_portfolio_add_modal(
@@ -4210,10 +4306,47 @@ def po_open_portfolio_add_modal(
     welcome_peer_clicks,
     welcome_index_clicks,
     welcome_other_clicks,
+    page_load_intervals=None,
+    route_intent=None,
+    consumed_token=None,
 ):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "po-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _po_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_PORTFOLIO,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        intent_trigger_map = {
+            "peer": "po-welcome-add-portfolios-peer-btn",
+            "index": "po-welcome-add-portfolios-index-btn",
+            "other": "po-welcome-add-portfolios-other-btn",
+        }
+        intent_trigger_id = intent_trigger_map.get(mode)
+        if not intent_trigger_id:
+            raise PreventUpdate
+        result = compute_open_portfolio_add_modal(
+            prefix="po",
+            triggered_id=intent_trigger_id,
+            peer_clicks=1 if mode == "peer" else None,
+            index_clicks=1 if mode == "index" else None,
+            other_clicks=1 if mode == "other" else None,
+            welcome_peer_clicks=1 if mode == "peer" else None,
+            welcome_index_clicks=1 if mode == "index" else None,
+            welcome_other_clicks=1 if mode == "other" else None,
+            db_engine=DB_ENGINE,
+        )
+        return (*result, False, intent_token)
+
     result = compute_open_portfolio_add_modal(
         prefix="po",
-        triggered_id=callback_context.triggered_id,
+        triggered_id=triggered_id,
         peer_clicks=peer_clicks,
         index_clicks=index_clicks,
         other_clicks=other_clicks,
@@ -4222,7 +4355,7 @@ def po_open_portfolio_add_modal(
         welcome_other_clicks=welcome_other_clicks,
         db_engine=DB_ENGINE,
     )
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -4237,13 +4370,32 @@ def po_open_portfolio_add_modal(
     Output("po-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("po-underlying-add-error-alert", "hide", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-menu-add-portfolios-underlying", "n_clicks"),
     Input("po-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("dashmat-route-intent-store", "data"),
+    State("po-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_underlying_add_modal(menu_clicks, welcome_clicks):
+def po_open_underlying_add_modal(menu_clicks, welcome_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+    triggered_id = _safe_triggered_id()
+    if triggered_id == "po-page-load-trigger":
+        if page_load_intervals is None:
+            raise PreventUpdate
+        intent_token = _po_route_intent_token_to_consume(
+            route_intent,
+            ACTION_OPEN_IMPORT_MODAL,
+            consumed_token,
+            flow=FLOW_UNDERLYING,
+        )
+        if not intent_token:
+            raise PreventUpdate
+        result = compute_open_underlying_add_modal(1, None)
+        return (*result, False, intent_token)
+
     result = compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
-    return (*result, False)
+    return (*result, False, no_update)
 
 
 @callback(
@@ -6018,13 +6170,73 @@ clientside_callback(
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
-        return [{display: "block"}, {display: "none"}];
+        return [{display: "none"}, {display: "none"}];
     }
     """,
     Output("po-welcome-screen", "style"),
     Output("po-main-container", "style"),
     Input("po-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
+)
+
+
+clientside_callback(
+    f"""
+    function(rawData, nIntervals, pathname, routeIntent, consumedToken) {{
+        if (!nIntervals || nIntervals < 1) {{
+            return window.dash_clientside.no_update;
+        }}
+        const currentPath = (pathname || '').split('?')[0].replace(/\/+$/, '') || '/';
+        if (currentPath !== '{PORTOPT_PATH}') {{
+            return window.dash_clientside.no_update;
+        }}
+        if (rawData) {{
+            return window.dash_clientside.no_update;
+        }}
+        if (
+            routeIntent &&
+            routeIntent.target_module === 'portopt' &&
+            routeIntent.action === 'open_import_modal' &&
+            String(routeIntent.token || '') &&
+            String(routeIntent.token || '') !== String(consumedToken || '')
+        ) {{
+            return window.dash_clientside.no_update;
+        }}
+        window.location.assign('{landing_href("portopt")}');
+        return '{landing_href("portopt")}';
+    }}
+    """,
+    Output("po-nav-effect-dummy", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-url-location", "pathname"),
+    State("dashmat-route-intent-store", "data"),
+    State("po-route-intent-consumed-token-store", "data"),
+    prevent_initial_call=False,
+)
+
+
+clientside_callback(
+    """
+    function(consumedToken, routeIntent) {
+        if (!consumedToken || !routeIntent || String(routeIntent.token || '') !== String(consumedToken || '')) {
+            return window.dash_clientside.no_update;
+        }
+        try {
+            sessionStorage.removeItem('dashmat-route-intent-store');
+        } catch (e) {
+            // no-op
+        }
+        if (window.dash_clientside && window.dash_clientside.set_props) {
+            window.dash_clientside.set_props('dashmat-route-intent-store', {data: null});
+        }
+        return consumedToken;
+    }
+    """,
+    Output("po-route-intent-clear-dummy", "data"),
+    Input("po-route-intent-consumed-token-store", "data"),
+    State("dashmat-route-intent-store", "data"),
+    prevent_initial_call=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -7334,22 +7546,63 @@ clientside_callback(
     Output("po-alert-message", "children", allow_duplicate=True),
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
+    Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-url-location", "pathname"),
+    State("po-series-select", "data"),
     State("po-series-selection-open-request-store", "data"),
     State("po-series-selection-grid-status-store", "data"),
+    State("dashmat-route-intent-store", "data"),
+    State("po-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_modal(n_clicks, current_request_token, current_status):
-    if not n_clicks:
-        raise PreventUpdate
+def po_open_modal(
+    n_clicks,
+    page_load_intervals,
+    raw_data,
+    pathname,
+    selected_series,
+    current_request_token,
+    current_status,
+    route_intent,
+    consumed_token,
+):
     if current_request_token and not _po_series_status_is_final(current_status, current_request_token):
         raise PreventUpdate
-    return (
-        _po_new_series_selection_request_token(),
-        "",
-        "blue",
-        True,
-    )
+
+    triggered_id = _safe_triggered_id()
+    consumed_route_intent = no_update
+    should_open = False
+
+    if triggered_id == "po-open-modal-button":
+        should_open = bool(n_clicks)
+    elif triggered_id == "po-page-load-trigger":
+        if page_load_intervals is None or not raw_data:
+            raise PreventUpdate
+        consumed_route_intent = _po_route_intent_token_to_consume(
+            route_intent,
+            ACTION_CONFIGURE_AFTER_IMPORT,
+            consumed_token,
+        )
+        if consumed_route_intent:
+            should_open = True
+        else:
+            current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+            if current_path != PORTOPT_PATH:
+                raise PreventUpdate
+            try:
+                columns = list(json_to_df(raw_data).columns)
+            except Exception:
+                columns = []
+            selected_set = set(selected_series or [])
+            should_open = bool(columns) and not bool(selected_set.intersection(columns))
+
+    if not should_open:
+        raise PreventUpdate
+
+    return _po_new_series_selection_request_token(), "", "blue", True, consumed_route_intent
 
 
 # ---------------------------------------------------------------------------
@@ -7439,7 +7692,8 @@ def po_update_series_selectors(
                 series_order.append(s)
         series_order = [s for s in series_order if s in all_series]
 
-    selected_set = set(selected_series or [])
+    use_first_open_defaults = not selected_series
+    selected_set = set(selected_series or all_series)
     missing_cmabench = [s for s in all_series if not str(current_cmabench_assignments.get(s, "")).strip()]
     core_cmabench_defaults = (
         get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)
@@ -7454,7 +7708,7 @@ def po_update_series_selectors(
         bench_val = current_assignments.get(series, "None")
         if bench_val not in all_series and bench_val != "None":
             bench_val = "None"
-        is_ls = long_short_assignments.get(series, False)
+        is_ls = long_short_assignments.get(series, True if use_first_open_defaults else False)
         is_scale_vol = vol_scaling_assignments.get(series, True)
         cmabench_val = current_cmabench_assignments.get(series, core_cmabench_defaults.get(series, ""))
         min_wt_val = min_wt.get(series, 0)

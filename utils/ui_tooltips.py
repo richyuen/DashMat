@@ -26,6 +26,7 @@ _EXPLICIT_TOOLTIPS: dict[str, str] = {}
 
 _WORKFLOW_BY_PREFIX: dict[str, str] = {
     "at": "Analytics Tool",
+    "dm": "DashMat",
     "po": "Portfolio Optimization",
     "reg": "Regression",
 }
@@ -61,8 +62,8 @@ db-add-ok-button|at,po,reg
 db-add-series-select|at,po,reg
 delete-portfolio-button|po
 delete-result-btn|reg
-download-sample-daily-btn|at,po,reg
-download-sample-monthly-btn|at,po,reg
+download-sample-daily-btn|at,dm,po,reg
+download-sample-monthly-btn|at,dm,po,reg
 drawdown-chart-switch|at,po,reg
 end-date-picker|at,po,reg
 estimate-matrix-btn|po
@@ -118,9 +119,11 @@ missing-data-select|po,reg
 modal-cancel-button|at,po,reg
 modal-ok-button|at,po,reg
 model-select|reg
+module-select|dm
 monthly-series-select|at
 monthly-view-checkbox|at
 objective-select|po
+open-workspace-button|dm
 open-modal-button|po,reg
 open-series-modal-button|at
 opt-model-select|po
@@ -189,26 +192,26 @@ rolling-window-select|at,po,reg
 run-button|reg
 scatter-mode-select|reg
 scatter-x-select|reg
-sheet-select-cancel-button|at,po,reg
-sheet-select-dropdown|at,po,reg
-sheet-select-import-all-button|at,po,reg
-sheet-select-ok-button|at,po,reg
+sheet-select-cancel-button|at,dm,po,reg
+sheet-select-dropdown|at,dm,po,reg
+sheet-select-import-all-button|at,dm,po,reg
+sheet-select-ok-button|at,dm,po,reg
 start-date-picker|at,po,reg
 turnover-chart-switch|po
-upload-data|at,po,reg
+upload-data|at,dm,po,reg
 vol-scaler-input|at,po,reg
 weight-chart-switch|po
 weight-portfolio-select|po
 weights-chart-switch|reg
-welcome-add-db-btn|at,po,reg
-welcome-add-portfolios-index-btn|at,po,reg
-welcome-add-portfolios-other-btn|at,po,reg
-welcome-add-portfolios-peer-btn|at,po,reg
-welcome-add-portfolios-underlying-btn|at,po,reg
-welcome-add-raw-factor-btn|at,po,reg
-welcome-add-raw-funds-btn|at,po,reg
-welcome-add-raw-performance-btn|at,po,reg
-welcome-add-series-btn|at,po,reg
+welcome-add-db-btn|at,dm,po,reg
+welcome-add-portfolios-index-btn|at,dm,po,reg
+welcome-add-portfolios-other-btn|at,dm,po,reg
+welcome-add-portfolios-peer-btn|at,dm,po,reg
+welcome-add-portfolios-underlying-btn|at,dm,po,reg
+welcome-add-raw-factor-btn|at,dm,po,reg
+welcome-add-raw-funds-btn|at,dm,po,reg
+welcome-add-raw-performance-btn|at,dm,po,reg
+welcome-add-series-btn|at,dm,po,reg
 welcome-view-analytics|po,reg
 welcome-view-portfolio|at,reg
 welcome-view-regression|at,po

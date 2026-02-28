@@ -7,17 +7,30 @@ from dash.exceptions import PreventUpdate
 def test_update_app_nav_links_for_test_role():
     import app as app_module
 
-    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Test"})
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Test"}, None)
     assert home_href == "/"
     assert analytics_href == "/restricted?target=Analytics%20Tool"
     assert portopt_href == "/restricted?target=Portfolio%20Optimization"
     assert regression_href == "/restricted?target=Regression"
 
 
-def test_update_app_nav_links_for_non_test_role():
+def test_update_app_nav_links_for_non_test_role_without_data():
     import app as app_module
 
-    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Admin"})
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Admin"}, None)
+    assert home_href == "/"
+    assert analytics_href == "/dashmat?module=analyticstool"
+    assert portopt_href == "/dashmat?module=portopt"
+    assert regression_href == "/dashmat?module=regression"
+
+
+def test_update_app_nav_links_for_non_test_role_with_data():
+    import app as app_module
+
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links(
+        {"role": "Admin"},
+        {"mock": True},
+    )
     assert home_href == "/"
     assert analytics_href == "/analyticstool"
     assert portopt_href == "/portopt"
@@ -35,6 +48,9 @@ def test_restricted_href_for_path_resolves_for_test_role():
     )
     assert app_module._restricted_href_for_path("/regression", {"role": "Test"}) == (
         "/restricted?target=Regression"
+    )
+    assert app_module._restricted_href_for_path("/dashmat", {"role": "Test"}) == (
+        "/restricted?target=DashMat"
     )
 
 
@@ -54,6 +70,9 @@ def test_guard_protected_pages_redirects_or_prevent_update():
     )
     assert app_module.guard_protected_pages("/regression", {"role": "Test"}) == (
         "/restricted?target=Regression"
+    )
+    assert app_module.guard_protected_pages("/dashmat", {"role": "Test"}) == (
+        "/restricted?target=DashMat"
     )
     with pytest.raises(PreventUpdate):
         app_module.guard_protected_pages("/", {"role": "Test"})
