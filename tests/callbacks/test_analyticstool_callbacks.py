@@ -684,9 +684,9 @@ def test_on_modal_ok_commits_pending_import_and_clears_staging(page_modules):
     assert result[3] == ["New_B", "Renamed_A"]
     assert result[7] == ["New_B", "Renamed_A"]
     assert result[9] == {"Renamed_A": True, "New_B": False}
-    assert result[13] == "Loaded pending import"
-    assert result[14] == "green"
-    assert result[15] is False
+    assert result[13] == ""
+    assert result[14] == "blue"
+    assert result[15] is True
     assert result[16] == "monthly"
     assert result[18] == "monthly"
     assert result[19] is False
@@ -814,16 +814,71 @@ def test_at_begin_series_selection_request_opens_modal_and_releases_blocker(page
 def test_at_resolve_series_selection_modal_controls_overlay_and_ok(page_modules):
     analyticstool, _ = page_modules
 
-    assert analyticstool.at_resolve_series_selection_modal("token", None) == (True, True, "", "blue", True)
+    assert analyticstool.at_resolve_series_selection_modal("token", None, None) == (True, True, "", "blue", True)
     assert analyticstool.at_resolve_series_selection_modal(
-        "token", {"token": "token", "status": "rendered", "message": ""}
+        "token", {"token": "token", "status": "rendered", "message": ""}, None
     ) == (True, True, "", "blue", True)
     assert analyticstool.at_resolve_series_selection_modal(
-        "token", {"token": "token", "status": "ready", "message": ""}
+        "token", {"token": "token", "status": "ready", "message": ""}, None
     ) == (False, False, "", "blue", True)
     assert analyticstool.at_resolve_series_selection_modal(
-        "token", {"token": "token", "status": "timeout", "message": "slow"}
+        "token", {"token": "token", "status": "timeout", "message": "slow"}, None
     ) == (False, True, "slow", "red", False)
+
+
+def test_at_resolve_series_selection_modal_shows_staged_import_message(page_modules):
+    analyticstool, _ = page_modules
+    pending_payload = {
+        "token": "token",
+        "commit_alert": {
+            "mode": "show",
+            "message": "Loaded 3 series",
+            "color": "green",
+        },
+    }
+
+    assert analyticstool.at_resolve_series_selection_modal("token", None, pending_payload) == (
+        True,
+        True,
+        "Loaded 3 series",
+        "green",
+        False,
+    )
+    assert analyticstool.at_resolve_series_selection_modal(
+        "token",
+        {"token": "token", "status": "ready", "message": ""},
+        pending_payload,
+    ) == (
+        False,
+        False,
+        "Loaded 3 series",
+        "green",
+        False,
+    )
+
+
+def test_at_resolve_series_selection_modal_error_overrides_staged_message(page_modules):
+    analyticstool, _ = page_modules
+    pending_payload = {
+        "token": "token",
+        "commit_alert": {
+            "mode": "show",
+            "message": "Loaded 3 series",
+            "color": "green",
+        },
+    }
+
+    assert analyticstool.at_resolve_series_selection_modal(
+        "token",
+        {"token": "token", "status": "timeout", "message": "slow"},
+        pending_payload,
+    ) == (
+        False,
+        True,
+        "slow",
+        "red",
+        False,
+    )
 
 
 def test_add_series_from_database_stages_pending_selection_state(monkeypatch, page_modules):

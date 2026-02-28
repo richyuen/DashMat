@@ -4801,9 +4801,6 @@ def on_modal_ok(
         default_periodicity = str(
             pending_payload.get("default_periodicity") or "daily_trading"
         )
-        alert_msg_output, alert_color_output, alert_hide_output = _at_commit_alert_outputs(
-            pending_payload.get("commit_alert")
-        )
         original_periodicity_output = original_periodicity
         periodicity_options_output = get_available_periodicities(original_periodicity)
         periodicity_value_output = default_periodicity
@@ -7695,26 +7692,31 @@ clientside_callback(
     Output("at-alert-message", "hide", allow_duplicate=True),
     Input("at-series-selection-open-request-store", "data"),
     Input("at-series-selection-grid-status-store", "data"),
+    State("at-pending-series-import-store", "data"),
     prevent_initial_call=True,
 )
-def at_resolve_series_selection_modal(request_token, status_data):
+def at_resolve_series_selection_modal(request_token, status_data, pending_payload):
     if not request_token:
         raise PreventUpdate
 
+    staged_alert = ("", "blue", True)
+    if _at_pending_payload_matches_request(pending_payload, request_token):
+        staged_alert = _at_commit_alert_outputs(pending_payload.get("commit_alert"))
+
     if not isinstance(status_data, dict) or status_data.get("token") != request_token:
-        return True, True, "", "blue", True
+        return True, True, *staged_alert
 
     status = str(status_data.get("status") or "")
     message = str(status_data.get("message") or "").strip()
     if status == "ready":
-        return False, False, "", "blue", True
+        return False, False, *staged_alert
     if status == "empty":
-        return False, True, "", "blue", True
+        return False, True, *staged_alert
     if status == "rendered":
-        return True, True, "", "blue", True
+        return True, True, *staged_alert
     if status in {"error", "timeout"}:
         return False, True, message or "Unable to prepare the series grid.", "red", False
-    return True, True, "", "blue", True
+    return True, True, *staged_alert
 
 
 @callback(
