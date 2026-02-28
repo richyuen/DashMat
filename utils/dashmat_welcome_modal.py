@@ -1165,6 +1165,41 @@ def compute_close_raw_db_add_modal(n_clicks):
     return False, [], [], "Select a series to preview option-adjusted results (first 6 rows)."
 
 
+def js_new_session_redirect(target_href: str) -> str:
+    return f"""
+    function(n_clicks) {{
+        if (!n_clicks) {{
+            return window.dash_clientside.no_update;
+        }}
+
+        var keys = [];
+        for (var i = 0; i < sessionStorage.length; i += 1) {{
+            keys.push(sessionStorage.key(i));
+        }}
+
+        var prefixes = ['dashmat-', 'at-', 'po-', 'reg-'];
+        keys.forEach(function(key) {{
+            if (!key) {{
+                return;
+            }}
+            var shouldRemove = prefixes.some(function(prefix) {{
+                return key.indexOf(prefix) === 0;
+            }});
+            // Legacy-only key from the pre-saved-series-cache store name.
+            if (key === 'bctbill13-cache-store') {{
+                shouldRemove = true;
+            }}
+            if (shouldRemove) {{
+                sessionStorage.removeItem(key);
+            }}
+        }});
+
+        window.location.replace('{target_href}');
+        return window.dash_clientside.no_update;
+    }}
+    """
+
+
 def js_trigger_upload_with_cancel(prefix: str) -> str:
     return f"""
     function(n_clicks) {{

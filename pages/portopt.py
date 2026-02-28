@@ -104,6 +104,7 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_benchmark_toggle,
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
+    js_new_session_redirect,
     js_portfolio_ok_disabled,
     js_probe_series_grid_ready,
     js_release_ui_blocker_on_modal_state,
@@ -3624,75 +3625,9 @@ clientside_callback(
 )
 
 
-# Clear session storage and refresh page
+# Clear DashMat session state and go to landing
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            const keysToRemove = [
-                'dashmat-raw-data-store',
-                'dashmat-original-periodicity-store',
-                'dashmat-pending-new-series-store',
-                'dashmat-saved-series-cache-store',
-                'bctbill13-cache-store',
-                'at-series-select',
-                'at-benchmark-assignments-store',
-                'at-long-short-store',
-                'at-periodicity-value-store',
-                'at-returns-type-value-store',
-                'at-series-select-value-store',
-                'at-series-order-store',
-                'at-active-tab-store',
-                'at-rolling-window-store',
-                'at-rolling-return-type-store',
-                'at-rolling-chart-switch-store',
-                'at-drawdown-chart-switch-store',
-                'at-growth-chart-switch-store',
-                'at-monthly-view-store',
-                'at-monthly-series-store',
-                'at-date-range-store',
-                'at-vol-scaler-value-store',
-                'at-vol-scaling-assignments-store',
-                'po-series-select',
-                'po-series-order-store',
-                'po-benchmark-assignments-store',
-                'po-cmabench-assignments-store',
-                'po-long-short-store',
-                'po-vol-scaling-assignments-store',
-                'po-min-wt-store',
-                'po-max-wt-store',
-                'po-force-max-store',
-                'po-periodicity-value-store',
-                'po-vol-scaler-value-store',
-                'po-date-range-store',
-                'po-series-select-value-store',
-                'po-opt-window-store',
-                'po-window-size-store',
-                'po-opt-step-store',
-                'po-opt-step-unit-store',
-                'po-opt-model-store',
-                'po-portfolio-name-store',
-                'po-exp-wt-cov-store',
-                'po-halflife-store',
-                'po-cov-shrinkage-store',
-                'po-cov-shrinkage-target-store',
-                'po-missing-data-store',
-                'po-fill-in-sample-store',
-                'po-results-store',
-                'po-active-tab-store',
-                'po-weight-chart-switch-store',
-                'po-attribution-chart-switch-store',
-                'po-risk-chart-switch-store',
-                'po-turnover-chart-switch-store'
-            ];
-            keysToRemove.forEach(key => {
-                sessionStorage.removeItem(key);
-            });
-            window.location.reload();
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    js_new_session_redirect(landing_href("portopt")),
     Output("po-url-location", "pathname", allow_duplicate=True),
     Input("po-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,

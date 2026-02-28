@@ -73,6 +73,7 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_benchmark_toggle,
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
+    js_new_session_redirect,
     js_portfolio_ok_disabled,
     js_probe_series_grid_ready,
     js_release_ui_blocker_on_opened,
@@ -2291,14 +2292,7 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        sessionStorage.clear();
-        window.location.reload();
-        return window.dash_clientside.no_update;
-    }
-    """,
+    js_new_session_redirect(landing_href("regression")),
     Output("reg-load-session-dummy", "data"),
     Input("reg-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
@@ -4663,20 +4657,6 @@ def reg_save_date_range(start, end, stored):
 # ---------------------------------------------------------------------------
 # Clear series
 # ---------------------------------------------------------------------------
-
-@callback(
-    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
-    Output("reg-series-select", "data", allow_duplicate=True),
-    Output("reg-dependent-var-store", "data", allow_duplicate=True),
-    Output("reg-series-order-store", "data", allow_duplicate=True),
-    Input("reg-menu-clear-local-storage", "n_clicks"),
-    prevent_initial_call=True,
-)
-def reg_clear_series(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    return None, [], None, []
-
 
 # ---------------------------------------------------------------------------
 # Linear Constraints
