@@ -3983,6 +3983,7 @@ layout = dmc.Container(
         dcc.Store(id="at-series-modal-commit-store", data=None),
         dcc.Store(id="at-series-selection-open-request-store", data=None),
         dcc.Store(id="at-series-selection-grid-status-store", data=None),
+        dcc.Store(id="at-pending-series-import-store", data=None, storage_type="memory"),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
         dcc.Store(id="at-underlying-add-rows-store", data=[]),
@@ -4500,6 +4501,50 @@ def _at_build_imported_committed_state(
     )
 
 
+def _at_build_imported_pending_payload(
+    merged_df,
+    combined_periodicity,
+    default_periodicity,
+    updated_selection,
+    updated_order,
+    updated_bench,
+    updated_ls,
+    updated_vol_scaling,
+    request_token,
+    commit_alert,
+):
+    return {
+        "token": request_token,
+        "raw_data": df_to_json(merged_df),
+        "original_periodicity": combined_periodicity,
+        "default_periodicity": default_periodicity,
+        "selected_series": list(updated_selection or []),
+        "series_order": list(updated_order or []),
+        "benchmark_assignments": dict(updated_bench or {}),
+        "long_short_assignments": dict(updated_ls or {}),
+        "vol_scaling_assignments": dict(updated_vol_scaling or {}),
+        "commit_alert": dict(commit_alert or {"mode": "hide"}),
+    }
+
+
+def _at_pending_payload_matches_request(pending_payload, request_token):
+    return (
+        isinstance(pending_payload, dict)
+        and bool(request_token)
+        and pending_payload.get("token") == request_token
+    )
+
+
+def _at_commit_alert_outputs(commit_alert):
+    if isinstance(commit_alert, dict) and str(commit_alert.get("mode") or "").lower() == "show":
+        return (
+            str(commit_alert.get("message") or ""),
+            str(commit_alert.get("color") or "green"),
+            False,
+        )
+    return no_update, no_update, True
+
+
 @callback(
     Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
@@ -4552,17 +4597,43 @@ def at_begin_series_selection_request(request_token):
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
+    Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "data", allow_duplicate=True),
+    Output("at-periodicity-select", "value", allow_duplicate=True),
+    Output("at-periodicity-select", "disabled", allow_duplicate=True),
+    Output("at-periodicity-value-store", "data", allow_duplicate=True),
+    Output("at-first-load-store", "data", allow_duplicate=True),
+    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-series-modal-commit-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-series-selection-open-request-store", "data"),
+    State("at-pending-series-import-store", "data"),
     State("at-series-selection-grid", "rowData", allow_optional=True),
     State("at-series-selection-grid", "selectedRows", allow_optional=True),
     State("at-series-selection-grid", "virtualRowData", allow_optional=True),
     prevent_initial_call=True,
 )
-def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
+def on_modal_ok(
+    commit_token,
+    committed_raw_data,
+    committed_original_periodicity,
+    request_token,
+    pending_payload,
+    row_data,
+    selected_rows,
+    virtual_rows,
+):
     if not commit_token:
         raise PreventUpdate
-    if not raw_data:
+    has_pending_import = _at_pending_payload_matches_request(pending_payload, request_token)
+    source_raw_data = (
+        pending_payload.get("raw_data")
+        if has_pending_import
+        else committed_raw_data
+    )
+    if not source_raw_data:
         return (
             no_update,
             no_update,
@@ -4580,6 +4651,14 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
             "Upload data before committing series changes.",
             "red",
             False,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
         )
 
     rows = _at_modal_series_rows(row_data)
@@ -4601,9 +4680,17 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
             "Series grid is not ready yet.",
             "red",
             False,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
         )
 
-    df = json_to_df(raw_data)
+    df = json_to_df(source_raw_data)
     valid_orig = [str(col) for col in df.columns]
     valid_orig_set = set(valid_orig)
     ordered_rows = _at_ordered_modal_rows(row_data, virtual_rows)
@@ -4638,6 +4725,14 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
             validation_error,
             "red",
             False,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
         )
 
     rename_map = {
@@ -4685,7 +4780,38 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
         final_vol_scaling[final_name] = bool(row.get("ScaleVol", True))
 
     updated_raw_data = df_to_json(updated_df)
-    raw_data_output = updated_raw_data if updated_raw_data != raw_data else no_update
+    raw_data_output = (
+        updated_raw_data if updated_raw_data != committed_raw_data else no_update
+    )
+    alert_msg_output = ""
+    alert_color_output = "blue"
+    alert_hide_output = True
+    original_periodicity_output = no_update
+    periodicity_options_output = no_update
+    periodicity_value_output = no_update
+    periodicity_disabled_output = no_update
+    periodicity_store_output = no_update
+    first_load_output = no_update
+    deleted_series_output = no_update
+    pending_payload_output = no_update
+    if has_pending_import:
+        original_periodicity = str(
+            pending_payload.get("original_periodicity") or committed_original_periodicity or "daily"
+        )
+        default_periodicity = str(
+            pending_payload.get("default_periodicity") or "daily_trading"
+        )
+        alert_msg_output, alert_color_output, alert_hide_output = _at_commit_alert_outputs(
+            pending_payload.get("commit_alert")
+        )
+        original_periodicity_output = original_periodicity
+        periodicity_options_output = get_available_periodicities(original_periodicity)
+        periodicity_value_output = default_periodicity
+        periodicity_disabled_output = False
+        periodicity_store_output = default_periodicity
+        first_load_output = True
+        deleted_series_output = []
+        pending_payload_output = None
     return (
         final_selected,
         final_bench,
@@ -4700,9 +4826,17 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
         False,
         False,
         True,
-        "",
-        "blue",
-        True,
+        alert_msg_output,
+        alert_color_output,
+        alert_hide_output,
+        original_periodicity_output,
+        periodicity_options_output,
+        periodicity_value_output,
+        periodicity_disabled_output,
+        periodicity_store_output,
+        first_load_output,
+        deleted_series_output,
+        pending_payload_output,
     )
 
 
@@ -4716,13 +4850,14 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-modal-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def on_modal_cancel(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return False, None, None, False, False, True, "", "blue", True
+    return False, None, None, False, False, True, no_update, no_update, no_update, None
 
 
 def _at_modal_series_rows(rows):
@@ -6254,6 +6389,7 @@ def at_manage_regime_definitions(
     Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-db-add-modal", "opened", allow_duplicate=True),
     Output("at-db-add-series-select", "value", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-db-add-ok-button", "n_clicks"),
     State("at-db-add-series-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -6292,6 +6428,7 @@ def add_series_from_database(
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
             True, n_no,
+            None,
         )
 
     try:
@@ -6308,6 +6445,7 @@ def add_series_from_database(
                     n_no, n_no, n_no, n_no, n_no,
                     n_no, n_no, n_no,
                     True, n_no,
+                    None,
                 )
 
         new_df, db_meta = load_cma_returns_for_benches_with_meta(
@@ -6357,7 +6495,6 @@ def add_series_from_database(
             combined_periodicity = new_periodicity
             merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
 
-        periodicity_options = get_available_periodicities(combined_periodicity)
         if combined_periodicity == "daily":
             # Keep data in daily-capable form, but default selection to monthly
             # when any imported series starts in monthly history.
@@ -6387,30 +6524,30 @@ def add_series_from_database(
         if daily_transition_notes:
             alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(daily_transition_notes)}"
         alert_color = "orange" if daily_transition_notes else "green"
-        alert_hide = False
-        new_first_load = True
         series_request_token = _at_new_series_selection_request_token()
-
-        return (
-            df_to_json(merged_df),
+        pending_payload = _at_build_imported_pending_payload(
+            merged_df,
             combined_periodicity,
-            periodicity_options,
             default_periodicity,
-            False,
             updated_selection,
-            alert_msg,
-            alert_color,
-            alert_hide,
-            default_periodicity,
-            series_request_token,
+            updated_order,
             updated_bench,
             updated_ls,
-            updated_order,
-            new_first_load,
-            [],
             updated_vol_scaling,
+            series_request_token,
+            {"mode": "show", "message": alert_msg, "color": alert_color},
+        )
+
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            n_no, n_no, n_no,
+            n_no,
+            series_request_token,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             False,
             [],
+            pending_payload,
         )
     except Exception as e:
         return (
@@ -6422,6 +6559,7 @@ def add_series_from_database(
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
             True, n_no,
+            None,
         )
 
 
@@ -6449,6 +6587,7 @@ def add_series_from_database(
     Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
     Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
     Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-raw-db-add-ok-button", "n_clicks"),
     State("at-raw-db-add-mode-store", "data"),
     State("at-raw-db-add-rows-store", "data"),
@@ -6493,6 +6632,7 @@ def at_add_raw_series_from_database(
             "Stage at least one row before importing.",
             False,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            None,
         )
 
     try:
@@ -6521,6 +6661,7 @@ def at_add_raw_series_from_database(
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
                     n_no,
+                    None,
                 )
 
         new_periodicity = load_result.periodicity
@@ -6542,7 +6683,6 @@ def at_add_raw_series_from_database(
             combined_periodicity = new_periodicity
             merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
 
-        periodicity_options = get_available_periodicities(combined_periodicity)
         default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
 
         (
@@ -6562,31 +6702,36 @@ def at_add_raw_series_from_database(
             new_bench=load_result.benchmark_assignments or {},
         )
         series_request_token = _at_new_series_selection_request_token()
-
-        return (
-            df_to_json(merged_df),
+        pending_payload = _at_build_imported_pending_payload(
+            merged_df,
             combined_periodicity,
-            periodicity_options,
             default_periodicity,
-            False,
             updated_selection,
-            f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from raw database import",
-            "green",
-            False,
-            default_periodicity,
-            series_request_token,
+            updated_order,
             updated_bench,
             updated_ls,
-            updated_order,
-            True if first_load is not None else True,
-            [],
             updated_vol_scaling,
+            series_request_token,
+            {
+                "mode": "show",
+                "message": f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from raw database import",
+                "color": "green",
+            },
+        )
+
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no, n_no,
+            n_no,
+            series_request_token,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             False,
             [],
             [],
             no_update,
             True,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            pending_payload,
         )
     except Exception as e:
         return (
@@ -6600,6 +6745,7 @@ def at_add_raw_series_from_database(
             f"Error loading raw database series: {str(e)}",
             False,
             n_no,
+            None,
         )
 
 
@@ -6626,6 +6772,7 @@ def at_add_raw_series_from_database(
     Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-underlying-add-ok-button", "n_clicks"),
     State("at-underlying-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
@@ -6669,6 +6816,7 @@ def at_add_underlying_categories_from_database(
             rows,
             "Stage at least one underlying category row before importing.",
             False,
+            None,
         )
 
     try:
@@ -6695,12 +6843,12 @@ def at_add_underlying_categories_from_database(
                     rows,
                     duplicate_text,
                     False,
+                    None,
                 )
 
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
-        periodicity_options = merge_result.periodicity_options
         default_periodicity = merge_result.default_periodicity
         imported_df = merge_result.imported_df
 
@@ -6720,30 +6868,36 @@ def at_add_underlying_categories_from_database(
             current_vol_scaling,
         )
         series_request_token = _at_new_series_selection_request_token()
-
-        return (
-            df_to_json(merged_df),
+        pending_payload = _at_build_imported_pending_payload(
+            merged_df,
             combined_periodicity,
-            periodicity_options,
             default_periodicity,
-            False,
             updated_selection,
-            f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from underlying categories.",
-            "green",
-            False,
-            default_periodicity,
-            series_request_token,
+            updated_order,
             updated_bench,
             updated_ls,
-            updated_order,
-            True if first_load is not None else True,
-            [],
             updated_vol_scaling,
+            series_request_token,
+            {
+                "mode": "show",
+                "message": f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from underlying categories.",
+                "color": "green",
+            },
+        )
+
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            n_no, n_no, n_no,
+            n_no,
+            series_request_token,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             False,
             [],
             [],
             no_update,
             True,
+            pending_payload,
         )
     except Exception as exc:
         error_text = f"Error loading underlying category series: {exc}"
@@ -6760,6 +6914,7 @@ def at_add_underlying_categories_from_database(
             rows,
             error_text,
             False,
+            None,
         )
 
 
@@ -6786,6 +6941,7 @@ def at_add_underlying_categories_from_database(
     Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-ok-button", "n_clicks"),
     State("at-portfolio-add-mode-store", "data"),
     State("at-portfolio-add-rows-store", "data"),
@@ -6831,6 +6987,7 @@ def at_add_portfolios_from_database(
             rows,
             "Stage at least one portfolio row before importing.",
             False,
+            None,
         )
 
     try:
@@ -6861,6 +7018,7 @@ def at_add_portfolios_from_database(
                     rows,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
+                    None,
                 )
 
         new_periodicity = load_result.periodicity or "monthly"
@@ -6881,7 +7039,6 @@ def at_add_portfolios_from_database(
             merged_df = _normalize_monthly_df_if_needed(new_df, new_periodicity)
             combined_periodicity = new_periodicity
 
-        periodicity_options = get_available_periodicities(combined_periodicity)
         default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
         (
             updated_selection,
@@ -6900,30 +7057,36 @@ def at_add_portfolios_from_database(
             new_bench=load_result.benchmark_assignments or {},
         )
         series_request_token = _at_new_series_selection_request_token()
-
-        return (
-            df_to_json(merged_df),
+        pending_payload = _at_build_imported_pending_payload(
+            merged_df,
             combined_periodicity,
-            periodicity_options,
             default_periodicity,
-            False,
             updated_selection,
-            f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {mode} portfolios.",
-            "green",
-            False,
-            default_periodicity,
-            series_request_token,
+            updated_order,
             updated_bench,
             updated_ls,
-            updated_order,
-            True,
-            [],
             updated_vol_scaling,
+            series_request_token,
+            {
+                "mode": "show",
+                "message": f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from {mode} portfolios.",
+                "color": "green",
+            },
+        )
+
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            n_no, n_no, n_no,
+            n_no,
+            series_request_token,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             False,
             [],
             [],
             no_update,
             True,
+            pending_payload,
         )
     except Exception as e:
         return (
@@ -6939,6 +7102,7 @@ def at_add_portfolios_from_database(
             rows,
             f"Error loading portfolio series: {str(e)}",
             False,
+            None,
         )
 
 
@@ -6968,6 +7132,7 @@ def at_add_portfolios_from_database(
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
     Output("at-sheet-select-sheetnames-store", "data", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-upload-data", "contents"),
     State("at-upload-data", "filename"),
     State("dashmat-raw-data-store", "data"),
@@ -7002,6 +7167,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                 n_no, n_no, n_no,
                 True,  # keep blocker until sheet modal opens
                 True, dropdown_data, [sheet_names[0]], contents, filename, sheet_names,  # open sheet modal
+                None,
             )
 
         # Parse and merge upload
@@ -7009,7 +7175,6 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
-        periodicity_options = merge_result.periodicity_options
         default_periodicity = merge_result.default_periodicity
         imported_df = merge_result.imported_df
 
@@ -7028,40 +7193,36 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             current_ls,
             current_vol_scaling,
         )
-
-        # Determine alert state
+        commit_alert = {"mode": "hide"}
         if not first_load:
-            alert_msg = f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from {filename}"
-            alert_color = "green"
-            alert_hide = False
-            new_first_load = True
-        else:
-            alert_msg = no_update
-            alert_color = no_update
-            alert_hide = True
-            new_first_load = True
+            commit_alert = {
+                "mode": "show",
+                "message": f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from {filename}",
+                "color": "green",
+            }
         series_request_token = _at_new_series_selection_request_token()
-
-        return (
-            df_to_json(merged_df),
+        pending_payload = _at_build_imported_pending_payload(
+            merged_df,
             combined_periodicity,
-            periodicity_options,
             default_periodicity,
-            False,
             updated_selection,
-            alert_msg,
-            alert_color,
-            alert_hide,
-            default_periodicity,
-            series_request_token,
+            updated_order,
             updated_bench,
             updated_ls,
-            updated_order,
-            new_first_load,
-            [], # Reset deleted series
             updated_vol_scaling,
+            series_request_token,
+            commit_alert,
+        )
+
+        return (
+            n_no, n_no, n_no, n_no, n_no, n_no,
+            n_no, n_no, n_no,
+            n_no,
+            series_request_token,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             True, # Keep blocker until series modal is ready
             *sheet_no,
+            pending_payload,
         )
 
     except Exception as e:
@@ -7075,6 +7236,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             n_no, n_no, n_no,
             False, # Hide blocker
             *sheet_no,
+            None,
         )
 
 
@@ -7105,6 +7267,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Output("at-sheet-select-filename-store", "data", allow_duplicate=True),
     Output("at-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Output("at-upload-data", "contents", allow_duplicate=True),
+    Output("at-pending-series-import-store", "data", allow_duplicate=True),
     Input("at-sheet-select-ok-button", "n_clicks"),
     Input("at-sheet-select-import-all-button", "n_clicks"),
     State("at-sheet-select-dropdown", "value"),
@@ -7151,6 +7314,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
                 n_no, n_no, n_no,
                 False,  # Hide blocker
                 True, stashed_contents, stashed_filename, workbook_sheets, n_no,  # keep modal open and stash
+                None,
             )
 
         new_df, imported_sheets = _import_selected_workbook_sheets(
@@ -7162,7 +7326,6 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
-        periodicity_options = merge_result.periodicity_options
         default_periodicity = merge_result.default_periodicity
         imported_df = merge_result.imported_df
         filename = stashed_filename
@@ -7183,45 +7346,44 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             current_vol_scaling,
         )
 
+        commit_alert = {"mode": "hide"}
         if not first_load:
             if len(imported_sheets) == 1:
                 sheet_msg = f"sheet: {imported_sheets[0]}"
             else:
                 sheet_msg = f"{len(imported_sheets)} sheets"
-            alert_msg = (
-                f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows "
-                f"from {filename} ({sheet_msg})"
-            )
-            alert_color = "green"
-            alert_hide = False
-            new_first_load = True
-        else:
-            alert_msg = n_no
-            alert_color = n_no
-            alert_hide = True
-            new_first_load = True
+            commit_alert = {
+                "mode": "show",
+                "message": (
+                    f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows "
+                    f"from {filename} ({sheet_msg})"
+                ),
+                "color": "green",
+            }
         series_request_token = _at_new_series_selection_request_token()
-
-        return (
-            df_to_json(merged_df),
+        pending_payload = _at_build_imported_pending_payload(
+            merged_df,
             combined_periodicity,
-            periodicity_options,
             default_periodicity,
-            False,
             updated_selection,
-            alert_msg,
-            alert_color,
-            alert_hide,
-            default_periodicity,
-            series_request_token,
+            updated_order,
             updated_bench,
             updated_ls,
-            updated_order,
-            new_first_load,
-            [],
             updated_vol_scaling,
+            series_request_token,
+            commit_alert,
+        )
+
+        return (
+            n_no, n_no, n_no, n_no, n_no,
+            n_no,
+            n_no, n_no, n_no,
+            n_no,
+            series_request_token,
+            n_no, n_no, n_no, n_no, n_no, n_no,
             True,  # Keep blocker until series modal is ready
             False, None, None, None, None,  # Close sheet modal, clear stash, reset upload
+            pending_payload,
         )
 
     except Exception as e:
@@ -7235,6 +7397,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             n_no, n_no, n_no,
             False,  # Hide blocker
             False, None, None, None, None,  # Close sheet modal, clear stash, reset upload
+            None,
         )
 
 
@@ -7326,6 +7489,7 @@ clientside_callback(
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("at-pending-series-import-store", "data"),
     prevent_initial_call=True,
 )
 def update_series_selectors(
@@ -7336,10 +7500,18 @@ def update_series_selectors(
     current_assignments,
     long_short_assignments,
     vol_scaling_assignments,
+    pending_payload,
 ):
     """Render Select Series as a single AG Grid with in-grid controls."""
     if not request_token:
         raise PreventUpdate
+    if _at_pending_payload_matches_request(pending_payload, request_token):
+        raw_data = pending_payload.get("raw_data")
+        selected_series = pending_payload.get("selected_series")
+        series_order = pending_payload.get("series_order")
+        current_assignments = pending_payload.get("benchmark_assignments")
+        long_short_assignments = pending_payload.get("long_short_assignments")
+        vol_scaling_assignments = pending_payload.get("vol_scaling_assignments")
     if raw_data is None:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], _at_series_status_payload(
             request_token, "empty", "Upload data to select series."

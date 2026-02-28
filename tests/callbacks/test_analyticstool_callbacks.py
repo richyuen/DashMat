@@ -65,6 +65,18 @@ def _find_component_by_id(node, target_id):
     return None
 
 
+def _component_prop(node, prop_name):
+    if hasattr(node, prop_name):
+        return getattr(node, prop_name)
+    to_plotly = getattr(node, "to_plotly_json", None)
+    if callable(to_plotly):
+        return ((to_plotly().get("props") or {})).get(prop_name)
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        return props.get(prop_name)
+    return None
+
+
 def _stack_section_titles(stack_component):
     def _graph_title(node):
         fig = getattr(node, "figure", None)
@@ -515,6 +527,9 @@ def test_on_modal_ok_commits_local_series_modal_state(page_modules, raw_json):
     result = analyticstool.on_modal_ok(
         1,
         raw_json,
+        "daily",
+        None,
+        None,
         [
             {
                 "__orig_series": "Asset_A",
@@ -555,6 +570,9 @@ def test_on_modal_ok_blocks_duplicate_series_names(page_modules, raw_json):
     result = analyticstool.on_modal_ok(
         1,
         raw_json,
+        "daily",
+        None,
+        None,
         [
             {
                 "__orig_series": "Asset_A",
@@ -589,6 +607,9 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
     result = analyticstool.on_modal_ok(
         1,
         raw_json,
+        "daily",
+        None,
+        None,
         [
             {
                 "__orig_series": "Asset_A",
@@ -604,6 +625,133 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
     )
 
     assert result[8] is no_update
+
+
+def test_on_modal_ok_commits_pending_import_and_clears_staging(page_modules):
+    analyticstool, _ = page_modules
+    imported = pd.DataFrame(
+        {"New_A": [0.01, 0.02], "New_B": [0.0, -0.01]},
+        index=pd.to_datetime(["2024-01-31", "2024-02-29"]),
+    )
+    imported.index.name = "Date"
+    pending_payload = analyticstool._at_build_imported_pending_payload(
+        imported,
+        "monthly",
+        "monthly",
+        ["New_A", "New_B"],
+        ["New_A", "New_B"],
+        {"New_A": "None", "New_B": "New_A"},
+        {"New_A": False, "New_B": True},
+        {"New_A": True, "New_B": False},
+        "token-1",
+        {"mode": "show", "message": "Loaded pending import", "color": "green"},
+    )
+
+    result = analyticstool.on_modal_ok(
+        1,
+        None,
+        "daily",
+        "token-1",
+        pending_payload,
+        [
+            {
+                "__orig_series": "New_A",
+                "Series": "Renamed_A",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            },
+            {
+                "__orig_series": "New_B",
+                "Series": "New_B",
+                "Benchmark": "New_A",
+                "LongShort": True,
+                "ScaleVol": False,
+                "Delete": False,
+            },
+        ],
+        [
+            {"__orig_series": "New_A", "Series": "Renamed_A"},
+            {"__orig_series": "New_B", "Series": "New_B"},
+        ],
+        [{"__orig_series": "New_B"}, {"__orig_series": "New_A"}],
+    )
+
+    assert result[0] == ["New_B", "Renamed_A"]
+    assert result[1] == {"Renamed_A": "None", "New_B": "Renamed_A"}
+    assert result[2] == {"Renamed_A": False, "New_B": True}
+    assert result[3] == ["New_B", "Renamed_A"]
+    assert result[7] == ["New_B", "Renamed_A"]
+    assert result[9] == {"Renamed_A": True, "New_B": False}
+    assert result[13] == "Loaded pending import"
+    assert result[14] == "green"
+    assert result[15] is False
+    assert result[16] == "monthly"
+    assert result[18] == "monthly"
+    assert result[19] is False
+    assert result[20] == "monthly"
+    assert result[21] is True
+    assert result[22] == []
+    assert result[23] is None
+
+    updated_df = pd.read_json(StringIO(result[8]), orient="split")
+    assert list(updated_df.columns) == ["Renamed_A", "New_B"]
+
+
+def test_on_modal_ok_keeps_pending_import_when_validation_fails(page_modules):
+    analyticstool, _ = page_modules
+    imported = pd.DataFrame(
+        {"New_A": [0.01], "New_B": [0.02]},
+        index=pd.to_datetime(["2024-01-31"]),
+    )
+    imported.index.name = "Date"
+    pending_payload = analyticstool._at_build_imported_pending_payload(
+        imported,
+        "monthly",
+        "monthly",
+        ["New_A", "New_B"],
+        ["New_A", "New_B"],
+        {"New_A": "None", "New_B": "None"},
+        {"New_A": False, "New_B": False},
+        {"New_A": True, "New_B": True},
+        "token-2",
+        {"mode": "show", "message": "Loaded pending import", "color": "green"},
+    )
+
+    result = analyticstool.on_modal_ok(
+        1,
+        None,
+        "daily",
+        "token-2",
+        pending_payload,
+        [
+            {
+                "__orig_series": "New_A",
+                "Series": "Duplicate",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            },
+            {
+                "__orig_series": "New_B",
+                "Series": "Duplicate",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            },
+        ],
+        [],
+        None,
+    )
+
+    assert result[4] is True
+    assert result[8] is no_update
+    assert "duplicate" in str(result[13]).lower()
+    assert result[15] is False
+    assert result[23] is no_update
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):
@@ -640,13 +788,16 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
         {},
     )
 
-    out_json = result[0]
-    out_periodicity = result[1]
-    out_default_periodicity = result[3]
+    pending_payload = result[19]
+    out_json = pending_payload["raw_data"]
+    out_periodicity = pending_payload["original_periodicity"]
+    out_default_periodicity = pending_payload["default_periodicity"]
 
     out_df = pd.read_json(StringIO(out_json), orient="split")
     out_df.index = pd.to_datetime(out_df.index)
 
+    assert result[0] is no_update
+    assert result[10]
     assert out_periodicity == "monthly"
     assert out_default_periodicity == "monthly"
     assert out_df.index.is_month_end.all()
@@ -675,7 +826,7 @@ def test_at_resolve_series_selection_modal_controls_overlay_and_ok(page_modules)
     ) == (False, True, "slow", "red", False)
 
 
-def test_add_series_from_database_appends_new_imports_to_committed_selection(monkeypatch, page_modules):
+def test_add_series_from_database_stages_pending_selection_state(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     existing_idx = pd.date_range("2024-01-01", periods=3, freq="B")
     existing_raw = pd.DataFrame({"Existing": [0.01, 0.0, -0.01]}, index=existing_idx)
@@ -702,8 +853,189 @@ def test_add_series_from_database_appends_new_imports_to_committed_selection(mon
         {},
     )
 
-    assert result[5] == ["Existing", "New_A"]
-    assert result[13] == ["Existing", "New_A"]
+    pending_payload = result[19]
+    assert result[5] is no_update
+    assert result[13] is no_update
+    assert result[10]
+    assert pending_payload["selected_series"] == ["Existing", "New_A"]
+    assert pending_payload["series_order"] == ["Existing", "New_A"]
+
+
+def test_update_series_selectors_prefers_matching_pending_payload(page_modules, raw_json):
+    analyticstool, _ = page_modules
+    imported = pd.DataFrame(
+        {"Pending_A": [0.01], "Pending_B": [0.02]},
+        index=pd.to_datetime(["2024-01-31"]),
+    )
+    imported.index.name = "Date"
+    pending_payload = analyticstool._at_build_imported_pending_payload(
+        imported,
+        "monthly",
+        "monthly",
+        ["Pending_B"],
+        ["Pending_B", "Pending_A"],
+        {"Pending_B": "Pending_A"},
+        {"Pending_B": True},
+        {"Pending_A": False, "Pending_B": True},
+        "pending-token",
+        {"mode": "show", "message": "Loaded", "color": "green"},
+    )
+
+    children, status = analyticstool.update_series_selectors(
+        "pending-token",
+        raw_json,
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        {"Asset_A": True},
+        pending_payload,
+    )
+
+    grid = children[0]
+    row_data = _component_prop(grid, "rowData")
+    selected_rows = _component_prop(grid, "selectedRows")
+
+    assert status["status"] == "rendered"
+    assert [row["Series"] for row in row_data] == ["Pending_B", "Pending_A"]
+    assert row_data[0]["Benchmark"] == "Pending_A"
+    assert row_data[0]["LongShort"] is True
+    assert row_data[1]["ScaleVol"] is False
+    assert [row["Series"] for row in selected_rows] == ["Pending_B"]
+
+
+def test_update_series_selectors_ignores_stale_pending_payload(page_modules, raw_json):
+    analyticstool, _ = page_modules
+    imported = pd.DataFrame(
+        {"Pending_A": [0.01]},
+        index=pd.to_datetime(["2024-01-31"]),
+    )
+    imported.index.name = "Date"
+    pending_payload = analyticstool._at_build_imported_pending_payload(
+        imported,
+        "monthly",
+        "monthly",
+        ["Pending_A"],
+        ["Pending_A"],
+        {"Pending_A": "None"},
+        {"Pending_A": False},
+        {"Pending_A": True},
+        "other-token",
+        {"mode": "show", "message": "Loaded", "color": "green"},
+    )
+
+    children, status = analyticstool.update_series_selectors(
+        "manual-token",
+        raw_json,
+        ["Asset_A"],
+        ["Asset_B", "Asset_A"],
+        {"Asset_A": "Asset_B"},
+        {"Asset_A": True},
+        {"Asset_A": False},
+        pending_payload,
+    )
+
+    grid = children[0]
+    row_data = _component_prop(grid, "rowData")
+
+    assert status["status"] == "rendered"
+    assert [row["Series"] for row in row_data[:2]] == ["Asset_B", "Asset_A"]
+    assert row_data[1]["Benchmark"] == "Asset_B"
+
+
+def test_handle_upload_stages_pending_import(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    imported = pd.DataFrame(
+        {"Upload_A": [0.01, 0.0]},
+        index=pd.to_datetime(["2024-01-31", "2024-02-29"]),
+    )
+    imported.index.name = "Date"
+
+    monkeypatch.setattr(analyticstool, "get_sheet_names", lambda *_args, **_kwargs: ["Sheet1"])
+    monkeypatch.setattr(analyticstool, "_shared_import_single_upload", lambda *_args, **_kwargs: imported.copy())
+
+    result = analyticstool.handle_upload(
+        "contents",
+        "upload.xlsx",
+        None,
+        None,
+        [],
+        {},
+        {},
+        [],
+        False,
+        {},
+    )
+
+    pending_payload = result[24]
+    assert result[0] is no_update
+    assert result[10]
+    assert pending_payload["selected_series"] == ["Upload_A"]
+    assert pending_payload["commit_alert"] == {
+        "mode": "show",
+        "message": "Loaded 1 series with 2 rows from upload.xlsx",
+        "color": "green",
+    }
+
+
+def test_on_sheet_select_ok_stages_pending_import(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    imported = pd.DataFrame(
+        {"Sheet_A": [0.01, -0.01]},
+        index=pd.to_datetime(["2024-01-31", "2024-02-29"]),
+    )
+    imported.index.name = "Date"
+
+    monkeypatch.setattr(
+        analyticstool,
+        "callback_context",
+        SimpleNamespace(triggered_id="at-sheet-select-ok-button"),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "_import_selected_workbook_sheets",
+        lambda *_args, **_kwargs: (imported.copy(), ["Sheet1"]),
+    )
+
+    result = analyticstool.on_sheet_select_ok(
+        1,
+        0,
+        ["Sheet1"],
+        "contents",
+        "book.xlsx",
+        ["Sheet1"],
+        None,
+        None,
+        [],
+        {},
+        {},
+        [],
+        False,
+        {},
+    )
+
+    pending_payload = result[23]
+    assert result[0] is no_update
+    assert result[10]
+    assert result[18] is False
+    assert pending_payload["selected_series"] == ["Sheet_A"]
+    assert pending_payload["commit_alert"] == {
+        "mode": "show",
+        "message": "Loaded 1 series with 2 rows from book.xlsx (sheet: Sheet1)",
+        "color": "green",
+    }
+
+
+def test_on_modal_cancel_clears_pending_import(page_modules):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.on_modal_cancel(1)
+
+    assert result[:6] == (False, None, None, False, False, True)
+    assert result[6] is no_update
+    assert result[7] is no_update
+    assert result[8] is no_update
+    assert result[9] is None
 
 
 def test_update_factor_series_select_includes_unselected_series(page_modules, raw_json):

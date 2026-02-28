@@ -56,10 +56,12 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
         False,
         {},
     )
-    selected_df = pd.read_json(StringIO(selected_result[0]), orient="split")
+    selected_pending = selected_result[23]
+    selected_df = pd.read_json(StringIO(selected_pending["raw_data"]), orient="split")
     selected_df.index = pd.to_datetime(selected_df.index)
-    assert selected_result[1] == "daily"
-    assert selected_result[7] == "green"
+    assert selected_result[10]
+    assert selected_pending["original_periodicity"] == "daily"
+    assert selected_pending["commit_alert"]["color"] == "green"
     assert selected_result[18] is False
     assert selected_df.shape == (2, 1)
 
@@ -84,9 +86,10 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
         False,
         {},
     )
-    all_df = pd.read_json(StringIO(all_result[0]), orient="split")
+    all_pending = all_result[23]
+    all_df = pd.read_json(StringIO(all_pending["raw_data"]), orient="split")
     all_df.index = pd.to_datetime(all_df.index)
-    assert all_result[1] == "daily"
+    assert all_pending["original_periodicity"] == "daily"
     assert all_df.shape == (3, 1)
     assert all_df.loc[pd.Timestamp("2024-01-02"), "SeriesA"] == 0.03
 
