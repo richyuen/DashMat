@@ -711,7 +711,12 @@ def test_reg_toggle_welcome_keeps_base_ready_false_before_page_load(regression_p
 def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page):
     monkeypatch.setattr(
         regression_page,
-        "compute_date_range_candidates",
+        "get_periodicity_range_metadata",
+        lambda *_args, **_kwargs: {"mock": True},
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "compute_date_range_candidates_from_metadata",
         lambda *_args, **_kwargs: {"available_series": ["Y", "X1"]},
     )
     monkeypatch.setattr(
@@ -725,7 +730,8 @@ def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page):
         "daily",
         ["X1"],
         "Y",
-        1,
+        True,
+        {"raw_data_hash": "hash"},
         {"start": "2024-01-01", "end": "2024-12-31"},
         False,
     )
@@ -735,7 +741,7 @@ def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page):
 
 
 def test_reg_init_date_range_leaves_page_ready_unchanged_without_series(regression_page):
-    result = regression_page.reg_init_date_range("raw-json", "daily", [], None, 1, None, False)
+    result = regression_page.reg_init_date_range("raw-json", "daily", [], None, True, None, None, False)
 
     assert result[-2] is None
     assert result[-1] is no_update

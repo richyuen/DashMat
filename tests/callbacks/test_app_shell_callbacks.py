@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from dash.exceptions import PreventUpdate
 
@@ -35,6 +37,23 @@ def test_update_app_nav_links_for_non_test_role_with_data():
     assert analytics_href == "/analyticstool"
     assert portopt_href == "/portopt"
     assert regression_href == "/regression"
+
+
+def test_update_raw_data_summary_returns_none_without_data():
+    import app as app_module
+
+    assert app_module.update_raw_data_summary(None, "daily") is None
+
+
+def test_update_raw_data_summary_builds_expected_payload(raw_json):
+    import app as app_module
+
+    summary = app_module.update_raw_data_summary(raw_json, "daily")
+
+    assert summary["raw_data_hash"] == hashlib.md5(raw_json.encode("utf-8")).hexdigest()
+    assert summary["columns"] == ["Asset_A", "Asset_B", "Asset_C", "Asset_D"]
+    assert summary["original_periodicity"] == "daily"
+    assert summary["available_periodicity_values"][0] == "daily_trading"
 
 
 def test_restricted_href_for_path_resolves_for_test_role():

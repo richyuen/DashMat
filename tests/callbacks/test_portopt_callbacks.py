@@ -485,7 +485,12 @@ def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules):
 
     monkeypatch.setattr(
         portopt,
-        "compute_date_range_candidates",
+        "get_periodicity_range_metadata",
+        lambda *_args, **_kwargs: {"mock": True},
+    )
+    monkeypatch.setattr(
+        portopt,
+        "compute_date_range_candidates_from_metadata",
         lambda *_args, **_kwargs: {
             "available_series": ["Asset_A"],
             "common_daily_start": "2024-01-01",
@@ -502,7 +507,9 @@ def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules):
         "raw-json",
         "daily",
         ["Asset_A"],
-        1,
+        True,
+        True,
+        {"raw_data_hash": "hash"},
         {"start": "2024-01-01", "end": "2024-12-31"},
         False,
     )
@@ -514,7 +521,7 @@ def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules):
 def test_po_init_date_range_leaves_page_ready_unchanged_without_data(page_modules):
     _, portopt = page_modules
 
-    result = portopt.po_init_date_range(None, "daily", [], 1, None, False)
+    result = portopt.po_init_date_range(None, "daily", [], True, True, None, None, False)
 
     assert result[-2] is None
     assert result[-1] is no_update

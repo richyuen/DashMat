@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from io import BytesIO
 import json
 import re
@@ -21,7 +22,8 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import get_sheet_names
 from utils.date_range_flow import (
-    compute_date_range_candidates,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -49,6 +51,7 @@ from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
+from utils.perf_timing import timed_block
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
 from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options
 from utils.dashmat_welcome_modal import (
@@ -4540,34 +4543,42 @@ def reg_on_modal_cancel(n_clicks):
     Input("reg-periodicity-select", "value"),
     Input("reg-series-select", "data"),
     Input("reg-dependent-var-store", "data"),
-    Input("reg-page-load-trigger", "n_intervals"),
+    Input("reg-base-controls-ready-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("reg-date-range-store", "data"),
     State("reg-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def reg_init_date_range(raw_data, periodicity, x_series, dep_var, n_intervals, stored_range, current_page_ready):
+def reg_init_date_range(raw_data, periodicity, x_series, dep_var, base_controls_ready, raw_data_summary, stored_range, current_page_ready):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
     all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
-    if not raw_data or not all_series:
+    if not raw_data or not all_series or not base_controls_ready:
         return None, None, disabled_style, True, True, None, no_update
     try:
-        candidates = compute_date_range_candidates(raw_data, periodicity or "daily", tuple(all_series))
-        if not candidates.get("available_series"):
-            return None, None, disabled_style, True, True, None, no_update
-        start_date, end_date = resolve_initial_range(candidates, stored_range)
-        if not start_date or not end_date:
-            return None, None, disabled_style, True, True, None, no_update
-        new_range = {"start": str(start_date)[:10], "end": str(end_date)[:10]}
-        return (
-            str(start_date)[:10],
-            str(end_date)[:10],
-            enabled_style,
-            False,
-            False,
-            new_range,
-            no_update if current_page_ready or not (n_intervals and n_intervals >= 1) else True,
-        )
+        with timed_block(
+            "regression.init_date_range",
+            periodicity=periodicity or "daily",
+            series_count=len(all_series),
+        ):
+            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
+            metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
+            candidates = compute_date_range_candidates_from_metadata(metadata, tuple(all_series))
+            if not candidates.get("available_series"):
+                return None, None, disabled_style, True, True, None, no_update
+            start_date, end_date = resolve_initial_range(candidates, stored_range)
+            if not start_date or not end_date:
+                return None, None, disabled_style, True, True, None, no_update
+            new_range = {"start": str(start_date)[:10], "end": str(end_date)[:10]}
+            return (
+                str(start_date)[:10],
+                str(end_date)[:10],
+                enabled_style,
+                False,
+                False,
+                new_range,
+                no_update if current_page_ready else True,
+            )
     except Exception:
         return None, None, disabled_style, True, True, None, no_update
 
@@ -4596,12 +4607,13 @@ def reg_release_page_ready_on_series_modal(request_token, status_data, current_p
     Input("reg-common-range-button", "n_clicks"),
     Input("reg-maximum-range-button", "n_clicks"),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("reg-periodicity-select", "value"),
     State("reg-series-select", "data"),
     State("reg-dependent-var-store", "data"),
     prevent_initial_call=True,
 )
-def reg_date_range_button(n_common, n_max, raw_data, periodicity, x_series, dep_var):
+def reg_date_range_button(n_common, n_max, raw_data, raw_data_summary, periodicity, x_series, dep_var):
     all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
     if not raw_data or not all_series:
         raise PreventUpdate
@@ -4610,7 +4622,9 @@ def reg_date_range_button(n_common, n_max, raw_data, periodicity, x_series, dep_
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        candidates = compute_date_range_candidates(raw_data, periodicity or "daily", tuple(all_series))
+        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
+        metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
+        candidates = compute_date_range_candidates_from_metadata(metadata, tuple(all_series))
         start, end, _ = resolve_button_range(candidates, button_id)
         if not start or not end:
             raise PreventUpdate

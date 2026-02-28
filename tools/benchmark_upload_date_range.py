@@ -22,7 +22,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import cache_config
-from utils.date_range_flow import compute_date_range_candidates
+from utils.date_range_flow import (
+    build_raw_data_summary,
+    compute_date_range_candidates,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
+)
 from utils.upload_flow import import_selected_workbook_sheets
 
 
@@ -96,10 +101,39 @@ def main() -> None:
         warmups=1,
     )
 
+    summary_ms = _time_ms(
+        lambda: build_raw_data_summary(raw_json, "daily"),
+        repeats=7,
+        warmups=1,
+    )
+    summary = build_raw_data_summary(raw_json, "daily")
+
+    cache_config.cache.clear()
+    first_metadata_ms = _time_ms(
+        lambda: get_periodicity_range_metadata(summary["raw_data_hash"], raw_json, "daily_trading"),
+        repeats=1,
+        warmups=0,
+    )
+    cached_metadata_ms = _time_ms(
+        lambda: get_periodicity_range_metadata(summary["raw_data_hash"], raw_json, "daily_trading"),
+        repeats=7,
+        warmups=1,
+    )
+    metadata = get_periodicity_range_metadata(summary["raw_data_hash"], raw_json, "daily_trading")
+    candidate_from_metadata_ms = _time_ms(
+        lambda: compute_date_range_candidates_from_metadata(metadata, series),
+        repeats=7,
+        warmups=1,
+    )
+
     print("== Upload + Date Range Benchmark ==")
     print(f"upload.multi_sheet_import.median_ms={upload_ms:.2f}")
     print(f"date_range.first_call.ms={first_range_ms:.2f}")
     print(f"date_range.cached_median_ms={cached_range_ms:.2f}")
+    print(f"date_range.summary.median_ms={summary_ms:.2f}")
+    print(f"date_range.metadata.first_call.ms={first_metadata_ms:.2f}")
+    print(f"date_range.metadata.cached_median_ms={cached_metadata_ms:.2f}")
+    print(f"date_range.metadata_candidates.median_ms={candidate_from_metadata_ms:.2f}")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,8 @@ from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
     compute_date_range_candidates,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -4290,6 +4292,7 @@ clientside_callback(
     State("at-monthly-series-store", "data"),
     State("at-pending-working-config-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("at-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
@@ -4315,6 +4318,7 @@ def restore_application_state(
     stored_monthly_series,
     pending_working_config,
     pending_series,
+    raw_data_summary,
     current_page_ready,
 ):
     ready_output = no_update if current_page_ready else bool(n_intervals and n_intervals >= 1 and not raw_data)
@@ -4327,69 +4331,84 @@ def restore_application_state(
         )
 
     try:
-        df = json_to_df(raw_data)
-        
-        # Periodicity
-        periodicity_options = get_available_periodicities(orig_periodicity or "daily")
-        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else ("daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading"))
-        
-        # Returns Type
-        valid_returns = stored_returns if stored_returns in ["total", "excess"] else "total"
-        
-        # Vol Scaler
-        valid_vol = stored_vol if stored_vol is not None else 0
-        
-        # Active Tab
-        active_tab = stored_tab if stored_tab else "statistics"
-        
-        # Rolling
-        roll_win = stored_roll_win if stored_roll_win else "1y"
-        roll_metric = stored_roll_metric if stored_roll_metric else "total_return"
-        roll_type = stored_roll_type if stored_roll_type else "annualized"
-        roll_chart = stored_roll_chart if stored_roll_chart is not None else "chart"
-        
-        # Rolling Return Type Disabled Logic
-        roll_type_disabled = False if roll_metric in ["total_return", "excess_return"] else True
-        roll_type_style = {} if not roll_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
-        
-        # Drawdown
-        dd_chart = stored_dd_chart if stored_dd_chart is not None else "chart"
-        
-        # Growth
-        gr_chart = stored_gr_chart if stored_gr_chart is not None else "chart"
+        with timed_block("analyticstool.restore_application_state"):
+            summary = raw_data_summary or {}
+            columns = list(summary.get("columns") or [])
+            if not columns:
+                columns = list(json_to_df(raw_data).columns)
 
-        # Factor Analysis
-        factor_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter"} else "box"
-        factor_quantiles = _coerce_factor_quantiles(stored_factor_quantiles, default=5)
-        factor_transform = stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw"
-        
-        # Monthly View
-        monthly_view = stored_monthly_view if stored_monthly_view is not None else "annual"
-        
-        has_pending_working_config = isinstance(pending_working_config, dict)
+            resolved_orig_periodicity = summary.get("original_periodicity") or orig_periodicity or "daily"
 
-        # Monthly Series Options & Selection
-        current_selection = stored_series or []
-        valid_selection = [s for s in current_selection if s in df.columns]
-        if not valid_selection and not has_pending_working_config:
-            valid_selection = list(df.columns)
+            # Periodicity
+            periodicity_options = get_available_periodicities(resolved_orig_periodicity)
+            valid_values = {option["value"] for option in periodicity_options}
+            valid_periodicity = (
+                stored_periodicity
+                if stored_periodicity in valid_values
+                else (
+                    "daily_trading"
+                    if resolved_orig_periodicity == "daily"
+                    else resolved_orig_periodicity
+                )
+            )
 
-        if not has_pending_working_config:
-            # Auto-add any pending new series from portfolio optimization
-            for s in (pending_series or []):
-                if s in df.columns and s not in valid_selection:
-                    valid_selection.append(s)
-            next_state_ready = False
-            next_page_ready = no_update
-        else:
-            next_state_ready = bool(valid_selection)
-            next_page_ready = True
+            # Returns Type
+            valid_returns = stored_returns if stored_returns in ["total", "excess"] else "total"
 
-        return (
-            periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
-            roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, next_state_ready, next_page_ready
-        )
+            # Vol Scaler
+            valid_vol = stored_vol if stored_vol is not None else 0
+
+            # Active Tab
+            active_tab = stored_tab if stored_tab else "statistics"
+
+            # Rolling
+            roll_win = stored_roll_win if stored_roll_win else "1y"
+            roll_metric = stored_roll_metric if stored_roll_metric else "total_return"
+            roll_type = stored_roll_type if stored_roll_type else "annualized"
+            roll_chart = stored_roll_chart if stored_roll_chart is not None else "chart"
+
+            # Rolling Return Type Disabled Logic
+            roll_type_disabled = False if roll_metric in ["total_return", "excess_return"] else True
+            roll_type_style = {} if not roll_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
+
+            # Drawdown
+            dd_chart = stored_dd_chart if stored_dd_chart is not None else "chart"
+
+            # Growth
+            gr_chart = stored_gr_chart if stored_gr_chart is not None else "chart"
+
+            # Factor Analysis
+            factor_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter"} else "box"
+            factor_quantiles = _coerce_factor_quantiles(stored_factor_quantiles, default=5)
+            factor_transform = stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw"
+
+            # Monthly View
+            monthly_view = stored_monthly_view if stored_monthly_view is not None else "annual"
+
+            has_pending_working_config = isinstance(pending_working_config, dict)
+
+            # Monthly Series Options & Selection
+            current_selection = stored_series or []
+            valid_selection = [s for s in current_selection if s in columns]
+            if not valid_selection and not has_pending_working_config:
+                valid_selection = list(columns)
+
+            if not has_pending_working_config:
+                # Auto-add any pending new series from portfolio optimization
+                for s in (pending_series or []):
+                    if s in columns and s not in valid_selection:
+                        valid_selection.append(s)
+                next_state_ready = False
+                next_page_ready = no_update
+            else:
+                next_state_ready = bool(valid_selection)
+                next_page_ready = True
+
+            return (
+                periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
+                roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
+                factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, next_state_ready, next_page_ready
+            )
 
     except Exception:
         # Fallback to defaults on error (visibility handled by clientside callback)
@@ -7986,8 +8005,8 @@ def at_resolve_series_selection_modal(request_token, status_data, pending_workin
     Output("at-page-ready-store", "data", allow_duplicate=True),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
-    Input("at-page-load-trigger", "n_intervals"),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
@@ -7997,8 +8016,8 @@ def at_resolve_series_selection_modal(request_token, status_data, pending_workin
 def initialize_date_range(
     periodicity,
     selected_series,
-    n_intervals,
     raw_data,
+    raw_data_summary,
     stored_range,
     current_start_date,
     current_end_date,
@@ -8012,44 +8031,54 @@ def initialize_date_range(
         return None, None, disabled_style, True, True, True, None, False, no_update
 
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
-        if not candidates.get("available_series"):
-            return None, None, disabled_style, True, True, True, None, False
+        with timed_block(
+            "analyticstool.initialize_date_range",
+            periodicity=periodicity or "daily",
+            series_count=len(selected_series or ()),
+        ):
+            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
+            metadata = get_periodicity_range_metadata(
+                raw_data_hash,
+                raw_data,
+                periodicity or "daily",
+            )
+            candidates = compute_date_range_candidates_from_metadata(
+                metadata,
+                tuple(selected_series or ()),
+            )
+            if not candidates.get("available_series"):
+                return None, None, disabled_style, True, True, True, None, False, no_update
 
-        start_date, end_date = resolve_initial_range(candidates, stored_range)
-        if not start_date or not end_date:
-            return None, None, disabled_style, True, True, True, None, False
+            start_date, end_date = resolve_initial_range(candidates, stored_range)
+            if not start_date or not end_date:
+                return None, None, disabled_style, True, True, True, None, False, no_update
 
-        has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
-        next_range = {"start": start_date, "end": end_date}
-        start_output = start_date
-        end_output = end_date
-        if current_start_date == start_date:
-            start_output = no_update
-        if current_end_date == end_date:
-            end_output = no_update
-        range_output = (
-            no_update
-            if _has_complete_date_range(stored_range)
-            and stored_range.get("start") == start_date
-            and stored_range.get("end") == end_date
-            else next_range
-        )
-        return (
-            start_output,
-            end_output,
-            enabled_style,
-            False,
-            not has_common_daily,
-            False,
-            range_output,
-            True,
-            no_update if current_page_ready or not (n_intervals and n_intervals >= 1) else True,
-        )
+            has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
+            next_range = {"start": start_date, "end": end_date}
+            start_output = start_date
+            end_output = end_date
+            if current_start_date == start_date:
+                start_output = no_update
+            if current_end_date == end_date:
+                end_output = no_update
+            range_output = (
+                no_update
+                if _has_complete_date_range(stored_range)
+                and stored_range.get("start") == start_date
+                and stored_range.get("end") == end_date
+                else next_range
+            )
+            return (
+                start_output,
+                end_output,
+                enabled_style,
+                False,
+                not has_common_daily,
+                False,
+                range_output,
+                True,
+                no_update if current_page_ready else True,
+            )
 
     except Exception:
         return None, None, disabled_style, True, True, True, None, False, no_update
@@ -8065,11 +8094,12 @@ def initialize_date_range(
     Input("at-common-daily-button", "n_clicks"),
     Input("at-maximum-range-button", "n_clicks"),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, periodicity, selected_series):
+def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, raw_data_summary, periodicity, selected_series):
     """Update date range based on button clicks."""
     if raw_data is None or not selected_series:
         raise PreventUpdate
@@ -8081,11 +8111,9 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
+        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
+        metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
+        candidates = compute_date_range_candidates_from_metadata(metadata, tuple(selected_series or ()))
         if not candidates.get("available_series"):
             raise PreventUpdate
 

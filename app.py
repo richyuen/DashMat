@@ -5,6 +5,7 @@ from dash import Dash, Input, Output, dcc, page_container
 from dash_iconify import DashIconify
 from dash.exceptions import PreventUpdate
 from cache_config import init_cache
+from utils.date_range_flow import build_raw_data_summary
 from utils.page_paths import (
     ANALYTICS_PATH,
     HOME_PATH,
@@ -47,6 +48,7 @@ def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> st
 _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
+    dcc.Store(id="dashmat-raw-data-summary-store", data=None, storage_type="memory"),
     dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-route-intent-store", data=None, storage_type="session"),
@@ -133,6 +135,16 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
 ]}
 _provider_kwargs["defaultColorScheme"] = "light"
 app.layout = dmc.MantineProvider(**_provider_kwargs)
+
+
+@app.callback(
+    Output("dashmat-raw-data-summary-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-original-periodicity-store", "data"),
+    prevent_initial_call=False,
+)
+def update_raw_data_summary(raw_data, original_periodicity):
+    return build_raw_data_summary(raw_data, original_periodicity or "daily")
 
 
 @app.callback(

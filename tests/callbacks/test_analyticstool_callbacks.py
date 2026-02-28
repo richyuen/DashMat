@@ -206,7 +206,12 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
 
     monkeypatch.setattr(
         analyticstool,
-        "compute_date_range_candidates",
+        "get_periodicity_range_metadata",
+        lambda *_args, **_kwargs: {"mock": True},
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "compute_date_range_candidates_from_metadata",
         lambda *_args, **_kwargs: {
             "available_series": ["Asset_A"],
             "common_daily_start": "2024-01-01",
@@ -223,8 +228,8 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
         analyticstool.initialize_date_range(
             "daily",
             ["Asset_A"],
-            1,
             "raw-json",
+            {"raw_data_hash": "hash"},
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
@@ -256,6 +261,7 @@ def test_restore_application_state_marks_empty_page_ready_after_page_load(page_m
 
     result = analyticstool.restore_application_state(
         1,
+        None,
         None,
         None,
         None,
@@ -308,6 +314,7 @@ def test_restore_application_state_keeps_loaded_page_ready_unchanged(page_module
         None,
         None,
         [],
+        None,
         False,
     )
 

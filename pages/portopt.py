@@ -1,6 +1,7 @@
 """Portfolio Optimization page for DashMat."""
 
 from dataclasses import dataclass
+import hashlib
 from io import BytesIO, StringIO
 import json
 
@@ -21,7 +22,8 @@ import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
-    compute_date_range_candidates,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -6047,39 +6049,50 @@ clientside_callback(
     State("po-periodicity-value-store", "data"),
     State("po-series-select-value-store", "data"),
     State("po-vol-scaler-value-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol):
+def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol, raw_data_summary):
     if not raw_data:
         raise PreventUpdate
     try:
-        df = json_to_df(raw_data)
-        if df is None or df.empty:
-            raise PreventUpdate
-            
-        periodicity_options = get_available_periodicities(orig_periodicity or "daily")
-        
-        # Validate stored values
-        valid_periodicity = stored_periodicity
-        if valid_periodicity not in [p["value"] for p in periodicity_options]:
-            valid_periodicity = "daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading")
-            
-        valid_vol = stored_vol if stored_vol is not None else 0
-        
-        # Validate series
-        current_selection = stored_series or []
-        valid_selection = [s for s in current_selection if s in df.columns]
-        
-        # If no stored selection matches, select all (default behavior)
-        if not valid_selection:
-            valid_selection = list(df.columns)
-            
-        return (
-            periodicity_options,
-            valid_periodicity,
-            valid_vol,
-            valid_selection,
-        )
+        with timed_block("portopt.restore_state"):
+            summary = raw_data_summary or {}
+            columns = list(summary.get("columns") or [])
+            if not columns:
+                columns = list(json_to_df(raw_data).columns)
+            if not columns:
+                raise PreventUpdate
+
+            resolved_orig_periodicity = summary.get("original_periodicity") or orig_periodicity or "daily"
+            periodicity_options = get_available_periodicities(resolved_orig_periodicity)
+
+            # Validate stored values
+            valid_periodicity = stored_periodicity
+            valid_values = {option["value"] for option in periodicity_options}
+            if valid_periodicity not in valid_values:
+                valid_periodicity = (
+                    "daily_trading"
+                    if resolved_orig_periodicity == "daily"
+                    else resolved_orig_periodicity
+                )
+
+            valid_vol = stored_vol if stored_vol is not None else 0
+
+            # Validate series
+            current_selection = stored_series or []
+            valid_selection = [s for s in current_selection if s in columns]
+
+            # If no stored selection matches, select all (default behavior)
+            if not valid_selection:
+                valid_selection = list(columns)
+
+            return (
+                periodicity_options,
+                valid_periodicity,
+                valid_vol,
+                valid_selection,
+            )
     except Exception as e:
 
         # Critical: Do not return defaults on error, as it wipes persistence.
@@ -8063,42 +8076,56 @@ def po_on_modal_cancel(n_clicks):
     Input("dashmat-raw-data-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
+    Input("po-base-controls-ready-store", "data"),
+    Input("po-ex-ante-controls-ready-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("po-date-range-store", "data"),
     State("po-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_date_range(raw_data, periodicity, selected_series, n_intervals, stored_range, current_page_ready):
+def po_init_date_range(
+    raw_data,
+    periodicity,
+    selected_series,
+    base_controls_ready,
+    ex_ante_controls_ready,
+    raw_data_summary,
+    stored_range,
+    current_page_ready,
+):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
-    if raw_data is None or not selected_series:
+    if raw_data is None or not selected_series or not base_controls_ready or not ex_ante_controls_ready:
         return None, None, disabled_style, True, True, True, None, no_update
 
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
-        if not candidates.get("available_series"):
-            return None, None, disabled_style, True, True, True, None, no_update
+        with timed_block(
+            "portopt.init_date_range",
+            periodicity=periodicity or "daily",
+            series_count=len(selected_series or ()),
+        ):
+            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
+            metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
+            candidates = compute_date_range_candidates_from_metadata(metadata, tuple(selected_series or ()))
+            if not candidates.get("available_series"):
+                return None, None, disabled_style, True, True, True, None, no_update
 
-        start_date, end_date = resolve_initial_range(candidates, stored_range)
-        if not start_date or not end_date:
-            return None, None, disabled_style, True, True, True, None, no_update
+            start_date, end_date = resolve_initial_range(candidates, stored_range)
+            if not start_date or not end_date:
+                return None, None, disabled_style, True, True, True, None, no_update
 
-        has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
-        return (
-            start_date,
-            end_date,
-            enabled_style,
-            False,
-            not has_common_daily,
-            False,
-            {"start": start_date, "end": end_date},
-            no_update if current_page_ready or not (n_intervals and n_intervals >= 1) else True,
-        )
+            has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
+            return (
+                start_date,
+                end_date,
+                enabled_style,
+                False,
+                not has_common_daily,
+                False,
+                {"start": start_date, "end": end_date},
+                no_update if current_page_ready else True,
+            )
     except Exception:
         return None, None, disabled_style, True, True, True, None, no_update
 
@@ -8117,11 +8144,12 @@ def po_init_date_range(raw_data, periodicity, selected_series, n_intervals, stor
     Input("po-common-daily-button", "n_clicks"),
     Input("po-maximum-range-button", "n_clicks"),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, periodicity, selected_series):
+def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, raw_data_summary, periodicity, selected_series):
     if raw_data is None or not selected_series:
         raise PreventUpdate
     ctx = callback_context
@@ -8129,11 +8157,9 @@ def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_da
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
+        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
+        metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
+        candidates = compute_date_range_candidates_from_metadata(metadata, tuple(selected_series or ()))
         if not candidates.get("available_series"):
             raise PreventUpdate
 
