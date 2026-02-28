@@ -59,7 +59,6 @@ from utils.dashmat_welcome_modal import (
     build_series_selection_modal,
     build_sheet_select_modal,
     build_underlying_add_modal,
-    build_welcome_screen as build_shared_welcome_screen,
     compute_close_db_add_modal,
     compute_close_underlying_add_modal,
     compute_close_portfolio_add_modal,
@@ -82,8 +81,9 @@ from utils.dashmat_welcome_modal import (
     js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
+    resolve_portfolio_add_mode,
+    resolve_raw_db_add_mode,
 )
-from utils.sample_data import get_sample_file_path
 from utils.page_paths import REGRESSION_PATH, landing_href
 from utils.route_intent import (
     ACTION_CONFIGURE_AFTER_IMPORT,
@@ -749,14 +749,6 @@ def _reg_prefixed(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     out = df.copy()
     out.columns = [f"{prefix} | {c}" for c in out.columns]
     return out
-
-
-# ---------------------------------------------------------------------------
-# Layout builders
-# ---------------------------------------------------------------------------
-
-def build_reg_welcome_screen():
-    return build_shared_welcome_screen(REG_CONFIG)
 
 
 def build_reg_help_modal():
@@ -2133,13 +2125,6 @@ layout = dmc.Container(
             ],
         ),
 
-        # Welcome screen
-        html.Div(
-            id="reg-welcome-screen",
-            children=build_reg_welcome_screen(),
-            style={"display": "none"},
-        ),
-
         # Main container
         html.Div(
             id="reg-main-container",
@@ -2238,8 +2223,6 @@ layout = dmc.Container(
             style={"display": "none"},
         ),
         dcc.Download(id="reg-download-excel"),
-        dcc.Download(id="reg-download-sample-daily"),
-        dcc.Download(id="reg-download-sample-monthly"),
         dcc.Location(id="reg-url-location", refresh=False),
         dcc.Store(id="reg-nav-effect-dummy", data=None),
         dcc.Store(id="reg-route-intent-clear-dummy", data=None),
@@ -2304,30 +2287,6 @@ clientside_callback(
     """,
     Output("reg-url-location", "pathname", allow_duplicate=True),
     Input("reg-menu-view-portfolio", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/analyticstool'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
-    Input("reg-welcome-view-analytics", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/portopt'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
-    Input("reg-welcome-view-portfolio", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -2419,13 +2378,6 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_trigger_upload_with_cancel("reg"),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
-    Input("reg-welcome-add-series-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
     """
     function(isLoading, rawData, baseReady, pageReady) {
         if (isLoading) return true;
@@ -2456,21 +2408,13 @@ clientside_callback(
     js_set_ui_blocker_true_on_any(),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-from-db", "n_clicks"),
-    Input("reg-welcome-add-db-btn", "n_clicks"),
     Input("reg-menu-add-raw-factor", "n_clicks"),
     Input("reg-menu-add-raw-funds", "n_clicks"),
     Input("reg-menu-add-raw-performance", "n_clicks"),
-    Input("reg-welcome-add-raw-factor-btn", "n_clicks"),
-    Input("reg-welcome-add-raw-funds-btn", "n_clicks"),
-    Input("reg-welcome-add-raw-performance-btn", "n_clicks"),
     Input("reg-menu-add-portfolios-peer", "n_clicks"),
     Input("reg-menu-add-portfolios-index", "n_clicks"),
     Input("reg-menu-add-portfolios-other", "n_clicks"),
-    Input("reg-welcome-add-portfolios-peer-btn", "n_clicks"),
-    Input("reg-welcome-add-portfolios-index-btn", "n_clicks"),
-    Input("reg-welcome-add-portfolios-other-btn", "n_clicks"),
     Input("reg-menu-add-portfolios-underlying", "n_clicks"),
-    Input("reg-welcome-add-portfolios-underlying-btn", "n_clicks"),
     Input("reg-open-modal-button", "n_clicks"),
     Input("reg-sheet-select-ok-button", "n_clicks"),
     Input("reg-sheet-select-import-all-button", "n_clicks"),
@@ -2726,13 +2670,12 @@ def reg_clear_server_cache(n_clicks):
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-from-db", "n_clicks"),
-    Input("reg-welcome-add-db-btn", "n_clicks"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("dashmat-route-intent-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_db_add_modal(menu_clicks=None, welcome_clicks=None, page_load_intervals=None, route_intent=None, consumed_token=None):
+def reg_open_db_add_modal(menu_clicks=None, page_load_intervals=None, route_intent=None, consumed_token=None):
     triggered_id = _safe_triggered_id()
     if triggered_id == "reg-page-load-trigger":
         if page_load_intervals is None:
@@ -2745,10 +2688,12 @@ def reg_open_db_add_modal(menu_clicks=None, welcome_clicks=None, page_load_inter
         )
         if not intent_token:
             raise PreventUpdate
-        result = compute_open_db_add_modal(1, None, DB_ENGINE)
+        result = compute_open_db_add_modal(DB_ENGINE)
         return (*result, False, intent_token)
 
-    result = compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
+    if not menu_clicks:
+        raise PreventUpdate
+    result = compute_open_db_add_modal(DB_ENGINE)
     return (*result, False, no_update)
 
 
@@ -2869,9 +2814,6 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
     Input("reg-menu-add-raw-factor", "n_clicks"),
     Input("reg-menu-add-raw-funds", "n_clicks"),
     Input("reg-menu-add-raw-performance", "n_clicks"),
-    Input("reg-welcome-add-raw-factor-btn", "n_clicks"),
-    Input("reg-welcome-add-raw-funds-btn", "n_clicks"),
-    Input("reg-welcome-add-raw-performance-btn", "n_clicks"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("dashmat-route-intent-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),
@@ -2881,9 +2823,6 @@ def reg_open_raw_db_add_modal(
     factor_clicks,
     funds_clicks,
     performance_clicks,
-    welcome_factor_clicks,
-    welcome_funds_clicks,
-    welcome_performance_clicks,
     page_load_intervals=None,
     route_intent=None,
     consumed_token=None,
@@ -2901,37 +2840,20 @@ def reg_open_raw_db_add_modal(
         if not intent_token:
             raise PreventUpdate
         mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
-        intent_trigger_map = {
-            "factor": "reg-welcome-add-raw-factor-btn",
-            "funds": "reg-welcome-add-raw-funds-btn",
-            "performance": "reg-welcome-add-raw-performance-btn",
-        }
-        intent_trigger_id = intent_trigger_map.get(mode)
-        if not intent_trigger_id:
+        if mode not in {"factor", "funds", "performance"}:
             raise PreventUpdate
         result = compute_open_raw_db_add_modal(
-            prefix="reg",
-            triggered_id=intent_trigger_id,
-            factor_clicks=1 if mode == "factor" else None,
-            funds_clicks=1 if mode == "funds" else None,
-            performance_clicks=1 if mode == "performance" else None,
-            welcome_factor_clicks=1 if mode == "factor" else None,
-            welcome_funds_clicks=1 if mode == "funds" else None,
-            welcome_performance_clicks=1 if mode == "performance" else None,
+            mode=mode,
             mrd_engine=MRD_ENGINE,
             perf_engine=PERF_ENGINE,
         )
         return (*result, False, intent_token)
 
+    mode = resolve_raw_db_add_mode("reg", triggered_id)
+    if not mode:
+        raise PreventUpdate
     result = compute_open_raw_db_add_modal(
-        prefix="reg",
-        triggered_id=triggered_id,
-        factor_clicks=factor_clicks,
-        funds_clicks=funds_clicks,
-        performance_clicks=performance_clicks,
-        welcome_factor_clicks=welcome_factor_clicks,
-        welcome_funds_clicks=welcome_funds_clicks,
-        welcome_performance_clicks=welcome_performance_clicks,
+        mode=mode,
         mrd_engine=MRD_ENGINE,
         perf_engine=PERF_ENGINE,
     )
@@ -3305,9 +3227,6 @@ def reg_update_raw_db_preview(
     Input("reg-menu-add-portfolios-peer", "n_clicks"),
     Input("reg-menu-add-portfolios-index", "n_clicks"),
     Input("reg-menu-add-portfolios-other", "n_clicks"),
-    Input("reg-welcome-add-portfolios-peer-btn", "n_clicks"),
-    Input("reg-welcome-add-portfolios-index-btn", "n_clicks"),
-    Input("reg-welcome-add-portfolios-other-btn", "n_clicks"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("dashmat-route-intent-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),
@@ -3317,9 +3236,6 @@ def reg_open_portfolio_add_modal(
     peer_clicks,
     index_clicks,
     other_clicks,
-    welcome_peer_clicks,
-    welcome_index_clicks,
-    welcome_other_clicks,
     page_load_intervals=None,
     route_intent=None,
     consumed_token=None,
@@ -3337,36 +3253,19 @@ def reg_open_portfolio_add_modal(
         if not intent_token:
             raise PreventUpdate
         mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
-        intent_trigger_map = {
-            "peer": "reg-welcome-add-portfolios-peer-btn",
-            "index": "reg-welcome-add-portfolios-index-btn",
-            "other": "reg-welcome-add-portfolios-other-btn",
-        }
-        intent_trigger_id = intent_trigger_map.get(mode)
-        if not intent_trigger_id:
+        if mode not in {"peer", "index", "other"}:
             raise PreventUpdate
         result = compute_open_portfolio_add_modal(
-            prefix="reg",
-            triggered_id=intent_trigger_id,
-            peer_clicks=1 if mode == "peer" else None,
-            index_clicks=1 if mode == "index" else None,
-            other_clicks=1 if mode == "other" else None,
-            welcome_peer_clicks=1 if mode == "peer" else None,
-            welcome_index_clicks=1 if mode == "index" else None,
-            welcome_other_clicks=1 if mode == "other" else None,
+            mode=mode,
             db_engine=DB_ENGINE,
         )
         return (*result, False, intent_token)
 
+    mode = resolve_portfolio_add_mode("reg", triggered_id)
+    if not mode:
+        raise PreventUpdate
     result = compute_open_portfolio_add_modal(
-        prefix="reg",
-        triggered_id=triggered_id,
-        peer_clicks=peer_clicks,
-        index_clicks=index_clicks,
-        other_clicks=other_clicks,
-        welcome_peer_clicks=welcome_peer_clicks,
-        welcome_index_clicks=welcome_index_clicks,
-        welcome_other_clicks=welcome_other_clicks,
+        mode=mode,
         db_engine=DB_ENGINE,
     )
     return (*result, False, no_update)
@@ -3386,13 +3285,12 @@ def reg_open_portfolio_add_modal(
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-underlying", "n_clicks"),
-    Input("reg-welcome-add-portfolios-underlying-btn", "n_clicks"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("dashmat-route-intent-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_underlying_add_modal(menu_clicks, welcome_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+def reg_open_underlying_add_modal(menu_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
     triggered_id = _safe_triggered_id()
     if triggered_id == "reg-page-load-trigger":
         if page_load_intervals is None:
@@ -3405,10 +3303,12 @@ def reg_open_underlying_add_modal(menu_clicks, welcome_clicks, page_load_interva
         )
         if not intent_token:
             raise PreventUpdate
-        result = compute_open_underlying_add_modal(1, None)
+        result = compute_open_underlying_add_modal()
         return (*result, False, intent_token)
 
-    result = compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+    if not menu_clicks:
+        raise PreventUpdate
+    result = compute_open_underlying_add_modal()
     return (*result, False, no_update)
 
 
@@ -3981,7 +3881,6 @@ def reg_handle_sheet_select_ok(
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("reg-welcome-screen", "style"),
     Output("reg-main-container", "style"),
     Output("reg-periodicity-select", "data"),
     Output("reg-periodicity-select", "value"),
@@ -3992,6 +3891,16 @@ def reg_handle_sheet_select_ok(
     State("reg-periodicity-value-store", "data"),
     prevent_initial_call=False,
 )
+def _reg_toggle_main_visibility(raw_data, n_intervals, original_periodicity, stored_periodicity):
+    _, main_style, options, value, base_ready = reg_toggle_welcome(
+        raw_data,
+        n_intervals,
+        original_periodicity,
+        stored_periodicity,
+    )
+    return main_style, options, value, base_ready
+
+
 def reg_toggle_welcome(raw_data, n_intervals, original_periodicity, stored_periodicity):
     hide_welcome = {"display": "none"}
     show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
@@ -4795,32 +4704,6 @@ def reg_update_constraints(n_add, n_clear, cell_change, current_rows):
         return rows, rows
     else:
         return current_rows, current_rows
-
-
-# ---------------------------------------------------------------------------
-# Sample data downloads
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("reg-download-sample-daily", "data"),
-    Input("reg-download-sample-daily-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def reg_download_sample_daily(n):
-    if not n:
-        raise PreventUpdate
-    return dcc.send_file(str(get_sample_file_path("daily")))
-
-
-@callback(
-    Output("reg-download-sample-monthly", "data"),
-    Input("reg-download-sample-monthly-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def reg_download_sample_monthly(n):
-    if not n:
-        raise PreventUpdate
-    return dcc.send_file(str(get_sample_file_path("monthly")))
 
 
 # ---------------------------------------------------------------------------

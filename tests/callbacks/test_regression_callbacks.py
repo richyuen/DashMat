@@ -409,7 +409,7 @@ def test_reg_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, regre
     monkeypatch.setattr(regression_page, "callback_context", SimpleNamespace(triggered_id="reg-page-load-trigger"))
 
     with pytest.raises(PreventUpdate):
-        regression_page.reg_open_db_add_modal(None, None, 1, route_intent, None)
+        regression_page.reg_open_db_add_modal(None, 1, route_intent, None)
 
 
 def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, regression_page):
@@ -470,12 +470,11 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
         ]
 
     monkeypatch.setattr(regression_page, "get_available_periodicities", _fake_get_available_periodicities)
-    welcome_style, main_style, options, value, base_ready = regression_page.reg_toggle_welcome(
+    main_style, options, value, base_ready = regression_page._reg_toggle_main_visibility(
         "raw", 1, "daily", "monthly"
     )
 
     assert captured["arg"] == "daily"
-    assert welcome_style["display"] == "none"
     assert main_style["display"] == "flex"
     assert options == [{"value": "daily", "label": "Daily"}, {"value": "monthly", "label": "Monthly"}]
     assert value == "monthly"

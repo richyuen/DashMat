@@ -49,7 +49,7 @@ class PagePrefixConfig:
     welcome_switch_buttons: tuple[tuple[str, str, str], ...] = ()
 
 
-def build_welcome_screen(cfg: PagePrefixConfig):
+def build_welcome_screen(cfg: PagePrefixConfig, extra_controls: list | None = None):
     switch_buttons = [
         dmc.Button(
             label,
@@ -77,17 +77,22 @@ def build_welcome_screen(cfg: PagePrefixConfig):
             )
         )
 
+    stack_children = [
+        dmc.Stack(
+            align="center",
+            gap=2,
+            children=header_children,
+        ),
+    ]
+    if extra_controls:
+        stack_children.extend(extra_controls)
+
     return dmc.Stack(
         align="center",
         justify="center",
         gap="lg",
         style={"width": "100%", "maxWidth": "1160px", "margin": "0 auto", "padding": "4px 8px 12px"},
-        children=[
-            dmc.Stack(
-                align="center",
-                gap=2,
-                children=header_children,
-            ),
+        children=stack_children + [
             html.Div(
                 className="dashmat-welcome-sections-grid",
                 children=[
@@ -1009,9 +1014,7 @@ def portfolio_type_options(mode: str) -> tuple[list[dict], list[dict]]:
     return _db_options(PEER_PORTFOLIO_TYPE_OPTIONS), _db_options(PEER_BENCHMARK_TYPE_OPTIONS)
 
 
-def compute_open_db_add_modal(menu_clicks, welcome_clicks, db_engine):
-    if not menu_clicks and not welcome_clicks:
-        raise PreventUpdate
+def compute_open_db_add_modal(db_engine):
     options = get_core_category_options_cached(db_engine)
     return True, options, []
 
@@ -1035,33 +1038,19 @@ def compute_validate_db_add_selection(selected_benches, raw_data, opened):
     return no_update, True, False
 
 
-def compute_open_portfolio_add_modal(
-    prefix: str,
-    triggered_id,
-    peer_clicks,
-    index_clicks,
-    other_clicks,
-    welcome_peer_clicks,
-    welcome_index_clicks,
-    welcome_other_clicks,
-    db_engine,
-):
-    if (
-        not peer_clicks
-        and not index_clicks
-        and not other_clicks
-        and not welcome_peer_clicks
-        and not welcome_index_clicks
-        and not welcome_other_clicks
-    ):
-        raise PreventUpdate
+def resolve_portfolio_add_mode(prefix: str, triggered_id):
+    if triggered_id == _sid(prefix, "menu-add-portfolios-peer"):
+        return "peer"
+    if triggered_id == _sid(prefix, "menu-add-portfolios-index"):
+        return "index"
+    if triggered_id == _sid(prefix, "menu-add-portfolios-other"):
+        return "other"
+    return None
 
-    if triggered_id in {_sid(prefix, "menu-add-portfolios-index"), _sid(prefix, "welcome-add-portfolios-index-btn")}:
-        mode = "index"
-    elif triggered_id in {_sid(prefix, "menu-add-portfolios-other"), _sid(prefix, "welcome-add-portfolios-other-btn")}:
-        mode = "other"
-    else:
-        mode = "peer"
+
+def compute_open_portfolio_add_modal(mode: str, db_engine):
+    if mode not in {"peer", "index", "other"}:
+        raise PreventUpdate
 
     mode_title_map = {
         "peer": "Add peer-relative portfolios",
@@ -1107,10 +1096,7 @@ def compute_close_portfolio_add_modal(n_clicks):
     return False, [], []
 
 
-def compute_open_underlying_add_modal(menu_clicks, welcome_clicks):
-    if not menu_clicks and not welcome_clicks:
-        raise PreventUpdate
-
+def compute_open_underlying_add_modal():
     return (
         True,
         "Add underlying categories",
@@ -1131,44 +1117,28 @@ def compute_close_underlying_add_modal(n_clicks):
     return False, None, [], [], [], True, [], []
 
 
-def compute_open_raw_db_add_modal(
-    prefix: str,
-    triggered_id,
-    factor_clicks,
-    funds_clicks,
-    performance_clicks,
-    welcome_factor_clicks,
-    welcome_funds_clicks,
-    welcome_performance_clicks,
-    mrd_engine,
-    perf_engine,
-):
-    if (
-        not factor_clicks
-        and not funds_clicks
-        and not performance_clicks
-        and not welcome_factor_clicks
-        and not welcome_funds_clicks
-        and not welcome_performance_clicks
-    ):
-        raise PreventUpdate
+def resolve_raw_db_add_mode(prefix: str, triggered_id):
+    if triggered_id == _sid(prefix, "menu-add-raw-factor"):
+        return "factor"
+    if triggered_id == _sid(prefix, "menu-add-raw-funds"):
+        return "funds"
+    if triggered_id == _sid(prefix, "menu-add-raw-performance"):
+        return "performance"
+    return None
 
-    factor_ids = {_sid(prefix, "menu-add-raw-factor"), _sid(prefix, "welcome-add-raw-factor-btn")}
-    funds_ids = {_sid(prefix, "menu-add-raw-funds"), _sid(prefix, "welcome-add-raw-funds-btn")}
-    performance_ids = {_sid(prefix, "menu-add-raw-performance"), _sid(prefix, "welcome-add-raw-performance-btn")}
 
-    if triggered_id in factor_ids:
-        mode = "factor"
+def compute_open_raw_db_add_modal(mode: str, mrd_engine, perf_engine):
+    if mode == "factor":
         title = "Add raw factor data"
         options = get_factor_options_cached(mrd_engine)
-    elif triggered_id in funds_ids:
-        mode = "funds"
+    elif mode == "funds":
         title = "Add fund return series"
         options = get_fund_options_cached(mrd_engine)
-    else:
-        mode = "performance"
+    elif mode == "performance":
         title = "Add performance return series"
         options = get_performance_options_cached(perf_engine)
+    else:
+        raise PreventUpdate
 
     return (
         True,

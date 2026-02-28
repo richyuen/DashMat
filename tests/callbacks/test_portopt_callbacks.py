@@ -229,7 +229,7 @@ def test_po_open_db_add_modal_clears_blocker_with_modal_payload(monkeypatch, pag
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(portopt, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
 
-    assert portopt.po_open_db_add_modal(1, None) == (*expected, False, portopt.no_update)
+    assert portopt.po_open_db_add_modal(1) == (*expected, False, portopt.no_update)
 
 
 def test_po_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, page_modules):
@@ -239,7 +239,7 @@ def test_po_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, page_m
     monkeypatch.setattr(portopt, "callback_context", SimpleNamespace(triggered_id="po-page-load-trigger"))
 
     with pytest.raises(PreventUpdate):
-        portopt.po_open_db_add_modal(None, None, 1, route_intent, None)
+        portopt.po_open_db_add_modal(None, 1, route_intent, None)
 
 
 def test_po_populate_returns_grid_adds_header_tooltips(page_modules):
