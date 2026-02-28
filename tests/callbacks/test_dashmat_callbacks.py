@@ -57,3 +57,25 @@ def test_dm_route_non_file_imports_builds_intent_for_real_click(monkeypatch):
     assert intent["action"] == "open_import_modal"
     assert intent["flow"] == "db"
     assert nav_target == "/portopt"
+
+
+def test_dm_update_workspace_cta_hides_restore_button_without_session_data():
+    import app  # noqa: F401
+    import pages.dashmat as dashmat
+
+    href, label, style = dashmat.dm_update_workspace_cta("portopt", None)
+
+    assert href == "/portopt"
+    assert label == "Restore existing session in Portfolio Optimization"
+    assert style == {"display": "none"}
+
+
+def test_dm_update_workspace_cta_shows_restore_button_with_session_data():
+    import app  # noqa: F401
+    import pages.dashmat as dashmat
+
+    href, label, style = dashmat.dm_update_workspace_cta("regression", {"data": "present"})
+
+    assert href == "/regression"
+    assert label == "Restore existing session in Regression"
+    assert style == {}

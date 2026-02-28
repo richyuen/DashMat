@@ -15,7 +15,7 @@ from utils.dashmat_welcome_modal import (
     build_welcome_screen,
     js_trigger_upload_with_cancel,
 )
-from utils.page_paths import LANDING_PATH, module_to_label, module_to_workspace_path, normalize_landing_module
+from utils.page_paths import LANDING_PATH, module_to_workspace_path, normalize_landing_module
 from utils.route_intent import (
     ACTION_CONFIGURE_AFTER_IMPORT,
     ACTION_OPEN_IMPORT_MODAL,
@@ -43,17 +43,23 @@ DM_CONFIG = PagePrefixConfig(
     prefix="dm",
     page_icon="tabler:layout-grid",
     page_title="Welcome to DashMat",
-    page_subtitle="Load data, then open Analytics, Portfolio Optimization, or Regression.",
+    page_subtitle="Choose a module, then load series for analysis.",
     series_modal_size="80vw",
     series_modal_max_width="1200px",
     series_modal_transition_ms=180,
 )
 
 _MODULE_OPTIONS = [
-    {"label": "Analytics Tool", "value": "analyticstool"},
-    {"label": "Portfolio Optimization", "value": "portopt"},
-    {"label": "Regression", "value": "regression"},
+    {"label": "Analyze Returns", "value": "analyticstool"},
+    {"label": "Optimize Portfolio", "value": "portopt"},
+    {"label": "Run Regression", "value": "regression"},
 ]
+
+_MODULE_RESTORE_LABELS = {
+    "analyticstool": "Restore existing session in Analytics",
+    "portopt": "Restore existing session in Portfolio Optimization",
+    "regression": "Restore existing session in Regression",
+}
 
 _IMPORT_TRIGGER_MAP = {
     "dm-welcome-add-db-btn": {"flow": FLOW_DB},
@@ -74,73 +80,6 @@ layout = dmc.Container(
         dmc.Stack(
             gap="lg",
             children=[
-                dmc.Paper(
-                    withBorder=True,
-                    radius="lg",
-                    p="lg",
-                    children=dmc.Stack(
-                        gap="md",
-                        children=[
-                            dmc.Group(
-                                justify="space-between",
-                                align="end",
-                                style={"gap": "16px", "flexWrap": "wrap"},
-                                children=[
-                                    dmc.Stack(
-                                        gap=4,
-                                        children=[
-                                            dmc.Title("Welcome to DashMat", order=2),
-                                            dmc.Text(
-                                                "Choose the initial workspace, then load or append returns data.",
-                                                c="dimmed",
-                                            ),
-                                        ],
-                                    ),
-                                    dmc.Stack(
-                                        gap=6,
-                                        style={"minWidth": "320px", "flex": "1"},
-                                        children=[
-                                            dmc.Text("Initial module", size="sm", fw=500),
-                                            dmc.SegmentedControl(
-                                                id="dm-module-select",
-                                                data=_MODULE_OPTIONS,
-                                                value="analyticstool",
-                                                fullWidth=True,
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            dmc.Group(
-                                justify="space-between",
-                                align="center",
-                                style={"gap": "12px", "flexWrap": "wrap"},
-                                children=[
-                                    dmc.Text(
-                                        id="dm-module-subtitle",
-                                        c="dimmed",
-                                        children="Imports below will open in Analytics Tool.",
-                                    ),
-                                    dmc.Anchor(
-                                        id="dm-open-workspace-link",
-                                        href=module_to_workspace_path("analyticstool"),
-                                        children=dmc.Button(
-                                            "Open Analytics Tool",
-                                            id="dm-open-workspace-button",
-                                            disabled=True,
-                                        ),
-                                    ),
-                                ],
-                            ),
-                            dmc.Alert(
-                                id="dm-alert-message",
-                                title="Status",
-                                color="red",
-                                hide=True,
-                            ),
-                        ],
-                    ),
-                ),
                 dmc.Box(
                     pos="relative",
                     children=[
@@ -151,7 +90,39 @@ layout = dmc.Container(
                             overlayProps={"radius": "sm", "blur": 2},
                             loaderProps={"variant": "bars"},
                         ),
-                        build_welcome_screen(DM_CONFIG),
+                        build_welcome_screen(
+                            DM_CONFIG,
+                            extra_controls=[
+                                dmc.SegmentedControl(
+                                    id="dm-module-select",
+                                    data=_MODULE_OPTIONS,
+                                    value="analyticstool",
+                                    fullWidth=True,
+                                ),
+                                dmc.Group(
+                                    justify="center",
+                                    align="center",
+                                    gap="md",
+                                    children=[
+                                        dmc.Anchor(
+                                            id="dm-open-workspace-link",
+                                            href=module_to_workspace_path("analyticstool"),
+                                            style={"display": "none"},
+                                            children=dmc.Button(
+                                                _MODULE_RESTORE_LABELS["analyticstool"],
+                                                id="dm-open-workspace-button",
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                                dmc.Alert(
+                                    id="dm-alert-message",
+                                    title="Status",
+                                    color="red",
+                                    hide=True,
+                                ),
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -286,22 +257,19 @@ clientside_callback(
 
 
 @callback(
-    Output("dm-module-subtitle", "children"),
     Output("dm-open-workspace-link", "href"),
     Output("dm-open-workspace-button", "children"),
-    Output("dm-open-workspace-button", "disabled"),
+    Output("dm-open-workspace-link", "style"),
     Input("dm-module-select", "value"),
     Input("dashmat-raw-data-store", "data"),
     prevent_initial_call=False,
 )
 def dm_update_workspace_cta(module_value, raw_data):
     module_name = normalize_landing_module(module_value)
-    label = module_to_label(module_name)
     return (
-        f"Imports below will open in {label}.",
         module_to_workspace_path(module_name),
-        f"Open {label}",
-        not bool(raw_data),
+        _MODULE_RESTORE_LABELS[module_name],
+        {} if raw_data else {"display": "none"},
     )
 
 
