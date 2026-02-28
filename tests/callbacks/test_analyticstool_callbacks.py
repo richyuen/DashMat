@@ -221,10 +221,10 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
 
     start, end, _style, _common_disabled, _daily_disabled, _max_disabled, range_store, ready, page_ready = (
         analyticstool.initialize_date_range(
-            "raw-json",
             "daily",
             ["Asset_A"],
             1,
+            "raw-json",
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
@@ -275,6 +275,7 @@ def test_restore_application_state_marks_empty_page_ready_after_page_load(page_m
         None,
         None,
         None,
+        None,
         False,
     )
 
@@ -305,6 +306,7 @@ def test_restore_application_state_keeps_loaded_page_ready_unchanged(page_module
         "raw",
         "annual",
         None,
+        None,
         [],
         False,
     )
@@ -333,7 +335,6 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
 
     column_defs, row_data, loaded = analyticstool.update_statistics(
-        "raw-json",
         "daily",
         ["Asset_A", "Asset_B"],
         {},
@@ -343,6 +344,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         0,
         {},
         None,
+        "raw-json",
     )
 
     assert column_defs[0]["field"] == "Statistic"
@@ -355,14 +357,14 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
 
 def test_update_download_excel_disabled_uses_ready_state(page_modules):
     analyticstool, _ = page_modules
-    assert analyticstool.update_download_excel_disabled(None, ["Asset_A"], None, True) is True
-    assert analyticstool.update_download_excel_disabled("raw", ["Asset_A"], None, True) is True
+    assert analyticstool.update_download_excel_disabled(["Asset_A"], None, True, None) is True
+    assert analyticstool.update_download_excel_disabled(["Asset_A"], None, True, "raw") is True
     assert (
         analyticstool.update_download_excel_disabled(
-            "raw",
             ["Asset_A"],
             {"start": "2024-01-01", "end": "2024-12-31"},
             True,
+            "raw",
         )
         is False
     )
@@ -405,7 +407,6 @@ def test_update_statistics_requires_ready_state(page_modules):
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
-            "raw-json",
             "daily",
             ["Asset_A"],
             {},
@@ -415,6 +416,7 @@ def test_update_statistics_requires_ready_state(page_modules):
             0,
             {},
             None,
+            "raw-json",
         )
 
 
@@ -432,7 +434,6 @@ def test_update_growth_grid_requires_growth_table_view(page_modules):
         analyticstool.update_growth_grid(
             "returns",
             "table",
-            "raw-json",
             "daily",
             ["Asset_A"],
             {},
@@ -441,6 +442,7 @@ def test_update_growth_grid_requires_growth_table_view(page_modules):
             True,
             0,
             {},
+            "raw-json",
         )
 
 
@@ -456,7 +458,6 @@ def test_update_growth_grid_builds_columns_and_rows(monkeypatch, page_modules):
     column_defs, row_data = analyticstool.update_growth_grid(
         "growth",
         "table",
-        "raw-json",
         "daily",
         ["Asset_A"],
         {},
@@ -465,6 +466,7 @@ def test_update_growth_grid_builds_columns_and_rows(monkeypatch, page_modules):
         True,
         0,
         {},
+        "raw-json",
     )
 
     assert column_defs[0]["field"] == "Date"
@@ -484,7 +486,6 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
     column_defs, row_data = analyticstool.update_drawdown_grid(
         "drawdown",
         "table",
-        "raw-json",
         "daily",
         ["Asset_A"],
         "total",
@@ -494,6 +495,7 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
         True,
         0,
         {},
+        "raw-json",
     )
 
     assert column_defs[0]["field"] == "Date"
@@ -513,7 +515,6 @@ def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules)
     graph = analyticstool.update_drawdown_charts(
         "drawdown",
         "chart",
-        "raw-json",
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -523,6 +524,7 @@ def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules)
         True,
         0,
         {},
+        "raw-json",
         "light",
     )
 
@@ -575,7 +577,6 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
 
     key_unweighted = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -592,10 +593,10 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         "scaled_identity",
         120,
         None,
+        None,
     )
     key_weighted = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -612,6 +613,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         "scaled_identity",
         120,
         None,
+        None,
     )
 
     assert isinstance(key_unweighted, str)
@@ -620,7 +622,6 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
     assert (
         analyticstool.update_correlogram_target_key(
             "correlogram",
-            None,
             "daily",
             ["Asset_A", "Asset_B"],
             "total",
@@ -636,6 +637,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
             "none",
             "scaled_identity",
             120,
+            None,
             key_weighted,
         )
         is no_update
@@ -648,7 +650,6 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
 
     key_none = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -665,10 +666,10 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         "scaled_identity",
         120,
         None,
+        None,
     )
     key_shrunk = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -685,6 +686,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         "scaled_identity",
         120,
         None,
+        None,
     )
 
     assert isinstance(key_none, str)
@@ -698,7 +700,6 @@ def test_update_correlogram_target_key_changes_on_target_for_ledoit_wolf_matrix_
 
     key_scaled = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -715,10 +716,10 @@ def test_update_correlogram_target_key_changes_on_target_for_ledoit_wolf_matrix_
         "scaled_identity",
         120,
         None,
+        None,
     )
     key_constant = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -735,6 +736,7 @@ def test_update_correlogram_target_key_changes_on_target_for_ledoit_wolf_matrix_
         "constant_correlation",
         120,
         None,
+        None,
     )
 
     assert isinstance(key_scaled, str)
@@ -748,7 +750,6 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
 
     key_scatter = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -765,12 +766,12 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
         "scaled_identity",
         120,
         None,
+        None,
     )
 
     assert (
         analyticstool.update_correlogram_target_key(
             "correlogram",
-            None,
             "daily",
             ["Asset_A", "Asset_B"],
             "total",
@@ -786,6 +787,7 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
             "oas",
             "constant_correlation",
             120,
+            None,
             key_scatter,
         )
         is no_update
@@ -798,7 +800,6 @@ def test_update_correlogram_target_key_ignores_target_when_not_effective(page_mo
 
     key_oas = analyticstool.update_correlogram_target_key(
         "correlogram",
-        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -815,12 +816,12 @@ def test_update_correlogram_target_key_ignores_target_when_not_effective(page_mo
         "scaled_identity",
         120,
         None,
+        None,
     )
 
     assert (
         analyticstool.update_correlogram_target_key(
             "correlogram",
-            None,
             "daily",
             ["Asset_A", "Asset_B"],
             "total",
@@ -836,6 +837,7 @@ def test_update_correlogram_target_key_ignores_target_when_not_effective(page_mo
             "oas",
             "constant_correlation",
             120,
+            None,
             key_oas,
         )
         is no_update
@@ -1100,16 +1102,15 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
     assert result[8] is no_update
 
 
-def test_on_modal_ok_commits_pending_import_and_clears_staging(page_modules):
+def test_on_modal_ok_applies_pending_working_config_and_clears_staging(page_modules):
     analyticstool, _ = page_modules
     imported = pd.DataFrame(
         {"New_A": [0.01, 0.02], "New_B": [0.0, -0.01]},
         index=pd.to_datetime(["2024-01-31", "2024-02-29"]),
     )
     imported.index.name = "Date"
-    pending_payload = analyticstool._at_build_imported_pending_payload(
-        imported,
-        "monthly",
+    committed_raw = df_to_json(imported)
+    pending_working_config = analyticstool._at_build_pending_working_config(
         "monthly",
         ["New_A", "New_B"],
         ["New_A", "New_B"],
@@ -1122,10 +1123,10 @@ def test_on_modal_ok_commits_pending_import_and_clears_staging(page_modules):
 
     result = analyticstool.on_modal_ok(
         1,
-        None,
-        "daily",
+        committed_raw,
+        "monthly",
         "token-1",
-        pending_payload,
+        pending_working_config,
         [
             {
                 "__orig_series": "New_A",
@@ -1160,7 +1161,8 @@ def test_on_modal_ok_commits_pending_import_and_clears_staging(page_modules):
     assert result[13] == ""
     assert result[14] == "blue"
     assert result[15] is True
-    assert result[16] == "monthly"
+    assert result[16] is no_update
+    assert [option["value"] for option in result[17]] == ["monthly"]
     assert result[18] == "monthly"
     assert result[19] is False
     assert result[20] == "monthly"
@@ -1172,16 +1174,15 @@ def test_on_modal_ok_commits_pending_import_and_clears_staging(page_modules):
     assert list(updated_df.columns) == ["Renamed_A", "New_B"]
 
 
-def test_on_modal_ok_keeps_pending_import_when_validation_fails(page_modules):
+def test_on_modal_ok_keeps_pending_working_config_when_validation_fails(page_modules):
     analyticstool, _ = page_modules
     imported = pd.DataFrame(
         {"New_A": [0.01], "New_B": [0.02]},
         index=pd.to_datetime(["2024-01-31"]),
     )
     imported.index.name = "Date"
-    pending_payload = analyticstool._at_build_imported_pending_payload(
-        imported,
-        "monthly",
+    committed_raw = df_to_json(imported)
+    pending_working_config = analyticstool._at_build_pending_working_config(
         "monthly",
         ["New_A", "New_B"],
         ["New_A", "New_B"],
@@ -1194,10 +1195,10 @@ def test_on_modal_ok_keeps_pending_import_when_validation_fails(page_modules):
 
     result = analyticstool.on_modal_ok(
         1,
-        None,
-        "daily",
+        committed_raw,
+        "monthly",
         "token-2",
-        pending_payload,
+        pending_working_config,
         [
             {
                 "__orig_series": "New_A",
@@ -1259,17 +1260,18 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
         [],
         False,
         {},
+        None,
     )
 
-    pending_payload = result[19]
-    out_json = pending_payload["raw_data"]
-    out_periodicity = pending_payload["original_periodicity"]
-    out_default_periodicity = pending_payload["default_periodicity"]
+    pending_working_config = result[19]
+    out_json = result[0]
+    out_periodicity = result[1]
+    out_default_periodicity = pending_working_config["default_periodicity"]
 
     out_df = pd.read_json(StringIO(out_json), orient="split")
     out_df.index = pd.to_datetime(out_df.index)
 
-    assert result[0] is no_update
+    assert result[0] == out_json
     assert result[10]
     assert out_periodicity == "monthly"
     assert out_default_periodicity == "monthly"
@@ -1299,6 +1301,7 @@ def test_open_modal_ignores_stale_configure_after_import_route_intent(monkeypatc
             ["Asset_A"],
             None,
             None,
+            None,
             route_intent,
             None,
         )
@@ -1319,18 +1322,20 @@ def test_at_resolve_series_selection_modal_controls_overlay_and_ok(page_modules)
     ) == (False, True, "slow", "red", False)
 
 
-def test_at_resolve_series_selection_modal_shows_staged_import_message(page_modules):
+def test_at_resolve_series_selection_modal_shows_pending_working_config_message(page_modules):
     analyticstool, _ = page_modules
-    pending_payload = {
-        "token": "token",
-        "commit_alert": {
-            "mode": "show",
-            "message": "Loaded 3 series",
-            "color": "green",
-        },
-    }
+    pending_working_config = analyticstool._at_build_pending_working_config(
+        "monthly",
+        ["Asset_A"],
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        {"Asset_A": True},
+        "token",
+        {"mode": "show", "message": "Loaded 3 series", "color": "green"},
+    )
 
-    assert analyticstool.at_resolve_series_selection_modal("token", None, pending_payload) == (
+    assert analyticstool.at_resolve_series_selection_modal("token", None, pending_working_config) == (
         True,
         True,
         "Loaded 3 series",
@@ -1340,7 +1345,7 @@ def test_at_resolve_series_selection_modal_shows_staged_import_message(page_modu
     assert analyticstool.at_resolve_series_selection_modal(
         "token",
         {"token": "token", "status": "ready", "message": ""},
-        pending_payload,
+        pending_working_config,
     ) == (
         False,
         False,
@@ -1350,21 +1355,23 @@ def test_at_resolve_series_selection_modal_shows_staged_import_message(page_modu
     )
 
 
-def test_at_resolve_series_selection_modal_error_overrides_staged_message(page_modules):
+def test_at_resolve_series_selection_modal_error_overrides_pending_message(page_modules):
     analyticstool, _ = page_modules
-    pending_payload = {
-        "token": "token",
-        "commit_alert": {
-            "mode": "show",
-            "message": "Loaded 3 series",
-            "color": "green",
-        },
-    }
+    pending_working_config = analyticstool._at_build_pending_working_config(
+        "monthly",
+        ["Asset_A"],
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        {"Asset_A": True},
+        "token",
+        {"mode": "show", "message": "Loaded 3 series", "color": "green"},
+    )
 
     assert analyticstool.at_resolve_series_selection_modal(
         "token",
         {"token": "token", "status": "timeout", "message": "slow"},
-        pending_payload,
+        pending_working_config,
     ) == (
         False,
         True,
@@ -1374,7 +1381,7 @@ def test_at_resolve_series_selection_modal_error_overrides_staged_message(page_m
     )
 
 
-def test_add_series_from_database_stages_pending_selection_state(monkeypatch, page_modules):
+def test_add_series_from_database_commits_raw_data_and_stages_pending_working_config(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     existing_idx = pd.date_range("2024-01-01", periods=3, freq="B")
     existing_raw = pd.DataFrame({"Existing": [0.01, 0.0, -0.01]}, index=existing_idx)
@@ -1399,26 +1406,28 @@ def test_add_series_from_database_stages_pending_selection_state(monkeypatch, pa
         ["Existing"],
         True,
         {},
+        None,
     )
 
-    pending_payload = result[19]
+    pending_working_config = result[19]
+    merged_df = pd.read_json(StringIO(result[0]), orient="split")
+    assert "New_A" in merged_df.columns
     assert result[5] is no_update
     assert result[13] is no_update
     assert result[10]
-    assert pending_payload["selected_series"] == ["Existing", "New_A"]
-    assert pending_payload["series_order"] == ["Existing", "New_A"]
+    assert pending_working_config["selected_series"] == ["Existing", "New_A"]
+    assert pending_working_config["series_order"] == ["Existing", "New_A"]
 
 
-def test_update_series_selectors_prefers_matching_pending_payload(page_modules, raw_json):
+def test_update_series_selectors_prefers_matching_pending_working_config(page_modules):
     analyticstool, _ = page_modules
     imported = pd.DataFrame(
         {"Pending_A": [0.01], "Pending_B": [0.02]},
         index=pd.to_datetime(["2024-01-31"]),
     )
     imported.index.name = "Date"
-    pending_payload = analyticstool._at_build_imported_pending_payload(
-        imported,
-        "monthly",
+    raw_json = df_to_json(imported)
+    pending_working_config = analyticstool._at_build_pending_working_config(
         "monthly",
         ["Pending_B"],
         ["Pending_B", "Pending_A"],
@@ -1437,7 +1446,7 @@ def test_update_series_selectors_prefers_matching_pending_payload(page_modules, 
         {"Asset_A": "None"},
         {"Asset_A": False},
         {"Asset_A": True},
-        pending_payload,
+        pending_working_config,
     )
 
     grid = children[0]
@@ -1452,16 +1461,9 @@ def test_update_series_selectors_prefers_matching_pending_payload(page_modules, 
     assert [row["Series"] for row in selected_rows] == ["Pending_B"]
 
 
-def test_update_series_selectors_ignores_stale_pending_payload(page_modules, raw_json):
+def test_update_series_selectors_ignores_stale_pending_working_config(page_modules, raw_json):
     analyticstool, _ = page_modules
-    imported = pd.DataFrame(
-        {"Pending_A": [0.01]},
-        index=pd.to_datetime(["2024-01-31"]),
-    )
-    imported.index.name = "Date"
-    pending_payload = analyticstool._at_build_imported_pending_payload(
-        imported,
-        "monthly",
+    pending_working_config = analyticstool._at_build_pending_working_config(
         "monthly",
         ["Pending_A"],
         ["Pending_A"],
@@ -1480,7 +1482,7 @@ def test_update_series_selectors_ignores_stale_pending_payload(page_modules, raw
         {"Asset_A": "Asset_B"},
         {"Asset_A": True},
         {"Asset_A": False},
-        pending_payload,
+        pending_working_config,
     )
 
     grid = children[0]
@@ -1491,7 +1493,7 @@ def test_update_series_selectors_ignores_stale_pending_payload(page_modules, raw
     assert row_data[1]["Benchmark"] == "Asset_B"
 
 
-def test_handle_upload_stages_pending_import(monkeypatch, page_modules):
+def test_handle_upload_commits_raw_data_and_stages_pending_working_config(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     imported = pd.DataFrame(
         {"Upload_A": [0.01, 0.0]},
@@ -1513,20 +1515,21 @@ def test_handle_upload_stages_pending_import(monkeypatch, page_modules):
         [],
         False,
         {},
+        None,
     )
 
-    pending_payload = result[24]
-    assert result[0] is no_update
+    pending_working_config = result[24]
+    assert pd.read_json(StringIO(result[0]), orient="split").columns.tolist() == ["Upload_A"]
     assert result[10]
-    assert pending_payload["selected_series"] == ["Upload_A"]
-    assert pending_payload["commit_alert"] == {
+    assert pending_working_config["selected_series"] == ["Upload_A"]
+    assert pending_working_config["commit_alert"] == {
         "mode": "show",
         "message": "Loaded 1 series with 2 rows from upload.xlsx",
         "color": "green",
     }
 
 
-def test_on_sheet_select_ok_stages_pending_import(monkeypatch, page_modules):
+def test_on_sheet_select_ok_commits_raw_data_and_stages_pending_working_config(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     imported = pd.DataFrame(
         {"Sheet_A": [0.01, -0.01]},
@@ -1560,40 +1563,51 @@ def test_on_sheet_select_ok_stages_pending_import(monkeypatch, page_modules):
         [],
         False,
         {},
+        None,
     )
 
-    pending_payload = result[23]
-    assert result[0] is no_update
+    pending_working_config = result[23]
+    assert pd.read_json(StringIO(result[0]), orient="split").columns.tolist() == ["Sheet_A"]
     assert result[10]
     assert result[18] is False
-    assert pending_payload["selected_series"] == ["Sheet_A"]
-    assert pending_payload["commit_alert"] == {
+    assert pending_working_config["selected_series"] == ["Sheet_A"]
+    assert pending_working_config["commit_alert"] == {
         "mode": "show",
         "message": "Loaded 1 series with 2 rows from book.xlsx (sheet: Sheet1)",
         "color": "green",
     }
 
 
-def test_on_modal_cancel_clears_pending_import(page_modules):
+def test_on_modal_cancel_keeps_pending_working_config_and_shows_info(page_modules):
     analyticstool, _ = page_modules
+    pending_working_config = analyticstool._at_build_pending_working_config(
+        "monthly",
+        ["Asset_A"],
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        {"Asset_A": True},
+        "token",
+        {"mode": "show", "message": "Loaded", "color": "green"},
+    )
 
-    result = analyticstool.on_modal_cancel(1)
+    result = analyticstool.on_modal_cancel(1, pending_working_config)
 
     assert result[:6] == (False, None, None, False, False, True)
-    assert result[6] is no_update
-    assert result[7] is no_update
-    assert result[8] is no_update
-    assert result[9] is None
+    assert result[6] == "Imported data is loaded. Open Select Series to apply it."
+    assert result[7] == "blue"
+    assert result[8] is False
+    assert result[9] is no_update
 
 
 def test_update_factor_series_select_includes_unselected_series(page_modules, raw_json):
     analyticstool, _ = page_modules
 
     options, value = analyticstool.update_factor_series_select(
-        raw_json,
         ["Asset_C", "Asset_A"],
         [],
         [],
+        raw_json,
         None,
         None,
     )
@@ -1608,10 +1622,10 @@ def test_update_factor_series_select_includes_saved_and_session_definitions(page
     analyticstool, _ = page_modules
 
     options, _value = analyticstool.update_factor_series_select(
-        raw_json,
         ["Asset_A"],
         [{"FactorName": "SavedFactor"}],
         [{"FactorName": "SessionFactor"}],
+        raw_json,
         None,
         None,
     )
@@ -1841,7 +1855,6 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
         "Factor_X",
         5,
         "raw",
-        "raw-json",
         "daily",
         ["Asset_A", "Asset_B"],
         "excess",
@@ -1851,6 +1864,7 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
         True,
         0,
         {},
+        "raw-json",
         "light",
     )
 
@@ -2229,7 +2243,6 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
     warning, content = analyticstool.update_regime_analysis(
         "regime_analysis",
         "def::SavedRegime",
-        "raw-json",
         "daily",
         ["Asset_A"],
         "total",
@@ -2239,6 +2252,7 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
         True,
         0,
         {},
+        "raw-json",
         "light",
         [{"RegimeName": "SavedRegime", "MethodType": 3, "Config": {"num_regimes": 3}}],
         [],
