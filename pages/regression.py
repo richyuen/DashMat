@@ -2201,10 +2201,12 @@ layout = dmc.Container(
         dcc.Download(id="reg-download-sample-monthly"),
         dcc.Location(id="reg-url-location", refresh=False),
         dcc.Interval(id="reg-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
+        dcc.Store(id="reg-base-controls-ready-store", data=False),
+        dcc.Store(id="reg-page-ready-store", data=False),
         dcc.Store(id="reg-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
             id="reg-ui-blocker-overlay",
-            visible=False,
+            visible=True,
             zIndex=2000,
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
@@ -2382,13 +2384,30 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(is_loading) {
-        return is_loading || false;
+    function(isLoading, rawData, baseReady, pageReady) {
+        if (isLoading) return true;
+        if (!baseReady) return true;
+        if (!rawData) return false;
+        return !pageReady;
     }
     """,
     Output("reg-ui-blocker-overlay", "visible"),
     Input("reg-ui-blocker-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-base-controls-ready-store", "data"),
+    Input("reg-page-ready-store", "data"),
 )
+
+
+def _reg_overlay_visible(ui_blocker, raw_data, base_ready, page_ready):
+    if bool(ui_blocker):
+        return True
+    if not bool(base_ready):
+        return True
+    if not raw_data:
+        return False
+    return not bool(page_ready)
+
 
 clientside_callback(
     js_set_ui_blocker_true_on_any(),
@@ -3802,18 +3821,21 @@ def reg_handle_sheet_select_ok(
     Output("reg-main-container", "style"),
     Output("reg-periodicity-select", "data"),
     Output("reg-periodicity-select", "value"),
+    Output("reg-base-controls-ready-store", "data"),
     Input("dashmat-raw-data-store", "data"),
+    Input("reg-page-load-trigger", "n_intervals"),
     State("dashmat-original-periodicity-store", "data"),
     State("reg-periodicity-value-store", "data"),
     prevent_initial_call=False,
 )
-def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
+def reg_toggle_welcome(raw_data, n_intervals, original_periodicity, stored_periodicity):
     hide_welcome = {"display": "none"}
     show_welcome = {"display": "block"}
     show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     hide_main = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
+    base_ready = bool(n_intervals and n_intervals >= 1)
     if not raw_data:
-        return show_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily"
+        return show_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily", base_ready
 
     period_data = get_available_periodicities(original_periodicity or "daily")
     valid_values = [option["value"] for option in period_data]
@@ -3827,7 +3849,7 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
         if (stored_periodicity and stored_periodicity in valid_values)
         else default_value
     )
-    return hide_welcome, show_main, period_data, period_value
+    return hide_welcome, show_main, period_data, period_value, base_ready
 
 
 _REG_SERIES_GRID_FINAL_STATUSES = {"ready", "empty", "error", "timeout"}
@@ -4385,30 +4407,58 @@ def reg_on_modal_cancel(n_clicks):
     Output("reg-common-range-button", "disabled"),
     Output("reg-maximum-range-button", "disabled"),
     Output("reg-date-range-store", "data", allow_duplicate=True),
+    Output("reg-page-ready-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-periodicity-select", "value"),
     Input("reg-series-select", "data"),
     Input("reg-dependent-var-store", "data"),
+    Input("reg-page-load-trigger", "n_intervals"),
     State("reg-date-range-store", "data"),
+    State("reg-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def reg_init_date_range(raw_data, periodicity, x_series, dep_var, stored_range):
+def reg_init_date_range(raw_data, periodicity, x_series, dep_var, n_intervals, stored_range, current_page_ready):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
     all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
     if not raw_data or not all_series:
-        return None, None, disabled_style, True, True, None
+        return None, None, disabled_style, True, True, None, no_update
     try:
         candidates = compute_date_range_candidates(raw_data, periodicity or "daily", tuple(all_series))
         if not candidates.get("available_series"):
-            return None, None, disabled_style, True, True, None
+            return None, None, disabled_style, True, True, None, no_update
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
-            return None, None, disabled_style, True, True, None
+            return None, None, disabled_style, True, True, None, no_update
         new_range = {"start": str(start_date)[:10], "end": str(end_date)[:10]}
-        return str(start_date)[:10], str(end_date)[:10], enabled_style, False, False, new_range
+        return (
+            str(start_date)[:10],
+            str(end_date)[:10],
+            enabled_style,
+            False,
+            False,
+            new_range,
+            no_update if current_page_ready or not (n_intervals and n_intervals >= 1) else True,
+        )
     except Exception:
-        return None, None, disabled_style, True, True, None
+        return None, None, disabled_style, True, True, None, no_update
+
+
+@callback(
+    Output("reg-page-ready-store", "data", allow_duplicate=True),
+    Input("reg-series-selection-open-request-store", "data"),
+    Input("reg-series-selection-grid-status-store", "data"),
+    State("reg-page-ready-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_release_page_ready_on_series_modal(request_token, status_data, current_page_ready):
+    if current_page_ready:
+        raise PreventUpdate
+    if not request_token:
+        raise PreventUpdate
+    if _reg_series_status_is_final(status_data, request_token):
+        return True
+    raise PreventUpdate
 
 
 @callback(

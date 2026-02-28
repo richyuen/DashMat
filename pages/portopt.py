@@ -3495,10 +3495,13 @@ layout = dmc.Container(
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
 
         # UI Blocker for file dialog (Overlay)
+        dcc.Store(id="po-base-controls-ready-store", data=False),
+        dcc.Store(id="po-ex-ante-controls-ready-store", data=False),
+        dcc.Store(id="po-page-ready-store", data=False),
         dcc.Store(id="po-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
             id="po-ui-blocker-overlay",
-            visible=False,
+            visible=True,
             zIndex=2000,
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
@@ -4544,15 +4547,32 @@ clientside_callback(
 # UI Blocker: sync overlay visibility
 clientside_callback(
     """
-    function(is_loading) {
-        return is_loading || false;
+    function(isLoading, rawData, baseReady, exAnteReady, pageReady) {
+        if (isLoading) return true;
+        if (!baseReady || !exAnteReady) return true;
+        if (!rawData) return false;
+        return !pageReady;
     }
     """,
     Output("po-ui-blocker-overlay", "visible"),
     Input("po-ui-blocker-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("po-base-controls-ready-store", "data"),
+    Input("po-ex-ante-controls-ready-store", "data"),
+    Input("po-page-ready-store", "data"),
 )
 
 _PO_SERIES_GRID_FINAL_STATUSES = {"ready", "empty", "error", "timeout"}
+
+
+def _po_overlay_visible(ui_blocker, raw_data, base_ready, ex_ante_ready, page_ready):
+    if bool(ui_blocker):
+        return True
+    if not bool(base_ready) or not bool(ex_ante_ready):
+        return True
+    if not raw_data:
+        return False
+    return not bool(page_ready)
 
 
 def _po_new_series_selection_request_token():
@@ -6014,7 +6034,7 @@ clientside_callback(
         };
         var defaultName = defaults[safeModel] || "Port";
         return [optWindow, windowSize, optStep, optStepUnit, safeModel, name || defaultName,
-                expWt || false, halflife, covShrinkage || "none", !expWt, missing, fillIS];
+                expWt || false, halflife, covShrinkage || "none", !expWt, missing, fillIS, true];
     }
     """,
     Output("po-opt-window-select", "value"),
@@ -6029,6 +6049,7 @@ clientside_callback(
     Output("po-halflife-input", "disabled", allow_duplicate=True),
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
+    Output("po-base-controls-ready-store", "data"),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
@@ -6052,11 +6073,12 @@ clientside_callback(
 clientside_callback(
     """
     function(n, mode, objective) {
-        return [mode || "ret_cov", objective || "maximize_sharpe"];
+        return [mode || "ret_cov", objective || "maximize_sharpe", true];
     }
     """,
     Output("po-ex-ante-mode-select", "value"),
     Output("po-objective-select", "value"),
+    Output("po-ex-ante-controls-ready-store", "data"),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-ex-ante-mode-store", "data"),
     State("po-objective-store", "data"),
@@ -7912,18 +7934,21 @@ def po_on_modal_cancel(n_clicks):
     Output("po-common-daily-button", "disabled"),
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
+    Output("po-page-ready-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
     State("po-date-range-store", "data"),
+    State("po-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
+def po_init_date_range(raw_data, periodicity, selected_series, n_intervals, stored_range, current_page_ready):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
     if raw_data is None or not selected_series:
-        return None, None, disabled_style, True, True, True, None
+        return None, None, disabled_style, True, True, True, None, no_update
 
     try:
         candidates = compute_date_range_candidates(
@@ -7932,11 +7957,11 @@ def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
             tuple(selected_series or ()),
         )
         if not candidates.get("available_series"):
-            return None, None, disabled_style, True, True, True, None
+            return None, None, disabled_style, True, True, True, None, no_update
 
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
-            return None, None, disabled_style, True, True, True, None
+            return None, None, disabled_style, True, True, True, None, no_update
 
         has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
         return (
@@ -7947,9 +7972,10 @@ def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
             not has_common_daily,
             False,
             {"start": start_date, "end": end_date},
+            no_update if current_page_ready or not (n_intervals and n_intervals >= 1) else True,
         )
     except Exception:
-        return None, None, disabled_style, True, True, True, None
+        return None, None, disabled_style, True, True, True, None, no_update
 
 
 # ---------------------------------------------------------------------------

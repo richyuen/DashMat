@@ -213,14 +213,16 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
         lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
     )
 
-    start, end, _style, _common_disabled, _daily_disabled, _max_disabled, range_store, ready = (
+    start, end, _style, _common_disabled, _daily_disabled, _max_disabled, range_store, ready, page_ready = (
         analyticstool.initialize_date_range(
             "raw-json",
             "daily",
             ["Asset_A"],
+            1,
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
+            False,
         )
     )
 
@@ -228,6 +230,89 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
     assert end == "2024-12-31"
     assert range_store is no_update
     assert ready is True
+    assert page_ready is True
+
+
+def test_analyticstool_layout_includes_page_ready_store_and_visible_overlay(page_modules):
+    analyticstool, _ = page_modules
+
+    ready_store = _find_component_by_id(analyticstool.layout, "at-page-ready-store")
+    overlay = _find_component_by_id(analyticstool.layout, "at-ui-blocker-overlay")
+
+    assert ready_store is not None
+    assert _component_prop(ready_store, "data") is False
+    assert overlay is not None
+    assert _component_prop(overlay, "visible") is True
+
+
+def test_restore_application_state_marks_empty_page_ready_after_page_load(page_modules):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.restore_application_state(
+        1,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        False,
+    )
+
+    assert result[-2] is False
+    assert result[-1] is True
+
+
+def test_restore_application_state_keeps_loaded_page_ready_unchanged(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.restore_application_state(
+        1,
+        raw_json,
+        "daily",
+        "daily_trading",
+        ["Asset_A"],
+        "total",
+        0,
+        "statistics",
+        "1y",
+        "total_return",
+        "annualized",
+        "chart",
+        "chart",
+        "chart",
+        "box",
+        5,
+        "raw",
+        "annual",
+        None,
+        [],
+        False,
+    )
+
+    assert result[-2] is False
+    assert result[-1] is no_update
+
+
+def test_at_overlay_visible_uses_ready_and_blocker(page_modules):
+    analyticstool, _ = page_modules
+
+    assert analyticstool._at_overlay_visible(False, False) is True
+    assert analyticstool._at_overlay_visible(True, True) is True
+    assert analyticstool._at_overlay_visible(False, True) is False
 
 
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):

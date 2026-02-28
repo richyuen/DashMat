@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from dash import no_update
+from dash.exceptions import PreventUpdate
 
 from utils.regression import RegressionWindowResult
 from utils.returns import df_to_json
@@ -60,6 +61,44 @@ def _call_reg_run(regression_page, **overrides):
     }
     params.update(overrides)
     return regression_page.reg_run_regression(**params)
+
+
+def _find_component_by_id(node, target_id):
+    if node is None:
+        return None
+    if getattr(node, "id", None) == target_id:
+        return node
+
+    children = getattr(node, "children", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            found = _find_component_by_id(child, target_id)
+            if found is not None:
+                return found
+    else:
+        found = _find_component_by_id(children, target_id)
+        if found is not None:
+            return found
+
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            found = _find_component_by_id(value, target_id)
+            if found is not None:
+                return found
+    return None
+
+
+def _component_prop(node, prop_name):
+    if hasattr(node, prop_name):
+        return getattr(node, prop_name)
+    to_plotly = getattr(node, "to_plotly_json", None)
+    if callable(to_plotly):
+        return ((to_plotly().get("props") or {})).get(prop_name)
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        return props.get(prop_name)
+    return None
 
 
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
@@ -405,13 +444,16 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
         ]
 
     monkeypatch.setattr(regression_page, "get_available_periodicities", _fake_get_available_periodicities)
-    welcome_style, main_style, options, value = regression_page.reg_toggle_welcome("raw", "daily", "monthly")
+    welcome_style, main_style, options, value, base_ready = regression_page.reg_toggle_welcome(
+        "raw", 1, "daily", "monthly"
+    )
 
     assert captured["arg"] == "daily"
     assert welcome_style["display"] == "none"
     assert main_style["display"] == "flex"
     assert options == [{"value": "daily", "label": "Daily"}, {"value": "monthly", "label": "Monthly"}]
     assert value == "monthly"
+    assert base_ready is True
 
 
 def test_reg_on_modal_ok_commits_local_series_modal_state(regression_page):
@@ -610,12 +652,103 @@ def _collect_components_by_class(node, class_name: str):
 
 
 def test_reg_toggle_welcome_no_data_shows_top_aligned_welcome(regression_page):
-    welcome_style, main_style, options, value = regression_page.reg_toggle_welcome(None, None, None)
+    welcome_style, main_style, options, value, base_ready = regression_page.reg_toggle_welcome(None, 1, None, None)
 
     assert welcome_style == {"display": "block"}
     assert main_style["display"] == "none"
     assert options == [{"value": "daily", "label": "Daily"}]
     assert value == "daily"
+    assert base_ready is True
+
+
+def test_regression_layout_includes_page_ready_stores_and_visible_overlay(regression_page):
+    base_store = _find_component_by_id(regression_page.layout, "reg-base-controls-ready-store")
+    page_store = _find_component_by_id(regression_page.layout, "reg-page-ready-store")
+    overlay = _find_component_by_id(regression_page.layout, "reg-ui-blocker-overlay")
+
+    assert base_store is not None
+    assert page_store is not None
+    assert _component_prop(base_store, "data") is False
+    assert _component_prop(page_store, "data") is False
+    assert _component_prop(overlay, "visible") is True
+
+
+def test_reg_toggle_welcome_keeps_base_ready_false_before_page_load(regression_page):
+    welcome_style, main_style, options, value, base_ready = regression_page.reg_toggle_welcome(None, 0, None, None)
+
+    assert welcome_style == {"display": "block"}
+    assert main_style["display"] == "none"
+    assert options == [{"value": "daily", "label": "Daily"}]
+    assert value == "daily"
+    assert base_ready is False
+
+
+def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page):
+    monkeypatch.setattr(
+        regression_page,
+        "compute_date_range_candidates",
+        lambda *_args, **_kwargs: {"available_series": ["Y", "X1"]},
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "resolve_initial_range",
+        lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
+    )
+
+    result = regression_page.reg_init_date_range(
+        "raw-json",
+        "daily",
+        ["X1"],
+        "Y",
+        1,
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        False,
+    )
+
+    assert result[-2] == {"start": "2024-01-01", "end": "2024-12-31"}
+    assert result[-1] is True
+
+
+def test_reg_init_date_range_leaves_page_ready_unchanged_without_series(regression_page):
+    result = regression_page.reg_init_date_range("raw-json", "daily", [], None, 1, None, False)
+
+    assert result[-2] is None
+    assert result[-1] is no_update
+
+
+def test_reg_release_page_ready_on_series_modal_uses_matching_final_status(regression_page):
+    assert (
+        regression_page.reg_release_page_ready_on_series_modal(
+            "token",
+            {"token": "token", "status": "ready", "message": ""},
+            False,
+        )
+        is True
+    )
+
+
+def test_reg_release_page_ready_on_series_modal_ignores_mismatched_or_nonfinal_status(regression_page):
+    with pytest.raises(PreventUpdate):
+        regression_page.reg_release_page_ready_on_series_modal(
+            "token",
+            {"token": "other", "status": "ready", "message": ""},
+            False,
+        )
+
+    with pytest.raises(PreventUpdate):
+        regression_page.reg_release_page_ready_on_series_modal(
+            "token",
+            {"token": "token", "status": "rendered", "message": ""},
+            False,
+        )
+
+
+def test_reg_overlay_visible_uses_base_and_page_ready(regression_page):
+    assert regression_page._reg_overlay_visible(False, None, False, False) is True
+    assert regression_page._reg_overlay_visible(False, None, True, False) is False
+    assert regression_page._reg_overlay_visible(False, "raw", True, False) is True
+    assert regression_page._reg_overlay_visible(False, "raw", True, True) is False
+    assert regression_page._reg_overlay_visible(True, "raw", True, True) is True
 
 
 def test_reg_help_modal_covers_three_sections_and_model_explainers(regression_page):

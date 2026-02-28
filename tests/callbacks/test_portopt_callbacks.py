@@ -87,6 +87,18 @@ def _find_component_by_id(node, target_id):
     return None
 
 
+def _component_prop(node, prop_name):
+    if hasattr(node, prop_name):
+        return getattr(node, prop_name)
+    to_plotly = getattr(node, "to_plotly_json", None)
+    if callable(to_plotly):
+        return ((to_plotly().get("props") or {})).get(prop_name)
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        return props.get(prop_name)
+    return None
+
+
 def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
     _, portopt = page_modules
 
@@ -438,6 +450,73 @@ def test_po_resolve_series_selection_modal_controls_overlay_and_ok(page_modules)
     assert portopt.po_resolve_series_selection_modal(
         "token", {"token": "token", "status": "error", "message": "bad"}
     ) == (False, True, "bad", "red", False)
+
+
+def test_portopt_layout_includes_page_ready_stores_and_visible_overlay(page_modules):
+    _, portopt = page_modules
+
+    base_store = _find_component_by_id(portopt.layout, "po-base-controls-ready-store")
+    ex_ante_store = _find_component_by_id(portopt.layout, "po-ex-ante-controls-ready-store")
+    page_store = _find_component_by_id(portopt.layout, "po-page-ready-store")
+    overlay = _find_component_by_id(portopt.layout, "po-ui-blocker-overlay")
+
+    assert base_store is not None
+    assert ex_ante_store is not None
+    assert page_store is not None
+    assert _component_prop(base_store, "data") is False
+    assert _component_prop(ex_ante_store, "data") is False
+    assert _component_prop(page_store, "data") is False
+    assert _component_prop(overlay, "visible") is True
+
+
+def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    monkeypatch.setattr(
+        portopt,
+        "compute_date_range_candidates",
+        lambda *_args, **_kwargs: {
+            "available_series": ["Asset_A"],
+            "common_daily_start": "2024-01-01",
+            "common_daily_end": "2024-12-31",
+        },
+    )
+    monkeypatch.setattr(
+        portopt,
+        "resolve_initial_range",
+        lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
+    )
+
+    result = portopt.po_init_date_range(
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        1,
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        False,
+    )
+
+    assert result[-2] == {"start": "2024-01-01", "end": "2024-12-31"}
+    assert result[-1] is True
+
+
+def test_po_init_date_range_leaves_page_ready_unchanged_without_data(page_modules):
+    _, portopt = page_modules
+
+    result = portopt.po_init_date_range(None, "daily", [], 1, None, False)
+
+    assert result[-2] is None
+    assert result[-1] is no_update
+
+
+def test_po_overlay_visible_uses_restore_and_page_ready(page_modules):
+    _, portopt = page_modules
+
+    assert portopt._po_overlay_visible(False, None, False, False, False) is True
+    assert portopt._po_overlay_visible(False, None, True, True, False) is False
+    assert portopt._po_overlay_visible(False, "raw", True, True, False) is True
+    assert portopt._po_overlay_visible(False, "raw", True, True, True) is False
+    assert portopt._po_overlay_visible(True, "raw", True, True, True) is True
 
 
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):

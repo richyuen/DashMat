@@ -4060,10 +4060,11 @@ layout = dmc.Container(
         dcc.Store(id="at-correlogram-rendered-key-store", data=None),
 
         # UI Blocker for file dialog (Overlay)
+        dcc.Store(id="at-page-ready-store", data=False),
         dcc.Store(id="at-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
             id="at-ui-blocker-overlay",
-            visible=False,
+            visible=True,
             zIndex=2000,
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
@@ -4116,6 +4117,7 @@ clientside_callback(
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
     Output("at-state-ready-store", "data", allow_duplicate=True),
+    Output("at-page-ready-store", "data", allow_duplicate=True),
     Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
@@ -4136,6 +4138,7 @@ clientside_callback(
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
+    State("at-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(
@@ -4159,13 +4162,15 @@ def restore_application_state(
     stored_monthly_view,
     stored_monthly_series,
     pending_series,
+    current_page_ready,
 ):
+    ready_output = no_update if current_page_ready else bool(n_intervals and n_intervals >= 1 and not raw_data)
     if not raw_data:
         # Reset defaults (visibility handled by clientside callback)
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], False
+            "box", 5, "raw", "annual", [], False, ready_output
         )
 
     try:
@@ -4222,7 +4227,7 @@ def restore_application_state(
         return (
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, False
+            factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, False, no_update
         )
 
     except Exception:
@@ -4230,7 +4235,7 @@ def restore_application_state(
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], False
+            "box", 5, "raw", "annual", [], False, no_update
         )
 
 
@@ -4451,14 +4456,19 @@ clientside_callback(
 )
 
 
+def _at_overlay_visible(ui_blocker, page_ready):
+    return (not bool(page_ready)) or bool(ui_blocker)
+
+
 clientside_callback(
     """
-    function(is_loading) {
-        return is_loading || false;
+    function(is_loading, pageReady) {
+        return !pageReady || !!is_loading;
     }
     """,
     Output("at-ui-blocker-overlay", "visible"),
     Input("at-ui-blocker-store", "data"),
+    Input("at-page-ready-store", "data"),
 )
 
 
@@ -7763,21 +7773,33 @@ def at_resolve_series_selection_modal(request_token, status_data, pending_payloa
     Output("at-maximum-range-button", "disabled"),
     Output("at-date-range-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
+    Output("at-page-ready-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
+    Input("at-page-load-trigger", "n_intervals"),
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
+    State("at-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def initialize_date_range(raw_data, periodicity, selected_series, stored_range, current_start_date, current_end_date):
+def initialize_date_range(
+    raw_data,
+    periodicity,
+    selected_series,
+    n_intervals,
+    stored_range,
+    current_start_date,
+    current_end_date,
+    current_page_ready,
+):
     """Initialize date range to maximum range when data is loaded."""
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
     if raw_data is None or not selected_series:
-        return None, None, disabled_style, True, True, True, None, False
+        return None, None, disabled_style, True, True, True, None, False, no_update
 
     try:
         candidates = compute_date_range_candidates(
@@ -7816,10 +7838,11 @@ def initialize_date_range(raw_data, periodicity, selected_series, stored_range, 
             False,
             range_output,
             True,
+            no_update if current_page_ready or not (n_intervals and n_intervals >= 1) else True,
         )
 
     except Exception:
-        return None, None, disabled_style, True, True, True, None, False
+        return None, None, disabled_style, True, True, True, None, False, no_update
 
 
 @callback(
