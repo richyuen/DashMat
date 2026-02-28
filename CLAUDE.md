@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DashMat is a Python dashboard for working with market returns time series data. Built with:
+DashMat is a Python dashboard for working with market returns time series data. It now has a shared landing/import page plus three workspace pages:
+- `/dashmat` - shared landing page and workspace handoff
+- `/analyticstool` - returns analytics
+- `/portopt` - portfolio optimization
+- `/regression` - regression analysis
+
+Built with:
 - **Dash 2.14+** - Plotly's framework for building analytical web applications
 - **Dash Mantine Components (DMC)** - Modern UI component library
 - **Dash AG Grid 31+** - Advanced data grid for displaying returns
@@ -81,26 +87,30 @@ DashMat/
 │   └── unit/                 # Pure unit tests
 ├── pages/
 │   ├── __init__.py
-│   ├── home.py               # Welcome/portal page
+│   ├── home.py               # Home/portal page
+│   ├── dashmat.py            # Shared landing/import page
 │   ├── restricted.py         # Access-restricted placeholder page
-│   ├── analyticstool.py      # Main analytics dashboard (~6,000 lines)
-│   └── portopt.py            # Portfolio optimization page (~9,200 lines)
+│   ├── analyticstool.py      # Analytics workspace
+│   ├── portopt.py            # Portfolio optimization workspace
+│   └── regression.py         # Regression workspace
 └── utils/
     ├── __init__.py
     ├── add_series_flow.py     # Add-series validation helpers
     ├── charting.py            # Plotly chart theming (apply_chart_theme)
     ├── constants.py           # Window/day mappings, index/peer constants
     ├── core_categories.py     # CoreCategories & CMA returns helpers
-    ├── dashmat_welcome_modal.py  # Welcome modal layout
+    ├── dashmat_welcome_modal.py  # Shared landing welcome builders and modal JS helpers
     ├── date_range_flow.py     # Date range candidate computation
     ├── excel_export.py        # Excel date formatting helpers
     ├── exponential_weighting.py  # EWM parameter normalization
     ├── optimization.py        # Portfolio optimization engine (riskfolio-lib)
     ├── parsing.py             # File parsing, percent detection, periodicity
     ├── perf_timing.py         # Performance timing utilities
+    ├── page_paths.py          # Canonical route/path helpers
     ├── portfolio_series.py    # CMA portfolio-series import helpers
     ├── raw_data_imports.py    # Raw DB import workflows (factor/funds/performance)
     ├── returns.py             # Return calculations, resampling, compounding
+    ├── route_intent.py        # Landing-to-workspace handoff payloads
     ├── sample_data.py         # Sample data generation for downloads
     ├── serialization.py       # Serialization and cache-key normalization
     ├── shared_metrics.py      # Shared metric definitions
@@ -233,8 +243,10 @@ Separate page (`/portopt`) for running portfolio optimizations on loaded series.
 ```python
 dashmat-raw-data-store             # Original uploaded data (JSON string), session storage
 dashmat-original-periodicity-store # Auto-detected: 'daily' or 'monthly', session storage
+dashmat-raw-data-summary-store     # Lightweight client summary for date-range init, memory storage
 dashmat-pending-new-series-store   # Queued series to add, session storage
 dashmat-saved-series-cache-store   # Cached series data, session storage
+dashmat-route-intent-store         # Landing/workspace handoff payload, session storage
 userinfo                           # Role-based access info (e.g., {"role": "Admin"})
 ```
 
@@ -441,7 +453,7 @@ Series are named `Daily1-6` or `Monthly1-6` depending on periodicity.
 
 - `userinfo` store (in `app.py`) holds `{"role": "Admin"}` (or `"Test"`)
 - `Test` role is redirected to `/restricted?target=<page>` via `guard_protected_pages` callback
-- Navigation menu links update dynamically via `update_app_nav_links` callback
+- Navigation menu links update dynamically via `update_global_nav_links` callback
 
 ## Caching Strategy (cache_config.py)
 
@@ -493,6 +505,23 @@ dag.AgGrid(
 - **Never** reference components from other pages as Outputs — use State-only for cross-layout reads
 - After changing callback outputs, clear `__pycache__`, `./cache`, AND browser site data — Dash caches callback graphs aggressively
 - Page-specific callbacks don't fire when that page isn't rendered — use a one-shot `dcc.Interval` to sync on navigation
+
+### Recent Learnings
+
+- `/dashmat` is the only visible welcome/import page. The workspace pages no longer show local welcome screens; when raw data is missing they redirect to `/dashmat?module=<tool>`.
+- Landing-to-workspace handoff uses `dashmat-route-intent-store` plus per-page `*-route-intent-consumed-token-store`. Keep route intent writes and workspace navigation in the same callback response to avoid races.
+- Landing-origin non-file modal flows should return to `/dashmat?module=<tool>` if the modal closes without creating raw data. The shared empty-workspace router handles this using the consumed route-intent token.
+- `File -> New Session` should clear DashMat-owned session keys and navigate directly to `landing_href(<module>)` with `window.location.replace(...)`. Preserve `userinfo` and unrelated session keys. `bctbill13-cache-store` is legacy-only cleanup; the live store is `dashmat-saved-series-cache-store`.
+- Analytics import semantics now differ from the older staged-import model:
+  - successful import callbacks commit `dashmat-raw-data-store` immediately
+  - working analytics state is staged in `at-pending-working-config-store`
+  - Series Selection `OK` applies the pending working config
+  - Series Selection `Cancel` keeps raw data but leaves working state unchanged
+- Shared module-switch date-range init uses `dashmat-raw-data-summary-store` plus hash-keyed metadata in `utils/date_range_flow.py`. The summary store is intentionally `memory`, not `session`.
+- For cross-page SPA navigation, Dash Pages routing is driven by `_pages_location`. Updating a page-local `dcc.Location` changes the URL but does not switch the rendered page content.
+- Global app navigation now uses `dcc.Link(refresh=False)` wrappers with `global-navbar-pretrade-*` IDs. Keep restricted-role href handling in `update_global_nav_links(...)` and `guard_protected_pages(...)`.
+- When seeding `dcc.Store` values in browser automation, write the same format Dash writes to `sessionStorage`: `JSON.stringify(value)`. Writing raw strings directly can make stores hydrate with the wrong type and cause misleading callback errors.
+- Dash callback outputs must target components that already exist in the layout. A tab lazy-mount approach that leaves output-target IDs absent from the layout will fail at runtime even if Python tests pass. To safely defer heavy content, keep stable output targets mounted and lazy-build behind host `children` instead of removing the target components themselves.
 
 ### Data Flow
 
