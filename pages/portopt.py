@@ -51,9 +51,11 @@ from utils.covariance import (
     covariance_to_correlation,
     estimate_covariance_matrix,
     estimate_mean_vector,
-    format_cov_shrinkage_label,
-    normalize_cov_shrinkage,
+    format_cov_shrinkage_spec_label,
+    format_cov_shrinkage_target_label,
+    resolve_cov_shrinkage_spec,
     VALID_COV_SHRINKAGE,
+    VALID_COV_SHRINKAGE_TARGET,
 )
 from utils.exponential_weighting import decay_input_mode, normalize_decay_input, resolve_ewm_params
 from utils.excel_export import format_excel_dates, format_mdy_date, write_excel_with_autofit
@@ -413,7 +415,11 @@ def _compute_window_risk_contributions(
     cfg = config or {}
     exp_wt_cov = bool(cfg.get("exp_wt_cov", False))
     decay_value = normalize_decay_input(cfg.get("halflife", 63), 63.0)
-    cov_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(cfg.get("cov_shrinkage", "none"))
+    cov_shrinkage, cov_shrinkage_target = resolve_cov_shrinkage_spec(
+        cfg.get("cov_shrinkage", "none"),
+        cfg.get("cov_shrinkage_target", "scaled_identity"),
+        exp_weighted=exp_wt_cov,
+    )
     rows = []
     for ww in window_weights:
         weights = ww.get("weights", {})
@@ -454,6 +460,7 @@ def _compute_window_risk_contributions(
                 exp_weighted=exp_wt_cov,
                 decay_value=decay_value,
                 shrinkage=cov_shrinkage,
+                shrinkage_target=cov_shrinkage_target,
             )
         rc = compute_risk_contributions(
             {name: float(weights.get(name, 0) or 0) for name in valid_assets},
@@ -823,6 +830,7 @@ def _validate_optimization_inputs(
     exp_wt_cov,
     halflife,
     cov_shrinkage,
+    cov_shrinkage_target,
     min_wt,
     max_wt,
     force_max,
@@ -878,6 +886,13 @@ def _validate_optimization_inputs(
     raw_shrinkage = "none" if cov_shrinkage in (None, "") else str(cov_shrinkage).strip().lower()
     if raw_shrinkage not in VALID_COV_SHRINKAGE:
         return "Select a valid covariance shrinkage option."
+    raw_target = (
+        "scaled_identity"
+        if cov_shrinkage_target in (None, "")
+        else str(cov_shrinkage_target).strip().lower()
+    )
+    if raw_target not in VALID_COV_SHRINKAGE_TARGET:
+        return "Select a valid covariance shrinkage target."
 
     min_map = min_wt or {}
     max_map = max_wt or {}
@@ -1005,7 +1020,11 @@ def _build_black_litterman_mu_cov(est_data, config, asset_cols):
     port.assets_stats(method_mu="hist", method_cov="hist")
 
     exp_wt_cov = bool(config.get("exp_wt_cov", False))
-    cov_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(config.get("cov_shrinkage", "none"))
+    cov_shrinkage, cov_shrinkage_target = resolve_cov_shrinkage_spec(
+        config.get("cov_shrinkage", "none"),
+        config.get("cov_shrinkage_target", "scaled_identity"),
+        exp_weighted=exp_wt_cov,
+    )
     if exp_wt_cov or cov_shrinkage != "none":
         port.cov = estimate_covariance_matrix(
             est_data,
@@ -1013,6 +1032,7 @@ def _build_black_litterman_mu_cov(est_data, config, asset_cols):
             exp_weighted=exp_wt_cov,
             decay_value=normalize_decay_input(config.get("halflife", 63), 63.0),
             shrinkage=cov_shrinkage,
+            shrinkage_target=cov_shrinkage_target,
         )
 
     bl_views = config.get("bl_views", []) or []
@@ -1153,7 +1173,11 @@ def _build_frontier_snapshot(
     custom_cov = None
     exp_wt_cov = bool(config.get("exp_wt_cov", False))
     decay_value = normalize_decay_input(config.get("halflife", 63), 63.0)
-    cov_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(config.get("cov_shrinkage", "none"))
+    cov_shrinkage, cov_shrinkage_target = resolve_cov_shrinkage_spec(
+        config.get("cov_shrinkage", "none"),
+        config.get("cov_shrinkage_target", "scaled_identity"),
+        exp_weighted=exp_wt_cov,
+    )
     if model == "ex_ante_mv":
         custom_mu, custom_cov, error_msg = _build_ex_ante_mu_cov(config, actual_cols, ann)
         if error_msg:
@@ -1175,6 +1199,7 @@ def _build_frontier_snapshot(
             exp_weighted=exp_wt_cov,
             decay_value=decay_value,
             shrinkage=cov_shrinkage,
+            shrinkage_target=cov_shrinkage_target,
         )
 
     frontier_pts, asset_pts, frontier_portfolios = compute_efficient_frontier(
@@ -1833,6 +1858,28 @@ def build_po_main_layout():
                                                     clearable=False,
                                                     w=130,
                                                     size="sm",
+                                                ),
+                                            ),
+                                        ]),
+                                        html.Div([
+                                            dmc.Text("Target", size="sm", fw=500, mb=3),
+                                            dmc.Tooltip(
+                                                label=tooltip_text("po-cov-shrinkage-target-select"),
+                                                multiline=True,
+                                                w=420,
+                                                withArrow=True,
+                                                children=dmc.Select(
+                                                    id="po-cov-shrinkage-target-select",
+                                                    data=[
+                                                        {"value": "scaled_identity", "label": "Scaled Identity"},
+                                                        {"value": "constant_correlation", "label": "Constant Correlation"},
+                                                    ],
+                                                    value="scaled_identity",
+                                                    searchable=False,
+                                                    clearable=False,
+                                                    w=180,
+                                                    size="sm",
+                                                    disabled=True,
                                                 ),
                                             ),
                                         ]),
@@ -3117,7 +3164,7 @@ layout = dmc.Container(
                                                         dmc.Text("Portfolio Name is the key used to store and select results.", size="sm"),
                                                         dmc.Text("Model chooses risk-based, mean-variance, ex-ante, or Black-Litterman optimization.", size="sm"),
                                                         dmc.Text("Exp Wt enables exponential weighting for historical parameter estimates.", size="sm"),
-                                                        dmc.Text("Cov Shrinkage offers Ledoit-Wolf or OAS covariance estimates when Exp Wt is off.", size="sm"),
+                                                        dmc.Text("Cov Shrinkage offers Ledoit-Wolf or OAS covariance estimates when Exp Wt is off. Ledoit-Wolf supports choosing either a Scaled Identity or Constant Correlation target, while OAS always uses the Scaled Identity target.", size="sm"),
                                                         dmc.Text("Decay input behavior: values >= 1 are half-life periods; values < 1 are lambda (for example 0.94).", size="sm"),
                                                         dmc.Text("Smaller half-life or lambda further from 1.0 puts more emphasis on recent data.", size="sm"),
                                                         dmc.Text("Window options: Expanding, Rolling, or Full.", size="sm"),
@@ -3446,6 +3493,7 @@ layout = dmc.Container(
         dcc.Store(id="po-exp-wt-cov-store", data=False, storage_type="session"),
         dcc.Store(id="po-halflife-store", data=63, storage_type="session"),
         dcc.Store(id="po-cov-shrinkage-store", data="none", storage_type="session"),
+        dcc.Store(id="po-cov-shrinkage-target-store", data="scaled_identity", storage_type="session"),
         dcc.Store(id="po-missing-data-store", data="fill_na", storage_type="session"),
         dcc.Store(id="po-fill-in-sample-store", data="off", storage_type="session"),
         # Ex ante stores
@@ -3662,6 +3710,7 @@ clientside_callback(
                 'po-exp-wt-cov-store',
                 'po-halflife-store',
                 'po-cov-shrinkage-store',
+                'po-cov-shrinkage-target-store',
                 'po-missing-data-store',
                 'po-fill-in-sample-store',
                 'po-results-store',
@@ -4643,10 +4692,18 @@ clientside_callback(
 
 # Toggle halflife disabled based on exp wt cov switch
 clientside_callback(
-    "function(checked) { return [!checked, !!checked]; }",
+    """
+    function(checked, shrinkage) {
+        var expWeighted = !!checked;
+        var useTarget = !expWeighted && (shrinkage === "ledoit_wolf");
+        return [!expWeighted, expWeighted, !useTarget];
+    }
+    """,
     Output("po-halflife-input", "disabled"),
     Output("po-cov-shrinkage-select", "disabled"),
+    Output("po-cov-shrinkage-target-select", "disabled"),
     Input("po-exp-wt-cov-switch", "checked"),
+    Input("po-cov-shrinkage-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -4737,6 +4794,14 @@ clientside_callback(
     "function(value) { return value || 'none'; }",
     Output("po-cov-shrinkage-store", "data"),
     Input("po-cov-shrinkage-select", "value"),
+    prevent_initial_call=True,
+)
+
+# Store sync: covariance shrinkage target
+clientside_callback(
+    "function(value) { return value || 'scaled_identity'; }",
+    Output("po-cov-shrinkage-target-store", "data"),
+    Input("po-cov-shrinkage-target-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -5199,9 +5264,10 @@ def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
     State("po-exp-wt-cov-switch", "checked"),
     State("po-halflife-input", "value"),
     State("po-cov-shrinkage-select", "value"),
+    State("po-cov-shrinkage-target-select", "value"),
     prevent_initial_call=True,
 )
-def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity, exp_wt_cov, halflife, cov_shrinkage):
+def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity, exp_wt_cov, halflife, cov_shrinkage, cov_shrinkage_target):
     if not n_clicks or not data or not selected_series:
         raise PreventUpdate
         
@@ -5217,7 +5283,11 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
             raise PreventUpdate
             
         sub_df = df[valid_series].dropna()
-        effective_shrinkage = "none" if exp_wt_cov else normalize_cov_shrinkage(cov_shrinkage)
+        effective_shrinkage, effective_target = resolve_cov_shrinkage_spec(
+            cov_shrinkage,
+            cov_shrinkage_target,
+            exp_weighted=bool(exp_wt_cov),
+        )
 
         if is_corr:
             cov_df = estimate_covariance_matrix(
@@ -5226,6 +5296,7 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
                 exp_weighted=bool(exp_wt_cov),
                 decay_value=normalize_decay_input(halflife, 63.0),
                 shrinkage=effective_shrinkage,
+                shrinkage_target=effective_target,
             )
             est_df = (
                 covariance_to_correlation(cov_df)
@@ -5240,6 +5311,7 @@ def po_estimate_matrix_store(n_clicks, data, selected_series, mode, periodicity,
                 exp_weighted=bool(exp_wt_cov),
                 decay_value=normalize_decay_input(halflife, 63.0),
                 shrinkage=effective_shrinkage,
+                shrinkage_target=effective_target,
                 annualization_factor=ann,
             )
             
@@ -6015,7 +6087,7 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
 
 clientside_callback(
     """
-    function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, missing, fillIS) {
+    function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
         var safeModel = model || "risk_parity";
         var defaults = {
             "risk_parity": "RP",
@@ -6030,8 +6102,12 @@ clientside_callback(
             "black_litterman": "BL",
         };
         var defaultName = defaults[safeModel] || "Port";
+        var safeExpWt = !!expWt;
+        var safeShrinkage = covShrinkage || "none";
+        var safeTarget = covShrinkageTarget || "scaled_identity";
+        var targetDisabled = safeExpWt || safeShrinkage !== "ledoit_wolf";
         return [optWindow, windowSize, optStep, optStepUnit, safeModel, name || defaultName,
-                expWt || false, halflife, covShrinkage || "none", !expWt, missing, fillIS, true];
+                safeExpWt, halflife, safeShrinkage, safeTarget, !safeExpWt, targetDisabled, missing, fillIS, true];
     }
     """,
     Output("po-opt-window-select", "value"),
@@ -6043,7 +6119,9 @@ clientside_callback(
     Output("po-exp-wt-cov-switch", "checked"),
     Output("po-halflife-input", "value", allow_duplicate=True),
     Output("po-cov-shrinkage-select", "value"),
+    Output("po-cov-shrinkage-target-select", "value"),
     Output("po-halflife-input", "disabled", allow_duplicate=True),
+    Output("po-cov-shrinkage-target-select", "disabled", allow_duplicate=True),
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
     Output("po-base-controls-ready-store", "data"),
@@ -6057,6 +6135,7 @@ clientside_callback(
     State("po-exp-wt-cov-store", "data"),
     State("po-halflife-store", "data"),
     State("po-cov-shrinkage-store", "data"),
+    State("po-cov-shrinkage-target-store", "data"),
     State("po-missing-data-store", "data"),
     State("po-fill-in-sample-store", "data"),
     prevent_initial_call=True,
@@ -6103,6 +6182,7 @@ clientside_callback(
     Input("po-exp-wt-cov-switch", "checked"),
     Input("po-halflife-input", "value"),
     Input("po-cov-shrinkage-select", "value"),
+    Input("po-cov-shrinkage-target-select", "value"),
     Input("po-min-wt-store", "data"),
     Input("po-max-wt-store", "data"),
     Input("po-force-max-store", "data"),
@@ -6128,6 +6208,7 @@ def po_toggle_ui_elements(
     exp_wt_cov,
     halflife,
     cov_shrinkage,
+    cov_shrinkage_target,
     min_wt,
     max_wt,
     force_max,
@@ -6153,6 +6234,7 @@ def po_toggle_ui_elements(
         exp_wt_cov=exp_wt_cov,
         halflife=halflife,
         cov_shrinkage=cov_shrinkage,
+        cov_shrinkage_target=cov_shrinkage_target,
         min_wt=min_wt,
         max_wt=max_wt,
         force_max=force_max,
@@ -8057,6 +8139,7 @@ def po_update_date_range_store(start, end):
     State("po-exp-wt-cov-switch", "checked"),
     State("po-halflife-input", "value"),
     State("po-cov-shrinkage-select", "value"),
+    State("po-cov-shrinkage-target-select", "value"),
     State("po-portfolio-name-input", "value"),
     State("po-opt-window-select", "value"),
     State("po-window-size-input", "value"),
@@ -8084,7 +8167,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         selected_series, benchmark_assignments, cmabench_assignments, long_short_assignments,
                         date_range, vol_scaler, vol_scaling_assignments,
                         min_wt, max_wt, force_max, exp_wt_cov, halflife,
-                        cov_shrinkage,
+                        cov_shrinkage, cov_shrinkage_target,
                         portfolio_name, opt_window, window_size, opt_step,
                         opt_step_unit_value,
                         opt_model, missing_data, fill_in_sample_value, current_results,
@@ -8114,6 +8197,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             exp_wt_cov=exp_wt_cov,
             halflife=halflife,
             cov_shrinkage=cov_shrinkage,
+            cov_shrinkage_target=cov_shrinkage_target,
             min_wt=min_wt,
             max_wt=max_wt,
             force_max=force_max,
@@ -8206,6 +8290,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             exp_wt_cov=exp_wt_cov,
             halflife=halflife,
             cov_shrinkage=cov_shrinkage,
+            cov_shrinkage_target=cov_shrinkage_target,
             min_wt=min_wt,
             max_wt=max_wt,
             force_max=force_max,
@@ -8226,6 +8311,12 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 no_update,
             )
 
+        effective_cov_shrinkage, effective_cov_target = resolve_cov_shrinkage_spec(
+            cov_shrinkage,
+            cov_shrinkage_target,
+            exp_weighted=bool(exp_wt_cov),
+        )
+
         # Build config
         config = {
             "model": model_value,
@@ -8235,7 +8326,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "opt_step_unit": opt_step_unit_value or "months",
             "exp_wt_cov": bool(exp_wt_cov),
             "halflife": normalize_decay_input(halflife, 63.0),
-            "cov_shrinkage": normalize_cov_shrinkage(cov_shrinkage),
+            "cov_shrinkage": effective_cov_shrinkage,
+            "cov_shrinkage_target": effective_cov_target,
             "missing_data": missing_data or "fill_na",
             "fill_in_sample": fill_in_sample_value == "on",
             "selected_series": opt_cols,
@@ -9720,7 +9812,22 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         _add_setting("Exponential Weighting (Cov)", exp_weighted)
         _add_setting("Decay Input", float(decay_value))
         _add_setting("Decay Mode", decay_input_mode(decay_value, 63.0))
-        _add_setting("Covariance Shrinkage", format_cov_shrinkage_label(cfg.get("cov_shrinkage", "none")))
+        effective_shrinkage, effective_target = resolve_cov_shrinkage_spec(
+            cfg.get("cov_shrinkage", "none"),
+            cfg.get("cov_shrinkage_target", "scaled_identity"),
+            exp_weighted=exp_weighted,
+        )
+        _add_setting(
+            "Covariance Shrinkage",
+            format_cov_shrinkage_spec_label(effective_shrinkage, effective_target)
+            if effective_shrinkage != "none"
+            else "None",
+        )
+        if effective_shrinkage == "none":
+            shrinkage_target_label = "N/A"
+        else:
+            shrinkage_target_label = format_cov_shrinkage_target_label(effective_target)
+        _add_setting("Covariance Shrinkage Target", shrinkage_target_label)
         _add_setting("Vol Scaler", float(vol_scaler or 0))
         _add_setting("Benchmark Assignments", _safe_json_text(bench or {}))
         _add_setting("CMA Benchmark Assignments", _safe_json_text(cmabench or {}))

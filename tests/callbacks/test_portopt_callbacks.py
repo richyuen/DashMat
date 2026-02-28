@@ -723,7 +723,7 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
         # Guard path first: no click should PreventUpdate.
         portopt.po_run_optimization(
             0, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, {}, None, 0, {},
-            {}, {}, {}, False, 63, "none", "MyPortfolio", "full", 252, 21, "periods",
+            {}, {}, {}, False, 63, "none", "scaled_identity", "MyPortfolio", "full", 252, 21, "periods",
             "risk_parity", "fill_na", "off", {}, [],
             {}, {}, [], 0.05, "maximize_sharpe",
             {}, {}, "ret_cov", [], None,
@@ -732,7 +732,7 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
     # Now force callback path and verify returned error payload.
     result = portopt.po_run_optimization(
         1, "raw", "daily", "daily", ["Asset_A", "Asset_B"], {}, {}, {}, None, 0, {},
-        {}, {}, {}, False, 63, "none", "MyPortfolio", "full", 252, 21, "periods",
+        {}, {}, {}, False, 63, "none", "scaled_identity", "MyPortfolio", "full", 252, 21, "periods",
         "risk_parity", "fill_na", "off", {}, [],
         {}, {}, [], 0.05, "maximize_sharpe",
         {}, {}, "ret_cov", [], None,
@@ -757,6 +757,7 @@ def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
             False,
             63,
             "none",
+            "scaled_identity",
             {},
             {},
             {},
@@ -794,6 +795,7 @@ def test_po_toggle_ui_elements_ex_ante_requires_complete_expected_inputs(page_mo
         False,
         63,
         "none",
+        "scaled_identity",
         {},
         {},
         {},
@@ -827,6 +829,7 @@ def test_validate_optimization_inputs_accepts_lambda_decay(page_modules):
         exp_wt_cov=True,
         halflife=0.94,
         cov_shrinkage="none",
+        cov_shrinkage_target="scaled_identity",
         min_wt={},
         max_wt={},
         force_max={},
@@ -857,6 +860,7 @@ def test_validate_optimization_inputs_rejects_non_positive_decay(page_modules):
         exp_wt_cov=True,
         halflife=0,
         cov_shrinkage="none",
+        cov_shrinkage_target="scaled_identity",
         min_wt={},
         max_wt={},
         force_max={},
@@ -887,6 +891,7 @@ def test_validate_optimization_inputs_rejects_invalid_cov_shrinkage(page_modules
         exp_wt_cov=False,
         halflife=63,
         cov_shrinkage="bad_value",
+        cov_shrinkage_target="scaled_identity",
         min_wt={},
         max_wt={},
         force_max={},
@@ -901,6 +906,37 @@ def test_validate_optimization_inputs_rejects_invalid_cov_shrinkage(page_modules
     )
 
     assert err == "Select a valid covariance shrinkage option."
+
+
+def test_validate_optimization_inputs_rejects_invalid_cov_shrinkage_target(page_modules):
+    _, portopt = page_modules
+
+    err = portopt._validate_optimization_inputs(
+        portfolio_name="MyPortfolio",
+        selected_series=["Asset_A", "Asset_B"],
+        opt_model="risk_parity",
+        opt_window="rolling",
+        window_size=252,
+        opt_step=1,
+        opt_step_unit="months",
+        exp_wt_cov=False,
+        halflife=63,
+        cov_shrinkage="ledoit_wolf",
+        cov_shrinkage_target="bad_target",
+        min_wt={},
+        max_wt={},
+        force_max={},
+        linear_constraints=[],
+        ex_ante_mode="ret_cov",
+        ex_ante_returns={},
+        ex_ante_cov={},
+        ex_ante_vol={},
+        ex_ante_corr={},
+        bl_views=[],
+        bl_tau=0.05,
+    )
+
+    assert err == "Select a valid covariance shrinkage target."
 
 
 def test_po_estimate_matrix_store_uses_selected_shrinkage(monkeypatch, page_modules, raw_json):
@@ -923,10 +959,12 @@ def test_po_estimate_matrix_store_uses_selected_shrinkage(monkeypatch, page_modu
         False,
         63,
         "ledoit_wolf",
+        "constant_correlation",
     )
 
     assert corr_store is no_update
     assert captured["kwargs"]["shrinkage"] == "ledoit_wolf"
+    assert captured["kwargs"]["shrinkage_target"] == "constant_correlation"
     assert set(cov_store) == {"Asset_A", "Asset_B"}
     assert len(rows) == 2
 
@@ -951,11 +989,13 @@ def test_po_estimate_matrix_store_ignores_shrinkage_when_exp_weighted(monkeypatc
         True,
         0.94,
         "oas",
+        "constant_correlation",
     )
 
     assert corr_store is no_update
     assert captured["kwargs"]["exp_weighted"] is True
     assert captured["kwargs"]["shrinkage"] == "none"
+    assert captured["kwargs"]["shrinkage_target"] == "scaled_identity"
     assert len(rows) == 2
 
 
@@ -1077,6 +1117,7 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
         False,
         63,
         "none",
+        "scaled_identity",
         "MyPort",
         "full",
         252,
@@ -1161,6 +1202,7 @@ def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, pag
         False,
         63,
         "none",
+        "scaled_identity",
         "MyPort",
         "full",
         12,
@@ -1240,6 +1282,7 @@ def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_
         False,
         63,
         "oas",
+        "constant_correlation",
         "MyPort",
         "full",
         252,
@@ -1264,7 +1307,9 @@ def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_
 
     assert status["status"] == "complete"
     assert captured["config"]["cov_shrinkage"] == "oas"
+    assert captured["config"]["cov_shrinkage_target"] == "scaled_identity"
     assert results_out["MyPort"]["config"]["cov_shrinkage"] == "oas"
+    assert results_out["MyPort"]["config"]["cov_shrinkage_target"] == "scaled_identity"
 
 
 def test_build_frontier_snapshot_uses_custom_moments_for_shrinkage(monkeypatch, page_modules, raw_json):
@@ -1279,15 +1324,15 @@ def test_build_frontier_snapshot_uses_custom_moments_for_shrinkage(monkeypatch, 
         "estimate_mean_vector",
         lambda *_args, **_kwargs: pd.DataFrame([[0.01, 0.02]], columns=["Asset_A", "Asset_B"]),
     )
-    monkeypatch.setattr(
-        portopt,
-        "estimate_covariance_matrix",
-        lambda *_args, **_kwargs: pd.DataFrame(
+    def _fake_estimate_covariance_matrix(*_args, **kwargs):
+        captured["cov_kwargs"] = kwargs
+        return pd.DataFrame(
             [[0.04, 0.01], [0.01, 0.09]],
             index=["Asset_A", "Asset_B"],
             columns=["Asset_A", "Asset_B"],
-        ),
-    )
+        )
+
+    monkeypatch.setattr(portopt, "estimate_covariance_matrix", _fake_estimate_covariance_matrix)
     def _fake_compute_efficient_frontier(**kwargs):
         captured["kwargs"] = kwargs
         return (
@@ -1314,6 +1359,7 @@ def test_build_frontier_snapshot_uses_custom_moments_for_shrinkage(monkeypatch, 
                 "exp_wt_cov": False,
                 "halflife": 63,
                 "cov_shrinkage": "ledoit_wolf",
+                "cov_shrinkage_target": "constant_correlation",
             },
         },
         raw_data=raw_json,
@@ -1332,6 +1378,7 @@ def test_build_frontier_snapshot_uses_custom_moments_for_shrinkage(monkeypatch, 
     assert snapshot["risk_measure"] == "MV"
     assert captured["kwargs"]["custom_mu"] is not None
     assert captured["kwargs"]["custom_cov"] is not None
+    assert captured["cov_kwargs"]["shrinkage_target"] == "constant_correlation"
 
 
 def test_compute_window_risk_contributions_uses_custom_covariance_estimator(monkeypatch, page_modules):
@@ -1340,15 +1387,15 @@ def test_compute_window_risk_contributions_uses_custom_covariance_estimator(monk
     working_df = pd.DataFrame({"Asset_A": 0.01, "Asset_B": 0.02}, index=idx)
     captured = {}
 
-    monkeypatch.setattr(
-        portopt,
-        "estimate_covariance_matrix",
-        lambda *_args, **_kwargs: pd.DataFrame(
+    def _fake_estimate_covariance_matrix(*_args, **kwargs):
+        captured["cov_kwargs"] = kwargs
+        return pd.DataFrame(
             [[0.04, 0.01], [0.01, 0.09]],
             index=["Asset_A", "Asset_B"],
             columns=["Asset_A", "Asset_B"],
-        ),
-    )
+        )
+
+    monkeypatch.setattr(portopt, "estimate_covariance_matrix", _fake_estimate_covariance_matrix)
 
     def _fake_compute_risk_contributions(weights_dict, returns_df, custom_cov=None):
         captured["custom_cov"] = custom_cov
@@ -1360,11 +1407,12 @@ def test_compute_window_risk_contributions_uses_custom_covariance_estimator(monk
         working_df,
         ["Asset_A", "Asset_B"],
         _sample_window_weights(),
-        {"exp_wt_cov": False, "halflife": 63, "cov_shrinkage": "oas"},
+        {"exp_wt_cov": False, "halflife": 63, "cov_shrinkage": "ledoit_wolf", "cov_shrinkage_target": "constant_correlation"},
     )
 
     assert len(rows) == 2
     assert captured["custom_cov"] is not None
+    assert captured["cov_kwargs"]["shrinkage_target"] == "constant_correlation"
 
 
 def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, page_modules):
@@ -1451,6 +1499,7 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     settings_df = xl.parse("Settings", keep_default_na=False)
     settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))
     assert settings_map["Covariance Shrinkage"] == "None"
+    assert settings_map["Covariance Shrinkage Target"] == "N/A"
     assert "Drawdown" in xl.sheet_names
     assert xl.sheet_names[-3:] == ["Attribution", "Risk", "Frontier"]
 

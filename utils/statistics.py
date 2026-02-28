@@ -805,7 +805,7 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
                                 returns_type: str, benchmark_assignments: str, long_short_assignments: str,
                                 date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "",
                                 exp_weighted: bool = False, decay_value: float = 63.0,
-                                shrinkage: str = "none"):
+                                shrinkage: str = "none", shrinkage_target: str = "scaled_identity"):
     """Generate correlogram with caching."""
     display_df = calculate_excess_returns(
         json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str,
@@ -825,6 +825,7 @@ def generate_correlogram_cached(json_str: str, periodicity: str, selected_series
             exp_weighted=exp_weighted,
             decay_value=decay_value,
             shrinkage=shrinkage,
+            shrinkage_target=shrinkage_target,
         )
         corr_matrix = covariance_to_correlation(cov_matrix)
     else:

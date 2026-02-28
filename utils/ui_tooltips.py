@@ -339,15 +339,25 @@ def _cov_shrinkage_tooltip_text(*, analytics: bool) -> str:
     if analytics:
         return (
             "Chooses covariance shrinkage for Analytics matrix views when exponential weighting is off. "
-            "Ledoit-Wolf is a broad-purpose shrinkage estimator that pulls the sample covariance toward a structured target using a data-driven shrinkage intensity, which often improves stability when the history is noisy or relatively short. "
-            "OAS, or Oracle Approximating Shrinkage, uses a related closed-form shrinkage rule that is often more aggressive in smaller samples and tends to work best when returns are fairly close to Gaussian. "
+            "Ledoit-Wolf is a broad-purpose shrinkage estimator that pulls the sample covariance toward a structured target using a data-driven shrinkage intensity, and it supports choosing either a scaled-identity or constant-correlation target. "
+            "OAS, or Oracle Approximating Shrinkage, uses a related closed-form shrinkage rule that is often more aggressive in smaller samples, tends to work best when returns are fairly close to Gaussian, and always uses the scaled-identity target. "
             "Correlation is derived from the estimated covariance matrix, so this setting affects both covariance and correlation heatmaps."
         )
     return (
         "Chooses covariance shrinkage for optimization when exponential weighting is off. "
-        "Ledoit-Wolf is a broad-purpose shrinkage estimator that pulls the sample covariance toward a structured target using a data-driven shrinkage intensity, which often improves stability when histories are short or the asset count is large relative to the sample. "
-        "OAS, or Oracle Approximating Shrinkage, uses a related closed-form shrinkage rule that is often more aggressive in small samples and works especially well when returns are reasonably close to Gaussian. "
+        "Ledoit-Wolf is a broad-purpose shrinkage estimator that pulls the sample covariance toward a structured target using a data-driven shrinkage intensity, and it supports choosing either a scaled-identity or constant-correlation target. "
+        "OAS, or Oracle Approximating Shrinkage, uses a related closed-form shrinkage rule that is often more aggressive in small samples, works especially well when returns are reasonably close to Gaussian, and always uses the scaled-identity target. "
         "Downstream optimization, frontier, and risk views use the same selected covariance estimator."
+    )
+
+
+def _cov_shrinkage_target_tooltip_text(*, analytics: bool) -> str:
+    usage = "Analytics matrix views" if analytics else "optimization covariance estimates"
+    return (
+        f"Chooses the Ledoit-Wolf shrinkage target used for {usage} when exponential weighting is off. "
+        "Scaled Identity shrinks toward average variance on the diagonal with zero correlation off-diagonal. "
+        "Constant Correlation keeps sample variances on the diagonal but shrinks off-diagonal structure toward one common average correlation. "
+        "This target selector applies only to Ledoit-Wolf; OAS always uses the scaled-identity target."
     )
 
 
@@ -574,6 +584,8 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
         )
     if suffix == "cov-shrinkage-select":
         return _cov_shrinkage_tooltip_text(analytics=False)
+    if suffix == "cov-shrinkage-target-select":
+        return _cov_shrinkage_target_tooltip_text(analytics=False)
     if suffix == "correlation-exp-wt-switch":
         return (
             "Enables exponential weighting for correlation or covariance estimates in the Analytics dependence view. "
@@ -582,6 +594,8 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
         )
     if suffix == "correlation-shrinkage-select":
         return _cov_shrinkage_tooltip_text(analytics=True)
+    if suffix == "correlation-shrinkage-target-select":
+        return _cov_shrinkage_target_tooltip_text(analytics=True)
     if suffix == "fill-in-sample-select":
         return (
             "Controls whether in-sample windows are backfilled in windowed runs. "
@@ -1971,8 +1985,12 @@ def _generated_explicit_tooltip(control_id: str, fallback_label: str | None = No
             "A value of 0 disables scaling and keeps raw series volatility, while positive values normalize magnitude across selected series. "
             "Use this to make cross-series comparisons more stable when base volatility levels differ materially."
         )
+    if "correlation-shrinkage-target" in lowered:
+        return _cov_shrinkage_target_tooltip_text(analytics=True)
     if "correlation-shrinkage" in lowered:
         return _cov_shrinkage_tooltip_text(analytics=True)
+    if "cov-shrinkage-target" in lowered:
+        return _cov_shrinkage_target_tooltip_text(analytics=False)
     if "cov-shrinkage" in lowered:
         return _cov_shrinkage_tooltip_text(analytics=False)
     if "periodicity" in lowered:

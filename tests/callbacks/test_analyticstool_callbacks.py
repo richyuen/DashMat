@@ -559,6 +559,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         False,
         63,
         "none",
+        "scaled_identity",
         120,
         None,
     )
@@ -578,6 +579,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         True,
         0.94,
         "none",
+        "scaled_identity",
         120,
         None,
     )
@@ -602,6 +604,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
             True,
             0.94,
             "none",
+            "scaled_identity",
             120,
             key_weighted,
         )
@@ -629,6 +632,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         False,
         63,
         "none",
+        "scaled_identity",
         120,
         None,
     )
@@ -648,6 +652,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         False,
         63,
         "ledoit_wolf",
+        "scaled_identity",
         120,
         None,
     )
@@ -655,6 +660,56 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
     assert isinstance(key_none, str)
     assert isinstance(key_shrunk, str)
     assert key_none != key_shrunk
+
+
+def test_update_correlogram_target_key_changes_on_target_for_ledoit_wolf_matrix_views(page_modules):
+    analyticstool, _ = page_modules
+    date_range = {"start": "2024-01-01", "end": "2024-12-31"}
+
+    key_scaled = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "covariance",
+        False,
+        63,
+        "ledoit_wolf",
+        "scaled_identity",
+        120,
+        None,
+    )
+    key_constant = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "covariance",
+        False,
+        63,
+        "ledoit_wolf",
+        "constant_correlation",
+        120,
+        None,
+    )
+
+    assert isinstance(key_scaled, str)
+    assert isinstance(key_constant, str)
+    assert key_scaled != key_constant
 
 
 def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_modules):
@@ -677,6 +732,7 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
         False,
         63,
         "none",
+        "scaled_identity",
         120,
         None,
     )
@@ -698,8 +754,59 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
             False,
             63,
             "oas",
+            "constant_correlation",
             120,
             key_scatter,
+        )
+        is no_update
+    )
+
+
+def test_update_correlogram_target_key_ignores_target_when_not_effective(page_modules):
+    analyticstool, _ = page_modules
+    date_range = {"start": "2024-01-01", "end": "2024-12-31"}
+
+    key_oas = analyticstool.update_correlogram_target_key(
+        "correlogram",
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        "correlation",
+        False,
+        63,
+        "oas",
+        "scaled_identity",
+        120,
+        None,
+    )
+
+    assert (
+        analyticstool.update_correlogram_target_key(
+            "correlogram",
+            None,
+            "daily",
+            ["Asset_A", "Asset_B"],
+            "total",
+            {},
+            {},
+            date_range,
+            True,
+            0,
+            {},
+            "correlation",
+            False,
+            63,
+            "oas",
+            "constant_correlation",
+            120,
+            key_oas,
         )
         is no_update
     )
@@ -732,6 +839,7 @@ def test_update_correlogram_heatmap_title_includes_shrinkage(monkeypatch, page_m
         False,
         63,
         "ledoit_wolf",
+        "scaled_identity",
         "correlation",
         120,
         "light",
@@ -739,6 +847,85 @@ def test_update_correlogram_heatmap_title_includes_shrinkage(monkeypatch, page_m
 
     assert rendered_key == "req-key"
     assert "Ledoit-Wolf" in graph.figure.layout.title.text
+
+
+def test_update_correlogram_passes_effective_target(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    captured = {}
+
+    def _fake_generate_correlogram_cached(*args, **kwargs):
+        captured["args"] = args
+        return {
+            "display_df": pd.DataFrame({"Asset_A": [0.01, 0.02], "Asset_B": [0.00, 0.03]}),
+            "corr_matrix": pd.DataFrame([[1.0, 0.5], [0.5, 1.0]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+            "cov_matrix": pd.DataFrame([[0.04, 0.01], [0.01, 0.09]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+            "available_series": ["Asset_A", "Asset_B"],
+            "n": 2,
+        }
+
+    monkeypatch.setattr(analyticstool, "generate_correlogram_cached", _fake_generate_correlogram_cached)
+
+    analyticstool.update_correlogram(
+        "req-key",
+        "correlogram",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        False,
+        63,
+        "ledoit_wolf",
+        "constant_correlation",
+        "covariance",
+        120,
+        "light",
+    )
+
+    assert captured["args"][11] == "ledoit_wolf"
+    assert captured["args"][12] == "constant_correlation"
+
+
+def test_update_correlogram_heatmap_title_includes_shrinkage_target(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    result = {
+        "display_df": pd.DataFrame({"Asset_A": [0.01, 0.02], "Asset_B": [0.00, 0.03]}),
+        "corr_matrix": pd.DataFrame([[1.0, 0.5], [0.5, 1.0]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+        "cov_matrix": pd.DataFrame([[0.04, 0.01], [0.01, 0.09]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+        "available_series": ["Asset_A", "Asset_B"],
+        "n": 2,
+    }
+    monkeypatch.setattr(analyticstool, "generate_correlogram_cached", lambda *_args, **_kwargs: result)
+
+    graph, rendered_key = analyticstool.update_correlogram(
+        "req-key",
+        "correlogram",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        False,
+        63,
+        "ledoit_wolf",
+        "constant_correlation",
+        "correlation",
+        120,
+        "light",
+    )
+
+    assert rendered_key == "req-key"
+    assert "Constant Correlation" in graph.figure.layout.title.text
 
 
 def test_update_correlogram_shrinkage_error_renders_annotation(monkeypatch, page_modules):
@@ -767,6 +954,7 @@ def test_update_correlogram_shrinkage_error_renders_annotation(monkeypatch, page
         False,
         63,
         "oas",
+        "scaled_identity",
         "correlation",
         120,
         "light",
@@ -1725,6 +1913,7 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         False,
         63,
         "none",
+        "scaled_identity",
         "Factor_X",
         5,
         "raw",
@@ -1809,6 +1998,7 @@ def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeyp
         False,
         63,
         "ledoit_wolf",
+        "scaled_identity",
         None,
         5,
         "raw",

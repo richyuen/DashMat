@@ -134,6 +134,28 @@ def test_generate_correlogram_cached_supports_ledoit_wolf_matrices(raw_json):
     assert result["cov_matrix"].shape == (2, 2)
 
 
+def test_generate_correlogram_cached_supports_constant_correlation_target(raw_json):
+    result = generate_correlogram_cached(
+        raw_json,
+        "daily",
+        ("Asset_A", "Asset_B"),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        0,
+        mapping_payload_for_cache({}),
+        False,
+        63.0,
+        "ledoit_wolf",
+        "constant_correlation",
+    )
+
+    assert result is not None
+    assert result["corr_matrix"].shape == (2, 2)
+    assert result["cov_matrix"].shape == (2, 2)
+
+
 def test_generate_correlogram_cached_supports_oas_matrices(raw_json):
     result = generate_correlogram_cached(
         raw_json,

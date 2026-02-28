@@ -495,8 +495,8 @@ def test_opt_step_and_exp_wt_cov_tooltips_are_not_generic():
 
 def test_cov_shrinkage_tooltips_explain_ledoit_wolf_and_oas():
     expected = {
-        "po-cov-shrinkage-select": ("ledoit-wolf", "structured target", "oracle approximating shrinkage", "gaussian"),
-        "at-correlation-shrinkage-select": ("ledoit-wolf", "structured target", "oracle approximating shrinkage", "correlation"),
+        "po-cov-shrinkage-select": ("ledoit-wolf", "scaled-identity", "oracle approximating shrinkage", "target"),
+        "at-correlation-shrinkage-select": ("ledoit-wolf", "scaled-identity", "oracle approximating shrinkage", "target"),
     }
 
     for control_id, required_tokens in expected.items():
@@ -508,6 +508,33 @@ def test_cov_shrinkage_tooltips_explain_ledoit_wolf_and_oas():
             assert token in text_lower, (control_id, token, text)
         assert _sentence_count(text) >= 3
         assert len(text) >= 260
+
+
+def test_cov_shrinkage_target_tooltips_explain_scaled_identity_and_constant_correlation():
+    expected = {
+        "po-cov-shrinkage-target-select": (
+            "scaled identity",
+            "constant correlation",
+            "ledoit-wolf",
+            "oas always uses the scaled-identity target",
+        ),
+        "at-correlation-shrinkage-target-select": (
+            "scaled identity",
+            "constant correlation",
+            "ledoit-wolf",
+            "oas always uses the scaled-identity target",
+        ),
+    }
+
+    for control_id, required_tokens in expected.items():
+        text, source = tooltip_text_and_source(control_id)
+        text_lower = text.lower()
+
+        assert source == "explicit"
+        for token in required_tokens:
+            assert token in text_lower, (control_id, token, text)
+        assert _sentence_count(text) >= 3
+        assert len(text) >= 240
 
 
 def test_arima_and_garch_order_tooltips_explain_each_parameter_individually():
