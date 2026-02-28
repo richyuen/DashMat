@@ -408,6 +408,17 @@ def _reg_build_table_coldefs(fields: list[str], header_overrides: dict[str, str]
     return col_defs
 
 
+def _reg_default_col_def(*, sortable: bool = True, extra: dict | None = None) -> dict:
+    col_def = {
+        "resizable": True,
+        "sortable": sortable,
+        "suppressHeaderMenuButton": True,
+    }
+    if isinstance(extra, dict):
+        col_def.update(extra)
+    return col_def
+
+
 def _reg_visible_summary_cols(fields: list[str]) -> list[str]:
     base = ["Date", "R²", "Adj R²", "Residual Std", "N Obs"]
     arima_cols = ["ARIMA_AIC", "GARCH_AIC", "ARIMA_BIC", "GARCH_BIC", "ARIMA_Error", "GARCH_Error"]
@@ -5363,7 +5374,7 @@ def reg_render_anova(selected, results, selected_window):
                 {"field": "p-value", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
             ], "reg-anova-decomposition-grid"),
             rowData=anova_rows,
-            defaultColDef={"resizable": True, "sortable": False},
+            defaultColDef=_reg_default_col_def(sortable=False),
             style={"height": "132px"},
             dashGridOptions=grid_tooltip_dash_options(
                 {"suppressExcelExport": True, "suppressCsvExport": True}
@@ -5394,7 +5405,7 @@ def reg_render_anova(selected, results, selected_window):
                 {"field": "CI High (95%)", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
             ], "reg-anova-parameter-grid"),
             rowData=param_df.to_dict("records"),
-            defaultColDef={"resizable": True, "sortable": True},
+            defaultColDef=_reg_default_col_def(),
             style={"height": f"{max(150, 36 + 30 * len(param_df))}px"},
             dashGridOptions=grid_tooltip_dash_options(
                 {"suppressExcelExport": True, "suppressCsvExport": True}
@@ -5557,7 +5568,7 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
         className="ag-theme-alpine",
         columnDefs=_reg_build_table_coldefs(table_fields, header_overrides=header_overrides),
         rowData=df_display[table_fields].to_dict("records"),
-        defaultColDef={"resizable": True, "sortable": True},
+        defaultColDef=_reg_default_col_def(),
         style={"height": "380px"},
         dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
     )
@@ -5667,7 +5678,7 @@ def reg_render_rolling_returns(
             className="ag-theme-alpine",
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
-            defaultColDef={"resizable": True, "sortable": True},
+            defaultColDef=_reg_default_col_def(),
             style={"height": "440px"},
             dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
         )
@@ -5754,7 +5765,7 @@ def reg_render_weights(selected, results, view_mode, theme):
                 className="ag-theme-alpine",
                 columnDefs=_reg_build_table_coldefs(table_fields),
                 rowData=table_df[table_fields].to_dict("records"),
-                defaultColDef={"resizable": True, "sortable": True},
+                defaultColDef=_reg_default_col_def(),
                 style={"height": "420px"},
                 dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
             )
@@ -5826,7 +5837,7 @@ def reg_render_returns(selected, results, raw_data):
         className="ag-theme-alpine",
         columnDefs=cols,
         rowData=df_reset.to_dict("records"),
-        defaultColDef={"resizable": True, "sortable": True},
+        defaultColDef=_reg_default_col_def(),
         style={"height": "500px"},
         dashGridOptions={
             "pagination": False,
@@ -5886,7 +5897,7 @@ def reg_render_growth(selected, results, raw_data, view_mode, theme):
             className="ag-theme-alpine",
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
-            defaultColDef={"resizable": True, "sortable": True},
+            defaultColDef=_reg_default_col_def(),
             style={"height": "460px"},
             dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
         )
@@ -5985,7 +5996,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
             className="ag-theme-alpine",
             columnDefs=monthly_col_defs,
             rowData=monthly_rows,
-            defaultColDef={"resizable": True, "sortable": True},
+            defaultColDef=_reg_default_col_def(),
             style={"height": "460px"},
             dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
         )
@@ -6023,7 +6034,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
         className="ag-theme-alpine",
         columnDefs=cols,
         rowData=table_df.to_dict("records"),
-        defaultColDef={"resizable": True, "sortable": True},
+        defaultColDef=_reg_default_col_def(),
         style={"height": "460px"},
         dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
     )
@@ -6081,7 +6092,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
             className="ag-theme-alpine",
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
-            defaultColDef={"resizable": True, "sortable": True},
+            defaultColDef=_reg_default_col_def(),
             style={"height": "440px"},
             dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
         )
@@ -6245,7 +6256,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
                 ],
             ],
             rowData=row_data,
-            defaultColDef={"resizable": True, "sortable": True},
+            defaultColDef=_reg_default_col_def(),
             style={"height": "600px"},
             dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
         )

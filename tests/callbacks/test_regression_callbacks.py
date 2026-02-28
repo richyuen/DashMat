@@ -101,6 +101,21 @@ def _component_prop(node, prop_name):
     return None
 
 
+def test_reg_default_col_def_hides_header_menu_button(regression_page):
+    default_col_def = regression_page._reg_default_col_def()
+    assert default_col_def == {
+        "resizable": True,
+        "sortable": True,
+        "suppressHeaderMenuButton": True,
+    }
+
+    custom_col_def = regression_page._reg_default_col_def(sortable=False, extra={"cellStyle": {"textAlign": "center"}})
+    assert custom_col_def["resizable"] is True
+    assert custom_col_def["sortable"] is False
+    assert custom_col_def["suppressHeaderMenuButton"] is True
+    assert custom_col_def["cellStyle"] == {"textAlign": "center"}
+
+
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
     idx = pd.date_range("2020-01-01", periods=6, freq="B")
     working_df = pd.DataFrame(
@@ -809,6 +824,7 @@ def test_reg_render_statistics_uses_current_stats_signature_and_list_shape(monke
     assert captured["args"][5] == "null"
     assert captured["args"][6] == 0
     assert getattr(comp, "rowData", None)
+    assert getattr(comp, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
     assert any(row.get("Statistic") == "Cumulative Return" for row in comp.rowData)
 
 
@@ -1219,6 +1235,7 @@ def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, reg
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert getattr(grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
 
 
 def test_reg_render_drawdown_table_uses_wide_date_column(monkeypatch, regression_page):
@@ -1245,6 +1262,7 @@ def test_reg_render_drawdown_table_uses_wide_date_column(monkeypatch, regression
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert getattr(grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
 
 
 def test_reg_render_growth_table_mode_returns_grid_with_wide_date_column(regression_page):
@@ -1263,6 +1281,7 @@ def test_reg_render_growth_table_mode_returns_grid_with_wide_date_column(regress
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert getattr(grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
     assert len(getattr(grid, "rowData", [])) == 4
 
 
@@ -1289,6 +1308,7 @@ def test_reg_render_weights_table_mode_returns_grid_with_wide_date_column(regres
 
     date_col = next(c for c in getattr(grid, "columnDefs", []) if c.get("field") == "Date")
     assert date_col["width"] == 112
+    assert getattr(grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
 
 
 def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regression_page):
@@ -1344,6 +1364,7 @@ def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regres
     assert anova_grid is not None
     assert getattr(anova_grid, "id", None) == "reg-anova-decomposition-grid"
     assert (getattr(anova_grid, "style", {}) or {}).get("height") == "132px"
+    assert getattr(anova_grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
     anova_sources = [row.get("Source") for row in (getattr(anova_grid, "rowData", []) or [])]
     assert set(anova_sources) == {"Model", "Residual", "Total"}
     assert all(c.get("headerTooltip") for c in (getattr(anova_grid, "columnDefs", []) or []))
@@ -1354,6 +1375,7 @@ def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regres
     )
     assert param_grid is not None
     assert getattr(param_grid, "id", None) == "reg-anova-parameter-grid"
+    assert getattr(param_grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
     assert all(c.get("headerTooltip") for c in (getattr(param_grid, "columnDefs", []) or []))
     param_names = [row.get("Parameter") for row in (getattr(param_grid, "rowData", []) or [])]
     assert "intercept" in param_names
@@ -1403,6 +1425,7 @@ def test_reg_render_rolling_table_merges_arima_garch_columns(regression_page):
 
     grid = regression_page.reg_render_rolling("R1", results, "table", "advanced", "light")
     fields = [c.get("field") for c in getattr(grid, "columnDefs", [])]
+    assert getattr(grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
     assert "ARIMA_AIC" in fields
     assert "ARIMA_ar_L1" in fields
 
