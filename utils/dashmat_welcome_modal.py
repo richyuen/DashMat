@@ -370,6 +370,7 @@ def build_series_selection_modal(cfg: PagePrefixConfig):
         size=cfg.series_modal_size,
         styles={"content": {"maxWidth": cfg.series_modal_max_width}},
         centered=True,
+        keepMounted=True,
         closeOnEscape=False,
         radius="lg",
         className="series-modal-dark dashmat-modal",
@@ -384,17 +385,29 @@ def build_series_selection_modal(cfg: PagePrefixConfig):
                 mb="md",
                 withCloseButton=True,
             ),
-            html.Div(
-                id=_sid(cfg.prefix, "series-selection-container"),
-                children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
+            dmc.Box(
+                pos="relative",
                 style={"maxHeight": "50vh"},
+                children=[
+                    dmc.LoadingOverlay(
+                        id=_sid(cfg.prefix, "series-selection-loading-overlay"),
+                        visible=False,
+                        zIndex=10,
+                        overlayProps={"blur": 1, "radius": "sm"},
+                    ),
+                    html.Div(
+                        id=_sid(cfg.prefix, "series-selection-container"),
+                        children=[dmc.Text("Upload data to select series", size="sm", c="dimmed")],
+                        style={"maxHeight": "50vh"},
+                    ),
+                ],
             ),
             dmc.Group(
                 mt="md",
                 justify="flex-end",
                 children=[
                     dmc.Button("Cancel", id=_sid(cfg.prefix, "modal-cancel-button"), variant="outline", color="red"),
-                    dmc.Button("OK", id=_sid(cfg.prefix, "modal-ok-button"), color="blue"),
+                    dmc.Button("OK", id=_sid(cfg.prefix, "modal-ok-button"), color="blue", disabled=True),
                 ],
             ),
         ],
@@ -1364,6 +1377,19 @@ def js_set_ui_blocker_true() -> str:
     """
 
 
+def js_set_ui_blocker_true_on_any() -> str:
+    return """
+    function() {
+        for (var i = 0; i < arguments.length; i += 1) {
+            if (arguments[i]) {
+                return true;
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """
+
+
 def js_release_ui_blocker_on_modal_state() -> str:
     return """
     function(opened, errorHidden) {
@@ -1372,4 +1398,88 @@ def js_release_ui_blocker_on_modal_state() -> str:
         }
         return window.dash_clientside.no_update;
     }
+    """
+
+
+def js_release_ui_blocker_on_opened() -> str:
+    return """
+    function(opened) {
+        if (opened === true) {
+            return false;
+        }
+        return window.dash_clientside.no_update;
+    }
+    """
+
+
+def js_probe_series_grid_ready(prefix: str) -> str:
+    grid_id = _sid(prefix, "series-selection-grid")
+    status_store_id = _sid(prefix, "series-selection-grid-status-store")
+    return f"""
+    function(requestToken, _children, currentStatus) {{
+        var noUpdate = window.dash_clientside.no_update;
+        if (!requestToken) {{
+            return noUpdate;
+        }}
+
+        var finalStates = ['ready', 'empty', 'error', 'timeout'];
+        var key = '{prefix}';
+        window.dashmatSeriesGridProbe = window.dashmatSeriesGridProbe || {{}};
+
+        if (
+            currentStatus &&
+            currentStatus.token === requestToken &&
+            finalStates.indexOf(currentStatus.status) >= 0
+        ) {{
+            if (
+                window.dashmatSeriesGridProbe[key] &&
+                window.dashmatSeriesGridProbe[key].token === requestToken
+            ) {{
+                delete window.dashmatSeriesGridProbe[key];
+            }}
+            return noUpdate;
+        }}
+
+        var activeProbe = window.dashmatSeriesGridProbe[key];
+        if (activeProbe && activeProbe.token === requestToken) {{
+            return noUpdate;
+        }}
+
+        var timeoutMs = 8000;
+        var started = Date.now();
+        window.dashmatSeriesGridProbe[key] = {{ token: requestToken, started: started }};
+
+        function publish(payload) {{
+            var active = window.dashmatSeriesGridProbe[key];
+            if (!active || active.token !== requestToken) {{
+                return;
+            }}
+            delete window.dashmatSeriesGridProbe[key];
+            window.dash_clientside.set_props('{status_store_id}', {{ data: payload }});
+        }}
+
+        function check() {{
+            var active = window.dashmatSeriesGridProbe[key];
+            if (!active || active.token !== requestToken) {{
+                return;
+            }}
+            var gridRoot = document.getElementById('{grid_id}');
+            if (gridRoot && gridRoot.querySelector('.ag-root-wrapper')) {{
+                publish({{ token: requestToken, status: 'ready', message: '' }});
+                return;
+            }}
+            if (Date.now() - started >= timeoutMs) {{
+                publish({{
+                    token: requestToken,
+                    status: 'timeout',
+                    message: 'Series grid is taking longer than expected.'
+                }});
+                return;
+            }}
+            window.requestAnimationFrame(check);
+        }}
+
+        window.requestAnimationFrame(check);
+        return noUpdate;
+    }}
     """

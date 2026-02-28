@@ -344,7 +344,7 @@ def test_reg_run_regression_handles_blank_linear_constraints(monkeypatch, regres
 def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(regression_page, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
-    assert regression_page.reg_open_db_add_modal(1) == expected
+    assert regression_page.reg_open_db_add_modal(1) == (*expected, False)
 
 
 def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, regression_page):
@@ -458,22 +458,37 @@ def test_reg_on_modal_ok_commits_local_series_modal_state(regression_page):
     assert out[1] == {"A": "None"}
     assert out[2] == {"A": True}
     assert out[3] == ["A"]
-    assert out[8] == "A"
-    assert out[9] == {"A": 2}
-    assert out[10] == {"A": -0.5}
-    assert out[11] == {"A": 0.8}
-    assert out[12] == {"A": True}
+    assert out[10] == "A"
+    assert out[11] == {"A": 2}
+    assert out[12] == {"A": -0.5}
+    assert out[13] == {"A": 0.8}
+    assert out[14] == {"A": True}
+    assert out[15] is False
 
-    updated_df = pd.read_json(StringIO(out[6]), orient="split")
+    updated_df = pd.read_json(StringIO(out[8]), orient="split")
     assert list(updated_df.columns) == ["A"]
+
+
+def test_reg_begin_series_selection_request_opens_modal_and_releases_blocker(regression_page):
+    assert regression_page.reg_begin_series_selection_request("token") == (True, False)
+
+
+def test_reg_resolve_series_selection_modal_controls_overlay_and_ok(regression_page):
+    assert regression_page.reg_resolve_series_selection_modal("token", None) == (True, True, "", "blue", True)
+    assert regression_page.reg_resolve_series_selection_modal(
+        "token", {"token": "token", "status": "ready", "message": ""}
+    ) == (False, False, "", "blue", True)
+    assert regression_page.reg_resolve_series_selection_modal(
+        "token", {"token": "token", "status": "timeout", "message": "slow"}
+    ) == (False, True, "slow", "red", False)
 
 
 def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_page):
     idx = pd.date_range("2024-01-01", periods=3, freq="B")
     raw = df_to_json(pd.DataFrame({"A": [0.01, 0.0, -0.01], "B": [0.0, 0.01, 0.02]}, index=idx))
 
-    children = regression_page.reg_update_series_grid(
-        True,
+    children, status = regression_page.reg_update_series_grid(
+        "token",
         raw,
         ["A"],
         ["A", "B"],
@@ -488,6 +503,7 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
     )
 
     grid = children[0]
+    assert status["status"] == "rendered"
     opts = getattr(grid, "dashGridOptions", {}) or {}
     assert opts.get("suppressMovableColumns") is True
     assert opts.get("stopEditingWhenCellsLoseFocus") is True

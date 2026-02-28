@@ -97,8 +97,11 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
     js_portfolio_ok_disabled,
+    js_probe_series_grid_ready,
     js_release_ui_blocker_on_modal_state,
+    js_release_ui_blocker_on_opened,
     js_set_ui_blocker_true,
+    js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
 )
@@ -3345,6 +3348,8 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-max-wt-store", data={}),
         dcc.Store(id="po-temp-force-max-store", data={}),
         dcc.Store(id="po-series-modal-commit-store", data=None),
+        dcc.Store(id="po-series-selection-open-request-store", data=None),
+        dcc.Store(id="po-series-selection-grid-status-store", data=None),
         dcc.Store(id="po-portfolio-add-mode-store", data=None),
         dcc.Store(id="po-portfolio-add-rows-store", data=[]),
         dcc.Store(id="po-underlying-add-rows-store", data=[]),
@@ -3622,12 +3627,14 @@ def po_clear_server_cache(n_clicks):
     Output("po-db-add-modal", "opened", allow_duplicate=True),
     Output("po-db-add-series-select", "data", allow_duplicate=True),
     Output("po-db-add-series-select", "value", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-from-db", "n_clicks"),
     Input("po-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def po_open_db_add_modal(menu_clicks, welcome_clicks):
-    return compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
+    result = compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
+    return (*result, False)
 
 
 @callback(
@@ -3656,6 +3663,7 @@ def po_close_db_add_modal(n_clicks):
     Output("po-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("po-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("po-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-raw-factor", "n_clicks"),
     Input("po-menu-add-raw-funds", "n_clicks"),
     Input("po-menu-add-raw-performance", "n_clicks"),
@@ -3672,7 +3680,7 @@ def po_open_raw_db_add_modal(
     welcome_funds_clicks,
     welcome_performance_clicks,
 ):
-    return compute_open_raw_db_add_modal(
+    result = compute_open_raw_db_add_modal(
         prefix="po",
         triggered_id=callback_context.triggered_id,
         factor_clicks=factor_clicks,
@@ -3684,6 +3692,7 @@ def po_open_raw_db_add_modal(
         mrd_engine=MRD_ENGINE,
         perf_engine=PERF_ENGINE,
     )
+    return (*result, False)
 
 
 @callback(
@@ -4060,6 +4069,7 @@ def po_validate_db_add_selection(selected_benches, raw_data, opened):
     Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-portfolios-peer", "n_clicks"),
     Input("po-menu-add-portfolios-index", "n_clicks"),
     Input("po-menu-add-portfolios-other", "n_clicks"),
@@ -4076,7 +4086,7 @@ def po_open_portfolio_add_modal(
     welcome_index_clicks,
     welcome_other_clicks,
 ):
-    return compute_open_portfolio_add_modal(
+    result = compute_open_portfolio_add_modal(
         prefix="po",
         triggered_id=callback_context.triggered_id,
         peer_clicks=peer_clicks,
@@ -4087,6 +4097,7 @@ def po_open_portfolio_add_modal(
         welcome_other_clicks=welcome_other_clicks,
         db_engine=DB_ENGINE,
     )
+    return (*result, False)
 
 
 @callback(
@@ -4100,12 +4111,14 @@ def po_open_portfolio_add_modal(
     Output("po-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("po-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("po-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-portfolios-underlying", "n_clicks"),
     Input("po-welcome-add-portfolios-underlying-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def po_open_underlying_add_modal(menu_clicks, welcome_clicks):
-    return compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+    result = compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+    return (*result, False)
 
 
 @callback(
@@ -4310,6 +4323,29 @@ clientside_callback(
 )
 
 clientside_callback(
+    js_set_ui_blocker_true_on_any(),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-menu-add-from-db", "n_clicks"),
+    Input("po-welcome-add-db-btn", "n_clicks"),
+    Input("po-menu-add-raw-factor", "n_clicks"),
+    Input("po-menu-add-raw-funds", "n_clicks"),
+    Input("po-menu-add-raw-performance", "n_clicks"),
+    Input("po-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("po-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("po-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("po-menu-add-portfolios-peer", "n_clicks"),
+    Input("po-menu-add-portfolios-index", "n_clicks"),
+    Input("po-menu-add-portfolios-other", "n_clicks"),
+    Input("po-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("po-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("po-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("po-menu-add-portfolios-underlying", "n_clicks"),
+    Input("po-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("po-open-modal-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     js_set_ui_blocker_true(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-db-add-ok-button", "n_clicks"),
@@ -4345,6 +4381,15 @@ clientside_callback(
 )
 
 clientside_callback(
+    js_set_ui_blocker_true_on_any(),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-upload-data", "contents"),
+    Input("po-sheet-select-ok-button", "n_clicks"),
+    Input("po-sheet-select-import-all-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     """
     function(n_clicks) {
         if (!n_clicks) {
@@ -4369,7 +4414,7 @@ clientside_callback(
     js_release_ui_blocker_on_modal_state(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-db-add-modal", "opened"),
-    Input("po-alert-message", "hide"),
+    Input("po-db-add-error-alert", "hide"),
     prevent_initial_call=True,
 )
 
@@ -4398,10 +4443,9 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
+    js_release_ui_blocker_on_opened(),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
-    Input("po-series-selection-modal", "opened"),
-    Input("po-alert-message", "hide"),
+    Input("po-sheet-select-modal", "opened"),
     prevent_initial_call=True,
 )
 
@@ -4431,6 +4475,24 @@ clientside_callback(
     Output("po-ui-blocker-overlay", "visible"),
     Input("po-ui-blocker-store", "data"),
 )
+
+_PO_SERIES_GRID_FINAL_STATUSES = {"ready", "empty", "error", "timeout"}
+
+
+def _po_new_series_selection_request_token():
+    return pd.Timestamp.utcnow().isoformat()
+
+
+def _po_series_status_payload(token, status, message=""):
+    return {"token": token, "status": status, "message": message}
+
+
+def _po_series_status_is_final(status_data, token=None):
+    if not isinstance(status_data, dict):
+        return False
+    if token is not None and status_data.get("token") != token:
+        return False
+    return str(status_data.get("status") or "") in _PO_SERIES_GRID_FINAL_STATUSES
 
 # Store sync: periodicity
 clientside_callback(
@@ -6071,7 +6133,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
-    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
@@ -6252,7 +6314,7 @@ def po_add_series_from_database(
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
-    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
@@ -6375,6 +6437,7 @@ def po_add_raw_series_from_database(
 
         updated_bench = dict(current_bench or {})
         updated_bench.update(load_result.benchmark_assignments or {})
+        series_request_token = _po_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6387,7 +6450,7 @@ def po_add_raw_series_from_database(
             "green",
             False,
             default_periodicity,
-            True,
+            series_request_token,
             updated_bench,
             current_cmabench or {},
             current_ls or {},
@@ -6430,7 +6493,7 @@ def po_add_raw_series_from_database(
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
-    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
@@ -6526,6 +6589,7 @@ def po_add_underlying_categories_from_database(
         new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
 
+        series_request_token = _po_new_series_selection_request_token()
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -6537,7 +6601,7 @@ def po_add_underlying_categories_from_database(
             "green",
             False,
             default_periodicity,
-            True,
+            series_request_token,
             current_bench or {},
             current_cmabench or {},
             current_ls or {},
@@ -6579,7 +6643,7 @@ def po_add_underlying_categories_from_database(
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
-    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
@@ -6700,6 +6764,7 @@ def po_add_portfolios_from_database(
 
         updated_bench = dict(current_bench or {})
         updated_bench.update(load_result.benchmark_assignments or {})
+        series_request_token = _po_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6712,7 +6777,7 @@ def po_add_portfolios_from_database(
             "green",
             False,
             default_periodicity,
-            True,
+            series_request_token,
             updated_bench,
             current_cmabench or {},
             current_ls or {},
@@ -6755,7 +6820,7 @@ def po_add_portfolios_from_database(
     Output("po-alert-message", "color"),
     Output("po-alert-message", "hide"),
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
-    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
@@ -6811,7 +6876,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no, n_no, n_no, n_no,
                 True, dropdown_data, [sheet_names[0]], contents, filename, sheet_names,  # open sheet modal
-                False,  # hide blocker
+                True,  # keep blocker until sheet modal opens
             )
 
         new_df = _shared_import_single_upload(contents, filename)
@@ -6827,6 +6892,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
 
         alert_msg = f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from {filename}"
 
+        series_request_token = _po_new_series_selection_request_token()
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -6836,7 +6902,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             updated_selection,
             alert_msg, "green", False,
             default_periodicity,
-            True,  # open modal
+            series_request_token,
             current_bench or {},
             current_cmabench or {},
             current_ls or {},
@@ -6847,7 +6913,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             current_max_wt or {},
             current_force_max or {},
             *sheet_no,
-            False,  # hide blocker
+            True,  # keep blocker until Select Series is ready
         )
     except Exception as e:
         return (
@@ -6873,7 +6939,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-periodicity-value-store", "data", allow_duplicate=True),
-    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-cmabench-assignments-store", "data", allow_duplicate=True),
     Output("po-temp-long-short-store", "data", allow_duplicate=True),
@@ -6961,6 +7027,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
             f"from {filename} ({sheet_msg})"
         )
 
+        series_request_token = _po_new_series_selection_request_token()
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -6970,7 +7037,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
             updated_selection,
             alert_msg, "green", False,
             default_periodicity,
-            True,  # open series-selection modal
+            series_request_token,
             current_bench or {},
             current_cmabench or {},
             current_ls or {},
@@ -6981,7 +7048,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
             current_max_wt or {},
             current_force_max or {},
             False, None, None, None, None,  # close sheet modal, clear stash, reset upload
-            False,  # hide blocker
+            True,  # keep blocker until Select Series is ready
         )
     except Exception as e:
         return (
@@ -7077,22 +7144,42 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("po-alert-message", "children", allow_duplicate=True),
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
+    State("po-series-selection-open-request-store", "data"),
+    State("po-series-selection-grid-status-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_modal(n_clicks):
+def po_open_modal(n_clicks, current_request_token, current_status):
     if not n_clicks:
         raise PreventUpdate
+    if current_request_token and not _po_series_status_is_final(current_status, current_request_token):
+        raise PreventUpdate
     return (
-        True,
+        _po_new_series_selection_request_token(),
         "",
         "blue",
         True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Series selection modal: begin request
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-series-selection-open-request-store", "data"),
+    prevent_initial_call=True,
+)
+def po_begin_series_selection_request(request_token):
+    if not request_token:
+        raise PreventUpdate
+    return True, False
 
 
 # ---------------------------------------------------------------------------
@@ -7101,7 +7188,8 @@ def po_open_modal(n_clicks):
 
 @callback(
     Output("po-series-selection-container", "children"),
-    Input("po-series-selection-modal", "opened"),
+    Output("po-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Input("po-series-selection-open-request-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-series-select", "data"),
     State("po-series-order-store", "data"),
@@ -7112,19 +7200,10 @@ def po_open_modal(n_clicks):
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
-    State("po-temp-series-select", "data"),
-    State("po-temp-series-order-store", "data"),
-    State("po-temp-benchmark-assignments-store", "data"),
-    State("po-temp-cmabench-assignments-store", "data"),
-    State("po-temp-long-short-store", "data"),
-    State("po-temp-vol-scaling-assignments-store", "data"),
-    State("po-temp-min-wt-store", "data"),
-    State("po-temp-max-wt-store", "data"),
-    State("po-temp-force-max-store", "data"),
     prevent_initial_call=True,
 )
 def po_update_series_selectors(
-    opened,
+    request_token,
     raw_data,
     selected_series,
     series_order,
@@ -7135,36 +7214,36 @@ def po_update_series_selectors(
     min_wt,
     max_wt,
     force_max,
-    temp_selected_series,
-    temp_series_order,
-    temp_assignments,
-    temp_cmabench_assignments,
-    temp_long_short_assignments,
-    temp_vol_scaling_assignments,
-    temp_min_wt,
-    temp_max_wt,
-    temp_force_max,
 ):
-    if not opened:
+    if not request_token:
         raise PreventUpdate
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], _po_series_status_payload(
+            request_token, "empty", "Upload data to select series."
+        )
 
-    df = json_to_df(raw_data)
+    try:
+        df = json_to_df(raw_data)
+    except Exception:
+        return [dmc.Text("Unable to prepare the series grid.", size="sm", c="dimmed")], _po_series_status_payload(
+            request_token, "error", "Unable to prepare the series grid."
+        )
     all_series = list(df.columns)
 
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], _po_series_status_payload(
+            request_token, "empty", "Upload data to select series."
+        )
 
-    selected_series = selected_series or temp_selected_series or []
-    series_order = series_order or temp_series_order or []
-    current_assignments = current_assignments or temp_assignments or {}
-    current_cmabench_assignments = current_cmabench_assignments or temp_cmabench_assignments or {}
-    long_short_assignments = long_short_assignments or temp_long_short_assignments or {}
-    vol_scaling_assignments = vol_scaling_assignments or temp_vol_scaling_assignments or {}
-    min_wt = min_wt or temp_min_wt or {}
-    max_wt = max_wt or temp_max_wt or {}
-    force_max = force_max or temp_force_max or {}
+    selected_series = selected_series or []
+    series_order = series_order or []
+    current_assignments = current_assignments or {}
+    current_cmabench_assignments = current_cmabench_assignments or {}
+    long_short_assignments = long_short_assignments or {}
+    vol_scaling_assignments = vol_scaling_assignments or {}
+    min_wt = min_wt or {}
+    max_wt = max_wt or {}
+    force_max = force_max or {}
 
     if not series_order:
         series_order = list(all_series)
@@ -7374,7 +7453,47 @@ def po_update_series_selectors(
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid]
+    return [grid], _po_series_status_payload(request_token, "rendered")
+
+
+clientside_callback(
+    js_probe_series_grid_ready("po"),
+    Output("po-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Input("po-series-selection-open-request-store", "data"),
+    Input("po-series-selection-container", "children"),
+    Input("po-series-selection-grid-status-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("po-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("po-modal-ok-button", "disabled", allow_duplicate=True),
+    Output("po-alert-message", "children", allow_duplicate=True),
+    Output("po-alert-message", "color", allow_duplicate=True),
+    Output("po-alert-message", "hide", allow_duplicate=True),
+    Input("po-series-selection-open-request-store", "data"),
+    Input("po-series-selection-grid-status-store", "data"),
+    prevent_initial_call=True,
+)
+def po_resolve_series_selection_modal(request_token, status_data):
+    if not request_token:
+        raise PreventUpdate
+
+    if not isinstance(status_data, dict) or status_data.get("token") != request_token:
+        return True, True, "", "blue", True
+
+    status = str(status_data.get("status") or "")
+    message = str(status_data.get("message") or "").strip()
+    if status == "ready":
+        return False, False, "", "blue", True
+    if status == "empty":
+        return False, True, "", "blue", True
+    if status == "rendered":
+        return True, True, "", "blue", True
+    if status in {"error", "timeout"}:
+        return False, True, message or "Unable to prepare the series grid.", "red", False
+    return True, True, "", "blue", True
 
 
 def _po_modal_series_rows(rows):
@@ -7447,6 +7566,8 @@ def _po_clamp_weight(value, default):
     Output("po-long-short-store", "data", allow_duplicate=True),
     Output("po-series-order-store", "data", allow_duplicate=True),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("po-series-selection-grid-status-store", "data", allow_duplicate=True),
     Output("po-series-select-value-store", "data", allow_duplicate=True),
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("po-vol-scaling-assignments-store", "data", allow_duplicate=True),
@@ -7454,6 +7575,9 @@ def _po_clamp_weight(value, default):
     Output("po-max-wt-store", "data"),
     Output("po-force-max-store", "data"),
     Output("po-results-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("po-modal-ok-button", "disabled", allow_duplicate=True),
     Output("po-alert-message", "children", allow_duplicate=True),
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
@@ -7490,6 +7614,11 @@ def po_on_modal_ok(
             no_update,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            False,
+            False,
+            no_update,
             "Upload data before committing series changes.",
             "red",
             False,
@@ -7510,6 +7639,11 @@ def po_on_modal_ok(
             no_update,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            no_update,
+            False,
+            False,
             no_update,
             "Series grid is not ready yet.",
             "red",
@@ -7547,6 +7681,11 @@ def po_on_modal_ok(
             no_update,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            no_update,
+            False,
+            False,
             no_update,
             validation_error,
             "red",
@@ -7635,6 +7774,8 @@ def po_on_modal_ok(
         final_ls,
         final_order,
         False,
+        None,
+        None,
         final_selected,
         raw_data_output,
         final_vol_scaling,
@@ -7642,6 +7783,9 @@ def po_on_modal_ok(
         final_max_wt,
         final_force_max,
         updated_results,
+        False,
+        False,
+        True,
         "",
         "blue",
         True,
@@ -7654,6 +7798,11 @@ def po_on_modal_ok(
 
 @callback(
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("po-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Output("po-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("po-modal-ok-button", "disabled", allow_duplicate=True),
     Output("po-alert-message", "children", allow_duplicate=True),
     Output("po-alert-message", "color", allow_duplicate=True),
     Output("po-alert-message", "hide", allow_duplicate=True),
@@ -7663,7 +7812,7 @@ def po_on_modal_ok(
 def po_on_modal_cancel(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return False, "", "blue", True
+    return False, None, None, False, False, True, "", "blue", True
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------

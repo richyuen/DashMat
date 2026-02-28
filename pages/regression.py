@@ -75,8 +75,12 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
     js_portfolio_ok_disabled,
+    js_probe_series_grid_ready,
+    js_release_ui_blocker_on_opened,
     js_release_ui_blocker_on_modal_state,
     js_set_ui_blocker_true,
+    js_set_ui_blocker_true_on_any,
+    js_trigger_upload_with_cancel,
     js_underlying_delete_row,
 )
 from utils.sample_data import get_sample_file_path
@@ -2138,6 +2142,8 @@ layout = dmc.Container(
         dcc.Store(id="reg-temp-max-beta-store", data={}),
         dcc.Store(id="reg-temp-enable-constraint-store", data={}),
         dcc.Store(id="reg-series-modal-commit-store", data=None),
+        dcc.Store(id="reg-series-selection-open-request-store", data=None),
+        dcc.Store(id="reg-series-selection-grid-status-store", data=None),
         dcc.Store(id="reg-portfolio-add-mode-store", data=None),
         dcc.Store(id="reg-portfolio-add-rows-store", data=[]),
         dcc.Store(id="reg-underlying-add-rows-store", data=[]),
@@ -2361,48 +2367,16 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            setTimeout(function() {
-                var uploadDiv = document.getElementById('reg-upload-data');
-                if (uploadDiv) {
-                    var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) {
-                        input.click();
-                    }
-                }
-            }, 100);
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-upload-data", "contents", allow_duplicate=True),
+    js_trigger_upload_with_cancel("reg"),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-series", "n_clicks"),
-    State("reg-upload-data", "contents"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            setTimeout(function() {
-                var uploadDiv = document.getElementById('reg-upload-data');
-                if (uploadDiv) {
-                    var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) {
-                        input.click();
-                    }
-                }
-            }, 100);
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-upload-data", "contents", allow_duplicate=True),
+    js_trigger_upload_with_cancel("reg"),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-welcome-add-series-btn", "n_clicks"),
-    State("reg-upload-data", "contents"),
     prevent_initial_call=True,
 )
 
@@ -2414,6 +2388,31 @@ clientside_callback(
     """,
     Output("reg-ui-blocker-overlay", "visible"),
     Input("reg-ui-blocker-store", "data"),
+)
+
+clientside_callback(
+    js_set_ui_blocker_true_on_any(),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-menu-add-from-db", "n_clicks"),
+    Input("reg-welcome-add-db-btn", "n_clicks"),
+    Input("reg-menu-add-raw-factor", "n_clicks"),
+    Input("reg-menu-add-raw-funds", "n_clicks"),
+    Input("reg-menu-add-raw-performance", "n_clicks"),
+    Input("reg-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("reg-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("reg-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("reg-menu-add-portfolios-peer", "n_clicks"),
+    Input("reg-menu-add-portfolios-index", "n_clicks"),
+    Input("reg-menu-add-portfolios-other", "n_clicks"),
+    Input("reg-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("reg-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("reg-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("reg-menu-add-portfolios-underlying", "n_clicks"),
+    Input("reg-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("reg-open-modal-button", "n_clicks"),
+    Input("reg-sheet-select-ok-button", "n_clicks"),
+    Input("reg-sheet-select-import-all-button", "n_clicks"),
+    prevent_initial_call=True,
 )
 
 clientside_callback(
@@ -2505,10 +2504,9 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
+    js_release_ui_blocker_on_opened(),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
-    Input("reg-series-selection-modal", "opened"),
-    Input("reg-alert-message", "hide"),
+    Input("reg-sheet-select-modal", "opened"),
     prevent_initial_call=True,
 )
 
@@ -2663,12 +2661,14 @@ def reg_clear_server_cache(n_clicks):
     Output("reg-db-add-modal", "opened", allow_duplicate=True),
     Output("reg-db-add-series-select", "data", allow_duplicate=True),
     Output("reg-db-add-series-select", "value", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-from-db", "n_clicks"),
     Input("reg-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def reg_open_db_add_modal(menu_clicks=None, welcome_clicks=None):
-    return compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
+    result = compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
+    return (*result, False)
 
 
 @callback(
@@ -2783,6 +2783,7 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
     Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("reg-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-raw-factor", "n_clicks"),
     Input("reg-menu-add-raw-funds", "n_clicks"),
     Input("reg-menu-add-raw-performance", "n_clicks"),
@@ -2799,7 +2800,7 @@ def reg_open_raw_db_add_modal(
     welcome_funds_clicks,
     welcome_performance_clicks,
 ):
-    return compute_open_raw_db_add_modal(
+    result = compute_open_raw_db_add_modal(
         prefix="reg",
         triggered_id=callback_context.triggered_id,
         factor_clicks=factor_clicks,
@@ -2811,6 +2812,7 @@ def reg_open_raw_db_add_modal(
         mrd_engine=MRD_ENGINE,
         perf_engine=PERF_ENGINE,
     )
+    return (*result, False)
 
 
 @callback(
@@ -3175,6 +3177,7 @@ def reg_update_raw_db_preview(
     Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-peer", "n_clicks"),
     Input("reg-menu-add-portfolios-index", "n_clicks"),
     Input("reg-menu-add-portfolios-other", "n_clicks"),
@@ -3191,7 +3194,7 @@ def reg_open_portfolio_add_modal(
     welcome_index_clicks,
     welcome_other_clicks,
 ):
-    return compute_open_portfolio_add_modal(
+    result = compute_open_portfolio_add_modal(
         prefix="reg",
         triggered_id=callback_context.triggered_id,
         peer_clicks=peer_clicks,
@@ -3202,6 +3205,7 @@ def reg_open_portfolio_add_modal(
         welcome_other_clicks=welcome_other_clicks,
         db_engine=DB_ENGINE,
     )
+    return (*result, False)
 
 
 @callback(
@@ -3215,12 +3219,14 @@ def reg_open_portfolio_add_modal(
     Output("reg-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("reg-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("reg-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-underlying", "n_clicks"),
     Input("reg-welcome-add-portfolios-underlying-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def reg_open_underlying_add_modal(menu_clicks, welcome_clicks):
-    return compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+    result = compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+    return (*result, False)
 
 
 @callback(
@@ -3698,6 +3704,7 @@ def reg_add_portfolios_from_database(
     Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
     Output("reg-periodicity-value-store", "data", allow_duplicate=True),
     Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-upload-data", "contents"),
     State("reg-upload-data", "filename"),
     State("dashmat-raw-data-store", "data"),
@@ -3709,16 +3716,25 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
         raise PreventUpdate
     sheet_names = get_sheet_names(contents, filename)
     if sheet_names and len(sheet_names) > 1:
-        return sheet_names, contents, filename, True, no_update, no_update, no_update, no_update
+        return sheet_names, contents, filename, True, no_update, no_update, no_update, no_update, True
     try:
         new_df = _shared_import_single_upload(contents, filename)
     except Exception:
-        raise PreventUpdate
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, False
     merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
     merged_df = merge_result.merged_df
     merged_periodicity = merge_result.combined_periodicity
-    return (no_update, no_update, no_update, False,
-            df_to_json(merged_df), merged_periodicity, merged_periodicity, merged_periodicity)
+    return (
+        no_update,
+        no_update,
+        no_update,
+        False,
+        df_to_json(merged_df),
+        merged_periodicity,
+        merged_periodicity,
+        merged_periodicity,
+        True,
+    )
 
 
 @callback(
@@ -3727,25 +3743,54 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
     Output("reg-periodicity-value-store", "data", allow_duplicate=True),
     Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
     Output("reg-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-sheet-select-ok-button", "n_clicks"),
+    Input("reg-sheet-select-import-all-button", "n_clicks"),
     State("reg-sheet-select-dropdown", "value"),
     State("reg-sheet-select-contents-store", "data"),
     State("reg-sheet-select-filename-store", "data"),
+    State("reg-sheet-select-sheetnames-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     prevent_initial_call=True,
 )
-def reg_handle_sheet_select_ok(n_clicks, selected_sheets, contents, filename, existing_raw, existing_periodicity):
-    if not n_clicks or not selected_sheets or not contents:
+def reg_handle_sheet_select_ok(
+    n_clicks_selected,
+    n_clicks_all,
+    selected_sheets,
+    contents,
+    filename,
+    stashed_sheet_names,
+    existing_raw,
+    existing_periodicity,
+):
+    if not contents:
         raise PreventUpdate
+    triggered_id = callback_context.triggered_id
+    if triggered_id not in {"reg-sheet-select-ok-button", "reg-sheet-select-import-all-button"}:
+        raise PreventUpdate
+    workbook_sheets = stashed_sheet_names or get_sheet_names(contents, filename)
+    if triggered_id == "reg-sheet-select-import-all-button":
+        target_sheets = workbook_sheets or []
+    else:
+        target_sheets = selected_sheets or []
+    if not target_sheets:
+        return no_update, no_update, no_update, no_update, True, False
     try:
-        new_df, _imported_sheets = _shared_import_selected_workbook_sheets(contents, filename, selected_sheets)
+        new_df, _imported_sheets = _shared_import_selected_workbook_sheets(contents, filename, target_sheets)
     except Exception:
-        raise PreventUpdate
+        return no_update, no_update, no_update, no_update, no_update, False
     merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
     merged_df = merge_result.merged_df
     merged_periodicity = merge_result.combined_periodicity
-    return df_to_json(merged_df), merged_periodicity, merged_periodicity, merged_periodicity, False
+    return (
+        df_to_json(merged_df),
+        merged_periodicity,
+        merged_periodicity,
+        merged_periodicity,
+        False,
+        True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3785,34 +3830,65 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     return hide_welcome, show_main, period_data, period_value
 
 
+_REG_SERIES_GRID_FINAL_STATUSES = {"ready", "empty", "error", "timeout"}
+
+
+def _reg_new_series_selection_request_token() -> str:
+    return pd.Timestamp.utcnow().isoformat()
+
+
+def _reg_series_status_payload(token, status, message=""):
+    return {
+        "token": token,
+        "status": status,
+        "message": message or "",
+    }
+
+
+def _reg_series_status_is_final(status_data, token=None):
+    if not isinstance(status_data, dict):
+        return False
+    if token is not None and status_data.get("token") != token:
+        return False
+    return str(status_data.get("status") or "") in _REG_SERIES_GRID_FINAL_STATUSES
+
+
 # ---------------------------------------------------------------------------
 # Open modal
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("reg-series-selection-modal", "opened"),
+    Output("reg-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("reg-alert-message", "children", allow_duplicate=True),
     Output("reg-alert-message", "color", allow_duplicate=True),
     Output("reg-alert-message", "hide", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("reg-url-location", "pathname"),
     State("reg-series-select", "data"),
     State("reg-series-order-store", "data"),
-    State("reg-benchmark-assignments-store", "data"),
-    State("reg-long-short-store", "data"),
-    State("reg-vol-scaling-assignments-store", "data"),
     State("reg-dependent-var-store", "data"),
-    State("reg-lag-store", "data"),
-    State("reg-min-beta-store", "data"),
-    State("reg-max-beta-store", "data"),
-    State("reg-enable-constraint-store", "data"),
+    State("reg-series-selection-open-request-store", "data"),
+    State("reg-series-selection-grid-status-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order, bench, ls, vol_scale, dep_var,
-                   lag, min_beta, max_beta, enable):
+def reg_open_modal(
+    n_clicks,
+    raw_data,
+    page_load_intervals,
+    pathname,
+    sel,
+    order,
+    dep_var,
+    current_request_token,
+    current_status,
+):
     triggered_id = callback_context.triggered_id
+
+    if current_request_token and not _reg_series_status_is_final(current_status, current_request_token):
+        raise PreventUpdate
 
     should_open = False
     if triggered_id == "reg-open-modal-button":
@@ -3844,11 +3920,28 @@ def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order
         raise PreventUpdate
 
     return (
-        True,
+        _reg_new_series_selection_request_token(),
         "",
         "blue",
         True,
+        True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Series selection modal: begin request
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("reg-series-selection-modal", "opened", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-series-selection-open-request-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_begin_series_selection_request(request_token):
+    if not request_token:
+        raise PreventUpdate
+    return True, False
 
 
 # ---------------------------------------------------------------------------
@@ -3857,7 +3950,8 @@ def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order
 
 @callback(
     Output("reg-series-selection-container", "children"),
-    Input("reg-series-selection-modal", "opened"),
+    Output("reg-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Input("reg-series-selection-open-request-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("reg-series-select", "data"),
     State("reg-series-order-store", "data"),
@@ -3871,17 +3965,26 @@ def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order
     State("reg-enable-constraint-store", "data"),
     prevent_initial_call=True,
 )
-def reg_update_series_grid(opened, raw_data, selected_x, series_order,
+def reg_update_series_grid(request_token, raw_data, selected_x, series_order,
                            bench_assign, ls_assign, vol_assign,
                            dep_var, lag_assign, min_b_assign, max_b_assign, enable_assign):
-    if not opened:
+    if not request_token:
         raise PreventUpdate
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
-    df = json_to_df(raw_data)
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], _reg_series_status_payload(
+            request_token, "empty", "Upload data to select series."
+        )
+    try:
+        df = json_to_df(raw_data)
+    except Exception:
+        return [dmc.Text("Unable to prepare the series grid", size="sm", c="dimmed")], _reg_series_status_payload(
+            request_token, "error", "Unable to prepare the series grid."
+        )
     all_series = list(df.columns)
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], _reg_series_status_payload(
+            request_token, "empty", "Upload data to select series."
+        )
     if not series_order:
         series_order = list(all_series)
     else:
@@ -3994,7 +4097,47 @@ def reg_update_series_grid(opened, raw_data, selected_x, series_order,
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid]
+    return [grid], _reg_series_status_payload(request_token, "rendered")
+
+
+clientside_callback(
+    js_probe_series_grid_ready("reg"),
+    Output("reg-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Input("reg-series-selection-open-request-store", "data"),
+    Input("reg-series-selection-container", "children"),
+    Input("reg-series-selection-grid-status-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("reg-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("reg-modal-ok-button", "disabled", allow_duplicate=True),
+    Output("reg-alert-message", "children", allow_duplicate=True),
+    Output("reg-alert-message", "color", allow_duplicate=True),
+    Output("reg-alert-message", "hide", allow_duplicate=True),
+    Input("reg-series-selection-open-request-store", "data"),
+    Input("reg-series-selection-grid-status-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_resolve_series_selection_modal(request_token, status_data):
+    if not request_token:
+        raise PreventUpdate
+
+    if not isinstance(status_data, dict) or status_data.get("token") != request_token:
+        return True, True, "", "blue", True
+
+    status = str(status_data.get("status") or "")
+    message = str(status_data.get("message") or "").strip()
+    if status == "ready":
+        return False, False, "", "blue", True
+    if status == "empty":
+        return False, True, "", "blue", True
+    if status == "rendered":
+        return True, True, "", "blue", True
+    if status in {"error", "timeout"}:
+        return False, True, message or "Unable to prepare the series grid.", "red", False
+    return True, True, "", "blue", True
 
 
 def _reg_modal_series_rows(rows):
@@ -4041,6 +4184,8 @@ def _reg_ordered_modal_rows(row_data, virtual_rows):
     Output("reg-long-short-store", "data"),
     Output("reg-series-order-store", "data"),
     Output("reg-series-selection-modal", "opened", allow_duplicate=True),
+    Output("reg-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("reg-series-selection-grid-status-store", "data", allow_duplicate=True),
     Output("reg-series-select-value-store", "data"),
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("reg-vol-scaling-assignments-store", "data"),
@@ -4049,6 +4194,9 @@ def _reg_ordered_modal_rows(row_data, virtual_rows):
     Output("reg-min-beta-store", "data"),
     Output("reg-max-beta-store", "data"),
     Output("reg-enable-constraint-store", "data"),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Output("reg-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("reg-modal-ok-button", "disabled", allow_duplicate=True),
     Output("reg-alert-message", "children", allow_duplicate=True),
     Output("reg-alert-message", "color", allow_duplicate=True),
     Output("reg-alert-message", "hide", allow_duplicate=True),
@@ -4076,6 +4224,11 @@ def reg_on_modal_ok(commit_token, raw_data, row_data, virtual_rows):
             no_update,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            False,
+            False,
+            no_update,
             "Upload data before committing series changes.",
             "red",
             False,
@@ -4096,6 +4249,11 @@ def reg_on_modal_ok(commit_token, raw_data, row_data, virtual_rows):
             no_update,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            no_update,
+            False,
+            False,
             no_update,
             "Series grid is not ready yet.",
             "red",
@@ -4180,6 +4338,8 @@ def reg_on_modal_ok(commit_token, raw_data, row_data, virtual_rows):
         final_ls,
         final_order,
         False,
+        None,
+        None,
         final_x,
         raw_data_output,
         final_vol,
@@ -4188,6 +4348,9 @@ def reg_on_modal_ok(commit_token, raw_data, row_data, virtual_rows):
         final_min,
         final_max,
         final_enable,
+        False,
+        False,
+        True,
         "",
         "blue",
         True,
@@ -4196,6 +4359,11 @@ def reg_on_modal_ok(commit_token, raw_data, row_data, virtual_rows):
 
 @callback(
     Output("reg-series-selection-modal", "opened", allow_duplicate=True),
+    Output("reg-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("reg-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Output("reg-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("reg-modal-ok-button", "disabled", allow_duplicate=True),
     Output("reg-alert-message", "children", allow_duplicate=True),
     Output("reg-alert-message", "color", allow_duplicate=True),
     Output("reg-alert-message", "hide", allow_duplicate=True),
@@ -4205,7 +4373,7 @@ def reg_on_modal_ok(commit_token, raw_data, row_data, virtual_rows):
 def reg_on_modal_cancel(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return False, "", "blue", True
+    return False, None, None, False, False, True, "", "blue", True
 
 # Date range
 # ---------------------------------------------------------------------------

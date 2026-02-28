@@ -87,8 +87,11 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
     js_portfolio_ok_disabled,
+    js_probe_series_grid_ready,
     js_release_ui_blocker_on_modal_state,
+    js_release_ui_blocker_on_opened,
     js_set_ui_blocker_true,
+    js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
 )
@@ -1168,12 +1171,14 @@ def at_toggle_save_session(welcome_style):
     Output("at-db-add-modal", "opened", allow_duplicate=True),
     Output("at-db-add-series-select", "data", allow_duplicate=True),
     Output("at-db-add-series-select", "value", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-from-db", "n_clicks"),
     Input("at-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def open_db_add_modal(menu_clicks, welcome_clicks):
-    return compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
+    result = compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
+    return (*result, False)
 
 
 @callback(
@@ -1202,6 +1207,7 @@ def close_db_add_modal(n_clicks):
     Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("at-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-raw-factor", "n_clicks"),
     Input("at-menu-add-raw-funds", "n_clicks"),
     Input("at-menu-add-raw-performance", "n_clicks"),
@@ -1218,7 +1224,7 @@ def at_open_raw_db_add_modal(
     welcome_funds_clicks,
     welcome_performance_clicks,
 ):
-    return compute_open_raw_db_add_modal(
+    result = compute_open_raw_db_add_modal(
         prefix="at",
         triggered_id=callback_context.triggered_id,
         factor_clicks=factor_clicks,
@@ -1230,6 +1236,7 @@ def at_open_raw_db_add_modal(
         mrd_engine=MRD_ENGINE,
         perf_engine=PERF_ENGINE,
     )
+    return (*result, False)
 
 
 @callback(
@@ -1682,6 +1689,7 @@ def validate_db_add_selection(selected_benches, raw_data, opened):
     Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-portfolios-peer", "n_clicks"),
     Input("at-menu-add-portfolios-index", "n_clicks"),
     Input("at-menu-add-portfolios-other", "n_clicks"),
@@ -1698,7 +1706,7 @@ def at_open_portfolio_add_modal(
     welcome_index_clicks,
     welcome_other_clicks,
 ):
-    return compute_open_portfolio_add_modal(
+    result = compute_open_portfolio_add_modal(
         prefix="at",
         triggered_id=callback_context.triggered_id,
         peer_clicks=peer_clicks,
@@ -1709,6 +1717,7 @@ def at_open_portfolio_add_modal(
         welcome_other_clicks=welcome_other_clicks,
         db_engine=DB_ENGINE,
     )
+    return (*result, False)
 
 
 @callback(
@@ -1722,12 +1731,14 @@ def at_open_portfolio_add_modal(
     Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-portfolios-underlying", "n_clicks"),
     Input("at-welcome-add-portfolios-underlying-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 def at_open_underlying_add_modal(menu_clicks, welcome_clicks):
-    return compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+    result = compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
+    return (*result, False)
 
 
 @callback(
@@ -1932,6 +1943,29 @@ clientside_callback(
 )
 
 clientside_callback(
+    js_set_ui_blocker_true_on_any(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-menu-add-from-db", "n_clicks"),
+    Input("at-welcome-add-db-btn", "n_clicks"),
+    Input("at-menu-add-raw-factor", "n_clicks"),
+    Input("at-menu-add-raw-funds", "n_clicks"),
+    Input("at-menu-add-raw-performance", "n_clicks"),
+    Input("at-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("at-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("at-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("at-menu-add-portfolios-peer", "n_clicks"),
+    Input("at-menu-add-portfolios-index", "n_clicks"),
+    Input("at-menu-add-portfolios-other", "n_clicks"),
+    Input("at-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("at-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("at-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("at-menu-add-portfolios-underlying", "n_clicks"),
+    Input("at-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("at-open-series-modal-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     js_set_ui_blocker_true(),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-db-add-ok-button", "n_clicks"),
@@ -1967,6 +2001,15 @@ clientside_callback(
 )
 
 clientside_callback(
+    js_set_ui_blocker_true_on_any(),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-upload-data", "contents"),
+    Input("at-sheet-select-ok-button", "n_clicks"),
+    Input("at-sheet-select-import-all-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     """
     function(n_clicks) {
         if (!n_clicks) {
@@ -1991,7 +2034,7 @@ clientside_callback(
     js_release_ui_blocker_on_modal_state(),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-db-add-modal", "opened"),
-    Input("at-alert-message", "hide"),
+    Input("at-db-add-error-alert", "hide"),
     prevent_initial_call=True,
 )
 
@@ -2020,10 +2063,9 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
+    js_release_ui_blocker_on_opened(),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
-    Input("at-series-selection-modal", "opened"),
-    Input("at-alert-message", "hide"),
+    Input("at-sheet-select-modal", "opened"),
     prevent_initial_call=True,
 )
 
@@ -3939,6 +3981,8 @@ layout = dmc.Container(
         dcc.Store(id="at-temp-series-order-store", data=[]),
         dcc.Store(id="at-temp-deleted-series-store", data=[]),
         dcc.Store(id="at-series-modal-commit-store", data=None),
+        dcc.Store(id="at-series-selection-open-request-store", data=None),
+        dcc.Store(id="at-series-selection-grid-status-store", data=None),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
         dcc.Store(id="at-underlying-add-rows-store", data=[]),
@@ -4382,23 +4426,113 @@ clientside_callback(
 )
 
 
+_AT_SERIES_GRID_FINAL_STATUSES = {"ready", "empty", "error", "timeout"}
+
+
+def _at_new_series_selection_request_token():
+    return pd.Timestamp.utcnow().isoformat()
+
+
+def _at_series_status_payload(token, status, message=""):
+    return {"token": token, "status": status, "message": message}
+
+
+def _at_series_status_is_final(status_data, token=None):
+    if not isinstance(status_data, dict):
+        return False
+    if token is not None and status_data.get("token") != token:
+        return False
+    return str(status_data.get("status") or "") in _AT_SERIES_GRID_FINAL_STATUSES
+
+
+def _at_build_imported_committed_state(
+    merged_columns,
+    imported_columns,
+    current_selection,
+    current_order,
+    current_bench,
+    current_ls,
+    current_vol_scaling,
+    new_bench=None,
+    new_ls=None,
+    new_vol_scaling=None,
+):
+    merged_columns = [str(col) for col in ([] if merged_columns is None else list(merged_columns)) if str(col).strip()]
+    imported_columns = [str(col) for col in ([] if imported_columns is None else list(imported_columns)) if str(col).strip()]
+    current_selection = [str(col) for col in (current_selection or []) if str(col).strip()]
+    current_order = [str(col) for col in (current_order or []) if str(col).strip()]
+
+    current_selection = [col for col in current_selection if col in merged_columns]
+    current_order = [col for col in current_order if col in merged_columns]
+    imported_columns = [col for col in imported_columns if col in merged_columns]
+
+    updated_selection = list(current_selection)
+    for col in imported_columns:
+        if col not in updated_selection:
+            updated_selection.append(col)
+
+    if current_order:
+        updated_order = list(current_order)
+        for col in imported_columns:
+            if col not in updated_order:
+                updated_order.append(col)
+        for col in merged_columns:
+            if col not in updated_order:
+                updated_order.append(col)
+    else:
+        updated_order = list(merged_columns)
+
+    updated_bench = dict(current_bench or {})
+    updated_bench.update(new_bench or {})
+
+    updated_ls = dict(current_ls or {})
+    updated_ls.update(new_ls or {})
+
+    updated_vol_scaling = dict(current_vol_scaling or {})
+    updated_vol_scaling.update(new_vol_scaling or {})
+
+    return (
+        updated_selection,
+        updated_order,
+        updated_bench,
+        updated_ls,
+        updated_vol_scaling,
+    )
+
+
 @callback(
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
+    State("at-series-selection-open-request-store", "data"),
+    State("at-series-selection-grid-status-store", "data"),
     prevent_initial_call=True,
 )
-def open_modal(n_clicks):
+def open_modal(n_clicks, current_request_token, current_status):
     if not n_clicks:
         raise PreventUpdate
+    if current_request_token and not _at_series_status_is_final(current_status, current_request_token):
+        raise PreventUpdate
     return (
-        True,
+        _at_new_series_selection_request_token(),
         "",
         "blue",
         True,
     )
+
+
+@callback(
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-series-selection-open-request-store", "data"),
+    prevent_initial_call=True,
+)
+def at_begin_series_selection_request(request_token):
+    if not request_token:
+        raise PreventUpdate
+    return True, False
 
 
 @callback(
@@ -4407,9 +4541,14 @@ def open_modal(n_clicks):
     Output("at-long-short-store", "data", allow_duplicate=True),
     Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-series-selection-grid-status-store", "data", allow_duplicate=True),
     Output("at-series-select-value-store", "data", allow_duplicate=True),
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Output("at-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("at-modal-ok-button", "disabled", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
@@ -4433,6 +4572,11 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
             no_update,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            False,
+            False,
+            no_update,
             "Upload data before committing series changes.",
             "red",
             False,
@@ -4448,6 +4592,11 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
             True,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            no_update,
+            False,
+            False,
             no_update,
             "Series grid is not ready yet.",
             "red",
@@ -4480,6 +4629,11 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
             True,
             no_update,
             no_update,
+            no_update,
+            no_update,
+            no_update,
+            False,
+            False,
             no_update,
             validation_error,
             "red",
@@ -4538,9 +4692,14 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
         final_ls,
         final_order,
         False,
+        None,
+        None,
         final_selected,
         raw_data_output,
         final_vol_scaling,
+        False,
+        False,
+        True,
         "",
         "blue",
         True,
@@ -4549,6 +4708,11 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
 
 @callback(
     Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Output("at-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("at-modal-ok-button", "disabled", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
@@ -4558,7 +4722,7 @@ def on_modal_ok(commit_token, raw_data, row_data, selected_rows, virtual_rows):
 def on_modal_cancel(n_clicks):
     if not n_clicks:
         raise PreventUpdate
-    return False, "", "blue", True
+    return False, None, None, False, False, True, "", "blue", True
 
 
 def _at_modal_series_rows(rows):
@@ -6076,18 +6240,18 @@ def at_manage_regime_definitions(
     Output("at-periodicity-select", "data", allow_duplicate=True),
     Output("at-periodicity-select", "value", allow_duplicate=True),
     Output("at-periodicity-select", "disabled", allow_duplicate=True),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-series-select", "data", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
     Output("at-periodicity-value-store", "data", allow_duplicate=True),
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-long-short-store", "data", allow_duplicate=True),
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-first-load-store", "data", allow_duplicate=True),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-db-add-modal", "opened", allow_duplicate=True),
     Output("at-db-add-series-select", "value", allow_duplicate=True),
     Input("at-db-add-ok-button", "n_clicks"),
@@ -6201,8 +6365,21 @@ def add_series_from_database(
         else:
             default_periodicity = combined_periodicity
 
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        (
+            updated_selection,
+            updated_order,
+            updated_bench,
+            updated_ls,
+            updated_vol_scaling,
+        ) = _at_build_imported_committed_state(
+            merged_df.columns,
+            new_df.columns,
+            current_selection,
+            current_order,
+            current_bench,
+            current_ls,
+            current_vol_scaling,
+        )
 
         alert_msg = (
             f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
@@ -6212,6 +6389,7 @@ def add_series_from_database(
         alert_color = "orange" if daily_transition_notes else "green"
         alert_hide = False
         new_first_load = True
+        series_request_token = _at_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6224,13 +6402,13 @@ def add_series_from_database(
             alert_color,
             alert_hide,
             default_periodicity,
-            True,
-            current_bench or {},
-            current_ls or {},
-            current_order or [],
+            series_request_token,
+            updated_bench,
+            updated_ls,
+            updated_order,
             new_first_load,
             [],
-            current_vol_scaling or {},
+            updated_vol_scaling,
             False,
             [],
         )
@@ -6253,18 +6431,18 @@ def add_series_from_database(
     Output("at-periodicity-select", "data", allow_duplicate=True),
     Output("at-periodicity-select", "value", allow_duplicate=True),
     Output("at-periodicity-select", "disabled", allow_duplicate=True),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-series-select", "data", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
     Output("at-periodicity-value-store", "data", allow_duplicate=True),
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-long-short-store", "data", allow_duplicate=True),
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-first-load-store", "data", allow_duplicate=True),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-raw-db-add-modal", "opened", allow_duplicate=True),
     Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
     Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
@@ -6367,11 +6545,23 @@ def at_add_raw_series_from_database(
         periodicity_options = get_available_periodicities(combined_periodicity)
         default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
 
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
-
-        updated_bench = dict(current_bench or {})
-        updated_bench.update(load_result.benchmark_assignments or {})
+        (
+            updated_selection,
+            updated_order,
+            updated_bench,
+            updated_ls,
+            updated_vol_scaling,
+        ) = _at_build_imported_committed_state(
+            merged_df.columns,
+            new_df.columns,
+            current_selection,
+            current_order,
+            current_bench,
+            current_ls,
+            current_vol_scaling,
+            new_bench=load_result.benchmark_assignments or {},
+        )
+        series_request_token = _at_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6384,13 +6574,13 @@ def at_add_raw_series_from_database(
             "green",
             False,
             default_periodicity,
-            True,
+            series_request_token,
             updated_bench,
-            current_ls or {},
-            current_order or [],
+            updated_ls,
+            updated_order,
             True if first_load is not None else True,
             [],
-            current_vol_scaling or {},
+            updated_vol_scaling,
             False,
             [],
             [],
@@ -6419,18 +6609,18 @@ def at_add_raw_series_from_database(
     Output("at-periodicity-select", "data", allow_duplicate=True),
     Output("at-periodicity-select", "value", allow_duplicate=True),
     Output("at-periodicity-select", "disabled", allow_duplicate=True),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-series-select", "data", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
     Output("at-periodicity-value-store", "data", allow_duplicate=True),
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-long-short-store", "data", allow_duplicate=True),
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-first-load-store", "data", allow_duplicate=True),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-underlying-add-modal", "opened", allow_duplicate=True),
     Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
@@ -6514,8 +6704,22 @@ def at_add_underlying_categories_from_database(
         default_periodicity = merge_result.default_periodicity
         imported_df = merge_result.imported_df
 
-        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        (
+            updated_selection,
+            updated_order,
+            updated_bench,
+            updated_ls,
+            updated_vol_scaling,
+        ) = _at_build_imported_committed_state(
+            merged_df.columns,
+            imported_df.columns,
+            current_selection,
+            current_order,
+            current_bench,
+            current_ls,
+            current_vol_scaling,
+        )
+        series_request_token = _at_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6528,13 +6732,13 @@ def at_add_underlying_categories_from_database(
             "green",
             False,
             default_periodicity,
-            True,
-            current_bench or {},
-            current_ls or {},
-            current_order or [],
+            series_request_token,
+            updated_bench,
+            updated_ls,
+            updated_order,
             True if first_load is not None else True,
             [],
-            current_vol_scaling or {},
+            updated_vol_scaling,
             False,
             [],
             [],
@@ -6565,18 +6769,18 @@ def at_add_underlying_categories_from_database(
     Output("at-periodicity-select", "data", allow_duplicate=True),
     Output("at-periodicity-select", "value", allow_duplicate=True),
     Output("at-periodicity-select", "disabled", allow_duplicate=True),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-series-select", "data", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
     Output("at-periodicity-value-store", "data", allow_duplicate=True),
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-long-short-store", "data", allow_duplicate=True),
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-first-load-store", "data", allow_duplicate=True),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-portfolio-add-modal", "opened", allow_duplicate=True),
     Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
@@ -6679,11 +6883,23 @@ def at_add_portfolios_from_database(
 
         periodicity_options = get_available_periodicities(combined_periodicity)
         default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
-
-        updated_bench = dict(current_bench or {})
-        updated_bench.update(load_result.benchmark_assignments or {})
+        (
+            updated_selection,
+            updated_order,
+            updated_bench,
+            updated_ls,
+            updated_vol_scaling,
+        ) = _at_build_imported_committed_state(
+            merged_df.columns,
+            new_df.columns,
+            current_selection,
+            current_order,
+            current_bench,
+            current_ls,
+            current_vol_scaling,
+            new_bench=load_result.benchmark_assignments or {},
+        )
+        series_request_token = _at_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6696,13 +6912,13 @@ def at_add_portfolios_from_database(
             "green",
             False,
             default_periodicity,
-            True,
+            series_request_token,
             updated_bench,
-            current_ls or {},
-            current_order or [],
+            updated_ls,
+            updated_order,
             True,
             [],
-            current_vol_scaling or {},
+            updated_vol_scaling,
             False,
             [],
             [],
@@ -6732,18 +6948,18 @@ def at_add_portfolios_from_database(
     Output("at-periodicity-select", "data"),
     Output("at-periodicity-select", "value"),
     Output("at-periodicity-select", "disabled"),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-series-select", "data", allow_duplicate=True),
     Output("at-alert-message", "children"),
     Output("at-alert-message", "color"),
     Output("at-alert-message", "hide"),
     Output("at-periodicity-value-store", "data", allow_duplicate=True),
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-long-short-store", "data", allow_duplicate=True),
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-first-load-store", "data"),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     # Sheet-select modal outputs
     Output("at-sheet-select-modal", "opened", allow_duplicate=True),
@@ -6784,7 +7000,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
                 n_no, n_no, True,  # hide alert
                 n_no, n_no, n_no, n_no, n_no,
                 n_no, n_no, n_no,
-                False,  # hide blocker
+                True,  # keep blocker until sheet modal opens
                 True, dropdown_data, [sheet_names[0]], contents, filename, sheet_names,  # open sheet modal
             )
 
@@ -6797,9 +7013,21 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
         default_periodicity = merge_result.default_periodicity
         imported_df = merge_result.imported_df
 
-        # Keep current selection and add new series
-        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        (
+            updated_selection,
+            updated_order,
+            updated_bench,
+            updated_ls,
+            updated_vol_scaling,
+        ) = _at_build_imported_committed_state(
+            merged_df.columns,
+            imported_df.columns,
+            current_selection,
+            current_order,
+            current_bench,
+            current_ls,
+            current_vol_scaling,
+        )
 
         # Determine alert state
         if not first_load:
@@ -6812,6 +7040,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             alert_color = no_update
             alert_hide = True
             new_first_load = True
+        series_request_token = _at_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6824,14 +7053,14 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             alert_color,
             alert_hide,
             default_periodicity,
-            True, # Open modal
-            current_bench or {},
-            current_ls or {},
-            current_order or [],
+            series_request_token,
+            updated_bench,
+            updated_ls,
+            updated_order,
             new_first_load,
             [], # Reset deleted series
-            current_vol_scaling or {},
-            False, # Hide blocker
+            updated_vol_scaling,
+            True, # Keep blocker until series modal is ready
             *sheet_no,
         )
 
@@ -6858,18 +7087,18 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     Output("at-periodicity-select", "data", allow_duplicate=True),
     Output("at-periodicity-select", "value", allow_duplicate=True),
     Output("at-periodicity-select", "disabled", allow_duplicate=True),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
+    Output("at-series-select", "data", allow_duplicate=True),
     Output("at-alert-message", "children", allow_duplicate=True),
     Output("at-alert-message", "color", allow_duplicate=True),
     Output("at-alert-message", "hide", allow_duplicate=True),
     Output("at-periodicity-value-store", "data", allow_duplicate=True),
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-long-short-store", "data", allow_duplicate=True),
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-open-request-store", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-first-load-store", "data", allow_duplicate=True),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Output("at-sheet-select-modal", "opened", allow_duplicate=True),
     Output("at-sheet-select-contents-store", "data", allow_duplicate=True),
@@ -6938,8 +7167,21 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
         imported_df = merge_result.imported_df
         filename = stashed_filename
 
-        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        (
+            updated_selection,
+            updated_order,
+            updated_bench,
+            updated_ls,
+            updated_vol_scaling,
+        ) = _at_build_imported_committed_state(
+            merged_df.columns,
+            imported_df.columns,
+            current_selection,
+            current_order,
+            current_bench,
+            current_ls,
+            current_vol_scaling,
+        )
 
         if not first_load:
             if len(imported_sheets) == 1:
@@ -6958,6 +7200,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             alert_color = n_no
             alert_hide = True
             new_first_load = True
+        series_request_token = _at_new_series_selection_request_token()
 
         return (
             df_to_json(merged_df),
@@ -6970,14 +7213,14 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             alert_color,
             alert_hide,
             default_periodicity,
-            True,  # Open series-selection modal
-            current_bench or {},
-            current_ls or {},
-            current_order or [],
+            series_request_token,
+            updated_bench,
+            updated_ls,
+            updated_order,
             new_first_load,
             [],
-            current_vol_scaling or {},
-            False,  # Hide blocker
+            updated_vol_scaling,
+            True,  # Keep blocker until series modal is ready
             False, None, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
@@ -7075,50 +7318,50 @@ clientside_callback(
 
 @callback(
     Output("at-series-selection-container", "children"),
-    Input("at-series-selection-modal", "opened"),
+    Output("at-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Input("at-series-selection-open-request-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("at-series-select", "data"),
     State("at-series-order-store", "data"),
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
-    State("at-temp-series-select", "data"),
-    State("at-temp-series-order-store", "data"),
-    State("at-temp-benchmark-assignments-store", "data"),
-    State("at-temp-long-short-store", "data"),
-    State("at-temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def update_series_selectors(
-    opened,
+    request_token,
     raw_data,
     selected_series,
     series_order,
     current_assignments,
     long_short_assignments,
     vol_scaling_assignments,
-    temp_selected_series,
-    temp_series_order,
-    temp_assignments,
-    temp_long_short_assignments,
-    temp_vol_scaling_assignments,
 ):
     """Render Select Series as a single AG Grid with in-grid controls."""
-    if not opened:
+    if not request_token:
         raise PreventUpdate
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], _at_series_status_payload(
+            request_token, "empty", "Upload data to select series."
+        )
 
-    df = json_to_df(raw_data)
+    try:
+        df = json_to_df(raw_data)
+    except Exception:
+        return [dmc.Text("Unable to prepare the series grid.", size="sm", c="dimmed")], _at_series_status_payload(
+            request_token, "error", "Unable to prepare the series grid."
+        )
     all_series = list(df.columns)
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")]
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], _at_series_status_payload(
+            request_token, "empty", "Upload data to select series."
+        )
 
-    selected_series = selected_series or temp_selected_series or []
-    series_order = series_order or temp_series_order or []
-    current_assignments = current_assignments or temp_assignments or {}
-    long_short_assignments = long_short_assignments or temp_long_short_assignments or {}
-    vol_scaling_assignments = vol_scaling_assignments or temp_vol_scaling_assignments or {}
+    selected_series = selected_series or []
+    series_order = series_order or []
+    current_assignments = current_assignments or {}
+    long_short_assignments = long_short_assignments or {}
+    vol_scaling_assignments = vol_scaling_assignments or {}
 
     if not series_order:
         series_order = list(all_series)
@@ -7259,7 +7502,47 @@ def update_series_selectors(
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid]
+    return [grid], _at_series_status_payload(request_token, "rendered")
+
+
+clientside_callback(
+    js_probe_series_grid_ready("at"),
+    Output("at-series-selection-grid-status-store", "data", allow_duplicate=True),
+    Input("at-series-selection-open-request-store", "data"),
+    Input("at-series-selection-container", "children"),
+    Input("at-series-selection-grid-status-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("at-series-selection-loading-overlay", "visible", allow_duplicate=True),
+    Output("at-modal-ok-button", "disabled", allow_duplicate=True),
+    Output("at-alert-message", "children", allow_duplicate=True),
+    Output("at-alert-message", "color", allow_duplicate=True),
+    Output("at-alert-message", "hide", allow_duplicate=True),
+    Input("at-series-selection-open-request-store", "data"),
+    Input("at-series-selection-grid-status-store", "data"),
+    prevent_initial_call=True,
+)
+def at_resolve_series_selection_modal(request_token, status_data):
+    if not request_token:
+        raise PreventUpdate
+
+    if not isinstance(status_data, dict) or status_data.get("token") != request_token:
+        return True, True, "", "blue", True
+
+    status = str(status_data.get("status") or "")
+    message = str(status_data.get("message") or "").strip()
+    if status == "ready":
+        return False, False, "", "blue", True
+    if status == "empty":
+        return False, True, "", "blue", True
+    if status == "rendered":
+        return True, True, "", "blue", True
+    if status in {"error", "timeout"}:
+        return False, True, message or "Unable to prepare the series grid.", "red", False
+    return True, True, "", "blue", True
 
 
 @callback(

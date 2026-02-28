@@ -210,6 +210,14 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert row_data[0]["Date"] == "2024-01-01"
 
 
+def test_po_open_db_add_modal_clears_blocker_with_modal_payload(monkeypatch, page_modules):
+    _, portopt = page_modules
+    expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
+    monkeypatch.setattr(portopt, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
+
+    assert portopt.po_open_db_add_modal(1, None) == (*expected, False)
+
+
 def test_po_populate_returns_grid_adds_header_tooltips(page_modules):
     _, portopt = page_modules
 
@@ -286,11 +294,10 @@ def test_po_update_series_selectors_adds_header_tooltips_and_grid_tooltip_option
     monkeypatch.setattr(portopt, "get_cmabench_map_for_fofbench", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(portopt, "get_unique_cmabench_values_cached", lambda *_args, **_kwargs: [])
 
-    children = portopt.po_update_series_selectors(
-        True,
+    children, status = portopt.po_update_series_selectors(
+        "token",
         raw_json,
         ["Asset_A"],
-        None,
         {},
         {},
         {},
@@ -298,15 +305,7 @@ def test_po_update_series_selectors_adds_header_tooltips_and_grid_tooltip_option
         {},
         {},
         {},
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        {},
     )
 
     grid = children[0]
@@ -314,6 +313,7 @@ def test_po_update_series_selectors_adds_header_tooltips_and_grid_tooltip_option
     assert getattr(grid, "getRowId", None) == "params.data.__orig_series"
     assert col_map["Series"].get("headerTooltip")
     assert col_map["Benchmark"].get("headerTooltip")
+    assert status["status"] == "rendered"
     assert col_map["CMABench"].get("headerTooltip")
     assert getattr(grid, "dashGridOptions", {}).get("tooltipShowDelay") == 500
 
@@ -365,13 +365,14 @@ def test_po_on_modal_ok_commits_local_series_modal_state(monkeypatch, page_modul
     assert result[2] == {"Renamed_A": "DefaultBench"}
     assert result[3] == {"Renamed_A": True}
     assert result[4] == ["Renamed_A"]
-    assert result[8] == {"Renamed_A": False}
-    assert result[9] == {"Renamed_A": 5.0}
-    assert result[10] == {"Renamed_A": 60.0}
-    assert result[11] == {"Renamed_A": False}
-    assert result[12] == {"KeepMe": {"x": 2}}
+    assert result[10] == {"Renamed_A": False}
+    assert result[11] == {"Renamed_A": 5.0}
+    assert result[12] == {"Renamed_A": 60.0}
+    assert result[13] == {"Renamed_A": False}
+    assert result[14] == {"KeepMe": {"x": 2}}
+    assert result[15] is False
 
-    updated_df = pd.read_json(StringIO(result[7]), orient="split")
+    updated_df = pd.read_json(StringIO(result[9]), orient="split")
     assert "Renamed_A" in updated_df.columns
     assert "Asset_A" not in updated_df.columns
     assert "Asset_B" not in updated_df.columns
@@ -415,8 +416,27 @@ def test_po_on_modal_ok_blocks_duplicate_series_names(page_modules, raw_json):
     )
 
     assert result[5] is True
-    assert "duplicate" in str(result[13]).lower()
     assert result[15] is False
+    assert "duplicate" in str(result[18]).lower()
+    assert result[20] is False
+
+
+def test_po_begin_series_selection_request_opens_modal_and_releases_blocker(page_modules):
+    _, portopt = page_modules
+
+    assert portopt.po_begin_series_selection_request("token") == (True, False)
+
+
+def test_po_resolve_series_selection_modal_controls_overlay_and_ok(page_modules):
+    _, portopt = page_modules
+
+    assert portopt.po_resolve_series_selection_modal("token", None) == (True, True, "", "blue", True)
+    assert portopt.po_resolve_series_selection_modal(
+        "token", {"token": "token", "status": "ready", "message": ""}
+    ) == (False, False, "", "blue", True)
+    assert portopt.po_resolve_series_selection_modal(
+        "token", {"token": "token", "status": "error", "message": "bad"}
+    ) == (False, True, "bad", "red", False)
 
 
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):

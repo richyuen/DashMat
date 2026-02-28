@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from utils.returns import df_to_json
 
 
 def _collect_component_text(node):
@@ -262,6 +263,14 @@ def test_update_download_excel_disabled_uses_ready_state(page_modules):
         )
         is False
     )
+
+
+def test_open_db_add_modal_clears_blocker_with_modal_payload(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
+    monkeypatch.setattr(analyticstool, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
+
+    assert analyticstool.open_db_add_modal(1, None) == (*expected, False)
 
 
 def test_update_statistics_requires_ready_state(page_modules):
@@ -532,9 +541,10 @@ def test_on_modal_ok_commits_local_series_modal_state(page_modules, raw_json):
     assert result[1] == {"Renamed_A": "Asset_B", "Asset_B": "None"}
     assert result[2] == {"Renamed_A": True, "Asset_B": False}
     assert result[3] == ["Asset_B", "Renamed_A"]
-    assert result[7] == {"Renamed_A": False, "Asset_B": True}
+    assert result[9] == {"Renamed_A": False, "Asset_B": True}
+    assert result[10] is False
 
-    updated_df = pd.read_json(StringIO(result[6]), orient="split")
+    updated_df = pd.read_json(StringIO(result[8]), orient="split")
     assert "Renamed_A" in updated_df.columns
     assert "Asset_A" not in updated_df.columns
 
@@ -568,8 +578,9 @@ def test_on_modal_ok_blocks_duplicate_series_names(page_modules, raw_json):
     )
 
     assert result[4] is True
-    assert "duplicate" in str(result[8]).lower()
     assert result[10] is False
+    assert "duplicate" in str(result[13]).lower()
+    assert result[15] is False
 
 
 def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_json):
@@ -592,7 +603,7 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
         [{"__orig_series": "Asset_A"}],
     )
 
-    assert result[6] is no_update
+    assert result[8] is no_update
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):
@@ -641,6 +652,58 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
     assert out_df.index.is_month_end.all()
     assert pd.Timestamp("1976-07-30") not in out_df.index
     assert pd.Timestamp("1976-07-31") in out_df.index
+
+
+def test_at_begin_series_selection_request_opens_modal_and_releases_blocker(page_modules):
+    analyticstool, _ = page_modules
+
+    assert analyticstool.at_begin_series_selection_request("token") == (True, False)
+
+
+def test_at_resolve_series_selection_modal_controls_overlay_and_ok(page_modules):
+    analyticstool, _ = page_modules
+
+    assert analyticstool.at_resolve_series_selection_modal("token", None) == (True, True, "", "blue", True)
+    assert analyticstool.at_resolve_series_selection_modal(
+        "token", {"token": "token", "status": "rendered", "message": ""}
+    ) == (True, True, "", "blue", True)
+    assert analyticstool.at_resolve_series_selection_modal(
+        "token", {"token": "token", "status": "ready", "message": ""}
+    ) == (False, False, "", "blue", True)
+    assert analyticstool.at_resolve_series_selection_modal(
+        "token", {"token": "token", "status": "timeout", "message": "slow"}
+    ) == (False, True, "slow", "red", False)
+
+
+def test_add_series_from_database_appends_new_imports_to_committed_selection(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    existing_idx = pd.date_range("2024-01-01", periods=3, freq="B")
+    existing_raw = pd.DataFrame({"Existing": [0.01, 0.0, -0.01]}, index=existing_idx)
+    imported = pd.DataFrame({"New_A": [0.02, 0.01, 0.0]}, index=existing_idx)
+    imported.index.name = "Date"
+    meta = {"New_A": {"starts_daily": True, "daily_start_date": existing_idx[0]}}
+
+    monkeypatch.setattr(
+        analyticstool,
+        "load_cma_returns_for_benches_with_meta",
+        lambda *_args, **_kwargs: (imported.copy(), meta),
+    )
+
+    result = analyticstool.add_series_from_database(
+        1,
+        ["New_A"],
+        df_to_json(existing_raw),
+        "daily",
+        ["Existing"],
+        {},
+        {},
+        ["Existing"],
+        True,
+        {},
+    )
+
+    assert result[5] == ["Existing", "New_A"]
+    assert result[13] == ["Existing", "New_A"]
 
 
 def test_update_factor_series_select_includes_unselected_series(page_modules, raw_json):
