@@ -51,12 +51,13 @@ def test_dm_route_non_file_imports_builds_intent_for_real_click(monkeypatch):
 
     monkeypatch.setattr(dashmat, "callback_context", SimpleNamespace(triggered_id="dm-welcome-add-db-btn"))
 
-    intent, nav_target = dashmat.dm_route_non_file_imports(1, None, None, None, None, None, None, None, "portopt")
+    intent, pathname, search = dashmat.dm_route_non_file_imports(1, None, None, None, None, None, None, None, "portopt")
 
     assert intent["target_module"] == "portopt"
     assert intent["action"] == "open_import_modal"
     assert intent["flow"] == "db"
-    assert nav_target == "/portopt"
+    assert pathname == "/portopt"
+    assert search == ""
 
 
 def test_dm_update_workspace_cta_hides_restore_button_without_session_data():
@@ -67,7 +68,7 @@ def test_dm_update_workspace_cta_hides_restore_button_without_session_data():
 
     assert href == "/portopt"
     assert label == "Restore existing session in Portfolio Optimization"
-    assert style == {"display": "none"}
+    assert style == {"textDecoration": "none", "color": "inherit", "display": "none"}
 
 
 def test_dm_update_workspace_cta_shows_restore_button_with_session_data():
@@ -78,4 +79,18 @@ def test_dm_update_workspace_cta_shows_restore_button_with_session_data():
 
     assert href == "/regression"
     assert label == "Restore existing session in Regression"
-    assert style == {}
+    assert style == {"textDecoration": "none", "color": "inherit"}
+
+
+def test_dm_upload_success_outputs_include_spa_navigation_targets():
+    import app  # noqa: F401
+    import pages.dashmat as dashmat
+    import pandas as pd
+
+    frame = pd.DataFrame({"SeriesA": [0.01, 0.02]}, index=pd.to_datetime(["2024-01-31", "2024-02-29"]))
+
+    outputs = dashmat._dm_upload_success_outputs(frame, "monthly", "analyticstool")
+
+    assert outputs[3] == "/analyticstool"
+    assert outputs[4] == ""
+    assert outputs[5] == ""

@@ -6,30 +6,30 @@ import pytest
 from dash.exceptions import PreventUpdate
 
 
-def test_update_app_nav_links_for_test_role():
+def test_update_global_nav_links_for_test_role():
     import app as app_module
 
-    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Test"}, None)
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_global_nav_links({"role": "Test"}, None)
     assert home_href == "/"
     assert analytics_href == "/restricted?target=Analytics%20Tool"
     assert portopt_href == "/restricted?target=Portfolio%20Optimization"
     assert regression_href == "/restricted?target=Regression"
 
 
-def test_update_app_nav_links_for_non_test_role_without_data():
+def test_update_global_nav_links_for_non_test_role_without_data():
     import app as app_module
 
-    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links({"role": "Admin"}, None)
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_global_nav_links({"role": "Admin"}, None)
     assert home_href == "/"
     assert analytics_href == "/dashmat?module=analyticstool"
     assert portopt_href == "/dashmat?module=portopt"
     assert regression_href == "/dashmat?module=regression"
 
 
-def test_update_app_nav_links_for_non_test_role_with_data():
+def test_update_global_nav_links_for_non_test_role_with_data():
     import app as app_module
 
-    home_href, analytics_href, portopt_href, regression_href = app_module.update_app_nav_links(
+    home_href, analytics_href, portopt_href, regression_href = app_module.update_global_nav_links(
         {"role": "Admin"},
         {"mock": True},
     )

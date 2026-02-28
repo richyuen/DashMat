@@ -4435,17 +4435,18 @@ clientside_callback(
 )
 
 
-# Navigate to Portfolio Optimization page (client-side, preserves shared stores)
+# Navigate to other workspaces through the Dash Pages router.
 clientside_callback(
     """
     function(n_clicks) {
-        if (n_clicks) {
-            window.location.pathname = '/portopt';
+        if (!n_clicks) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return window.dash_clientside.no_update;
+        return ['/portopt', ''];
     }
     """,
-    Output("at-url-location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Input("at-menu-view-portfolio", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -4454,13 +4455,14 @@ clientside_callback(
 clientside_callback(
     """
     function(n_clicks) {
-        if (n_clicks) {
-            window.location.pathname = '/regression';
+        if (!n_clicks) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return window.dash_clientside.no_update;
+        return ['/regression', ''];
     }
     """,
-    Output("at-url-location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Input("at-menu-view-regression", "n_clicks"),
     prevent_initial_call=True,
 )

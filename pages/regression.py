@@ -2274,11 +2274,14 @@ clientside_callback(
 clientside_callback(
     """
     function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/analyticstool'; }
-        return window.dash_clientside.no_update;
+        if (!n_clicks) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        return ['/analyticstool', ''];
     }
     """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Input("reg-menu-view-analytics", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -2286,11 +2289,14 @@ clientside_callback(
 clientside_callback(
     """
     function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/portopt'; }
-        return window.dash_clientside.no_update;
+        if (!n_clicks) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        return ['/portopt', ''];
     }
     """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Input("reg-menu-view-portfolio", "n_clicks"),
     prevent_initial_call=True,
 )

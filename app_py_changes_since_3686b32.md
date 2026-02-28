@@ -116,23 +116,33 @@ dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
 
 ### Before
 
-The app-shell menu always pointed directly to the workspaces:
+The app-shell menu always pointed directly to the workspaces using `dmc.MenuItem(..., href=...)`:
 
 ```python
-href=ANALYTICS_PATH
-href=PORTOPT_PATH
-href=REGRESSION_PATH
+dmc.MenuItem("Analytics Tool", id="app-nav-analytics", href=ANALYTICS_PATH)
+dmc.MenuItem("Portfolio Optimization", id="app-nav-portopt", href=PORTOPT_PATH)
+dmc.MenuItem("Regression", id="app-nav-regression", href=REGRESSION_PATH)
 ```
 
 ### After
 
-The static default hrefs should point to landing-page module targets:
+The app-shell should use `dcc.Link(refresh=False)` wrappers with renamed IDs, and the default hrefs should point to landing-page module targets:
 
 ```python
-href=landing_href("analyticstool")
-href=landing_href("portopt")
-href=landing_href("regression")
+dcc.Link(
+    id="global-navbar-pretrade-analytics",
+    href=landing_href("analyticstool"),
+    refresh=False,
+    style={"textDecoration": "none", "color": "inherit"},
+    children=dmc.MenuItem("Analytics Tool"),
+)
 ```
+
+Repeat that pattern for:
+
+- `global-navbar-pretrade-home`
+- `global-navbar-pretrade-portopt`
+- `global-navbar-pretrade-regression`
 
 ### Why
 
@@ -176,11 +186,11 @@ This callback keeps a small derived summary in sync with the shared raw-data sto
 
 This is now consumed by page-level restore and date-range initialization callbacks.
 
-## 6. Change `update_app_nav_links(...)` To Be Data-Aware
+## 6. Change `update_global_nav_links(...)` To Be Data-Aware
 
 ### Before
 
-`update_app_nav_links(...)` only depended on `userinfo`, and for non-test users it always returned direct workspace paths.
+`update_global_nav_links(...)` only depended on `userinfo`, and for non-test users it always returned direct workspace paths.
 
 ### After
 
@@ -195,15 +205,15 @@ and its implementation becomes:
 
 ```python
 @app.callback(
-    Output("app-nav-home", "href"),
-    Output("app-nav-analytics", "href"),
-    Output("app-nav-portopt", "href"),
-    Output("app-nav-regression", "href"),
+    Output("global-navbar-pretrade-home", "href"),
+    Output("global-navbar-pretrade-analytics", "href"),
+    Output("global-navbar-pretrade-portopt", "href"),
+    Output("global-navbar-pretrade-regression", "href"),
     Input("userinfo", "data"),
     Input("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_app_nav_links(userinfo, raw_data):
+def update_global_nav_links(userinfo, raw_data):
     if (userinfo or {}).get("role") == "Test":
         return (
             HOME_PATH,
@@ -268,8 +278,9 @@ If you want the lowest-risk port into a different `app.py`, apply the changes in
 2. Add `LANDING_PATH` support to `_restricted_href_for_path(...)`.
 3. Add the two new shared stores.
 4. Add the `update_raw_data_summary(...)` callback.
-5. Update the static menu hrefs to `landing_href(...)`.
-6. Update `update_app_nav_links(...)` to be data-aware.
+5. Convert the app-shell menu items to `dcc.Link(refresh=False)` wrappers.
+6. Update the static menu hrefs to `landing_href(...)`.
+7. Update `update_global_nav_links(...)` to be data-aware.
 
 ## Quick Validation Checklist
 

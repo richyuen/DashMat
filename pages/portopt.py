@@ -3601,15 +3601,18 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Navigate to Analytics Tool page (client-side, preserves shared stores)
+# Navigate to other workspaces through the Dash Pages router.
 clientside_callback(
     """
     function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/analyticstool'; }
-        return window.dash_clientside.no_update;
+        if (!n_clicks) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        return ['/analyticstool', ''];
     }
     """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Input("po-menu-view-analytics", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -3618,11 +3621,14 @@ clientside_callback(
 clientside_callback(
     """
     function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/regression'; }
-        return window.dash_clientside.no_update;
+        if (!n_clicks) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        return ['/regression', ''];
     }
     """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Input("po-menu-view-regression", "n_clicks"),
     prevent_initial_call=True,
 )

@@ -97,25 +97,33 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
                                         ),
                                         dmc.MenuDropdown(
                                             children=[
-                                                dmc.MenuItem(
-                                                    "Home",
-                                                    id="app-nav-home",
+                                                dcc.Link(
+                                                    id="global-navbar-pretrade-home",
                                                     href=HOME_PATH,
+                                                    refresh=False,
+                                                    style={"textDecoration": "none", "color": "inherit"},
+                                                    children=dmc.MenuItem("Home"),
                                                 ),
-                                                dmc.MenuItem(
-                                                    "Analytics Tool",
-                                                    id="app-nav-analytics",
+                                                dcc.Link(
+                                                    id="global-navbar-pretrade-analytics",
                                                     href=landing_href("analyticstool"),
+                                                    refresh=False,
+                                                    style={"textDecoration": "none", "color": "inherit"},
+                                                    children=dmc.MenuItem("Analytics Tool"),
                                                 ),
-                                                dmc.MenuItem(
-                                                    "Portfolio Optimization",
-                                                    id="app-nav-portopt",
+                                                dcc.Link(
+                                                    id="global-navbar-pretrade-portopt",
                                                     href=landing_href("portopt"),
+                                                    refresh=False,
+                                                    style={"textDecoration": "none", "color": "inherit"},
+                                                    children=dmc.MenuItem("Portfolio Optimization"),
                                                 ),
-                                                dmc.MenuItem(
-                                                    "Regression",
-                                                    id="app-nav-regression",
+                                                dcc.Link(
+                                                    id="global-navbar-pretrade-regression",
                                                     href=landing_href("regression"),
+                                                    refresh=False,
+                                                    style={"textDecoration": "none", "color": "inherit"},
+                                                    children=dmc.MenuItem("Regression"),
                                                 ),
                                             ],
                                         ),
@@ -148,15 +156,15 @@ def update_raw_data_summary(raw_data, original_periodicity):
 
 
 @app.callback(
-    Output("app-nav-home", "href"),
-    Output("app-nav-analytics", "href"),
-    Output("app-nav-portopt", "href"),
-    Output("app-nav-regression", "href"),
+    Output("global-navbar-pretrade-home", "href"),
+    Output("global-navbar-pretrade-analytics", "href"),
+    Output("global-navbar-pretrade-portopt", "href"),
+    Output("global-navbar-pretrade-regression", "href"),
     Input("userinfo", "data"),
     Input("dashmat-raw-data-store", "data"),
     prevent_initial_call=True,
 )
-def update_app_nav_links(userinfo, raw_data):
+def update_global_nav_links(userinfo, raw_data):
     if (userinfo or {}).get("role") == "Test":
         return (
             HOME_PATH,

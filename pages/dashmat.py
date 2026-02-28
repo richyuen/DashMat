@@ -104,10 +104,11 @@ layout = dmc.Container(
                                     align="center",
                                     gap="md",
                                     children=[
-                                        dmc.Anchor(
+                                        dcc.Link(
                                             id="dm-open-workspace-link",
                                             href=module_to_workspace_path("analyticstool"),
-                                            style={"display": "none"},
+                                            refresh=False,
+                                            style={"display": "none", "textDecoration": "none", "color": "inherit"},
                                             children=dmc.Button(
                                                 _MODULE_RESTORE_LABELS["analyticstool"],
                                                 id="dm-open-workspace-button",
@@ -128,8 +129,6 @@ layout = dmc.Container(
             ],
         ),
         dcc.Store(id="dm-ui-blocker-store", data=False),
-        dcc.Store(id="dm-pending-nav-target-store", data=None),
-        dcc.Store(id="dm-nav-effect-dummy", data=None),
         dcc.Store(id="dm-query-sync-dummy", data=None),
         dcc.Store(id="dm-sheet-select-contents-store", data=None),
         dcc.Store(id="dm-sheet-select-filename-store", data=None),
@@ -183,22 +182,6 @@ clientside_callback(
     """,
     Output("dm-ui-blocker-overlay", "visible"),
     Input("dm-ui-blocker-store", "data"),
-)
-
-
-clientside_callback(
-    """
-    function(targetHref) {
-        if (!targetHref) {
-            return window.dash_clientside.no_update;
-        }
-        window.location.assign(targetHref);
-        return targetHref;
-    }
-    """,
-    Output("dm-nav-effect-dummy", "data"),
-    Input("dm-pending-nav-target-store", "data"),
-    prevent_initial_call=True,
 )
 
 
@@ -266,16 +249,18 @@ clientside_callback(
 )
 def dm_update_workspace_cta(module_value, raw_data):
     module_name = normalize_landing_module(module_value)
+    visible_style = {"textDecoration": "none", "color": "inherit"}
     return (
         module_to_workspace_path(module_name),
         _MODULE_RESTORE_LABELS[module_name],
-        {} if raw_data else {"display": "none"},
+        visible_style if raw_data else {**visible_style, "display": "none"},
     )
 
 
 @callback(
     Output("dashmat-route-intent-store", "data", allow_duplicate=True),
-    Output("dm-pending-nav-target-store", "data", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Input("dm-welcome-add-db-btn", "n_clicks"),
     Input("dm-welcome-add-portfolios-peer-btn", "n_clicks"),
     Input("dm-welcome-add-portfolios-index-btn", "n_clicks"),
@@ -320,7 +305,7 @@ def dm_route_non_file_imports(
         flow=trigger_meta["flow"],
         mode=trigger_meta.get("mode"),
     )
-    return intent, module_to_workspace_path(module_name)
+    return intent, module_to_workspace_path(module_name), ""
 
 
 def _dm_upload_success_outputs(
@@ -334,6 +319,7 @@ def _dm_upload_success_outputs(
         combined_periodicity,
         build_route_intent(module_name, ACTION_CONFIGURE_AFTER_IMPORT),
         module_to_workspace_path(module_name),
+        "",
         "",
         "blue",
         True,
@@ -352,7 +338,8 @@ def _dm_upload_success_outputs(
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
     Output("dashmat-route-intent-store", "data", allow_duplicate=True),
-    Output("dm-pending-nav-target-store", "data", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Output("dm-alert-message", "children", allow_duplicate=True),
     Output("dm-alert-message", "color", allow_duplicate=True),
     Output("dm-alert-message", "hide", allow_duplicate=True),
@@ -384,6 +371,7 @@ def dm_handle_upload(contents, filename, existing_data, existing_periodicity, mo
                 no_update,
                 no_update,
                 no_update,
+                no_update,
                 "",
                 "blue",
                 True,
@@ -410,6 +398,7 @@ def dm_handle_upload(contents, filename, existing_data, existing_periodicity, mo
             no_update,
             no_update,
             no_update,
+            no_update,
             f"Error loading file: {exc}",
             "red",
             False,
@@ -428,7 +417,8 @@ def dm_handle_upload(contents, filename, existing_data, existing_periodicity, mo
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
     Output("dashmat-route-intent-store", "data", allow_duplicate=True),
-    Output("dm-pending-nav-target-store", "data", allow_duplicate=True),
+    Output("_pages_location", "pathname", allow_duplicate=True),
+    Output("_pages_location", "search", allow_duplicate=True),
     Output("dm-alert-message", "children", allow_duplicate=True),
     Output("dm-alert-message", "color", allow_duplicate=True),
     Output("dm-alert-message", "hide", allow_duplicate=True),
@@ -476,6 +466,7 @@ def dm_on_sheet_select_ok(
             no_update,
             no_update,
             no_update,
+            no_update,
             "Select at least one sheet to import.",
             "red",
             False,
@@ -500,7 +491,7 @@ def dm_on_sheet_select_ok(
                 merge_result.merged_df,
                 merge_result.combined_periodicity,
                 module_value,
-            )[:8],
+            )[:9],
             False,
             None,
             None,
@@ -509,6 +500,7 @@ def dm_on_sheet_select_ok(
         )
     except Exception as exc:
         return (
+            no_update,
             no_update,
             no_update,
             no_update,
