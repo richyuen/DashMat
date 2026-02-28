@@ -73,7 +73,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
-from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options
+from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options, tooltip_text
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
@@ -1817,12 +1817,9 @@ def build_po_main_layout():
                                         html.Div([
                                             dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
                                             dmc.Tooltip(
-                                                label=(
-                                                    "Chooses covariance shrinkage when Exp Wt is off. "
-                                                    "Shrinkage applies to covariance estimation, and correlation views derive correlation from that covariance."
-                                                ),
+                                                label=tooltip_text("po-cov-shrinkage-select"),
                                                 multiline=True,
-                                                w=300,
+                                                w=420,
                                                 withArrow=True,
                                                 children=dmc.Select(
                                                     id="po-cov-shrinkage-select",

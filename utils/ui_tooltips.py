@@ -335,6 +335,22 @@ def _suffix_fallback_text(prefix: str, suffix: str, workflow: str) -> str:
     return _default_explicit_tooltip(f"{prefix}-{suffix}")
 
 
+def _cov_shrinkage_tooltip_text(*, analytics: bool) -> str:
+    if analytics:
+        return (
+            "Chooses covariance shrinkage for Analytics matrix views when exponential weighting is off. "
+            "Ledoit-Wolf is a broad-purpose shrinkage estimator that pulls the sample covariance toward a structured target using a data-driven shrinkage intensity, which often improves stability when the history is noisy or relatively short. "
+            "OAS, or Oracle Approximating Shrinkage, uses a related closed-form shrinkage rule that is often more aggressive in smaller samples and tends to work best when returns are fairly close to Gaussian. "
+            "Correlation is derived from the estimated covariance matrix, so this setting affects both covariance and correlation heatmaps."
+        )
+    return (
+        "Chooses covariance shrinkage for optimization when exponential weighting is off. "
+        "Ledoit-Wolf is a broad-purpose shrinkage estimator that pulls the sample covariance toward a structured target using a data-driven shrinkage intensity, which often improves stability when histories are short or the asset count is large relative to the sample. "
+        "OAS, or Oracle Approximating Shrinkage, uses a related closed-form shrinkage rule that is often more aggressive in small samples and works especially well when returns are reasonably close to Gaussian. "
+        "Downstream optimization, frontier, and risk views use the same selected covariance estimator."
+    )
+
+
 def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
     workflow = _workflow_for_prefix(prefix)
 
@@ -557,10 +573,7 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
             "Set the Half-Life control to define the decay speed when this switch is on."
         )
     if suffix == "cov-shrinkage-select":
-        return (
-            "Chooses covariance shrinkage for optimization when exponential weighting is off. "
-            "Ledoit-Wolf and OAS can stabilize noisy covariance estimates, and downstream frontier and risk views use the same selected estimator."
-        )
+        return _cov_shrinkage_tooltip_text(analytics=False)
     if suffix == "correlation-exp-wt-switch":
         return (
             "Enables exponential weighting for correlation or covariance estimates in the Analytics dependence view. "
@@ -568,10 +581,7 @@ def _suffix_tooltip_override(prefix: str, suffix: str) -> str | None:
             "Use the correlation half-life input to control decay speed when weighting is enabled."
         )
     if suffix == "correlation-shrinkage-select":
-        return (
-            "Chooses covariance shrinkage for Analytics matrix views when exponential weighting is off. "
-            "Correlation is derived from the estimated covariance matrix, so shrinkage affects both covariance and correlation heatmaps."
-        )
+        return _cov_shrinkage_tooltip_text(analytics=True)
     if suffix == "fill-in-sample-select":
         return (
             "Controls whether in-sample windows are backfilled in windowed runs. "
@@ -1961,6 +1971,10 @@ def _generated_explicit_tooltip(control_id: str, fallback_label: str | None = No
             "A value of 0 disables scaling and keeps raw series volatility, while positive values normalize magnitude across selected series. "
             "Use this to make cross-series comparisons more stable when base volatility levels differ materially."
         )
+    if "correlation-shrinkage" in lowered:
+        return _cov_shrinkage_tooltip_text(analytics=True)
+    if "cov-shrinkage" in lowered:
+        return _cov_shrinkage_tooltip_text(analytics=False)
     if "periodicity" in lowered:
         return (
             f"Selects the working data frequency for {workflow} calculations. "

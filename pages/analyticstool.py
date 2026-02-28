@@ -63,7 +63,7 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
-from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options
+from utils.ui_tooltips import apply_header_tooltips, apply_tooltips_to_layout, grid_tooltip_dash_options, tooltip_text
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -2544,15 +2544,12 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     ),
                                 ]),
                                 html.Div([
-                                    dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
-                                    html.Div(
-                                        dmc.Tooltip(
-                                            label=(
-                                                "Chooses covariance shrinkage for matrix views. "
-                                                "Correlation is derived from the shrunk covariance, and this control is unavailable when Exp Wt is enabled."
-                                            ),
+                                        dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
+                                        html.Div(
+                                            dmc.Tooltip(
+                                            label=tooltip_text("at-correlation-shrinkage-select"),
                                             multiline=True,
-                                            w=300,
+                                            w=420,
                                             withArrow=True,
                                             children=dmc.Select(
                                                 id="at-correlation-shrinkage-select",
