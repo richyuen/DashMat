@@ -1200,6 +1200,72 @@ def js_new_session_redirect(target_href: str) -> str:
     """
 
 
+def js_workspace_empty_state_router(
+    workspace_path: str,
+    module_name: str,
+    landing_target_href: str,
+    consumed_store_id: str,
+) -> str:
+    return f"""
+    function(rawData, nIntervals, dbOpened, rawOpened, portfolioOpened, underlyingOpened, pathname, routeIntent, consumedToken) {{
+        var noUpdate = window.dash_clientside.no_update;
+        var currentPath = (pathname || '').split('?')[0].replace(/\/+$/, '') || '/';
+        if (currentPath !== '{workspace_path}') {{
+            return noUpdate;
+        }}
+
+        var anyModalOpen = !!dbOpened || !!rawOpened || !!portfolioOpened || !!underlyingOpened;
+        var token = String(consumedToken || '');
+        var intentToken = String(((routeIntent && routeIntent.token) || ''));
+        var hasPendingLandingOpenIntent = !!(
+            routeIntent &&
+            routeIntent.target_module === '{module_name}' &&
+            routeIntent.action === 'open_import_modal' &&
+            intentToken &&
+            intentToken !== token
+        );
+
+        function clearConsumedToken() {{
+            try {{
+                sessionStorage.removeItem('{consumed_store_id}');
+            }} catch (e) {{
+                // no-op
+            }}
+            if (window.dash_clientside && window.dash_clientside.set_props) {{
+                window.dash_clientside.set_props('{consumed_store_id}', {{data: null}});
+            }}
+        }}
+
+        if (rawData) {{
+            if (!anyModalOpen && token) {{
+                clearConsumedToken();
+            }}
+            return noUpdate;
+        }}
+
+        if (hasPendingLandingOpenIntent) {{
+            return noUpdate;
+        }}
+
+        if (token) {{
+            if (anyModalOpen) {{
+                return noUpdate;
+            }}
+            clearConsumedToken();
+            window.location.replace('{landing_target_href}');
+            return '{landing_target_href}';
+        }}
+
+        if (!nIntervals || nIntervals < 1) {{
+            return noUpdate;
+        }}
+
+        window.location.replace('{landing_target_href}');
+        return '{landing_target_href}';
+    }}
+    """
+
+
 def js_trigger_upload_with_cancel(prefix: str) -> str:
     return f"""
     function(n_clicks) {{

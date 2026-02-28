@@ -82,6 +82,7 @@ from utils.dashmat_welcome_modal import (
     js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
+    js_workspace_empty_state_router,
     resolve_portfolio_add_mode,
     resolve_raw_db_add_mode,
 )
@@ -3919,34 +3920,19 @@ def reg_toggle_welcome(raw_data, n_intervals, original_periodicity, stored_perio
 
 
 clientside_callback(
-    f"""
-    function(rawData, nIntervals, pathname, routeIntent, consumedToken) {{
-        if (!nIntervals || nIntervals < 1) {{
-            return window.dash_clientside.no_update;
-        }}
-        const currentPath = (pathname || '').split('?')[0].replace(/\/+$/, '') || '/';
-        if (currentPath !== '{REGRESSION_PATH}') {{
-            return window.dash_clientside.no_update;
-        }}
-        if (rawData) {{
-            return window.dash_clientside.no_update;
-        }}
-        if (
-            routeIntent &&
-            routeIntent.target_module === 'regression' &&
-            routeIntent.action === 'open_import_modal' &&
-            String(routeIntent.token || '') &&
-            String(routeIntent.token || '') !== String(consumedToken || '')
-        ) {{
-            return window.dash_clientside.no_update;
-        }}
-        window.location.assign('{landing_href("regression")}');
-        return '{landing_href("regression")}';
-    }}
-    """,
+    js_workspace_empty_state_router(
+        REGRESSION_PATH,
+        "regression",
+        landing_href("regression"),
+        "reg-route-intent-consumed-token-store",
+    ),
     Output("reg-nav-effect-dummy", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
+    Input("reg-db-add-modal", "opened"),
+    Input("reg-raw-db-add-modal", "opened"),
+    Input("reg-portfolio-add-modal", "opened"),
+    Input("reg-underlying-add-modal", "opened"),
     State("reg-url-location", "pathname"),
     State("dashmat-route-intent-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),

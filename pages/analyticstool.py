@@ -108,6 +108,7 @@ from utils.dashmat_welcome_modal import (
     js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
+    js_workspace_empty_state_router,
     resolve_portfolio_add_mode,
     resolve_raw_db_add_mode,
 )
@@ -4203,34 +4204,19 @@ clientside_callback(
 
 
 clientside_callback(
-    f"""
-    function(rawData, nIntervals, pathname, routeIntent, consumedToken) {{
-        if (!nIntervals || nIntervals < 1) {{
-            return window.dash_clientside.no_update;
-        }}
-        const currentPath = (pathname || '').split('?')[0].replace(/\/+$/, '') || '/';
-        if (currentPath !== '{ANALYTICS_PATH}') {{
-            return window.dash_clientside.no_update;
-        }}
-        if (rawData) {{
-            return window.dash_clientside.no_update;
-        }}
-        if (
-            routeIntent &&
-            routeIntent.target_module === 'analyticstool' &&
-            routeIntent.action === 'open_import_modal' &&
-            String(routeIntent.token || '') &&
-            String(routeIntent.token || '') !== String(consumedToken || '')
-        ) {{
-            return window.dash_clientside.no_update;
-        }}
-        window.location.assign('{landing_href("analyticstool")}');
-        return '{landing_href("analyticstool")}';
-    }}
-    """,
+    js_workspace_empty_state_router(
+        ANALYTICS_PATH,
+        "analyticstool",
+        landing_href("analyticstool"),
+        "at-route-intent-consumed-token-store",
+    ),
     Output("at-nav-effect-dummy", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-page-load-trigger", "n_intervals"),
+    Input("at-db-add-modal", "opened"),
+    Input("at-raw-db-add-modal", "opened"),
+    Input("at-portfolio-add-modal", "opened"),
+    Input("at-underlying-add-modal", "opened"),
     State("at-url-location", "pathname"),
     State("dashmat-route-intent-store", "data"),
     State("at-route-intent-consumed-token-store", "data"),

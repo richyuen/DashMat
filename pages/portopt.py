@@ -113,6 +113,7 @@ from utils.dashmat_welcome_modal import (
     js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
+    js_workspace_empty_state_router,
     resolve_portfolio_add_mode,
     resolve_raw_db_add_mode,
 )
@@ -5989,34 +5990,19 @@ clientside_callback(
 
 
 clientside_callback(
-    f"""
-    function(rawData, nIntervals, pathname, routeIntent, consumedToken) {{
-        if (!nIntervals || nIntervals < 1) {{
-            return window.dash_clientside.no_update;
-        }}
-        const currentPath = (pathname || '').split('?')[0].replace(/\/+$/, '') || '/';
-        if (currentPath !== '{PORTOPT_PATH}') {{
-            return window.dash_clientside.no_update;
-        }}
-        if (rawData) {{
-            return window.dash_clientside.no_update;
-        }}
-        if (
-            routeIntent &&
-            routeIntent.target_module === 'portopt' &&
-            routeIntent.action === 'open_import_modal' &&
-            String(routeIntent.token || '') &&
-            String(routeIntent.token || '') !== String(consumedToken || '')
-        ) {{
-            return window.dash_clientside.no_update;
-        }}
-        window.location.assign('{landing_href("portopt")}');
-        return '{landing_href("portopt")}';
-    }}
-    """,
+    js_workspace_empty_state_router(
+        PORTOPT_PATH,
+        "portopt",
+        landing_href("portopt"),
+        "po-route-intent-consumed-token-store",
+    ),
     Output("po-nav-effect-dummy", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("po-page-load-trigger", "n_intervals"),
+    Input("po-db-add-modal", "opened"),
+    Input("po-raw-db-add-modal", "opened"),
+    Input("po-portfolio-add-modal", "opened"),
+    Input("po-underlying-add-modal", "opened"),
     State("po-url-location", "pathname"),
     State("dashmat-route-intent-store", "data"),
     State("po-route-intent-consumed-token-store", "data"),
