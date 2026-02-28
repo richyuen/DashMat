@@ -1555,6 +1555,102 @@ def _effective_cmabench_assignments(selected_series: list[str] | None, cmabench_
     return effective
 
 
+def _po_panel_loading_shell(host_id: str, initial_children=None, *, overflow: str = "hidden"):
+    shell_style = {"flex": "1", "display": "flex", "flexDirection": "column", "overflow": overflow}
+    return dcc.Loading(
+        delay_show=150,
+        delay_hide=100,
+        type="default",
+        style=shell_style,
+        parent_style=shell_style,
+        children=html.Div(id=host_id, style=shell_style, children=initial_children),
+    )
+
+
+def _po_standard_grid(grid_id: str):
+    return dag.AgGrid(
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
+        id=grid_id,
+        className="ag-theme-alpine",
+        columnDefs=[],
+        rowData=[],
+        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
+        style={"height": "100%", "width": "100%"},
+        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+    )
+
+
+def _build_po_weight_tab_body(chart_switch):
+    is_chart = (chart_switch or "chart") == "chart"
+    return [
+        dmc.Group(mb="md", children=[dmc.SegmentedControl(id="po-weight-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value=chart_switch or "chart", size="sm")]),
+        html.Div(id="po-weight-chart-container", style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"} if is_chart else {"display": "none"}, children=[html.Div(id="po-weight-chart-content")]),
+        html.Div(id="po-weight-grid-container", style={"display": "none"} if is_chart else {"display": "block", "flex": "1", "overflow": "hidden"}, children=[_po_standard_grid("po-weight-grid")]),
+    ]
+
+
+def _build_po_attribution_tab_body(chart_switch):
+    is_chart = (chart_switch or "chart") == "chart"
+    return [
+        dmc.Group(mb="md", children=[dmc.SegmentedControl(id="po-attribution-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value=chart_switch or "chart", size="sm")]),
+        html.Div(id="po-attribution-chart-container", style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"} if is_chart else {"display": "none"}, children=[html.Div(id="po-attribution-chart-content")]),
+        html.Div(id="po-attribution-grid-container", style={"display": "none"} if is_chart else {"display": "block", "flex": "1", "overflow": "hidden"}, children=[_po_standard_grid("po-attribution-grid")]),
+    ]
+
+
+def _build_po_risk_tab_body(chart_switch):
+    is_chart = (chart_switch or "chart") == "chart"
+    return [
+        dmc.Group(mb="md", children=[dmc.SegmentedControl(id="po-risk-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value=chart_switch or "chart", size="sm")]),
+        html.Div(id="po-risk-chart-container", style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"} if is_chart else {"display": "none"}, children=[html.Div(id="po-risk-chart-content")]),
+        html.Div(id="po-risk-grid-container", style={"display": "none"} if is_chart else {"display": "block", "flex": "1", "overflow": "hidden"}, children=[_po_standard_grid("po-risk-grid")]),
+    ]
+
+
+def _build_po_turnover_tab_body(chart_switch):
+    is_chart = (chart_switch or "chart") == "chart"
+    return [
+        dmc.Group(mb="md", children=[dmc.SegmentedControl(id="po-turnover-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value=chart_switch or "chart", size="sm")]),
+        html.Div(id="po-turnover-chart-container", style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"} if is_chart else {"display": "none"}, children=[html.Div(id="po-turnover-chart-content")]),
+        html.Div(id="po-turnover-grid-container", style={"display": "none"} if is_chart else {"display": "block", "flex": "1", "overflow": "hidden"}, children=[_po_standard_grid("po-turnover-grid")]),
+    ]
+
+
+def _build_po_frontier_tab_body(chart_switch):
+    is_chart = (chart_switch or "chart") == "chart"
+    return [
+        dmc.Group(mb="md", children=[dmc.Select(id="po-frontier-window-select", label="Window", data=[], value=None, w=250, size="sm", clearable=False), dmc.Select(id="po-frontier-rm-select", label="Risk Measure", data=[{"value": "MV", "label": "Volatility"}, {"value": "CVaR", "label": "CVaR"}], value="MV", w=150, size="sm", clearable=False), dmc.SegmentedControl(id="po-frontier-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value=chart_switch or "chart", size="sm", style={"marginTop": "24px"})]),
+        html.Div(id="po-frontier-rf-warning", style={"display": "none"}),
+        html.Div(id="po-frontier-chart-container", style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"} if is_chart else {"display": "none"}, children=[dcc.Loading(type="default", children=[html.Div(id="po-frontier-chart-content")])]),
+        html.Div(id="po-frontier-grid-container", style={"display": "none"} if is_chart else {"display": "block", "flex": "1", "overflow": "hidden"}, children=[_po_standard_grid("po-frontier-grid")]),
+    ]
+
+
+def _build_po_statistics_tab_body():
+    return [_po_standard_grid("po-statistics-grid")]
+
+
+def _build_po_returns_tab_body():
+    return [_po_standard_grid("po-returns-grid")]
+
+
+def _build_po_growth_tab_body():
+    return [dmc.Group(mb="md", children=[dmc.SegmentedControl(id="po-growth-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value="chart", size="sm")]), dcc.Loading(type="default", children=[html.Div(id="po-growth-chart-container")])]
+
+
+def _build_po_rolling_tab_body():
+    return [dmc.Group(mb="md", gap="md", children=[dmc.Select(id="po-rolling-metric-select", data=[{"value": "total_return", "label": "Total Return"}, {"value": "volatility", "label": "Volatility"}, {"value": "sharpe_ratio", "label": "Sharpe Ratio"}, {"value": "sortino_ratio", "label": "Sortino Ratio"}], value="total_return", w=180, size="sm", clearable=False), dmc.Select(id="po-rolling-window-select", data=[{"value": "3m", "label": "3-month"}, {"value": "6m", "label": "6-month"}, {"value": "1y", "label": "1-year"}, {"value": "3y", "label": "3-year"}, {"value": "5y", "label": "5-year"}, {"value": "10y", "label": "10-year"}], value="1y", w=120, size="sm", clearable=False), dmc.SegmentedControl(id="po-rolling-return-type-select", data=[{"value": "cumulative", "label": "Cumulative"}, {"value": "annualized", "label": "Annualized"}], value="annualized", size="sm"), dmc.SegmentedControl(id="po-rolling-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value="chart", size="sm")]), html.Div(id="po-rolling-content", style={"height": "100%", "overflow": "auto"})]
+
+
+def _build_po_calendar_tab_body():
+    return [dmc.Group(mb="md", gap="md", children=[dmc.SegmentedControl(id="po-calendar-view-select", data=[{"value": "annual", "label": "Annual"}, {"value": "monthly", "label": "Monthly"}], value="annual", size="sm"), dmc.Select(id="po-calendar-series-select", data=[], value=None, w=220, size="sm", clearable=False, disabled=True, placeholder="Series (Monthly view)")]), html.Div(id="po-calendar-content", style={"height": "100%", "overflow": "auto"})]
+
+
+def _build_po_drawdown_tab_body():
+    return [dmc.Group(mb="md", children=[dmc.SegmentedControl(id="po-drawdown-chart-switch", data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}], value="chart", size="sm")]), html.Div(id="po-drawdown-content", style={"height": "100%", "overflow": "auto"})]
+
+
 def build_po_main_layout():
     return html.Div(
         style={"display": "flex", "flexDirection": "column", "height": "100%", "overflow": "hidden"},
@@ -2332,408 +2428,67 @@ def build_po_main_layout():
                         value="weight",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(mb="md", children=[
-                                dmc.SegmentedControl(
-                                    id="po-weight-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                ),
-                            ]),
-                            html.Div(
-                                id="po-weight-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[html.Div(id="po-weight-chart-content")],
-                            ),
-                            html.Div(
-                                id="po-weight-grid-container",
-                                style={"display": "none"},
-                                children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-weight-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
-                                ],
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-weight-host", _build_po_weight_tab_body("chart"))],
                     ),
                     dmc.TabsPanel(
                         value="attribution",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(mb="md", children=[
-                                dmc.SegmentedControl(
-                                    id="po-attribution-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                ),
-                            ]),
-                            html.Div(
-                                id="po-attribution-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[html.Div(id="po-attribution-chart-content")],
-                            ),
-                            html.Div(
-                                id="po-attribution-grid-container",
-                                style={"display": "none"},
-                                children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-attribution-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
-                                ],
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-attribution-host", _build_po_attribution_tab_body("chart"))],
                     ),
                     dmc.TabsPanel(
                         value="risk",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(mb="md", children=[
-                                dmc.SegmentedControl(
-                                    id="po-risk-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                ),
-                            ]),
-                            html.Div(
-                                id="po-risk-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[html.Div(id="po-risk-chart-content")],
-                            ),
-                            html.Div(
-                                id="po-risk-grid-container",
-                                style={"display": "none"},
-                                children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-risk-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
-                                ],
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-risk-host", _build_po_risk_tab_body("chart"))],
                     ),
                     dmc.TabsPanel(
                         value="turnover",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(mb="md", children=[
-                                dmc.SegmentedControl(
-                                    id="po-turnover-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                ),
-                            ]),
-                            html.Div(
-                                id="po-turnover-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[html.Div(id="po-turnover-chart-content")],
-                            ),
-                            html.Div(
-                                id="po-turnover-grid-container",
-                                style={"display": "none"},
-                                children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-turnover-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
-                                ],
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-turnover-host", _build_po_turnover_tab_body("chart"))],
                     ),
                     dmc.TabsPanel(
                         value="frontier",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(mb="md", children=[
-                                dmc.Select(
-                                    id="po-frontier-window-select",
-                                    label="Window",
-                                    data=[],
-                                    value=None,
-                                    w=250,
-                                    size="sm",
-                                    clearable=False,
-                                ),
-                                dmc.Select(
-                                    id="po-frontier-rm-select",
-                                    label="Risk Measure",
-                                    data=[
-                                        {"value": "MV", "label": "Volatility"},
-                                        {"value": "CVaR", "label": "CVaR"},
-                                    ],
-                                    value="MV",
-                                    w=150,
-                                    size="sm",
-                                    clearable=False,
-                                ),
-                                dmc.SegmentedControl(
-                                    id="po-frontier-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value="chart",
-                                    size="sm",
-                                    style={"marginTop": "24px"},
-                                ),
-                            ]),
-                            html.Div(
-                                id="po-frontier-rf-warning",
-                                style={"display": "none"},
-                            ),
-                            html.Div(
-                                id="po-frontier-chart-container",
-                                style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[
-                                    dcc.Loading(
-                                        type="default",
-                                        children=[html.Div(id="po-frontier-chart-content")],
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                id="po-frontier-grid-container",
-                                style={"display": "none"},
-                                children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-frontier-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
-                                ],
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-frontier-host", _build_po_frontier_tab_body("chart"))],
                     ),
                     dmc.TabsPanel(
                         value="statistics",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dag.AgGrid(
-                                enableEnterpriseModules=True,
-                                licenseKey=AG_GRID_LICENSE_KEY,
-                                id="po-statistics-grid",
-                                className='ag-theme-alpine',
-                                columnDefs=[],
-                                rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                style={"height": "100%", "width": "100%"},
-                                dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-statistics-host", _build_po_statistics_tab_body())],
                     ),
                     dmc.TabsPanel(
                         value="returns",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dag.AgGrid(
-                                enableEnterpriseModules=True,
-                                licenseKey=AG_GRID_LICENSE_KEY,
-                                id="po-returns-grid",
-                                className='ag-theme-alpine',
-                                columnDefs=[],
-                                rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                style={"height": "100%", "width": "100%"},
-                                dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-returns-host", _build_po_returns_tab_body())],
                     ),
                     dmc.TabsPanel(
                         value="growth",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
-                        children=[
-                            dmc.Group(
-                                mb="md",
-                                children=[
-                                    dmc.SegmentedControl(
-                                        id="po-growth-chart-switch",
-                                        data=[
-                                            {"value": "table", "label": "Table"},
-                                            {"value": "chart", "label": "Chart"},
-                                        ],
-                                        value="chart",
-                                        size="sm",
-                                    ),
-                                ],
-                            ),
-                            dcc.Loading(
-                                type="default",
-                                children=[html.Div(id="po-growth-chart-container")],
-                            ),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-growth-host", _build_po_growth_tab_body(), overflow="auto")],
                     ),
                     dmc.TabsPanel(
                         value="rolling",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(
-                                mb="md",
-                                gap="md",
-                                children=[
-                                    dmc.Select(
-                                        id="po-rolling-metric-select",
-                                        data=[
-                                            {"value": "total_return", "label": "Total Return"},
-                                            {"value": "volatility", "label": "Volatility"},
-                                            {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
-                                            {"value": "sortino_ratio", "label": "Sortino Ratio"},
-                                        ],
-                                        value="total_return",
-                                        w=180,
-                                        size="sm",
-                                        clearable=False,
-                                    ),
-                                    dmc.Select(
-                                        id="po-rolling-window-select",
-                                        data=[
-                                            {"value": "3m", "label": "3-month"},
-                                            {"value": "6m", "label": "6-month"},
-                                            {"value": "1y", "label": "1-year"},
-                                            {"value": "3y", "label": "3-year"},
-                                            {"value": "5y", "label": "5-year"},
-                                            {"value": "10y", "label": "10-year"},
-                                        ],
-                                        value="1y",
-                                        w=120,
-                                        size="sm",
-                                        clearable=False,
-                                    ),
-                                    dmc.SegmentedControl(
-                                        id="po-rolling-return-type-select",
-                                        data=[
-                                            {"value": "cumulative", "label": "Cumulative"},
-                                            {"value": "annualized", "label": "Annualized"},
-                                        ],
-                                        value="annualized",
-                                        size="sm",
-                                    ),
-                                    dmc.SegmentedControl(
-                                        id="po-rolling-chart-switch",
-                                        data=[
-                                            {"value": "table", "label": "Table"},
-                                            {"value": "chart", "label": "Chart"},
-                                        ],
-                                        value="chart",
-                                        size="sm",
-                                    ),
-                                ],
-                            ),
-                            html.Div(id="po-rolling-content", style={"height": "100%", "overflow": "auto"}),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-rolling-host", _build_po_rolling_tab_body())],
                     ),
                     dmc.TabsPanel(
                         value="calendar",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(
-                                mb="md",
-                                gap="md",
-                                children=[
-                                    dmc.SegmentedControl(
-                                        id="po-calendar-view-select",
-                                        data=[
-                                            {"value": "annual", "label": "Annual"},
-                                            {"value": "monthly", "label": "Monthly"},
-                                        ],
-                                        value="annual",
-                                        size="sm",
-                                    ),
-                                    dmc.Select(
-                                        id="po-calendar-series-select",
-                                        data=[],
-                                        value=None,
-                                        w=220,
-                                        size="sm",
-                                        clearable=False,
-                                        disabled=True,
-                                        placeholder="Series (Monthly view)",
-                                    ),
-                                ],
-                            ),
-                            html.Div(id="po-calendar-content", style={"height": "100%", "overflow": "auto"}),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-calendar-host", _build_po_calendar_tab_body())],
                     ),
                     dmc.TabsPanel(
                         value="drawdown",
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                        children=[
-                            dmc.Group(
-                                mb="md",
-                                children=[
-                                    dmc.SegmentedControl(
-                                        id="po-drawdown-chart-switch",
-                                        data=[
-                                            {"value": "table", "label": "Table"},
-                                            {"value": "chart", "label": "Chart"},
-                                        ],
-                                        value="chart",
-                                        size="sm",
-                                    ),
-                                ],
-                            ),
-                            html.Div(id="po-drawdown-content", style={"height": "100%", "overflow": "auto"}),
-                        ],
+                        children=[_po_panel_loading_shell("po-tab-drawdown-host", _build_po_drawdown_tab_body())],
                     ),
                 ],
             ),
@@ -3529,6 +3284,9 @@ layout = dmc.Container(
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
+        dcc.Store(id="po-mounted-tabs-store", data=[], storage_type="memory"),
+        dcc.Store(id="po-tab-mount-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-help-mounted-store", data=False, storage_type="memory"),
         # Chart/table switch stores
         dcc.Store(id="po-weight-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-attribution-chart-switch-store", data="chart", storage_type="session"),
@@ -4651,6 +4409,109 @@ clientside_callback(
     Input("po-vis-tabs", "value"),
     prevent_initial_call=True,
 )
+
+
+def _po_has_mounted_tab(mounted_tabs, tab_value: str) -> bool:
+    return tab_value in (mounted_tabs or [])
+
+
+@callback(
+    Output("po-mounted-tabs-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-page-ready-store", "data"),
+    State("po-mounted-tabs-store", "data"),
+    prevent_initial_call=False,
+)
+def po_track_mounted_tabs(active_tab, page_ready, mounted_tabs):
+    if not page_ready:
+        return []
+    tabs = list(mounted_tabs or [])
+    if not active_tab:
+        return tabs
+    if active_tab in tabs:
+        raise PreventUpdate
+    tabs.append(active_tab)
+    return tabs
+
+
+@callback(
+    Output("po-tab-weight-host", "children"),
+    Output("po-tab-turnover-host", "children"),
+    Output("po-tab-statistics-host", "children"),
+    Output("po-tab-returns-host", "children"),
+    Output("po-tab-rolling-host", "children"),
+    Output("po-tab-calendar-host", "children"),
+    Output("po-tab-growth-host", "children"),
+    Output("po-tab-drawdown-host", "children"),
+    Output("po-tab-attribution-host", "children"),
+    Output("po-tab-risk-host", "children"),
+    Output("po-tab-frontier-host", "children"),
+    Output("po-tab-mount-trigger-store", "data"),
+    Input("po-mounted-tabs-store", "data"),
+    State("po-tab-weight-host", "children"),
+    State("po-tab-turnover-host", "children"),
+    State("po-tab-statistics-host", "children"),
+    State("po-tab-returns-host", "children"),
+    State("po-tab-rolling-host", "children"),
+    State("po-tab-calendar-host", "children"),
+    State("po-tab-growth-host", "children"),
+    State("po-tab-drawdown-host", "children"),
+    State("po-tab-attribution-host", "children"),
+    State("po-tab-risk-host", "children"),
+    State("po-tab-frontier-host", "children"),
+    State("po-weight-chart-switch-store", "data"),
+    State("po-turnover-chart-switch-store", "data"),
+    State("po-attribution-chart-switch-store", "data"),
+    State("po-risk-chart-switch-store", "data"),
+    State("po-frontier-chart-switch-store", "data"),
+    prevent_initial_call=True,
+)
+def po_mount_tab_bodies(
+    mounted_tabs,
+    weight_children,
+    turnover_children,
+    statistics_children,
+    returns_children,
+    rolling_children,
+    calendar_children,
+    growth_children,
+    drawdown_children,
+    attribution_children,
+    risk_children,
+    frontier_children,
+    weight_chart_switch,
+    turnover_chart_switch,
+    attribution_chart_switch,
+    risk_chart_switch,
+    frontier_chart_switch,
+):
+    mounted_tabs = mounted_tabs or []
+    outputs = []
+    hosts = [
+        ("weight", weight_children, lambda: _build_po_weight_tab_body(weight_chart_switch or "chart")),
+        ("turnover", turnover_children, lambda: _build_po_turnover_tab_body(turnover_chart_switch or "chart")),
+        ("statistics", statistics_children, _build_po_statistics_tab_body),
+        ("returns", returns_children, _build_po_returns_tab_body),
+        ("rolling", rolling_children, _build_po_rolling_tab_body),
+        ("calendar", calendar_children, _build_po_calendar_tab_body),
+        ("growth", growth_children, _build_po_growth_tab_body),
+        ("drawdown", drawdown_children, _build_po_drawdown_tab_body),
+        ("attribution", attribution_children, lambda: _build_po_attribution_tab_body(attribution_chart_switch or "chart")),
+        ("risk", risk_children, lambda: _build_po_risk_tab_body(risk_chart_switch or "chart")),
+        ("frontier", frontier_children, lambda: _build_po_frontier_tab_body(frontier_chart_switch or "chart")),
+    ]
+    mounted_any = False
+    for tab_value, current_children, builder in hosts:
+        if tab_value not in mounted_tabs:
+            outputs.append(no_update)
+            continue
+        if current_children:
+            outputs.append(no_update)
+            continue
+        outputs.append(builder())
+        mounted_any = True
+    outputs.append({"mounted_tabs": list(mounted_tabs)} if mounted_any else no_update)
+    return tuple(outputs)
 
 # Store sync: series selection
 clientside_callback(
@@ -8800,10 +8661,14 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme):
+def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, _mount_trigger, theme, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "weight"):
+        return no_update
     if active_tab != "weight" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -8867,6 +8732,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-growth-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -8875,6 +8741,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_growth_chart(
@@ -8882,6 +8749,7 @@ def po_render_growth_chart(
     results,
     active_tab,
     view_mode,
+    _mount_trigger,
     raw_data,
     periodicity,
     bench,
@@ -8890,7 +8758,10 @@ def po_render_growth_chart(
     vol_scaler,
     vol_scaling,
     theme,
+    mounted_tabs,
 ):
+    if not _po_has_mounted_tab(mounted_tabs, "growth"):
+        return no_update
     if active_tab != "growth" or not selected_portfolio or not results:
         return html.Div()
 
@@ -8990,6 +8861,7 @@ def po_toggle_rolling_return_type(metric):
     Input("po-rolling-return-type-select", "value"),
     Input("po-rolling-metric-select", "value"),
     Input("po-rolling-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -8997,6 +8869,7 @@ def po_toggle_rolling_return_type(metric):
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_rolling(
@@ -9008,6 +8881,7 @@ def po_render_rolling(
     return_type,
     metric,
     view_mode,
+    _mount_trigger,
     raw_data,
     bench,
     ls,
@@ -9015,7 +8889,10 @@ def po_render_rolling(
     vol_scaler,
     vol_scaling,
     theme,
+    mounted_tabs,
 ):
+    if not _po_has_mounted_tab(mounted_tabs, "rolling"):
+        return no_update
     if active_tab != "rolling" or not results:
         return html.Div()
 
@@ -9113,10 +8990,14 @@ def po_render_rolling(
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-calendar-view-select", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("po-calendar-series-select", "value"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def po_sync_calendar_series_select(selected_portfolio, results, view_mode, current_value):
+def po_sync_calendar_series_select(selected_portfolio, results, view_mode, _mount_trigger, current_value, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "calendar"):
+        return no_update, no_update, no_update
     if not selected_portfolio or not results or selected_portfolio not in results:
         return True, [], None
 
@@ -9143,12 +9024,14 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     Input("po-periodicity-select", "value"),
     Input("po-calendar-view-select", "value"),
     Input("po-calendar-series-select", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_calendar(
@@ -9158,13 +9041,17 @@ def po_render_calendar(
     periodicity,
     view_mode,
     monthly_series,
+    _mount_trigger,
     raw_data,
     bench,
     ls,
     date_range,
     vol_scaler,
     vol_scaling,
+    mounted_tabs,
 ):
+    if not _po_has_mounted_tab(mounted_tabs, "calendar"):
+        return no_update
     if active_tab != "calendar" or not results:
         return html.Div()
 
@@ -9271,6 +9158,7 @@ def po_render_calendar(
     Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
     Input("po-drawdown-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9278,6 +9166,7 @@ def po_render_calendar(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_drawdown(
@@ -9286,6 +9175,7 @@ def po_render_drawdown(
     selected_portfolio,
     periodicity,
     view_mode,
+    _mount_trigger,
     raw_data,
     bench,
     ls,
@@ -9293,7 +9183,10 @@ def po_render_drawdown(
     vol_scaler,
     vol_scaling,
     theme,
+    mounted_tabs,
 ):
+    if not _po_has_mounted_tab(mounted_tabs, "drawdown"):
+        return no_update
     if active_tab != "drawdown" or not results:
         return html.Div()
 
@@ -9386,6 +9279,7 @@ def po_render_drawdown(
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-attribution-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
@@ -9395,11 +9289,14 @@ def po_render_drawdown(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value,
-                                 raw_data, orig_periodicity, periodicity, bench, ls,
-                                 date_range, vol_scaler, vol_scaling, theme):
+                                 _mount_trigger, raw_data, orig_periodicity, periodicity, bench, ls,
+                                 date_range, vol_scaler, vol_scaling, theme, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "attribution"):
+        return no_update
     if active_tab != "attribution" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -9469,9 +9366,13 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_weight_table(selected_portfolio, results, active_tab, switch_value):
+def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, _mount_trigger, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "weight"):
+        return no_update, no_update
     if active_tab != "weight" or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
@@ -9520,6 +9421,7 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-attribution-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -9527,11 +9429,14 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_attribution_table(selected_portfolio, results, active_tab, switch_value,
-                                raw_data, periodicity, bench, ls, date_range,
-                                vol_scaler, vol_scaling):
+                                _mount_trigger, raw_data, periodicity, bench, ls, date_range,
+                                vol_scaler, vol_scaling, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "attribution"):
+        return no_update, no_update
     if active_tab != "attribution" or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
@@ -9604,6 +9509,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
     Input("dashmat-saved-series-cache-store", "data"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -9611,6 +9517,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_statistics(
@@ -9618,6 +9525,7 @@ def po_render_statistics(
     active_tab,
     selected_portfolio,
     saved_series_store,
+    _mount_trigger,
     periodicity=None,
     raw_data=None,
     bench=None,
@@ -9625,7 +9533,10 @@ def po_render_statistics(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
+    mounted_tabs=None,
 ):
+    if not _po_has_mounted_tab(mounted_tabs, "statistics"):
+        return no_update, no_update
     if active_tab != "statistics" or not results:
         return [], []
 
@@ -9711,6 +9622,7 @@ def po_render_statistics(
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -9718,12 +9630,14 @@ def po_render_statistics(
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_returns(
     results,
     active_tab,
     selected_portfolio,
+    _mount_trigger,
     raw_data=None,
     periodicity=None,
     bench=None,
@@ -9731,7 +9645,10 @@ def po_render_returns(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
+    mounted_tabs=None,
 ):
+    if not _po_has_mounted_tab(mounted_tabs, "returns"):
+        return no_update, no_update
     if active_tab != "returns" or not results:
         return [], []
 
@@ -10276,6 +10193,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-risk-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10285,11 +10203,14 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
-                         raw_data, periodicity, bench, ls, date_range,
-                         vol_scaler, vol_scaling, series_select, theme):
+                         _mount_trigger, raw_data, periodicity, bench, ls, date_range,
+                         vol_scaler, vol_scaling, series_select, theme, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "risk"):
+        return no_update
     if active_tab != "risk" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -10364,6 +10285,7 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-risk-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10372,11 +10294,14 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
-                         raw_data, periodicity, bench, ls, date_range,
-                         vol_scaler, vol_scaling, series_select):
+                         _mount_trigger, raw_data, periodicity, bench, ls, date_range,
+                         vol_scaler, vol_scaling, series_select, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "risk"):
+        return no_update, no_update
     if active_tab != "risk" or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
@@ -10447,10 +10372,14 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
+def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, _mount_trigger, theme, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "turnover"):
+        return no_update
     if active_tab != "turnover" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -10505,9 +10434,13 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value):
+def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value, _mount_trigger, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "turnover"):
+        return no_update, no_update
     if active_tab != "turnover" or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
@@ -10562,10 +10495,14 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
     Output("po-frontier-rm-select", "value"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("po-frontier-rm-select", "value"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_frontier_risk_measure_options(selected_portfolio, results, current_rm):
+def po_update_frontier_risk_measure_options(selected_portfolio, results, _mount_trigger, current_rm, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "frontier"):
+        return no_update, no_update
     all_options = [
         {"value": "MV", "label": "Volatility"},
         {"value": "CVaR", "label": "CVaR"},
@@ -10587,9 +10524,13 @@ def po_update_frontier_risk_measure_options(selected_portfolio, results, current
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def po_populate_frontier_windows(selected_portfolio, results, active_tab):
+def po_populate_frontier_windows(selected_portfolio, results, active_tab, _mount_trigger, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "frontier"):
+        return no_update, no_update, no_update
     if active_tab != "frontier" or not selected_portfolio or not results:
         return [], None, False
     portfolio_data = results.get(selected_portfolio, {})
@@ -10624,6 +10565,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     Input("po-frontier-chart-switch", "value"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10636,13 +10578,16 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("po-linear-constraints-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value,
-                             window_idx, rm,
+                             window_idx, rm, _mount_trigger,
                              raw_data, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, series_select, theme,
-                             linear_constraints):
+                             linear_constraints, mounted_tabs):
+    if not _po_has_mounted_tab(mounted_tabs, "frontier"):
+        return no_update
     if active_tab != "frontier" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
@@ -10771,6 +10716,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     Input("po-frontier-chart-switch", "value"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10780,6 +10726,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     State("po-cmabench-assignments-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-linear-constraints-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_frontier_table(
@@ -10789,6 +10736,7 @@ def po_render_frontier_table(
     switch_value,
     window_idx,
     rm,
+    _mount_trigger,
     raw_data,
     periodicity,
     bench,
@@ -10798,7 +10746,10 @@ def po_render_frontier_table(
     cmabench_assignments,
     saved_series_store,
     linear_constraints,
+    mounted_tabs,
 ):
+    if not _po_has_mounted_tab(mounted_tabs, "frontier"):
+        return no_update, no_update
     if active_tab != "frontier" or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
@@ -10858,9 +10809,11 @@ def po_render_frontier_table(
     Input("po-vis-tabs", "value"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
+    Input("po-tab-mount-trigger-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-cmabench-assignments-store", "data"),
+    State("po-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_frontier_rf_warning(
@@ -10869,12 +10822,16 @@ def po_render_frontier_rf_warning(
     active_tab,
     window_idx,
     rm,
+    _mount_trigger,
     periodicity,
     saved_series_store,
     cmabench_assignments,
+    mounted_tabs,
 ):
     hidden = {"display": "none"}
     shown = {"display": "block", "marginBottom": "8px"}
+    if not _po_has_mounted_tab(mounted_tabs, "frontier"):
+        return no_update, no_update
     if active_tab != "frontier" or not selected_portfolio or not results:
         return "", hidden
     if selected_portfolio not in results:

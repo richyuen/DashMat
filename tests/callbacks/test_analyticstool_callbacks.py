@@ -342,6 +342,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
 
     column_defs, row_data, loaded = analyticstool.update_statistics(
+        None,
         "daily",
         ["Asset_A", "Asset_B"],
         {},
@@ -352,6 +353,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         {},
         None,
         "raw-json",
+        ["statistics"],
     )
 
     assert column_defs[0]["field"] == "Statistic"
@@ -414,6 +416,7 @@ def test_update_statistics_requires_ready_state(page_modules):
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            None,
             "daily",
             ["Asset_A"],
             {},
@@ -424,6 +427,7 @@ def test_update_statistics_requires_ready_state(page_modules):
             {},
             None,
             "raw-json",
+            ["statistics"],
         )
 
 
@@ -439,6 +443,7 @@ def test_update_growth_grid_requires_growth_table_view(page_modules):
     analyticstool, _ = page_modules
     with pytest.raises(PreventUpdate):
         analyticstool.update_growth_grid(
+            None,
             "returns",
             "table",
             "daily",
@@ -450,6 +455,7 @@ def test_update_growth_grid_requires_growth_table_view(page_modules):
             0,
             {},
             "raw-json",
+            ["growth"],
         )
 
 
@@ -463,6 +469,7 @@ def test_update_growth_grid_builds_columns_and_rows(monkeypatch, page_modules):
     monkeypatch.setattr(analyticstool, "calculate_growth_of_dollar", lambda *args, **kwargs: growth_df)
 
     column_defs, row_data = analyticstool.update_growth_grid(
+        None,
         "growth",
         "table",
         "daily",
@@ -474,6 +481,7 @@ def test_update_growth_grid_builds_columns_and_rows(monkeypatch, page_modules):
         0,
         {},
         "raw-json",
+        ["growth"],
     )
 
     assert column_defs[0]["field"] == "Date"
@@ -491,6 +499,7 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
     monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *args, **kwargs: drawdown_df)
 
     column_defs, row_data = analyticstool.update_drawdown_grid(
+        None,
         "drawdown",
         "table",
         "daily",
@@ -503,6 +512,7 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
         0,
         {},
         "raw-json",
+        ["drawdown"],
     )
 
     assert column_defs[0]["field"] == "Date"
@@ -520,6 +530,7 @@ def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules)
     monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *args, **kwargs: drawdown_df)
 
     graph = analyticstool.update_drawdown_charts(
+        None,
         "drawdown",
         "chart",
         "daily",
@@ -533,6 +544,7 @@ def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules)
         {},
         "raw-json",
         "light",
+        ["drawdown"],
     )
 
     fig = getattr(graph, "figure", None)
@@ -863,6 +875,7 @@ def test_update_correlogram_heatmap_title_includes_shrinkage(monkeypatch, page_m
     monkeypatch.setattr(analyticstool, "generate_correlogram_cached", lambda *_args, **_kwargs: result)
 
     graph, rendered_key = analyticstool.update_correlogram(
+        None,
         "req-key",
         "correlogram",
         "raw-json",
@@ -882,6 +895,7 @@ def test_update_correlogram_heatmap_title_includes_shrinkage(monkeypatch, page_m
         "correlation",
         120,
         "light",
+        ["correlogram"],
     )
 
     assert rendered_key == "req-key"
@@ -905,6 +919,7 @@ def test_update_correlogram_passes_effective_target(monkeypatch, page_modules):
     monkeypatch.setattr(analyticstool, "generate_correlogram_cached", _fake_generate_correlogram_cached)
 
     analyticstool.update_correlogram(
+        None,
         "req-key",
         "correlogram",
         "raw-json",
@@ -924,6 +939,7 @@ def test_update_correlogram_passes_effective_target(monkeypatch, page_modules):
         "covariance",
         120,
         "light",
+        ["correlogram"],
     )
 
     assert captured["args"][11] == "ledoit_wolf"
@@ -942,6 +958,7 @@ def test_update_correlogram_heatmap_title_includes_shrinkage_target(monkeypatch,
     monkeypatch.setattr(analyticstool, "generate_correlogram_cached", lambda *_args, **_kwargs: result)
 
     graph, rendered_key = analyticstool.update_correlogram(
+        None,
         "req-key",
         "correlogram",
         "raw-json",
@@ -961,6 +978,7 @@ def test_update_correlogram_heatmap_title_includes_shrinkage_target(monkeypatch,
         "correlation",
         120,
         "light",
+        ["correlogram"],
     )
 
     assert rendered_key == "req-key"
@@ -978,6 +996,7 @@ def test_update_correlogram_shrinkage_error_renders_annotation(monkeypatch, page
     )
 
     graph, rendered_key = analyticstool.update_correlogram(
+        None,
         "req-key",
         "correlogram",
         "raw-json",
@@ -997,6 +1016,7 @@ def test_update_correlogram_shrinkage_error_renders_annotation(monkeypatch, page
         "correlation",
         120,
         "light",
+        ["correlogram"],
     )
 
     assert rendered_key == "req-key"
@@ -1614,9 +1634,11 @@ def test_update_factor_series_select_includes_unselected_series(page_modules, ra
         ["Asset_C", "Asset_A"],
         [],
         [],
+        None,
         raw_json,
         None,
         None,
+        ["factor_analysis"],
     )
 
     ordered_values = [opt["value"] for opt in options]
@@ -1632,9 +1654,11 @@ def test_update_factor_series_select_includes_saved_and_session_definitions(page
         ["Asset_A"],
         [{"FactorName": "SavedFactor"}],
         [{"FactorName": "SessionFactor"}],
+        None,
         raw_json,
         None,
         None,
+        ["factor_analysis"],
     )
 
     option_map = {opt["value"]: opt["label"] for opt in options}
@@ -1857,6 +1881,7 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
     )
 
     warning, content = analyticstool.update_factor_analysis(
+        None,
         "factor_analysis",
         "scatter",
         "Factor_X",
@@ -1873,6 +1898,9 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
         {},
         "raw-json",
         "light",
+        [],
+        [],
+        ["factor_analysis"],
     )
 
     assert warning is None
@@ -2098,6 +2126,8 @@ def test_update_regime_definition_select_includes_saved_and_session(page_modules
         [{"RegimeName": "SessionRegime"}],
         None,
         None,
+        None,
+        ["regime_analysis"],
     )
 
     option_map = {opt["value"]: opt["label"] for opt in options}
@@ -2248,6 +2278,7 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
     monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
 
     warning, content = analyticstool.update_regime_analysis(
+        None,
         "regime_analysis",
         "def::SavedRegime",
         "daily",
@@ -2263,6 +2294,8 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
         "light",
         [{"RegimeName": "SavedRegime", "MethodType": 3, "Config": {"num_regimes": 3}}],
         [],
+        [],
+        ["regime_analysis"],
     )
 
     assert warning is not None

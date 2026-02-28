@@ -835,7 +835,7 @@ def test_reg_render_statistics_uses_current_stats_signature_and_list_shape(monke
         ]
 
     monkeypatch.setattr(regression_page, "calculate_statistics_cached", _fake_stats)
-    comp = regression_page.reg_render_statistics("R1", {"R1": entry})
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry}, mounted_tabs=["statistics"])
 
     assert captured["args"][5] == "null"
     assert captured["args"][6] == 0
@@ -854,7 +854,7 @@ def test_reg_render_statistics_uses_full_stats_config_rows(monkeypatch, regressi
         "calculate_statistics_cached",
         lambda *_args, **_kwargs: [{"Series": "Predicted", "Start Date": "2024-01-01", "End Date": "2024-01-04"}],
     )
-    comp = regression_page.reg_render_statistics("R1", {"R1": entry})
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry}, mounted_tabs=["statistics"])
 
     stat_names = [row.get("Statistic") for row in getattr(comp, "rowData", [])]
     expected = [name for name, _fmt in STATS_CONFIG]
@@ -880,7 +880,7 @@ def test_reg_render_statistics_includes_actual_predicted_residual_when_available
         ]
 
     monkeypatch.setattr(regression_page, "calculate_statistics_cached", _fake_stats)
-    comp = regression_page.reg_render_statistics("R1", {"R1": entry})
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry}, mounted_tabs=["statistics"])
 
     col_fields = [c.get("field") for c in getattr(comp, "columnDefs", [])]
     assert "Actual (Y)" in col_fields
@@ -926,7 +926,7 @@ def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkey
         return []
 
     monkeypatch.setattr(regression_page, "calculate_statistics_cached", _fake_stats)
-    comp = regression_page.reg_render_statistics("R1", {"R1": entry}, df_to_json(raw_df), {})
+    comp = regression_page.reg_render_statistics("R1", {"R1": entry}, df_to_json(raw_df), {}, None, ["statistics"])
 
     selected_payloads = [tuple(call[2]) for call in calls]
     assert ("Predicted", "Actual (Y)", "EM_TRIndex", "EAFE_TRIndex", "Residual") in selected_payloads
@@ -1193,7 +1193,7 @@ def test_reg_sync_anova_window_options_defaults_to_latest_on_result_change(monke
     }
     monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-result-select"})())
 
-    options, value, disabled = regression_page.reg_sync_anova_window_options("R1", results, "0")
+    options, value, disabled = regression_page.reg_sync_anova_window_options("R1", results, None, "0", ["anova"])
 
     assert len(options) == 3
     assert value == "2"
@@ -1213,7 +1213,7 @@ def test_reg_sync_anova_window_options_defaults_to_latest_on_results_refresh(mon
     }
     monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-results-store"})())
 
-    _options, value, _disabled = regression_page.reg_sync_anova_window_options("R1", results, "1")
+    _options, value, _disabled = regression_page.reg_sync_anova_window_options("R1", results, None, "1", ["anova"])
 
     assert value == "2"
 
@@ -1247,6 +1247,8 @@ def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, reg
         "total_return",
         "table",
         "light",
+        None,
+        ["rolling_returns"],
     )
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
@@ -1274,7 +1276,7 @@ def test_reg_render_drawdown_table_uses_wide_date_column(monkeypatch, regression
             index=[pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-31")],
         ),
     )
-    grid = regression_page.reg_render_drawdown("R1", results, None, "table", "light")
+    grid = regression_page.reg_render_drawdown("R1", results, None, "table", "light", None, ["drawdown"])
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
@@ -1293,7 +1295,7 @@ def test_reg_render_growth_table_mode_returns_grid_with_wide_date_column(regress
         }
     }
 
-    grid = regression_page.reg_render_growth("R1", results, None, "table", "light")
+    grid = regression_page.reg_render_growth("R1", results, None, "table", "light", None, ["growth"])
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
@@ -1318,7 +1320,7 @@ def test_reg_render_weights_table_mode_returns_grid_with_wide_date_column(regres
         }
     }
 
-    stack = regression_page.reg_render_weights("R1", results, "table", "light")
+    stack = regression_page.reg_render_weights("R1", results, "table", "light", None, ["weights"])
     children = list(getattr(stack, "children", []) or [])
     grid = children[0]
 
@@ -1369,7 +1371,7 @@ def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regres
         }
     }
 
-    comp = regression_page.reg_render_anova("R1", results, "0")
+    comp = regression_page.reg_render_anova("R1", results, "0", None, ["anova"])
     grids = _collect_ag_grids(comp)
     assert len(grids) >= 2
 
@@ -1439,7 +1441,7 @@ def test_reg_render_rolling_table_merges_arima_garch_columns(regression_page):
         }
     }
 
-    grid = regression_page.reg_render_rolling("R1", results, "table", "advanced", "light")
+    grid = regression_page.reg_render_rolling("R1", results, "table", "advanced", "light", None, ["rolling"])
     fields = [c.get("field") for c in getattr(grid, "columnDefs", [])]
     assert getattr(grid, "defaultColDef", {}).get("suppressHeaderMenuButton") is True
     assert "ARIMA_AIC" in fields
@@ -1449,7 +1451,7 @@ def test_reg_render_rolling_table_merges_arima_garch_columns(regression_page):
     assert rows[0].get("ARIMA_ar_L1") == 0.2
     assert rows[1].get("ARIMA_ar_L1") == 0.25
 
-    basic_grid = regression_page.reg_render_rolling("R1", results, "table", "basic", "light")
+    basic_grid = regression_page.reg_render_rolling("R1", results, "table", "basic", "light", None, ["rolling"])
     basic_fields = [c.get("field") for c in getattr(basic_grid, "columnDefs", [])]
     assert basic_fields.index("β_X1") < basic_fields.index("ARIMA_AIC")
     assert "ARIMA_AIC" in basic_fields
@@ -1482,14 +1484,14 @@ def test_reg_render_rolling_chart_respects_basic_advanced_field_scope(regression
         }
     }
 
-    basic_chart = regression_page.reg_render_rolling("R1", results, "chart", "basic", "light")
+    basic_chart = regression_page.reg_render_rolling("R1", results, "chart", "basic", "light", None, ["rolling"])
     basic_names = [trace.name for trace in getattr(getattr(basic_chart, "figure", None), "data", [])]
     assert "β_intercept" in basic_names
     assert "β_X1" in basic_names
     assert "ARIMA_AIC" in basic_names
     assert "ARIMA_ar_L1" not in basic_names
 
-    advanced_chart = regression_page.reg_render_rolling("R1", results, "chart", "advanced", "light")
+    advanced_chart = regression_page.reg_render_rolling("R1", results, "chart", "advanced", "light", None, ["rolling"])
     advanced_names = [trace.name for trace in getattr(getattr(advanced_chart, "figure", None), "data", [])]
     assert "ARIMA_ar_L1" in advanced_names
 
@@ -1513,7 +1515,7 @@ def test_reg_render_weights_table_only_shows_prediction_coefficients(regression_
         }
     }
 
-    comp = regression_page.reg_render_weights("R1", results, "table", "light")
+    comp = regression_page.reg_render_weights("R1", results, "table", "light", None, ["weights"])
     children = list(getattr(comp, "children", []) or [])
     grid = next(c for c in children if getattr(c, "columnDefs", None) is not None)
     fields = [c.get("field") for c in getattr(grid, "columnDefs", [])]

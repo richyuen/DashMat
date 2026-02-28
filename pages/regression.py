@@ -1277,6 +1277,239 @@ def build_reg_help_modal():
     )
 
 
+def _reg_panel_loading_shell(host_id: str, initial_children=None):
+    shell_style = {"height": "100%", "width": "100%", "display": "flex", "flexDirection": "column", "minHeight": 0}
+    return dcc.Loading(
+        delay_show=150,
+        delay_hide=100,
+        type="default",
+        style=shell_style,
+        parent_style=shell_style,
+        children=html.Div(id=host_id, style=shell_style, children=initial_children),
+    )
+
+
+def _build_reg_anova_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            align="flex-end",
+            children=[
+                dmc.Select(
+                    id="reg-anova-window-select",
+                    label="Window Period",
+                    data=[],
+                    value=None,
+                    w=360,
+                    size="sm",
+                    clearable=False,
+                    disabled=True,
+                    placeholder="Latest period",
+                ),
+            ],
+        ),
+        html.Div(id="reg-anova-content", style={"padding": "8px"}),
+    ]
+
+
+def _build_reg_rolling_summary_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            children=[
+                dmc.SegmentedControl(
+                    id="reg-rolling-summary-chart-switch",
+                    data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}],
+                    value="chart",
+                    size="sm",
+                ),
+                dmc.SegmentedControl(
+                    id="reg-rolling-summary-detail-switch",
+                    data=[{"value": "basic", "label": "Basic"}, {"value": "advanced", "label": "Advanced"}],
+                    value="basic",
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(id="reg-rolling-content", style={"padding": "8px"}),
+    ]
+
+
+def _build_reg_rolling_returns_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            gap="md",
+            children=[
+                dmc.Select(
+                    id="reg-rolling-metric-select",
+                    data=[
+                        {"value": "total_return", "label": "Total Return"},
+                        {"value": "volatility", "label": "Volatility"},
+                        {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
+                        {"value": "sortino_ratio", "label": "Sortino Ratio"},
+                    ],
+                    value="total_return",
+                    w=170,
+                    size="sm",
+                    clearable=False,
+                ),
+                dmc.Select(
+                    id="reg-rolling-window-select",
+                    data=[
+                        {"value": "3m", "label": "3-month"},
+                        {"value": "6m", "label": "6-month"},
+                        {"value": "1y", "label": "1-year"},
+                        {"value": "3y", "label": "3-year"},
+                        {"value": "5y", "label": "5-year"},
+                        {"value": "10y", "label": "10-year"},
+                    ],
+                    value="1y",
+                    w=120,
+                    size="sm",
+                    clearable=False,
+                ),
+                dmc.SegmentedControl(
+                    id="reg-rolling-return-type-select",
+                    data=[{"value": "cumulative", "label": "Cumulative"}, {"value": "annualized", "label": "Annualized"}],
+                    value="annualized",
+                    size="sm",
+                ),
+                dmc.SegmentedControl(
+                    id="reg-rolling-chart-switch",
+                    data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}],
+                    value="chart",
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(id="reg-rolling-returns-content", style={"padding": "8px", "height": "100%"}),
+    ]
+
+
+def _build_reg_weights_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            children=[
+                dmc.SegmentedControl(
+                    id="reg-weights-chart-switch",
+                    data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}],
+                    value="chart",
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(id="reg-weights-content", style={"padding": "8px"}),
+    ]
+
+
+def _build_reg_statistics_tab_body():
+    return [html.Div(id="reg-statistics-content", style={"padding": "8px"})]
+
+
+def _build_reg_returns_tab_body():
+    return [html.Div(id="reg-returns-content", style={"padding": "8px"})]
+
+
+def _build_reg_growth_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            children=[
+                dmc.SegmentedControl(
+                    id="reg-growth-chart-switch",
+                    data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}],
+                    value="chart",
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(id="reg-growth-content", style={"padding": "8px"}),
+    ]
+
+
+def _build_reg_calendar_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            gap="md",
+            children=[
+                dmc.SegmentedControl(
+                    id="reg-calendar-view-select",
+                    data=[{"value": "annual", "label": "Annual"}, {"value": "monthly", "label": "Monthly"}],
+                    value="annual",
+                    size="sm",
+                ),
+                dmc.Select(
+                    id="reg-calendar-series-select",
+                    data=[],
+                    value=None,
+                    w=220,
+                    size="sm",
+                    clearable=False,
+                    disabled=True,
+                    placeholder="Series (Monthly view)",
+                ),
+            ],
+        ),
+        html.Div(id="reg-calendar-content", style={"padding": "8px"}),
+    ]
+
+
+def _build_reg_drawdown_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            children=[
+                dmc.SegmentedControl(
+                    id="reg-drawdown-chart-switch",
+                    data=[{"value": "table", "label": "Table"}, {"value": "chart", "label": "Chart"}],
+                    value="chart",
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(id="reg-drawdown-content", style={"padding": "8px"}),
+    ]
+
+
+def _build_reg_scatter_tab_body():
+    return [
+        dmc.Group(
+            mb="xs",
+            gap="md",
+            children=[
+                dmc.Select(
+                    id="reg-scatter-mode-select",
+                    label="Scatter Mode",
+                    data=[
+                        {"value": "residual_vs_predicted", "label": "Residual vs Predicted"},
+                        {"value": "actual_vs_predicted", "label": "Actual vs Predicted"},
+                        {"value": "actual_vs_x", "label": "Actual vs X"},
+                        {"value": "predicted_vs_x", "label": "Predicted vs X"},
+                    ],
+                    value="residual_vs_predicted",
+                    w=220,
+                    size="sm",
+                    clearable=False,
+                ),
+                dmc.Select(
+                    id="reg-scatter-x-select",
+                    label="X Variable",
+                    data=[],
+                    value=None,
+                    w=200,
+                    size="sm",
+                    clearable=False,
+                    disabled=True,
+                ),
+            ],
+        ),
+        html.Div(id="reg-scatter-content", style={"padding": "8px"}),
+    ]
+
+
 def build_reg_main_layout():
     return html.Div(
         style={"display": "flex", "flexDirection": "column", "height": "100%", "overflow": "hidden"},
@@ -1726,252 +1959,63 @@ def build_reg_main_layout():
                             ]),
                             dmc.TabsPanel(
                                 value="anova",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        align="flex-end",
-                                        children=[
-                                            dmc.Select(
-                                                id="reg-anova-window-select",
-                                                label="Window Period",
-                                                data=[],
-                                                value=None,
-                                                w=360,
-                                                size="sm",
-                                                clearable=False,
-                                                disabled=True,
-                                                placeholder="Latest period",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-anova-content", style={"padding": "8px"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-anova-host", _build_reg_anova_tab_body())],
                             ),
                             dmc.TabsPanel(
                                 value="rolling",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        children=[
-                                            dmc.SegmentedControl(
-                                                id="reg-rolling-summary-chart-switch",
-                                                data=[
-                                                    {"value": "table", "label": "Table"},
-                                                    {"value": "chart", "label": "Chart"},
-                                                ],
-                                                value="chart",
-                                                size="sm",
-                                            ),
-                                            dmc.SegmentedControl(
-                                                id="reg-rolling-summary-detail-switch",
-                                                data=[
-                                                    {"value": "basic", "label": "Basic"},
-                                                    {"value": "advanced", "label": "Advanced"},
-                                                ],
-                                                value="basic",
-                                                size="sm",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-rolling-content", style={"padding": "8px"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-rolling-summary-host", _build_reg_rolling_summary_tab_body())],
                             ),
                             dmc.TabsPanel(
                                 value="rolling_returns",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        gap="md",
-                                        children=[
-                                            dmc.Select(
-                                                id="reg-rolling-metric-select",
-                                                data=[
-                                                    {"value": "total_return", "label": "Total Return"},
-                                                    {"value": "volatility", "label": "Volatility"},
-                                                    {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
-                                                    {"value": "sortino_ratio", "label": "Sortino Ratio"},
-                                                ],
-                                                value="total_return",
-                                                w=170,
-                                                size="sm",
-                                                clearable=False,
-                                            ),
-                                            dmc.Select(
-                                                id="reg-rolling-window-select",
-                                                data=[
-                                                    {"value": "3m", "label": "3-month"},
-                                                    {"value": "6m", "label": "6-month"},
-                                                    {"value": "1y", "label": "1-year"},
-                                                    {"value": "3y", "label": "3-year"},
-                                                    {"value": "5y", "label": "5-year"},
-                                                    {"value": "10y", "label": "10-year"},
-                                                ],
-                                                value="1y",
-                                                w=120,
-                                                size="sm",
-                                                clearable=False,
-                                            ),
-                                            dmc.SegmentedControl(
-                                                id="reg-rolling-return-type-select",
-                                                data=[
-                                                    {"value": "cumulative", "label": "Cumulative"},
-                                                    {"value": "annualized", "label": "Annualized"},
-                                                ],
-                                                value="annualized",
-                                                size="sm",
-                                            ),
-                                            dmc.SegmentedControl(
-                                                id="reg-rolling-chart-switch",
-                                                data=[
-                                                    {"value": "table", "label": "Table"},
-                                                    {"value": "chart", "label": "Chart"},
-                                                ],
-                                                value="chart",
-                                                size="sm",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-rolling-returns-content", style={"padding": "8px", "height": "100%"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-rolling-returns-host", _build_reg_rolling_returns_tab_body())],
                             ),
                             dmc.TabsPanel(
                                 value="weights",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        children=[
-                                            dmc.SegmentedControl(
-                                                id="reg-weights-chart-switch",
-                                                data=[
-                                                    {"value": "table", "label": "Table"},
-                                                    {"value": "chart", "label": "Chart"},
-                                                ],
-                                                value="chart",
-                                                size="sm",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-weights-content", style={"padding": "8px"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-weights-host", _build_reg_weights_tab_body())],
                             ),
-                            dmc.TabsPanel(value="statistics", style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-statistics-content", style={"padding": "8px"})]),
-                            dmc.TabsPanel(value="returns", style={"overflow": "auto", "flex": "1"},
-                                children=[html.Div(id="reg-returns-content", style={"padding": "8px"})]),
+                            dmc.TabsPanel(
+                                value="statistics",
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-statistics-host", _build_reg_statistics_tab_body())],
+                            ),
+                            dmc.TabsPanel(
+                                value="returns",
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-returns-host", _build_reg_returns_tab_body())],
+                            ),
                             dmc.TabsPanel(
                                 value="growth",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        children=[
-                                            dmc.SegmentedControl(
-                                                id="reg-growth-chart-switch",
-                                                data=[
-                                                    {"value": "table", "label": "Table"},
-                                                    {"value": "chart", "label": "Chart"},
-                                                ],
-                                                value="chart",
-                                                size="sm",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-growth-content", style={"padding": "8px"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-growth-host", _build_reg_growth_tab_body())],
                             ),
                             dmc.TabsPanel(
                                 value="calendar",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        gap="md",
-                                        children=[
-                                            dmc.SegmentedControl(
-                                                id="reg-calendar-view-select",
-                                                data=[
-                                                    {"value": "annual", "label": "Annual"},
-                                                    {"value": "monthly", "label": "Monthly"},
-                                                ],
-                                                value="annual",
-                                                size="sm",
-                                            ),
-                                            dmc.Select(
-                                                id="reg-calendar-series-select",
-                                                data=[],
-                                                value=None,
-                                                w=220,
-                                                size="sm",
-                                                clearable=False,
-                                                disabled=True,
-                                                placeholder="Series (Monthly view)",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-calendar-content", style={"padding": "8px"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-calendar-host", _build_reg_calendar_tab_body())],
                             ),
                             dmc.TabsPanel(
                                 value="drawdown",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        children=[
-                                            dmc.SegmentedControl(
-                                                id="reg-drawdown-chart-switch",
-                                                data=[
-                                                    {"value": "table", "label": "Table"},
-                                                    {"value": "chart", "label": "Chart"},
-                                                ],
-                                                value="chart",
-                                                size="sm",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-drawdown-content", style={"padding": "8px"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-drawdown-host", _build_reg_drawdown_tab_body())],
                             ),
                             dmc.TabsPanel(
                                 value="scatter",
-                                style={"overflow": "auto", "flex": "1"},
-                                children=[
-                                    dmc.Group(
-                                        mb="xs",
-                                        gap="md",
-                                        children=[
-                                            dmc.Select(
-                                                id="reg-scatter-mode-select",
-                                                label="Scatter Mode",
-                                                data=[
-                                                    {"value": "residual_vs_predicted", "label": "Residual vs Predicted"},
-                                                    {"value": "actual_vs_predicted", "label": "Actual vs Predicted"},
-                                                    {"value": "actual_vs_x", "label": "Actual vs X"},
-                                                    {"value": "predicted_vs_x", "label": "Predicted vs X"},
-                                                ],
-                                                value="residual_vs_predicted",
-                                                w=220,
-                                                size="sm",
-                                                clearable=False,
-                                            ),
-                                            dmc.Select(
-                                                id="reg-scatter-x-select",
-                                                label="X Variable",
-                                                data=[],
-                                                value=None,
-                                                w=200,
-                                                size="sm",
-                                                clearable=False,
-                                                disabled=True,
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(id="reg-scatter-content", style={"padding": "8px"}),
-                                ],
+                                pt="md",
+                                style={"overflow": "hidden", "flex": "1", "display": "flex", "flexDirection": "column"},
+                                children=[_reg_panel_loading_shell("reg-tab-scatter-host", _build_reg_scatter_tab_body())],
                             ),
                         ],
                     ),
@@ -2209,6 +2253,9 @@ layout = dmc.Container(
         # Results
         dcc.Store(id="reg-results-store", data={}, storage_type="session"),
         dcc.Store(id="reg-active-tab-store", data="anova", storage_type="session"),
+        dcc.Store(id="reg-mounted-tabs-store", data=[], storage_type="memory"),
+        dcc.Store(id="reg-tab-mount-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-help-mounted-store", data=False, storage_type="memory"),
         # Save/Load session + cache
         dcc.Store(id="reg-save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="reg-load-session-dummy", data=None, storage_type="memory"),
@@ -2559,6 +2606,95 @@ clientside_callback("function(v){return v;}",
     Output("reg-active-tab-store","data"), Input("reg-tabs","value"), prevent_initial_call=True)
 
 
+def _reg_has_mounted_tab(mounted_tabs, tab_value: str) -> bool:
+    return tab_value in (mounted_tabs or [])
+
+
+@callback(
+    Output("reg-mounted-tabs-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-page-ready-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
+    prevent_initial_call=False,
+)
+def reg_track_mounted_tabs(active_tab, page_ready, mounted_tabs):
+    if not page_ready:
+        return []
+    tabs = list(mounted_tabs or [])
+    if not active_tab:
+        return tabs
+    if active_tab in tabs:
+        raise PreventUpdate
+    tabs.append(active_tab)
+    return tabs
+
+
+@callback(
+    Output("reg-tab-anova-host", "children"),
+    Output("reg-tab-rolling-summary-host", "children"),
+    Output("reg-tab-weights-host", "children"),
+    Output("reg-tab-statistics-host", "children"),
+    Output("reg-tab-returns-host", "children"),
+    Output("reg-tab-rolling-returns-host", "children"),
+    Output("reg-tab-calendar-host", "children"),
+    Output("reg-tab-growth-host", "children"),
+    Output("reg-tab-drawdown-host", "children"),
+    Output("reg-tab-scatter-host", "children"),
+    Output("reg-tab-mount-trigger-store", "data"),
+    Input("reg-mounted-tabs-store", "data"),
+    State("reg-tab-anova-host", "children"),
+    State("reg-tab-rolling-summary-host", "children"),
+    State("reg-tab-weights-host", "children"),
+    State("reg-tab-statistics-host", "children"),
+    State("reg-tab-returns-host", "children"),
+    State("reg-tab-rolling-returns-host", "children"),
+    State("reg-tab-calendar-host", "children"),
+    State("reg-tab-growth-host", "children"),
+    State("reg-tab-drawdown-host", "children"),
+    State("reg-tab-scatter-host", "children"),
+    prevent_initial_call=True,
+)
+def reg_mount_tab_bodies(
+    mounted_tabs,
+    anova_children,
+    rolling_summary_children,
+    weights_children,
+    statistics_children,
+    returns_children,
+    rolling_returns_children,
+    calendar_children,
+    growth_children,
+    drawdown_children,
+    scatter_children,
+):
+    mounted_tabs = mounted_tabs or []
+    outputs = []
+    hosts = [
+        ("anova", anova_children, _build_reg_anova_tab_body),
+        ("rolling", rolling_summary_children, _build_reg_rolling_summary_tab_body),
+        ("weights", weights_children, _build_reg_weights_tab_body),
+        ("statistics", statistics_children, _build_reg_statistics_tab_body),
+        ("returns", returns_children, _build_reg_returns_tab_body),
+        ("rolling_returns", rolling_returns_children, _build_reg_rolling_returns_tab_body),
+        ("calendar", calendar_children, _build_reg_calendar_tab_body),
+        ("growth", growth_children, _build_reg_growth_tab_body),
+        ("drawdown", drawdown_children, _build_reg_drawdown_tab_body),
+        ("scatter", scatter_children, _build_reg_scatter_tab_body),
+    ]
+    mounted_any = False
+    for tab_value, current_children, builder in hosts:
+        if tab_value not in mounted_tabs:
+            outputs.append(no_update)
+            continue
+        if current_children:
+            outputs.append(no_update)
+            continue
+        outputs.append(builder())
+        mounted_any = True
+    outputs.append({"mounted_tabs": list(mounted_tabs)} if mounted_any else no_update)
+    return tuple(outputs)
+
+
 # ===========================================================================
 # Server callbacks
 # ===========================================================================
@@ -2630,10 +2766,14 @@ def reg_toggle_rolling_return_type(metric):
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("reg-scatter-mode-select", "value"),
+    Input("reg-tab-mount-trigger-store", "data"),
     State("reg-scatter-x-select", "value"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_sync_scatter_x_options(selected, results, mode, current_x):
+def reg_sync_scatter_x_options(selected, results, mode, _mount_trigger, current_x, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "scatter"):
+        return no_update, no_update, no_update
     if not selected or not results or selected not in results:
         return [], None, True
 
@@ -5387,10 +5527,14 @@ def reg_sync_result_options(results, current_val):
     Output("reg-anova-window-select", "disabled"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    Input("reg-tab-mount-trigger-store", "data"),
     State("reg-anova-window-select", "value"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_sync_anova_window_options(selected, results, current_window):
+def reg_sync_anova_window_options(selected, results, _mount_trigger, current_window, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "anova"):
+        return no_update, no_update, no_update
     if not selected or not results or selected not in results:
         return [], None, True
 
@@ -5435,9 +5579,13 @@ def reg_delete_result(n_clicks, selected, results):
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("reg-anova-window-select", "value"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_anova(selected, results, selected_window):
+def reg_render_anova(selected, results, selected_window, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "anova"):
+        return no_update
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
 
@@ -5586,9 +5734,13 @@ def reg_render_anova(selected, results, selected_window):
     Input("reg-rolling-summary-chart-switch", "value"),
     Input("reg-rolling-summary-detail-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
+def reg_render_rolling(selected, results, view_mode, detail_mode, theme, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "rolling"):
+        return no_update
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -5684,6 +5836,8 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
     Input("reg-rolling-metric-select", "value"),
     Input("reg-rolling-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
 def reg_render_rolling_returns(
@@ -5695,7 +5849,11 @@ def reg_render_rolling_returns(
     rolling_metric,
     view_mode,
     theme,
+    _mount_trigger,
+    mounted_tabs,
 ):
+    if not _reg_has_mounted_tab(mounted_tabs, "rolling_returns"):
+        return no_update
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -5820,9 +5978,13 @@ def reg_render_rolling_returns(
     Input("reg-results-store", "data"),
     Input("reg-weights-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_weights(selected, results, view_mode, theme):
+def reg_render_weights(selected, results, view_mode, theme, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "weights"):
+        return no_update
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -5902,9 +6064,13 @@ def reg_render_weights(selected, results, view_mode, theme):
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_returns(selected, results, raw_data):
+def reg_render_returns(selected, results, raw_data, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "returns"):
+        return no_update
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -5955,9 +6121,13 @@ def reg_render_returns(selected, results, raw_data):
     Input("dashmat-raw-data-store", "data"),
     Input("reg-growth-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_growth(selected, results, raw_data, view_mode, theme):
+def reg_render_growth(selected, results, raw_data, view_mode, theme, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "growth"):
+        return no_update
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -6035,10 +6205,14 @@ def reg_render_growth(selected, results, raw_data, view_mode, theme):
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-calendar-view-select", "value"),
+    Input("reg-tab-mount-trigger-store", "data"),
     State("reg-calendar-series-select", "value"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, current_series):
+def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, _mount_trigger, current_series, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "calendar"):
+        return no_update, no_update, no_update
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return True, [], None
@@ -6060,9 +6234,13 @@ def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, 
     Input("dashmat-raw-data-store", "data"),
     Input("reg-calendar-view-select", "value"),
     Input("reg-calendar-series-select", "value"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series):
+def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "calendar"):
+        return no_update
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -6144,9 +6322,13 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
     Input("dashmat-raw-data-store", "data"),
     Input("reg-drawdown-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
+def reg_render_drawdown(selected, results, raw_data, view_mode, theme, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "drawdown"):
+        return no_update
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -6236,9 +6418,13 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None):
+def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, _mount_trigger=None, mounted_tabs=None):
+    if not _reg_has_mounted_tab(mounted_tabs, "statistics"):
+        return no_update
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
 
@@ -6412,9 +6598,13 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
     Input("reg-scatter-x-select", "value"),
     Input("dashmat-raw-data-store", "data"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tab-mount-trigger-store", "data"),
+    State("reg-mounted-tabs-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_scatter(selected, results, mode, x_var, raw_data, theme):
+def reg_render_scatter(selected, results, mode, x_var, raw_data, theme, _mount_trigger, mounted_tabs):
+    if not _reg_has_mounted_tab(mounted_tabs, "scatter"):
+        return no_update
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")

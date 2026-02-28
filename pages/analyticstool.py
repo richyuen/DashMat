@@ -2165,6 +2165,496 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+
+def _at_panel_loading_shell(host_id: str, initial_children=None, *, overflow: str = "hidden"):
+    shell_style = {"flex": "1", "display": "flex", "flexDirection": "column", "overflow": overflow}
+    return dcc.Loading(
+        delay_show=150,
+        delay_hide=100,
+        type="default",
+        style=shell_style,
+        parent_style=shell_style,
+        children=html.Div(id=host_id, style=shell_style, children=initial_children),
+    )
+
+
+def _at_standard_grid(grid_id: str, *, suppress_csv: bool = True):
+    dash_grid_options = {
+        "animateRows": True,
+        "suppressExcelExport": True,
+        "enableRangeSelection": True,
+    }
+    if suppress_csv:
+        dash_grid_options["suppressCsvExport"] = True
+    return dag.AgGrid(
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
+        id=grid_id,
+        className="ag-theme-alpine",
+        columnDefs=[],
+        rowData=[],
+        defaultColDef={
+            "sortable": True,
+            "resizable": True,
+            "suppressHeaderMenuButton": True,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "dashmat-center-header",
+        },
+        style={"height": "100%", "width": "100%"},
+        dashGridOptions=dash_grid_options,
+    )
+
+
+def _build_at_returns_tab_body():
+    return [
+        dcc.Loading(
+            id="at-loading-returns",
+            type="default",
+            delay_show=300,
+            delay_hide=150,
+            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+            children=[_at_standard_grid("at-returns-grid", suppress_csv=False)],
+        ),
+    ]
+
+
+def _build_at_rolling_tab_body(rolling_metric, rolling_window, rolling_return_type, rolling_chart_switch):
+    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
+    none_style = {"display": "none"}
+    rolling_grid_style = flex_style if rolling_chart_switch == "table" else none_style
+    rolling_chart_style = flex_style if rolling_chart_switch == "chart" else none_style
+    rolling_return_type_disabled = rolling_metric not in ["total_return", "excess_return"]
+    rolling_return_type_style = {} if not rolling_return_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
+    return [
+        dmc.Group(
+            mb="md",
+            children=[
+                dmc.Select(
+                    id="at-rolling-metric-select",
+                    data=[
+                        {"value": "total_return", "label": "Total Return"},
+                        {"value": "volatility", "label": "Volatility"},
+                        {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
+                        {"value": "sortino_ratio", "label": "Sortino Ratio"},
+                        {"value": "excess_return", "label": "Excess Return"},
+                        {"value": "tracking_error", "label": "Tracking Error"},
+                        {"value": "information_ratio", "label": "Information Ratio"},
+                        {"value": "correlation", "label": "Correlation"},
+                    ],
+                    value=rolling_metric,
+                    w=150,
+                    size="sm",
+                    clearable=False,
+                ),
+                dmc.Select(
+                    id="at-rolling-window-select",
+                    data=[
+                        {"value": "3m", "label": "3-month"},
+                        {"value": "6m", "label": "6-month"},
+                        {"value": "1y", "label": "1-year"},
+                        {"value": "3y", "label": "3-year"},
+                        {"value": "5y", "label": "5-year"},
+                        {"value": "10y", "label": "10-year"},
+                    ],
+                    value=rolling_window,
+                    w=120,
+                    size="sm",
+                ),
+                dmc.SegmentedControl(
+                    id="at-rolling-return-type-select",
+                    data=[
+                        {"value": "cumulative", "label": "Cumulative"},
+                        {"value": "annualized", "label": "Annualized"},
+                    ],
+                    value=rolling_return_type,
+                    size="sm",
+                    disabled=rolling_return_type_disabled,
+                    style=rolling_return_type_style,
+                ),
+                dmc.SegmentedControl(
+                    id="at-rolling-chart-switch",
+                    data=[
+                        {"value": "table", "label": "Table"},
+                        {"value": "chart", "label": "Chart"},
+                    ],
+                    value=rolling_chart_switch,
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(
+            id="at-rolling-grid-container",
+            style=rolling_grid_style,
+            children=[_at_standard_grid("at-rolling-grid")],
+        ),
+        html.Div(
+            id="at-rolling-chart-container",
+            style=rolling_chart_style,
+            children=[html.Div(id="at-rolling-chart-wrapper", style={"height": "100%", "width": "100%"})],
+        ),
+    ]
+
+
+def _build_at_statistics_tab_body():
+    return [
+        dcc.Loading(
+            id="at-loading-statistics",
+            type="default",
+            delay_show=300,
+            delay_hide=150,
+            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+            children=[_at_standard_grid("at-statistics-grid")],
+        ),
+    ]
+
+
+def _build_at_calendar_tab_body(monthly_view, monthly_series_options, monthly_series, monthly_select_disabled):
+    return [
+        dmc.Group(
+            mb="md",
+            children=[
+                dmc.SegmentedControl(
+                    id="at-monthly-view-checkbox",
+                    data=[
+                        {"value": "annual", "label": "Annual"},
+                        {"value": "monthly", "label": "Monthly"},
+                    ],
+                    value=monthly_view,
+                    size="sm",
+                ),
+                dmc.Select(
+                    id="at-monthly-series-select",
+                    data=monthly_series_options,
+                    value=monthly_series,
+                    w=200,
+                    size="sm",
+                    placeholder="Select series",
+                    disabled=monthly_select_disabled,
+                ),
+            ],
+        ),
+        _at_standard_grid("at-calendar-grid"),
+    ]
+
+
+def _build_at_correlogram_tab_body():
+    return [
+        dmc.Group(
+            mb="md",
+            gap="md",
+            align="flex-end",
+            children=[
+                html.Div([
+                    dmc.Text("View", size="sm", fw=500, mb=3),
+                    html.Div(
+                        dmc.SegmentedControl(
+                            id="at-correlation-view-switch",
+                            data=[
+                                {"value": "correlation", "label": "Correlation"},
+                                {"value": "covariance", "label": "Covariance"},
+                                {"value": "correlogram", "label": "Correlogram"},
+                            ],
+                            value="correlogram",
+                            size="sm",
+                        ),
+                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                    ),
+                ]),
+                html.Div([
+                    dmc.Text("Exp Wt", size="sm", fw=500, mb=3),
+                    html.Div(
+                        dmc.Switch(
+                            id="at-correlation-exp-wt-switch",
+                            checked=False,
+                            size="sm",
+                        ),
+                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                    ),
+                ]),
+                html.Div([
+                    dmc.Text("Half-Life", size="sm", fw=500, mb=3),
+                    html.Div(
+                        dmc.Tooltip(
+                            label=(
+                                "Controls exponential decay for correlation or correlogram calculations when Exp Wt is enabled. "
+                                "Values below 1 are treated as lambda, while values of 1 or higher are interpreted as half-life in periods. "
+                                "Use shorter decay for faster adaptation or longer decay for smoother dependence estimates."
+                            ),
+                            multiline=True,
+                            w=300,
+                            withArrow=True,
+                            children=dmc.NumberInput(
+                                id="at-correlation-halflife-input",
+                                label=None,
+                                value=63,
+                                min=0.001,
+                                step=0.01,
+                                w=100,
+                                size="sm",
+                                disabled=True,
+                            ),
+                        ),
+                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                    ),
+                ]),
+                html.Div([
+                    dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
+                    html.Div(
+                        dmc.Tooltip(
+                            label=tooltip_text("at-correlation-shrinkage-select"),
+                            multiline=True,
+                            w=420,
+                            withArrow=True,
+                            children=dmc.Select(
+                                id="at-correlation-shrinkage-select",
+                                data=[
+                                    {"value": "none", "label": "None"},
+                                    {"value": "ledoit_wolf", "label": "Ledoit-Wolf"},
+                                    {"value": "oas", "label": "OAS"},
+                                ],
+                                value="none",
+                                searchable=False,
+                                clearable=False,
+                                w=130,
+                                size="sm",
+                            ),
+                        ),
+                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                    ),
+                ]),
+                html.Div([
+                    dmc.Text("Target", size="sm", fw=500, mb=3),
+                    html.Div(
+                        dmc.Tooltip(
+                            label=tooltip_text("at-correlation-shrinkage-target-select"),
+                            multiline=True,
+                            w=420,
+                            withArrow=True,
+                            children=dmc.Select(
+                                id="at-correlation-shrinkage-target-select",
+                                data=[
+                                    {"value": "scaled_identity", "label": "Scaled Identity"},
+                                    {"value": "constant_correlation", "label": "Constant Correlation"},
+                                ],
+                                value="scaled_identity",
+                                searchable=False,
+                                clearable=False,
+                                w=180,
+                                size="sm",
+                                disabled=True,
+                            ),
+                        ),
+                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                    ),
+                ]),
+                html.Div([
+                    dmc.Text("Block Size", size="sm", fw=500, mb=3),
+                    dmc.NumberInput(
+                        id="at-correlogram-block-width",
+                        label=None,
+                        value=None,
+                        min=50,
+                        step=50,
+                        suffix="px",
+                        w=110,
+                        size="sm",
+                    ),
+                ]),
+            ],
+        ),
+        dcc.Loading(
+            id="at-loading-correlogram",
+            type="default",
+            delay_show=0,
+            delay_hide=150,
+            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+            children=[html.Div(id="at-correlogram-container", style={"flex": "1", "minHeight": "520px", "overflow": "auto"})],
+        ),
+    ]
+
+
+def _build_at_factor_analysis_tab_body(factor_mode, factor_quantiles, factor_transform, factor_series_value):
+    return [
+        dmc.Group(
+            mb="md",
+            gap="md",
+            align="flex-end",
+            children=[
+                html.Div([
+                    dmc.Text("Mode", size="sm", fw=500, mb=3),
+                    dmc.SegmentedControl(
+                        id="at-factor-mode-select",
+                        data=[
+                            {"value": "box", "label": "Box Plot"},
+                            {"value": "scatter", "label": "Scatter"},
+                        ],
+                        value=factor_mode,
+                        size="sm",
+                    ),
+                ]),
+                dmc.Select(
+                    id="at-factor-series-select",
+                    label="Factor",
+                    data=[],
+                    value=factor_series_value,
+                    w=280,
+                    size="sm",
+                    searchable=True,
+                    clearable=False,
+                    placeholder="Select factor series",
+                ),
+                html.Div([
+                    dmc.Text("Definitions", size="sm", fw=500, mb=3),
+                    dmc.Button(
+                        "Edit factors",
+                        id="at-factor-open-modal-btn",
+                        size="sm",
+                        variant="light",
+                        leftSection=DashIconify(icon="tabler:math-function", width=14),
+                    ),
+                ]),
+                html.Div(
+                    id="at-factor-quantiles-wrapper",
+                    style={"display": "block"},
+                    children=[
+                        dmc.NumberInput(
+                            id="at-factor-quantiles-input",
+                            label="Quantiles",
+                            value=factor_quantiles,
+                            min=2,
+                            max=20,
+                            step=1,
+                            w=120,
+                            size="sm",
+                        ),
+                    ],
+                ),
+                html.Div([
+                    dmc.Text("Factor Transform", size="sm", fw=500, mb=3),
+                    dmc.SegmentedControl(
+                        id="at-factor-transform-select",
+                        data=[
+                            {"value": "raw", "label": "Raw"},
+                            {"value": "zscore", "label": "Z-Score"},
+                        ],
+                        value=factor_transform,
+                        size="sm",
+                    ),
+                ]),
+            ],
+        ),
+        html.Div(id="at-factor-analysis-warning"),
+        html.Div(id="at-factor-analysis-container", style={"flex": "1", "overflow": "auto"}),
+    ]
+
+
+def _build_at_regime_analysis_tab_body(selected_regime_value):
+    return [
+        dmc.Group(
+            mb="md",
+            gap="md",
+            align="flex-end",
+            children=[
+                dmc.Select(
+                    id="at-regime-definition-select",
+                    label="Regime definition",
+                    data=[],
+                    value=selected_regime_value,
+                    w=340,
+                    size="sm",
+                    searchable=True,
+                    clearable=True,
+                    placeholder="Select regime definition",
+                    nothingFoundMessage="No saved regimes",
+                ),
+                html.Div([
+                    dmc.Text("Definitions", size="sm", fw=500, mb=3),
+                    dmc.Button(
+                        "Edit regimes",
+                        id="at-regime-open-modal-btn",
+                        size="sm",
+                        variant="light",
+                        leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
+                    ),
+                ]),
+            ],
+        ),
+        html.Div(id="at-regime-analysis-warning"),
+        html.Div(id="at-regime-analysis-container", style={"flex": "1", "overflow": "auto"}),
+    ]
+
+
+def _build_at_growth_tab_body(growth_chart_switch):
+    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
+    flex_scroll_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"}
+    none_style = {"display": "none"}
+    growth_grid_style = flex_style if growth_chart_switch == "table" else none_style
+    growth_chart_style = flex_scroll_style if growth_chart_switch == "chart" else none_style
+    return [
+        dmc.Group(
+            mb="md",
+            children=[
+                dmc.SegmentedControl(
+                    id="at-growth-chart-switch",
+                    data=[
+                        {"value": "table", "label": "Table"},
+                        {"value": "chart", "label": "Chart"},
+                    ],
+                    value=growth_chart_switch,
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(
+            id="at-growth-chart-container",
+            style=growth_chart_style,
+            children=[html.Div(id="at-growth-charts-container", style={"height": "100%", "width": "100%"})],
+        ),
+        html.Div(
+            id="at-growth-grid-container",
+            style=growth_grid_style,
+            children=[_at_standard_grid("at-growth-grid")],
+        ),
+    ]
+
+
+def _build_at_drawdown_tab_body(drawdown_chart_switch):
+    flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
+    flex_scroll_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "auto"}
+    none_style = {"display": "none"}
+    drawdown_grid_style = flex_style if drawdown_chart_switch == "table" else none_style
+    drawdown_chart_style = flex_scroll_style if drawdown_chart_switch == "chart" else none_style
+    return [
+        dmc.Group(
+            mb="md",
+            children=[
+                dmc.SegmentedControl(
+                    id="at-drawdown-chart-switch",
+                    data=[
+                        {"value": "table", "label": "Table"},
+                        {"value": "chart", "label": "Chart"},
+                    ],
+                    value=drawdown_chart_switch,
+                    size="sm",
+                ),
+            ],
+        ),
+        html.Div(
+            id="at-drawdown-chart-container",
+            style=drawdown_chart_style,
+            children=[html.Div(id="at-drawdown-charts", style={"height": "100%", "width": "100%"})],
+        ),
+        html.Div(
+            id="at-drawdown-grid-container",
+            style=drawdown_grid_style,
+            children=[_at_standard_grid("at-drawdown-grid")],
+        ),
+    ]
+
+
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
                       active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
@@ -2349,608 +2839,71 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     value="returns",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dcc.Loading(
-                            id="at-loading-returns",
-                            type="default",
-                            delay_show=300,
-                            delay_hide=150,
-                            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                            children=[
-                                dag.AgGrid(
-                                    enableEnterpriseModules=True,
-                                    licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="at-returns-grid",
-                                    className='ag-theme-alpine',
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                        "suppressHeaderMenuButton": True,
-                                        "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "dashmat-center-header",
-                                    },
-                                    style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": False,
-                                        "suppressExcelExport": True,
-                                        "enableRangeSelection": True,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell("at-tab-returns-host", _build_at_returns_tab_body())],
                 ),
                 dmc.TabsPanel(
                     value="rolling",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.Select(
-                                    id="at-rolling-metric-select",
-                                    data=[
-                                        {"value": "total_return", "label": "Total Return"},
-                                        {"value": "volatility", "label": "Volatility"},
-                                        {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
-                                        {"value": "sortino_ratio", "label": "Sortino Ratio"},
-                                        {"value": "excess_return", "label": "Excess Return"},
-                                        {"value": "tracking_error", "label": "Tracking Error"},
-                                        {"value": "information_ratio", "label": "Information Ratio"},
-                                        {"value": "correlation", "label": "Correlation"},
-                                    ],
-                                    value=rolling_metric,
-                                    w=150,
-                                    size="sm",
-                                    clearable=False,
-                                ),
-                                dmc.Select(
-                                    id="at-rolling-window-select",
-                                    data=[
-                                        {"value": "3m", "label": "3-month"},
-                                        {"value": "6m", "label": "6-month"},
-                                        {"value": "1y", "label": "1-year"},
-                                        {"value": "3y", "label": "3-year"},
-                                        {"value": "5y", "label": "5-year"},
-                                        {"value": "10y", "label": "10-year"},
-                                    ],
-                                    value=rolling_window,
-                                    w=120,
-                                    size="sm",
-                                ),
-                                dmc.SegmentedControl(
-                                    id="at-rolling-return-type-select",
-                                    data=[
-                                        {"value": "cumulative", "label": "Cumulative"},
-                                        {"value": "annualized", "label": "Annualized"},
-                                    ],
-                                    value=rolling_return_type,
-                                    size="sm",
-                                    disabled=rolling_return_type_disabled,
-                                    style=rolling_return_type_style,
-                                ),
-                                dmc.SegmentedControl(
-                                    id="at-rolling-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value=rolling_chart_switch,
-                                    size="sm",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="at-rolling-grid-container",
-                            style=rolling_grid_style,
-                            children=[
-                                dag.AgGrid(
-                                    enableEnterpriseModules=True,
-                                    licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="at-rolling-grid",
-                                    className='ag-theme-alpine',
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                        "suppressHeaderMenuButton": True,
-                                        "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "dashmat-center-header",
-                                    },
-                                    style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": False,
-                                        "suppressExcelExport": True,
-                                        "enableRangeSelection": True,
-                                        "suppressCsvExport": True,
-                                    },
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="at-rolling-chart-container",
-                            style=rolling_chart_style,
-                            children=[
-                                html.Div(id="at-rolling-chart-wrapper", style={"height": "100%", "width": "100%"}),
-                            ],
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell(
+                        "at-tab-rolling-host",
+                        _build_at_rolling_tab_body("total_return", "1y", "annualized", "chart"),
+                    )],
                 ),
                 dmc.TabsPanel(
                     value="statistics",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dcc.Loading(
-                            id="at-loading-statistics",
-                            type="default",
-                            delay_show=300,
-                            delay_hide=150,
-                            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                            children=[
-                                dag.AgGrid(
-                                    enableEnterpriseModules=True,
-                                    licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="at-statistics-grid",
-                                    className='ag-theme-alpine',
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "resizable": True,
-                                        "suppressHeaderMenuButton": True,
-                                        "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "dashmat-center-header",
-                                    },
-                                    style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "suppressExcelExport": True,
-                                        "enableRangeSelection": True,
-                                        "suppressCsvExport": True,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell("at-tab-statistics-host", _build_at_statistics_tab_body())],
                 ),
                 dmc.TabsPanel(
                     value="calendar",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.SegmentedControl(
-                                    id="at-monthly-view-checkbox",
-                                    data=[
-                                        {"value": "annual", "label": "Annual"},
-                                        {"value": "monthly", "label": "Monthly"},
-                                    ],
-                                    value=monthly_view,
-                                    size="sm",
-                                ),
-                                dmc.Select(
-                                    id="at-monthly-series-select",
-                                    data=monthly_series_options,
-                                    value=monthly_series,
-                                    w=200,
-                                    size="sm",
-                                    placeholder="Select series",
-                                    disabled=monthly_select_disabled,
-                                ),
-                            ],
-                        ),
-                        dag.AgGrid(
-                            enableEnterpriseModules=True,
-                            licenseKey=AG_GRID_LICENSE_KEY,
-                            id="at-calendar-grid",
-                            className='ag-theme-alpine',
-                            columnDefs=[],
-                            rowData=[],
-                            defaultColDef={
-                                "sortable": True,
-                                "resizable": True,
-                                "suppressHeaderMenuButton": True,
-                                "cellStyle": {"textAlign": "center"},
-                                "headerClass": "dashmat-center-header",
-                            },
-                            style={"height": "100%", "width": "100%"},
-                            dashGridOptions={
-                                "animateRows": True,
-                                "suppressExcelExport": True,
-                                "enableRangeSelection": True,
-                                "suppressCsvExport": True,
-                            },
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell(
+                        "at-tab-calendar-host",
+                        _build_at_calendar_tab_body("annual", [], None, True),
+                    )],
                 ),
                 dmc.TabsPanel(
                     value="correlogram",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            gap="md",
-                            align="flex-end",
-                            children=[
-                                html.Div([
-                                    dmc.Text("View", size="sm", fw=500, mb=3),
-                                    html.Div(
-                                        dmc.SegmentedControl(
-                                            id="at-correlation-view-switch",
-                                            data=[
-                                                {"value": "correlation", "label": "Correlation"},
-                                                {"value": "covariance", "label": "Covariance"},
-                                                {"value": "correlogram", "label": "Correlogram"},
-                                            ],
-                                            value="correlogram",
-                                            size="sm",
-                                        ),
-                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
-                                    ),
-                                ]),
-                                html.Div([
-                                    dmc.Text("Exp Wt", size="sm", fw=500, mb=3),
-                                    html.Div(
-                                        dmc.Switch(
-                                            id="at-correlation-exp-wt-switch",
-                                            checked=False,
-                                            size="sm",
-                                        ),
-                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
-                                    ),
-                                ]),
-                                html.Div([
-                                    dmc.Text("Half-Life", size="sm", fw=500, mb=3),
-                                    html.Div(
-                                        dmc.Tooltip(
-                                            label=(
-                                                "Controls exponential decay for correlation or correlogram calculations when Exp Wt is enabled. "
-                                                "Values below 1 are treated as lambda, while values of 1 or higher are interpreted as half-life in periods. "
-                                                "Use shorter decay for faster adaptation or longer decay for smoother dependence estimates."
-                                            ),
-                                            multiline=True,
-                                            w=300,
-                                            withArrow=True,
-                                            children=dmc.NumberInput(
-                                                id="at-correlation-halflife-input",
-                                                label=None,
-                                                value=63,
-                                                min=0.001,
-                                                step=0.01,
-                                                w=100,
-                                                size="sm",
-                                                disabled=True,
-                                            ),
-                                        ),
-                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
-                                    ),
-                                ]),
-                                html.Div([
-                                        dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
-                                        html.Div(
-                                            dmc.Tooltip(
-                                            label=tooltip_text("at-correlation-shrinkage-select"),
-                                            multiline=True,
-                                            w=420,
-                                            withArrow=True,
-                                            children=dmc.Select(
-                                                id="at-correlation-shrinkage-select",
-                                                data=[
-                                                    {"value": "none", "label": "None"},
-                                                    {"value": "ledoit_wolf", "label": "Ledoit-Wolf"},
-                                                    {"value": "oas", "label": "OAS"},
-                                                ],
-                                                value="none",
-                                                searchable=False,
-                                                clearable=False,
-                                                w=130,
-                                                size="sm",
-                                            ),
-                                        ),
-                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
-                                    ),
-                                ]),
-                                html.Div([
-                                        dmc.Text("Target", size="sm", fw=500, mb=3),
-                                        html.Div(
-                                            dmc.Tooltip(
-                                            label=tooltip_text("at-correlation-shrinkage-target-select"),
-                                            multiline=True,
-                                            w=420,
-                                            withArrow=True,
-                                            children=dmc.Select(
-                                                id="at-correlation-shrinkage-target-select",
-                                                data=[
-                                                    {"value": "scaled_identity", "label": "Scaled Identity"},
-                                                    {"value": "constant_correlation", "label": "Constant Correlation"},
-                                                ],
-                                                value="scaled_identity",
-                                                searchable=False,
-                                                clearable=False,
-                                                w=180,
-                                                size="sm",
-                                                disabled=True,
-                                            ),
-                                        ),
-                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
-                                    ),
-                                ]),
-                                html.Div([
-                                    dmc.Text("Block Size", size="sm", fw=500, mb=3),
-                                    dmc.NumberInput(
-                                        id="at-correlogram-block-width",
-                                        label=None,
-                                        value=None,
-                                        min=50,
-                                        step=50,
-                                        suffix="px",
-                                        w=110,
-                                        size="sm",
-                                    ),
-                                ]),
-                            ],
-                        ),
-                        dcc.Loading(
-                            id="at-loading-correlogram",
-                            type="default",
-                            delay_show=0,
-                            delay_hide=150,
-                            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
-                            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
-                            children=[
-                                html.Div(
-                                    id="at-correlogram-container",
-                                    style={"flex": "1", "minHeight": "520px", "overflow": "auto"},
-                                ),
-                            ],
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell(
+                        "at-tab-correlogram-host",
+                        _build_at_correlogram_tab_body(),
+                        overflow="auto",
+                    )],
                 ),
                 dmc.TabsPanel(
                     value="factor_analysis",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            gap="md",
-                            align="flex-end",
-                            children=[
-                                html.Div([
-                                    dmc.Text("Mode", size="sm", fw=500, mb=3),
-                                    dmc.SegmentedControl(
-                                        id="at-factor-mode-select",
-                                        data=[
-                                            {"value": "box", "label": "Box Plot"},
-                                            {"value": "scatter", "label": "Scatter"},
-                                        ],
-                                        value=factor_mode,
-                                        size="sm",
-                                    ),
-                                ]),
-                                dmc.Select(
-                                    id="at-factor-series-select",
-                                    label="Factor",
-                                    data=factor_series_options,
-                                    value=factor_series_value,
-                                    w=280,
-                                    size="sm",
-                                    searchable=True,
-                                    clearable=False,
-                                    placeholder="Select factor series",
-                                ),
-                                html.Div([
-                                    dmc.Text("Definitions", size="sm", fw=500, mb=3),
-                                    dmc.Button(
-                                        "Edit factors",
-                                        id="at-factor-open-modal-btn",
-                                        size="sm",
-                                        variant="light",
-                                        leftSection=DashIconify(icon="tabler:math-function", width=14),
-                                    ),
-                                ]),
-                                html.Div(
-                                    id="at-factor-quantiles-wrapper",
-                                    style={"display": "block"},
-                                    children=[
-                                        dmc.NumberInput(
-                                            id="at-factor-quantiles-input",
-                                            label="Quantiles",
-                                            value=factor_quantiles,
-                                            min=2,
-                                            max=20,
-                                            step=1,
-                                            w=120,
-                                            size="sm",
-                                        ),
-                                    ],
-                                ),
-                                html.Div([
-                                    dmc.Text("Factor Transform", size="sm", fw=500, mb=3),
-                                    dmc.SegmentedControl(
-                                        id="at-factor-transform-select",
-                                        data=[
-                                            {"value": "raw", "label": "Raw"},
-                                            {"value": "zscore", "label": "Z-Score"},
-                                        ],
-                                        value=factor_transform,
-                                        size="sm",
-                                    ),
-                                ]),
-                            ],
-                        ),
-                        html.Div(id="at-factor-analysis-warning"),
-                        html.Div(
-                            id="at-factor-analysis-container",
-                            style={"flex": "1", "overflow": "auto"},
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell(
+                        "at-tab-factor-analysis-host",
+                        _build_at_factor_analysis_tab_body("box", 5, "raw", None),
+                    )],
                 ),
                 dmc.TabsPanel(
                     value="regime_analysis",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            gap="md",
-                            align="flex-end",
-                            children=[
-                                dmc.Select(
-                                    id="at-regime-definition-select",
-                                    label="Regime definition",
-                                    data=[],
-                                    value=None,
-                                    w=340,
-                                    size="sm",
-                                    searchable=True,
-                                    clearable=True,
-                                    placeholder="Select regime definition",
-                                    nothingFoundMessage="No saved regimes",
-                                ),
-                                html.Div([
-                                    dmc.Text("Definitions", size="sm", fw=500, mb=3),
-                                    dmc.Button(
-                                        "Edit regimes",
-                                        id="at-regime-open-modal-btn",
-                                        size="sm",
-                                        variant="light",
-                                        leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
-                                    ),
-                                ]),
-                            ],
-                        ),
-                        html.Div(id="at-regime-analysis-warning"),
-                        html.Div(
-                            id="at-regime-analysis-container",
-                            style={"flex": "1", "overflow": "auto"},
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell(
+                        "at-tab-regime-analysis-host",
+                        _build_at_regime_analysis_tab_body(None),
+                    )],
                 ),
                 dmc.TabsPanel(
                     value="growth",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.SegmentedControl(
-                                    id="at-growth-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value=growth_chart_switch,
-                                    size="sm",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="at-growth-chart-container",
-                            style=growth_chart_style,
-                            children=[
-                                html.Div(id="at-growth-charts-container", style={"height": "100%", "width": "100%"}),
-                            ],
-                        ),
-                        html.Div(
-                            id="at-growth-grid-container",
-                            style=growth_grid_style,
-                            children=[
-                                dag.AgGrid(
-                                    enableEnterpriseModules=True,
-                                    licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="at-growth-grid",
-                                    className='ag-theme-alpine',
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                        "suppressHeaderMenuButton": True,
-                                        "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "dashmat-center-header",
-                                    },
-                                    style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": False,
-                                        "suppressExcelExport": True,
-                                        "enableRangeSelection": True,
-                                        "suppressCsvExport": True,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell("at-tab-growth-host", _build_at_growth_tab_body("chart"))],
                 ),
                 dmc.TabsPanel(
                     value="drawdown",
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
-                    children=[
-                        dmc.Group(
-                            mb="md",
-                            children=[
-                                dmc.SegmentedControl(
-                                    id="at-drawdown-chart-switch",
-                                    data=[
-                                        {"value": "table", "label": "Table"},
-                                        {"value": "chart", "label": "Chart"},
-                                    ],
-                                    value=drawdown_chart_switch,
-                                    size="sm",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            id="at-drawdown-chart-container",
-                            style=drawdown_chart_style,
-                            children=[
-                                html.Div(id="at-drawdown-charts", style={"height": "100%", "width": "100%"}),
-                            ],
-                        ),
-                        html.Div(
-                            id="at-drawdown-grid-container",
-                            style=drawdown_grid_style,
-                            children=[
-                                dag.AgGrid(
-                                    enableEnterpriseModules=True,
-                                    licenseKey=AG_GRID_LICENSE_KEY,
-                                    id="at-drawdown-grid",
-                                    className='ag-theme-alpine',
-                                    columnDefs=[],
-                                    rowData=[],
-                                    defaultColDef={
-                                        "sortable": True,
-                                        "resizable": True,
-                                        "suppressHeaderMenuButton": True,
-                                        "cellStyle": {"textAlign": "center"},
-                                        "headerClass": "dashmat-center-header",
-                                    },
-                                    style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
-                                        "animateRows": True,
-                                        "pagination": False,
-                                        "suppressExcelExport": True,
-                                        "enableRangeSelection": True,
-                                        "suppressCsvExport": True,
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
+                    children=[_at_panel_loading_shell("at-tab-drawdown-host", _build_at_drawdown_tab_body("chart"))],
                 ),
             ],
         ),
@@ -4087,6 +4040,9 @@ layout = dmc.Container(
         dcc.Store(id="at-series-select-value-store", data=[], storage_type="session"),
         dcc.Store(id="at-series-order-store", data=[], storage_type="session"),
         dcc.Store(id="at-active-tab-store", data="statistics", storage_type="session"),
+        dcc.Store(id="at-mounted-tabs-store", data=[], storage_type="memory"),
+        dcc.Store(id="at-tab-mount-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-help-mounted-store", data=False, storage_type="memory"),
         dcc.Store(id="at-rolling-window-store", data="1y", storage_type="session"),
         dcc.Store(id="at-rolling-metric-store", data="total_return", storage_type="session"),
         dcc.Store(id="at-rolling-return-type-store", data="annualized", storage_type="session"),
@@ -5401,26 +5357,162 @@ clientside_callback(
 )
 
 
+def _at_has_mounted_tab(mounted_tabs, tab_value: str) -> bool:
+    return tab_value in (mounted_tabs or [])
+
+
+@callback(
+    Output("at-mounted-tabs-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-page-ready-store", "data"),
+    State("at-mounted-tabs-store", "data"),
+    prevent_initial_call=False,
+)
+def at_track_mounted_tabs(active_tab, page_ready, mounted_tabs):
+    if not page_ready:
+        return []
+    tabs = list(mounted_tabs or [])
+    if not active_tab:
+        return tabs
+    if active_tab in tabs:
+        raise PreventUpdate
+    tabs.append(active_tab)
+    return tabs
+
+
+@callback(
+    Output("at-tab-statistics-host", "children"),
+    Output("at-tab-returns-host", "children"),
+    Output("at-tab-rolling-host", "children"),
+    Output("at-tab-calendar-host", "children"),
+    Output("at-tab-growth-host", "children"),
+    Output("at-tab-drawdown-host", "children"),
+    Output("at-tab-correlogram-host", "children"),
+    Output("at-tab-factor-analysis-host", "children"),
+    Output("at-tab-regime-analysis-host", "children"),
+    Output("at-tab-mount-trigger-store", "data"),
+    Input("at-mounted-tabs-store", "data"),
+    State("at-tab-statistics-host", "children"),
+    State("at-tab-returns-host", "children"),
+    State("at-tab-rolling-host", "children"),
+    State("at-tab-calendar-host", "children"),
+    State("at-tab-growth-host", "children"),
+    State("at-tab-drawdown-host", "children"),
+    State("at-tab-correlogram-host", "children"),
+    State("at-tab-factor-analysis-host", "children"),
+    State("at-tab-regime-analysis-host", "children"),
+    State("at-rolling-metric-store", "data"),
+    State("at-rolling-window-store", "data"),
+    State("at-rolling-return-type-store", "data"),
+    State("at-rolling-chart-switch-store", "data"),
+    State("at-monthly-view-store", "data"),
+    State("at-monthly-series-store", "data"),
+    State("at-series-select", "data"),
+    State("at-growth-chart-switch-store", "data"),
+    State("at-drawdown-chart-switch-store", "data"),
+    State("at-factor-mode-store", "data"),
+    State("at-factor-quantiles-store", "data"),
+    State("at-factor-transform-store", "data"),
+    State("at-factor-series-store", "data"),
+    State("at-regime-definition-store", "data"),
+    prevent_initial_call=True,
+)
+def at_mount_tab_bodies(
+    mounted_tabs,
+    statistics_children,
+    returns_children,
+    rolling_children,
+    calendar_children,
+    growth_children,
+    drawdown_children,
+    correlogram_children,
+    factor_children,
+    regime_children,
+    rolling_metric,
+    rolling_window,
+    rolling_return_type,
+    rolling_chart_switch,
+    monthly_view,
+    monthly_series,
+    selected_series,
+    growth_chart_switch,
+    drawdown_chart_switch,
+    factor_mode,
+    factor_quantiles,
+    factor_transform,
+    factor_series_value,
+    regime_definition_value,
+):
+    mounted_tabs = mounted_tabs or []
+    monthly_series_options = [{"value": s, "label": s} for s in (selected_series or [])]
+    monthly_select_disabled = monthly_view != "monthly" or not bool(monthly_series_options)
+    outputs = []
+    hosts = [
+        ("statistics", statistics_children, _build_at_statistics_tab_body),
+        ("returns", returns_children, _build_at_returns_tab_body),
+        ("rolling", rolling_children, lambda: _build_at_rolling_tab_body(
+            rolling_metric or "total_return",
+            rolling_window or "1y",
+            rolling_return_type or "annualized",
+            rolling_chart_switch or "chart",
+        )),
+        ("calendar", calendar_children, lambda: _build_at_calendar_tab_body(
+            monthly_view or "annual",
+            monthly_series_options,
+            monthly_series,
+            monthly_select_disabled,
+        )),
+        ("growth", growth_children, lambda: _build_at_growth_tab_body(growth_chart_switch or "chart")),
+        ("drawdown", drawdown_children, lambda: _build_at_drawdown_tab_body(drawdown_chart_switch or "chart")),
+        ("correlogram", correlogram_children, _build_at_correlogram_tab_body),
+        ("factor_analysis", factor_children, lambda: _build_at_factor_analysis_tab_body(
+            factor_mode or "box",
+            _coerce_factor_quantiles(factor_quantiles, default=5),
+            factor_transform or "raw",
+            factor_series_value,
+        )),
+        ("regime_analysis", regime_children, lambda: _build_at_regime_analysis_tab_body(regime_definition_value)),
+    ]
+    mounted_any = False
+    for tab_value, current_children, builder in hosts:
+        if tab_value not in mounted_tabs:
+            outputs.append(no_update)
+            continue
+        if current_children:
+            outputs.append(no_update)
+            continue
+        outputs.append(builder())
+        mounted_any = True
+    outputs.append({"mounted_tabs": list(mounted_tabs)} if mounted_any else no_update)
+    return tuple(outputs)
+
+
 @callback(
     Output("at-factor-series-select", "data"),
     Output("at-factor-series-select", "value", allow_duplicate=True),
     Input("at-series-select", "data"),
     Input("at-factor-definitions-db-store", "data"),
     Input("at-factor-definitions-local-store", "data"),
+    Input("at-tab-mount-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("at-factor-series-store", "data"),
     State("at-factor-series-select", "value"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def update_factor_series_select(
     selected_series,
     db_definitions,
     local_definitions,
+    _tab_mount_trigger,
     raw_data,
     stored_factor_series,
     current_factor_series,
+    mounted_tabs,
 ):
     """Expose raw and custom factor candidates, with selected raw series first."""
+    if not _at_has_mounted_tab(mounted_tabs, "factor_analysis"):
+        raise PreventUpdate
     if raw_data is None:
         return [], None
 
@@ -5922,16 +6014,22 @@ def at_manage_factor_definitions(
     Output("at-regime-definition-select", "value", allow_duplicate=True),
     Input("at-regime-definitions-db-store", "data"),
     Input("at-regime-definitions-local-store", "data"),
+    Input("at-tab-mount-trigger-store", "data"),
     State("at-regime-definition-store", "data"),
     State("at-regime-definition-select", "value"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def at_update_regime_definition_analysis_select_options(
     db_definitions,
     local_definitions,
+    _tab_mount_trigger,
     stored_selection,
     current_selection,
+    mounted_tabs,
 ):
+    if not _at_has_mounted_tab(mounted_tabs, "regime_analysis"):
+        raise PreventUpdate
     entries = _regime_option_definitions(db_definitions, local_definitions)
     options = []
     names = []
@@ -8153,6 +8251,7 @@ def update_date_range_store(start_date, end_date, existing_range):
 @callback(
     Output("at-returns-grid", "columnDefs"),
     Output("at-returns-grid", "rowData"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
     Input("at-returns-type-select", "value"),
@@ -8163,10 +8262,13 @@ def update_date_range_store(start_date, end_date, existing_range):
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data):
+def update_grid(_tab_mount_trigger, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, mounted_tabs):
     """Update the AG Grid based on selections (optimized with caching)."""
+    if not _at_has_mounted_tab(mounted_tabs, "returns"):
+        raise PreventUpdate
     if not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
@@ -8261,6 +8363,7 @@ def control_statistics_loading_display(active_tab, state_ready, statistics_loade
 @callback(
     Output("at-rolling-grid", "columnDefs"),
     Output("at-rolling-grid", "rowData"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-rolling-chart-switch", "value"),
     Input("at-periodicity-select", "value"),
@@ -8275,10 +8378,13 @@ def control_statistics_loading_display(active_tab, state_ready, statistics_loade
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(active_tab, chart_checked, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data):
+def update_rolling_grid(_tab_mount_trigger, active_tab, chart_checked, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, mounted_tabs):
     """Update the Rolling Returns grid with rolling window calculations."""
+    if not _at_has_mounted_tab(mounted_tabs, "rolling"):
+        raise PreventUpdate
     # Lazy loading: only calculate when rolling tab/table view is active and ready.
     if active_tab != "rolling" or chart_checked != "table" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
@@ -8344,6 +8450,7 @@ def update_rolling_grid(active_tab, chart_checked, periodicity, selected_series,
 
 @callback(
     Output("at-rolling-chart-wrapper", "children"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-rolling-chart-switch", "value"),
     Input("at-periodicity-select", "value"),
@@ -8359,10 +8466,13 @@ def update_rolling_grid(active_tab, chart_checked, periodicity, selected_series,
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, chart_checked, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, theme):
+def update_rolling_chart(_tab_mount_trigger, active_tab, chart_checked, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, theme, mounted_tabs):
     """Update the Rolling Returns chart with rolling window calculations."""
+    if not _at_has_mounted_tab(mounted_tabs, "rolling"):
+        raise PreventUpdate
     # Create empty figure
     empty_fig = go.Figure()
     empty_fig.update_layout(
@@ -8482,14 +8592,18 @@ def update_rolling_chart(active_tab, chart_checked, periodicity, selected_series
     Output("at-monthly-series-select", "disabled"),
     Output("at-monthly-series-select", "data"),
     Output("at-monthly-series-select", "value", allow_duplicate=True),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-monthly-view-checkbox", "value"),
     Input("at-series-select", "data"),
     State("at-monthly-series-store", "data"),
     State("at-monthly-series-select", "value"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_monthly_series_select(monthly_view, selected_series, stored_monthly_series, current_value):
+def update_monthly_series_select(_tab_mount_trigger, monthly_view, selected_series, stored_monthly_series, current_value, mounted_tabs):
     """Enable/disable monthly series select and populate with available series."""
+    if not _at_has_mounted_tab(mounted_tabs, "calendar"):
+        raise PreventUpdate
     # Check which input triggered the callback
     ctx = callback_context
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
@@ -8528,6 +8642,7 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
 @callback(
     Output("at-calendar-grid", "columnDefs"),
     Output("at-calendar-grid", "rowData"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("dashmat-original-periodicity-store", "data"),
     Input("at-periodicity-select", "value"),
@@ -8542,10 +8657,13 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(active_tab, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, raw_data):
+def update_calendar_grid(_tab_mount_trigger, active_tab, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, raw_data, mounted_tabs):
     """Update the Calendar Year Returns grid (lazy loaded)."""
+    if not _at_has_mounted_tab(mounted_tabs, "calendar"):
+        raise PreventUpdate
     # Lazy loading: only calculate when calendar tab is active
     if active_tab != "calendar" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
@@ -8683,6 +8801,7 @@ def update_calendar_grid(active_tab, original_periodicity, selected_periodicity,
     Output("at-statistics-grid", "columnDefs"),
     Output("at-statistics-grid", "rowData"),
     Output("at-statistics-loaded-store", "data", allow_duplicate=True),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
     Input("at-benchmark-assignments-store", "data"),
@@ -8693,10 +8812,13 @@ def update_calendar_grid(active_tab, original_periodicity, selected_periodicity,
     Input("at-vol-scaling-assignments-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, saved_series_store, raw_data):
+def update_statistics(_tab_mount_trigger, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, saved_series_store, raw_data, mounted_tabs):
     """Update the Statistics grid with transposed data (optimized with caching)."""
+    if not _at_has_mounted_tab(mounted_tabs, "statistics"):
+        raise PreventUpdate
     if not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
@@ -8946,6 +9068,7 @@ clientside_callback(
 @callback(
     Output("at-correlogram-container", "children"),
     Output("at-correlogram-rendered-key-store", "data", allow_duplicate=True),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-correlogram-target-key-store", "data"),
     State("at-main-tabs", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -8965,10 +9088,13 @@ clientside_callback(
     State("at-correlation-view-switch", "value"),
     State("at-correlogram-block-width", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, shrinkage_target, correlation_view, block_width, theme):
+def update_correlogram(_tab_mount_trigger, target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, shrinkage_target, correlation_view, block_width, theme, mounted_tabs):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
+    if not _at_has_mounted_tab(mounted_tabs, "correlogram"):
+        raise PreventUpdate
     # Define empty figure
     empty_fig = go.Figure()
     empty_fig.add_annotation(
@@ -9324,6 +9450,7 @@ def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_ser
 @callback(
     Output("at-factor-analysis-warning", "children"),
     Output("at-factor-analysis-container", "children"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-factor-mode-select", "value"),
     Input("at-factor-series-select", "value"),
@@ -9342,9 +9469,11 @@ def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_ser
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def update_factor_analysis(
+    _tab_mount_trigger,
     active_tab,
     factor_mode,
     factor_series,
@@ -9363,8 +9492,11 @@ def update_factor_analysis(
     theme,
     factor_definitions_db=None,
     factor_definitions_local=None,
+    mounted_tabs=None,
 ):
     """Render Factor Analysis charts for selected series."""
+    if not _at_has_mounted_tab(mounted_tabs, "factor_analysis"):
+        raise PreventUpdate
     if (
         active_tab != "factor_analysis"
         or not state_ready
@@ -9613,6 +9745,7 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
 @callback(
     Output("at-regime-analysis-warning", "children"),
     Output("at-regime-analysis-container", "children"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-regime-definition-select", "value"),
     Input("at-periodicity-select", "value"),
@@ -9629,9 +9762,11 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     State("at-regime-definitions-db-store", "data"),
     State("at-regime-definitions-local-store", "data"),
     State("at-regime-series-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
 def update_regime_analysis(
+    _tab_mount_trigger,
     active_tab,
     regime_definition_key,
     periodicity,
@@ -9648,7 +9783,10 @@ def update_regime_analysis(
     regime_definitions_db=None,
     regime_definitions_local=None,
     regime_series_store=None,
+    mounted_tabs=None,
 ):
+    if not _at_has_mounted_tab(mounted_tabs, "regime_analysis"):
+        raise PreventUpdate
     if (
         active_tab != "regime_analysis"
         or not state_ready
@@ -9776,6 +9914,7 @@ def update_regime_analysis(
 
 @callback(
     Output("at-growth-charts-container", "children"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-growth-chart-switch", "value"),
     Input("at-periodicity-select", "value"),
@@ -9788,10 +9927,13 @@ def update_regime_analysis(
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_charts(active_tab, chart_checked, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, theme):
+def update_growth_charts(_tab_mount_trigger, active_tab, chart_checked, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, theme, mounted_tabs):
     """Update Growth of $1 charts (lazy loaded)."""
+    if not _at_has_mounted_tab(mounted_tabs, "growth"):
+        raise PreventUpdate
     # Lazy loading: only generate when growth tab is active and chart view is selected
     if (
         active_tab != "growth"
@@ -9969,6 +10111,7 @@ def update_growth_charts(active_tab, chart_checked, periodicity, selected_series
 @callback(
     Output("at-growth-grid", "columnDefs"),
     Output("at-growth-grid", "rowData"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-growth-chart-switch", "value"),
     Input("at-periodicity-select", "value"),
@@ -9980,10 +10123,13 @@ def update_growth_charts(active_tab, chart_checked, periodicity, selected_series
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_grid(active_tab, chart_checked, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data):
+def update_growth_grid(_tab_mount_trigger, active_tab, chart_checked, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, mounted_tabs):
     """Update Growth of $1 grid (lazy loaded)."""
+    if not _at_has_mounted_tab(mounted_tabs, "growth"):
+        raise PreventUpdate
     # Lazy loading: only generate when growth tab is active and table view is selected
     if (
         active_tab != "growth"
@@ -10044,6 +10190,7 @@ def update_growth_grid(active_tab, chart_checked, periodicity, selected_series, 
 
 @callback(
     Output("at-drawdown-charts", "children"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-drawdown-chart-switch", "value"),
     Input("at-periodicity-select", "value"),
@@ -10057,10 +10204,13 @@ def update_growth_grid(active_tab, chart_checked, periodicity, selected_series, 
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_charts(active_tab, chart_checked, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, theme):
+def update_drawdown_charts(_tab_mount_trigger, active_tab, chart_checked, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, theme, mounted_tabs):
     """Update Drawdown charts (lazy loaded)."""
+    if not _at_has_mounted_tab(mounted_tabs, "drawdown"):
+        raise PreventUpdate
     # Lazy loading: only generate when drawdown tab is active and chart view is selected
     if (
         active_tab != "drawdown"
@@ -10126,6 +10276,7 @@ def update_drawdown_charts(active_tab, chart_checked, periodicity, selected_seri
 @callback(
     Output("at-drawdown-grid", "columnDefs"),
     Output("at-drawdown-grid", "rowData"),
+    Input("at-tab-mount-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-drawdown-chart-switch", "value"),
     Input("at-periodicity-select", "value"),
@@ -10138,10 +10289,13 @@ def update_drawdown_charts(active_tab, chart_checked, periodicity, selected_seri
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("at-mounted-tabs-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_grid(active_tab, chart_checked, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data):
+def update_drawdown_grid(_tab_mount_trigger, active_tab, chart_checked, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, raw_data, mounted_tabs):
     """Update Drawdown grid (lazy loaded)."""
+    if not _at_has_mounted_tab(mounted_tabs, "drawdown"):
+        raise PreventUpdate
     # Lazy loading: only generate when drawdown tab is active and table view is selected
     if (
         active_tab != "drawdown"

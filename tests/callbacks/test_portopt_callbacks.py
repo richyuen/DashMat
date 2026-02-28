@@ -171,6 +171,7 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
         results,
         "attribution",
         "table",
+        None,
         "raw-json",
         "daily",
         {},
@@ -178,6 +179,7 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
         None,
         0,
         {},
+        ["attribution"],
     )
 
     assert column_defs[0]["field"] == "Date"
@@ -203,7 +205,15 @@ def test_po_render_statistics_transposes_stats(monkeypatch, page_modules):
         "P2": {"returns_json": s2.to_json(date_format="iso")},
     }
 
-    column_defs, row_data = portopt.po_render_statistics(results, "statistics", ["P1", "P2"], None, "daily")
+    column_defs, row_data = portopt.po_render_statistics(
+        results,
+        "statistics",
+        ["P1", "P2"],
+        None,
+        None,
+        "daily",
+        mounted_tabs=["statistics"],
+    )
 
     assert column_defs[0]["field"] == "Statistic"
     assert {c["field"] for c in column_defs[1:]} == {"P1", "P2"}
@@ -218,7 +228,7 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     s1 = pd.Series([0.01, 0.02], index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
     results = {"P1": {"returns_json": s1.to_json(date_format="iso")}}
 
-    column_defs, row_data = portopt.po_render_returns(results, "returns", ["P1"])
+    column_defs, row_data = portopt.po_render_returns(results, "returns", ["P1"], None, mounted_tabs=["returns"])
     assert column_defs[0]["field"] == "Date"
     assert column_defs[1]["field"] == "P1"
     assert row_data[0]["Date"] == "2024-01-01"
@@ -601,6 +611,7 @@ def test_po_render_growth_chart_table_mode_returns_grid_with_wide_date_column(mo
         {"P1": {"window_weights": _sample_window_weights()}},
         "growth",
         "table",
+        None,
         "raw-json",
         "daily",
         {},
@@ -609,6 +620,7 @@ def test_po_render_growth_chart_table_mode_returns_grid_with_wide_date_column(mo
         0,
         {},
         "light",
+        ["growth"],
     )
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
@@ -636,6 +648,7 @@ def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeyp
         "annualized",
         "total_return",
         "table",
+        None,
         "raw-json",
         {},
         {},
@@ -643,6 +656,7 @@ def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeyp
         0,
         {},
         "light",
+        ["rolling"],
     )
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
@@ -666,6 +680,7 @@ def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkey
         "P1",
         "daily",
         "table",
+        None,
         "raw-json",
         {},
         {},
@@ -673,6 +688,7 @@ def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkey
         0,
         {},
         "light",
+        ["drawdown"],
     )
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
@@ -688,7 +704,7 @@ def test_po_populate_frontier_windows_disables_for_ex_ante_model(page_modules):
         }
     }
 
-    options, value, disabled = portopt.po_populate_frontier_windows("P1", results, "frontier")
+    options, value, disabled = portopt.po_populate_frontier_windows("P1", results, "frontier", None, ["frontier"])
     assert len(options) == 2
     assert value == "1"
     assert disabled is True
@@ -702,7 +718,7 @@ def test_po_render_turnover_table_computes_turnover(page_modules):
         }
     }
 
-    column_defs, row_data = portopt.po_render_turnover_table("P1", results, "turnover", "table")
+    column_defs, row_data = portopt.po_render_turnover_table("P1", results, "turnover", "table", None, ["turnover"])
     assert column_defs[0]["field"] == "Rebalance Date"
     assert row_data[0]["Turnover"] == pytest.approx(0.1)
 
@@ -1021,7 +1037,7 @@ def test_po_update_frontier_risk_measure_options_restricts_ex_ante(page_modules)
     _, portopt = page_modules
     results = {"P1": {"config": {"model": "ex_ante_mv"}}}
 
-    options, value = portopt.po_update_frontier_risk_measure_options("P1", results, "CVaR")
+    options, value = portopt.po_update_frontier_risk_measure_options("P1", results, None, "CVaR", ["frontier"])
     assert options == [{"value": "MV", "label": "Volatility"}]
     assert value == "MV"
 
@@ -1057,6 +1073,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         "table",
         "1",
         "MV",
+        None,
         "raw-json",
         "daily",
         {},
@@ -1066,6 +1083,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         {},
         None,
         [],
+        ["frontier"],
     )
 
     assert any(col["field"] == "Wt_Asset_A" for col in column_defs)
