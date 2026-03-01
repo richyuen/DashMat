@@ -21,7 +21,8 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import get_sheet_names
 from utils.date_range_flow import (
-    compute_date_range_candidates_from_global_metadata,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -38,6 +39,7 @@ from utils.returns import (
     get_available_periodicities,
     get_working_returns,
     json_to_df,
+    PERIODICITY_LABELS,
     annualization_factor,
 )
 from utils.statistics import (
@@ -150,6 +152,33 @@ def _reg_route_intent_token_to_consume(route_intent, action, consumed_token, *, 
         consumed_token,
         flow=flow,
     )
+
+
+def _reg_build_import_modal_request(route_intent, consumed_token):
+    intent_token = _reg_route_intent_token_to_consume(
+        route_intent,
+        ACTION_OPEN_IMPORT_MODAL,
+        consumed_token,
+    )
+    if not intent_token:
+        return None
+
+    flow = str(route_intent_value(route_intent, "flow", "")).strip().lower()
+    if flow == FLOW_DB:
+        return {"flow": FLOW_DB, "token": intent_token}
+    if flow == FLOW_UNDERLYING:
+        return {"flow": FLOW_UNDERLYING, "token": intent_token}
+    if flow == FLOW_RAW:
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        if mode in {"factor", "funds", "performance"}:
+            return {"flow": FLOW_RAW, "mode": mode, "token": intent_token}
+        return None
+    if flow == FLOW_PORTFOLIO:
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        if mode in {"peer", "index", "other"}:
+            return {"flow": FLOW_PORTFOLIO, "mode": mode, "token": intent_token}
+        return None
+    return None
 
 
 _MODEL_OPTIONS = [
@@ -2217,6 +2246,10 @@ layout = dmc.Container(
         dcc.Store(id="reg-series-selection-open-request-store", data=None),
         dcc.Store(id="reg-series-selection-grid-status-store", data=None),
         dcc.Store(id="reg-route-intent-consumed-token-store", data=None, storage_type="session"),
+        dcc.Store(id="reg-db-add-request-store", data=None),
+        dcc.Store(id="reg-raw-db-add-request-store", data=None),
+        dcc.Store(id="reg-portfolio-add-request-store", data=None),
+        dcc.Store(id="reg-underlying-add-request-store", data=None),
         dcc.Store(id="reg-portfolio-add-mode-store", data=None),
         dcc.Store(id="reg-portfolio-add-rows-store", data=[]),
         dcc.Store(id="reg-underlying-add-rows-store", data=[]),
@@ -2812,26 +2845,16 @@ def reg_clear_server_cache(n_clicks):
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-from-db", "n_clicks"),
-    Input("reg-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("reg-route-intent-consumed-token-store", "data"),
+    Input("reg-db-add-request-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_db_add_modal(menu_clicks=None, page_load_intervals=None, route_intent=None, consumed_token=None):
+def reg_open_db_add_modal(menu_clicks=None, open_request=None):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "reg-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
-        intent_token = _reg_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_DB,
-        )
-        if not intent_token:
+    if triggered_id == "reg-db-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_DB:
             raise PreventUpdate
         result = compute_open_db_add_modal(DB_ENGINE)
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     if not menu_clicks:
         raise PreventUpdate
@@ -2956,32 +2979,20 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
     Input("reg-menu-add-raw-factor", "n_clicks"),
     Input("reg-menu-add-raw-funds", "n_clicks"),
     Input("reg-menu-add-raw-performance", "n_clicks"),
-    Input("reg-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("reg-route-intent-consumed-token-store", "data"),
+    Input("reg-raw-db-add-request-store", "data"),
     prevent_initial_call=True,
 )
 def reg_open_raw_db_add_modal(
     factor_clicks,
     funds_clicks,
     performance_clicks,
-    page_load_intervals=None,
-    route_intent=None,
-    consumed_token=None,
+    open_request=None,
 ):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "reg-page-load-trigger":
-        if page_load_intervals is None:
+    if triggered_id == "reg-raw-db-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_RAW:
             raise PreventUpdate
-        intent_token = _reg_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_RAW,
-        )
-        if not intent_token:
-            raise PreventUpdate
-        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        mode = str(open_request.get("mode", "")).strip().lower()
         if mode not in {"factor", "funds", "performance"}:
             raise PreventUpdate
         result = compute_open_raw_db_add_modal(
@@ -2989,7 +3000,7 @@ def reg_open_raw_db_add_modal(
             mrd_engine=MRD_ENGINE,
             perf_engine=PERF_ENGINE,
         )
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     mode = resolve_raw_db_add_mode("reg", triggered_id)
     if not mode:
@@ -3369,39 +3380,27 @@ def reg_update_raw_db_preview(
     Input("reg-menu-add-portfolios-peer", "n_clicks"),
     Input("reg-menu-add-portfolios-index", "n_clicks"),
     Input("reg-menu-add-portfolios-other", "n_clicks"),
-    Input("reg-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("reg-route-intent-consumed-token-store", "data"),
+    Input("reg-portfolio-add-request-store", "data"),
     prevent_initial_call=True,
 )
 def reg_open_portfolio_add_modal(
     peer_clicks,
     index_clicks,
     other_clicks,
-    page_load_intervals=None,
-    route_intent=None,
-    consumed_token=None,
+    open_request=None,
 ):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "reg-page-load-trigger":
-        if page_load_intervals is None:
+    if triggered_id == "reg-portfolio-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_PORTFOLIO:
             raise PreventUpdate
-        intent_token = _reg_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_PORTFOLIO,
-        )
-        if not intent_token:
-            raise PreventUpdate
-        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        mode = str(open_request.get("mode", "")).strip().lower()
         if mode not in {"peer", "index", "other"}:
             raise PreventUpdate
         result = compute_open_portfolio_add_modal(
             mode=mode,
             db_engine=DB_ENGINE,
         )
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     mode = resolve_portfolio_add_mode("reg", triggered_id)
     if not mode:
@@ -3427,26 +3426,16 @@ def reg_open_portfolio_add_modal(
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-underlying", "n_clicks"),
-    Input("reg-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("reg-route-intent-consumed-token-store", "data"),
+    Input("reg-underlying-add-request-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_underlying_add_modal(menu_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+def reg_open_underlying_add_modal(menu_clicks, open_request=None):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "reg-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
-        intent_token = _reg_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_UNDERLYING,
-        )
-        if not intent_token:
+    if triggered_id == "reg-underlying-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_UNDERLYING:
             raise PreventUpdate
         result = compute_open_underlying_add_modal()
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     if not menu_clicks:
         raise PreventUpdate
@@ -4060,7 +4049,7 @@ clientside_callback(
     Output("reg-periodicity-select", "data"),
     Output("reg-periodicity-select", "value"),
     Output("reg-base-controls-ready-store", "data"),
-    Input("dashmat-raw-data-metadata-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("dashmat-original-periodicity-store", "data"),
     State("reg-periodicity-value-store", "data"),
@@ -4068,9 +4057,9 @@ clientside_callback(
 )
 
 
-def _reg_toggle_main_visibility(raw_data_metadata, n_intervals, original_periodicity, stored_periodicity):
+def _reg_toggle_main_visibility(raw_data_summary, n_intervals, original_periodicity, stored_periodicity):
     _, main_style, options, value, base_ready = reg_toggle_welcome(
-        raw_data_metadata,
+        raw_data_summary,
         n_intervals,
         original_periodicity,
         stored_periodicity,
@@ -4078,16 +4067,20 @@ def _reg_toggle_main_visibility(raw_data_metadata, n_intervals, original_periodi
     return main_style, options, value, base_ready
 
 
-def reg_toggle_welcome(raw_data_metadata, n_intervals, original_periodicity, stored_periodicity):
+def reg_toggle_welcome(raw_data_summary, n_intervals, original_periodicity, stored_periodicity):
     hide_welcome = {"display": "none"}
     show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     hide_main = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     base_ready = bool(n_intervals and n_intervals >= 1)
-    if not raw_data_metadata:
+    if not raw_data_summary:
         return hide_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily", base_ready
 
-    resolved_original = (raw_data_metadata or {}).get("original_periodicity") or original_periodicity or "daily"
-    period_data = get_available_periodicities(resolved_original)
+    resolved_original = (raw_data_summary or {}).get("original_periodicity") or original_periodicity or "daily"
+    period_values = (raw_data_summary or {}).get("available_periodicity_values") or []
+    period_data = (
+        [{"value": value, "label": PERIODICITY_LABELS.get(value, value)} for value in period_values]
+        or get_available_periodicities(resolved_original)
+    )
     valid_values = [option["value"] for option in period_data]
     default_value = (
         resolved_original
@@ -4147,6 +4140,32 @@ clientside_callback(
 )
 
 
+@callback(
+    Output("reg-db-add-request-store", "data"),
+    Output("reg-raw-db-add-request-store", "data"),
+    Output("reg-portfolio-add-request-store", "data"),
+    Output("reg-underlying-add-request-store", "data"),
+    Input("reg-url-location", "pathname"),
+    Input("dashmat-route-intent-store", "data"),
+    State("reg-route-intent-consumed-token-store", "data"),
+    prevent_initial_call=False,
+)
+def reg_resolve_import_modal_request(pathname, route_intent, consumed_token):
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+    if page_path != REGRESSION_PATH:
+        raise PreventUpdate
+    request = _reg_build_import_modal_request(route_intent, consumed_token)
+    if not request:
+        raise PreventUpdate
+    flow = request.get("flow")
+    return (
+        request if flow == FLOW_DB else no_update,
+        request if flow == FLOW_RAW else no_update,
+        request if flow == FLOW_PORTFOLIO else no_update,
+        request if flow == FLOW_UNDERLYING else no_update,
+    )
+
+
 _REG_SERIES_GRID_FINAL_STATUSES = {"ready", "empty", "error", "timeout"}
 
 
@@ -4182,8 +4201,8 @@ def _reg_series_status_is_final(status_data, token=None):
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
-    Input("dashmat-raw-data-metadata-store", "data"),
-    State("reg-url-location", "pathname"),
+    Input("dashmat-raw-data-summary-store", "data"),
+    Input("reg-url-location", "pathname"),
     State("reg-series-select", "data"),
     State("reg-series-order-store", "data"),
     State("reg-dependent-var-store", "data"),
@@ -4195,7 +4214,7 @@ def _reg_series_status_is_final(status_data, token=None):
 )
 def reg_open_modal(
     n_clicks,
-    raw_data_metadata,
+    raw_data_summary,
     pathname,
     sel,
     order,
@@ -4211,12 +4230,15 @@ def reg_open_modal(
     if current_request_token and not _reg_series_status_is_final(current_status, current_request_token):
         raise PreventUpdate
 
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
     should_open = False
     if triggered_id == "reg-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id == "dashmat-raw-data-metadata-store":
-        if raw_data_metadata:
-            columns = list((raw_data_metadata or {}).get("columns") or [])
+    elif triggered_id in {"dashmat-raw-data-summary-store", "reg-url-location"}:
+        if page_path != REGRESSION_PATH:
+            raise PreventUpdate
+        if raw_data_summary:
+            columns = list((raw_data_summary or {}).get("columns") or [])
             known_order = list(order or [])
             new_columns = [c for c in columns if c not in known_order]
             should_open = bool(new_columns)
@@ -4225,12 +4247,11 @@ def reg_open_modal(
             ACTION_CONFIGURE_AFTER_IMPORT,
             consumed_token,
         )
-        if consumed_route_intent and raw_data_metadata:
+        if consumed_route_intent and raw_data_summary:
             should_open = True
         else:
-            page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-            if page_path == REGRESSION_PATH and raw_data_metadata:
-                columns = list((raw_data_metadata or {}).get("columns") or [])
+            if page_path == REGRESSION_PATH and raw_data_summary:
+                columns = list((raw_data_summary or {}).get("columns") or [])
                 selected = set(sel or [])
                 has_selected = bool(selected.intersection(columns))
                 has_dependent = bool(dep_var and dep_var in columns)
@@ -4708,20 +4729,21 @@ def reg_on_modal_cancel(n_clicks):
     Output("reg-maximum-range-button", "disabled"),
     Output("reg-date-range-store", "data", allow_duplicate=True),
     Output("reg-page-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-metadata-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     Input("reg-periodicity-select", "value"),
     Input("reg-series-select", "data"),
     Input("reg-dependent-var-store", "data"),
     Input("reg-base-controls-ready-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("reg-date-range-store", "data"),
     State("reg-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def reg_init_date_range(raw_data_metadata, periodicity, x_series, dep_var, base_controls_ready, stored_range, current_page_ready):
+def reg_init_date_range(raw_data_summary, periodicity, x_series, dep_var, base_controls_ready, raw_data, stored_range, current_page_ready):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
     all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
-    if not raw_data_metadata or not all_series or not base_controls_ready:
+    if not raw_data or not raw_data_summary or not all_series or not base_controls_ready:
         return None, None, disabled_style, True, True, None, no_update
     try:
         with timed_block(
@@ -4729,9 +4751,17 @@ def reg_init_date_range(raw_data_metadata, periodicity, x_series, dep_var, base_
             periodicity=periodicity or "daily",
             series_count=len(all_series),
         ):
-            candidates = compute_date_range_candidates_from_global_metadata(
-                raw_data_metadata,
+            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash")
+            if not raw_data_hash:
+                return None, None, disabled_style, True, True, None, no_update
+
+            metadata = get_periodicity_range_metadata(
+                raw_data_hash,
+                raw_data,
                 periodicity or "daily",
+            )
+            candidates = compute_date_range_candidates_from_metadata(
+                metadata,
                 tuple(all_series),
             )
             if not candidates.get("available_series"):
@@ -4776,24 +4806,33 @@ def reg_release_page_ready_on_series_modal(request_token, status_data, current_p
     Output("reg-date-range-store", "data", allow_duplicate=True),
     Input("reg-common-range-button", "n_clicks"),
     Input("reg-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-metadata-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("reg-periodicity-select", "value"),
     State("reg-series-select", "data"),
     State("reg-dependent-var-store", "data"),
     prevent_initial_call=True,
 )
-def reg_date_range_button(n_common, n_max, raw_data_metadata, periodicity, x_series, dep_var):
+def reg_date_range_button(n_common, n_max, raw_data, raw_data_summary, periodicity, x_series, dep_var):
     all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
-    if not raw_data_metadata or not all_series:
+    if not raw_data or not raw_data_summary or not all_series:
         raise PreventUpdate
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        candidates = compute_date_range_candidates_from_global_metadata(
-            raw_data_metadata,
+        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash")
+        if not raw_data_hash:
+            raise PreventUpdate
+
+        metadata = get_periodicity_range_metadata(
+            raw_data_hash,
+            raw_data,
             periodicity or "daily",
+        )
+        candidates = compute_date_range_candidates_from_metadata(
+            metadata,
             tuple(all_series),
         )
         start, end, _ = resolve_button_range(candidates, button_id)

@@ -201,12 +201,17 @@ def test_update_date_range_store_returns_payload_or_no_update(page_modules):
     )
 
 
-def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatch, page_modules):
+def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatch, page_modules, raw_json):
     analyticstool, _ = page_modules
 
     monkeypatch.setattr(
         analyticstool,
-        "compute_date_range_candidates_from_global_metadata",
+        "get_periodicity_range_metadata",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "compute_date_range_candidates_from_metadata",
         lambda *_args, **_kwargs: {
             "available_series": ["Asset_A"],
             "common_daily_start": "2024-01-01",
@@ -224,6 +229,7 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
             {"raw_data_hash": "hash"},
             "daily",
             ["Asset_A"],
+            raw_json,
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
@@ -379,28 +385,44 @@ def test_open_db_add_modal_clears_blocker_with_modal_payload(monkeypatch, page_m
     assert analyticstool.open_db_add_modal(1) == (*expected, False, analyticstool.no_update)
 
 
-def test_open_db_add_modal_consumes_fresh_page_load_intent(monkeypatch, page_modules):
+def test_at_resolve_import_modal_request_returns_db_request(page_modules):
     analyticstool, _ = page_modules
-    expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     route_intent = build_route_intent("analyticstool", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
-    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="at-page-load-trigger"))
-    monkeypatch.setattr(analyticstool, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
 
-    assert analyticstool.open_db_add_modal(None, 1, route_intent, None) == (
-        *expected,
-        False,
-        route_intent["token"],
+    request = analyticstool.at_resolve_import_modal_request("/analyticstool", route_intent, None)
+
+    assert request == (
+        {"flow": FLOW_DB, "token": route_intent["token"]},
+        no_update,
+        no_update,
+        no_update,
     )
 
 
-def test_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, page_modules):
+def test_open_db_add_modal_consumes_request_store_token(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
+    monkeypatch.setattr(analyticstool, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
+    monkeypatch.setattr(
+        analyticstool,
+        "callback_context",
+        SimpleNamespace(triggered_id="at-db-add-request-store"),
+    )
+
+    assert analyticstool.open_db_add_modal(None, {"flow": FLOW_DB, "token": "tok"}) == (
+        *expected,
+        False,
+        "tok",
+    )
+
+
+def test_at_resolve_import_modal_request_ignores_stale_intent(page_modules):
     analyticstool, _ = page_modules
     route_intent = build_route_intent("analyticstool", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
-    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="at-page-load-trigger"))
 
     with pytest.raises(PreventUpdate):
-        analyticstool.open_db_add_modal(None, 1, route_intent, None)
+        analyticstool.at_resolve_import_modal_request("/analyticstool", route_intent, None)
 
 
 def test_update_statistics_requires_ready_state(page_modules):
@@ -1309,7 +1331,7 @@ def test_open_modal_ignores_stale_configure_after_import_route_intent(monkeypatc
     analyticstool, _ = page_modules
     route_intent = build_route_intent("analyticstool", ACTION_CONFIGURE_AFTER_IMPORT)
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
-    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="dashmat-raw-data-metadata-store"))
+    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="dashmat-raw-data-summary-store"))
 
     with pytest.raises(PreventUpdate):
         analyticstool.open_modal(

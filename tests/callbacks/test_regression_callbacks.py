@@ -403,13 +403,39 @@ def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     assert regression_page.reg_open_db_add_modal(1) == (*expected, False, regression_page.no_update)
 
 
-def test_reg_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, regression_page):
+def test_reg_resolve_import_modal_request_ignores_stale_intent(regression_page):
     route_intent = build_route_intent("regression", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
-    monkeypatch.setattr(regression_page, "callback_context", SimpleNamespace(triggered_id="reg-page-load-trigger"))
 
     with pytest.raises(PreventUpdate):
-        regression_page.reg_open_db_add_modal(None, 1, route_intent, None)
+        regression_page.reg_resolve_import_modal_request("/regression", route_intent, None)
+
+
+def test_reg_resolve_import_modal_request_returns_db_request(regression_page):
+    route_intent = build_route_intent("regression", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
+
+    request = regression_page.reg_resolve_import_modal_request("/regression", route_intent, None)
+
+    assert request == (
+        {"flow": FLOW_DB, "token": route_intent["token"]},
+        no_update,
+        no_update,
+        no_update,
+    )
+
+
+def test_reg_open_db_add_modal_uses_request_store_token(monkeypatch, regression_page):
+    expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
+    monkeypatch.setattr(regression_page, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        SimpleNamespace(triggered_id="reg-db-add-request-store"),
+    )
+
+    out = regression_page.reg_open_db_add_modal(None, {"flow": FLOW_DB, "token": "tok"})
+
+    assert out == (*expected, False, "tok")
 
 
 def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, regression_page):
@@ -708,10 +734,15 @@ def test_reg_toggle_welcome_keeps_base_ready_false_before_page_load(regression_p
     assert base_ready is False
 
 
-def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page):
+def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page, raw_json):
     monkeypatch.setattr(
         regression_page,
-        "compute_date_range_candidates_from_global_metadata",
+        "get_periodicity_range_metadata",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "compute_date_range_candidates_from_metadata",
         lambda *_args, **_kwargs: {"available_series": ["Y", "X1"]},
     )
     monkeypatch.setattr(
@@ -726,6 +757,7 @@ def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page):
         ["X1"],
         "Y",
         True,
+        raw_json,
         {"start": "2024-01-01", "end": "2024-12-31"},
         False,
     )
@@ -735,7 +767,7 @@ def test_reg_init_date_range_sets_page_ready(monkeypatch, regression_page):
 
 
 def test_reg_init_date_range_leaves_page_ready_unchanged_without_series(regression_page):
-    result = regression_page.reg_init_date_range(None, "daily", [], None, True, None, False)
+    result = regression_page.reg_init_date_range(None, "daily", [], None, True, None, None, False)
 
     assert result[-2] is None
     assert result[-1] is no_update
@@ -766,6 +798,30 @@ def test_reg_release_page_ready_on_series_modal_ignores_mismatched_or_nonfinal_s
             {"token": "token", "status": "rendered", "message": ""},
             False,
         )
+
+
+def test_reg_open_modal_opens_on_regression_path_with_summary(monkeypatch, regression_page):
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        SimpleNamespace(triggered_id="reg-url-location"),
+    )
+
+    out = regression_page.reg_open_modal(
+        None,
+        {"columns": ["Y", "X1", "X2"]},
+        "/regression",
+        [],
+        [],
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+    assert isinstance(out[0], str) and out[0]
+    assert out[1:] == ("", "blue", True, True, None)
 
 
 def test_reg_overlay_visible_uses_base_and_page_ready(regression_page):

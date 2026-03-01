@@ -242,14 +242,44 @@ def test_po_open_db_add_modal_clears_blocker_with_modal_payload(monkeypatch, pag
     assert portopt.po_open_db_add_modal(1) == (*expected, False, portopt.no_update)
 
 
-def test_po_open_db_add_modal_ignores_stale_page_load_intent(monkeypatch, page_modules):
+def test_po_resolve_import_modal_request_returns_db_request(page_modules):
+    _, portopt = page_modules
+    route_intent = build_route_intent("portopt", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
+
+    request = portopt.po_resolve_import_modal_request("/portopt", route_intent, None)
+
+    assert request == (
+        {"flow": FLOW_DB, "token": route_intent["token"]},
+        no_update,
+        no_update,
+        no_update,
+    )
+
+
+def test_po_open_db_add_modal_uses_request_store_token(monkeypatch, page_modules):
+    _, portopt = page_modules
+    expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
+    monkeypatch.setattr(portopt, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
+    monkeypatch.setattr(
+        portopt,
+        "callback_context",
+        SimpleNamespace(triggered_id="po-db-add-request-store"),
+    )
+
+    assert portopt.po_open_db_add_modal(None, {"flow": FLOW_DB, "token": "tok"}) == (
+        *expected,
+        False,
+        "tok",
+    )
+
+
+def test_po_resolve_import_modal_request_ignores_stale_intent(page_modules):
     _, portopt = page_modules
     route_intent = build_route_intent("portopt", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
-    monkeypatch.setattr(portopt, "callback_context", SimpleNamespace(triggered_id="po-page-load-trigger"))
 
     with pytest.raises(PreventUpdate):
-        portopt.po_open_db_add_modal(None, 1, route_intent, None)
+        portopt.po_resolve_import_modal_request("/portopt", route_intent, None)
 
 
 def test_po_populate_returns_grid_adds_header_tooltips(page_modules):
@@ -490,12 +520,17 @@ def test_portopt_layout_includes_page_ready_stores_and_visible_overlay(page_modu
     assert _component_prop(overlay, "visible") is True
 
 
-def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules):
+def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules, raw_json):
     _, portopt = page_modules
 
     monkeypatch.setattr(
         portopt,
-        "compute_date_range_candidates_from_global_metadata",
+        "get_periodicity_range_metadata",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        portopt,
+        "compute_date_range_candidates_from_metadata",
         lambda *_args, **_kwargs: {
             "available_series": ["Asset_A"],
             "common_daily_start": "2024-01-01",
@@ -514,6 +549,7 @@ def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules):
         ["Asset_A"],
         True,
         True,
+        raw_json,
         {"start": "2024-01-01", "end": "2024-12-31"},
         False,
     )
@@ -525,7 +561,7 @@ def test_po_init_date_range_sets_page_ready(monkeypatch, page_modules):
 def test_po_init_date_range_leaves_page_ready_unchanged_without_data(page_modules):
     _, portopt = page_modules
 
-    result = portopt.po_init_date_range(None, "daily", [], True, True, None, False)
+    result = portopt.po_init_date_range(None, "daily", [], True, True, None, None, False)
 
     assert result[-2] is None
     assert result[-1] is no_update
@@ -724,8 +760,52 @@ def test_po_sync_results_with_raw_data_prunes_missing_portfolios(page_modules, r
     raw_with_portfolio = df_to_json(df)
     results = {"KeepMe": {"x": 1}, "DropMe": {"x": 2}}
 
-    pruned = portopt.po_sync_results_with_raw_data(raw_with_portfolio, 1, results)
+    pruned = portopt.po_sync_results_with_raw_data(raw_with_portfolio, results)
     assert pruned == {"KeepMe": {"x": 1}}
+
+
+def test_po_open_modal_opens_on_portopt_path_with_summary(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(
+        portopt,
+        "callback_context",
+        SimpleNamespace(triggered_id="po-url-location"),
+    )
+
+    out = portopt.po_open_modal(
+        None,
+        {"columns": ["P1", "P2"]},
+        "/portopt",
+        [],
+        None,
+        None,
+        None,
+        None,
+    )
+
+    assert isinstance(out[0], str) and out[0]
+    assert out[1:] == ("", "blue", True, None)
+
+
+def test_po_open_modal_ignores_non_portopt_path(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(
+        portopt,
+        "callback_context",
+        SimpleNamespace(triggered_id="po-url-location"),
+    )
+
+    with pytest.raises(PreventUpdate):
+        portopt.po_open_modal(
+            None,
+            {"columns": ["P1", "P2"]},
+            "/analyticstool",
+            [],
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 def test_po_delete_portfolio_removes_from_results_and_raw(page_modules, raw_json):

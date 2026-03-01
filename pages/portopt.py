@@ -21,7 +21,8 @@ import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
-    compute_date_range_candidates_from_global_metadata,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -38,6 +39,7 @@ from utils.returns import (
     calculate_rolling_returns,
     create_monthly_view,
     df_to_json,
+    PERIODICITY_LABELS,
     get_available_periodicities,
     get_working_returns,
     json_to_df,
@@ -197,6 +199,33 @@ def _po_route_intent_token_to_consume(route_intent, action, consumed_token, *, f
         consumed_token,
         flow=flow,
     )
+
+
+def _po_build_import_modal_request(route_intent, consumed_token):
+    intent_token = _po_route_intent_token_to_consume(
+        route_intent,
+        ACTION_OPEN_IMPORT_MODAL,
+        consumed_token,
+    )
+    if not intent_token:
+        return None
+
+    flow = str(route_intent_value(route_intent, "flow", "")).strip().lower()
+    if flow == FLOW_DB:
+        return {"flow": FLOW_DB, "token": intent_token}
+    if flow == FLOW_UNDERLYING:
+        return {"flow": FLOW_UNDERLYING, "token": intent_token}
+    if flow == FLOW_RAW:
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        if mode in {"factor", "funds", "performance"}:
+            return {"flow": FLOW_RAW, "mode": mode, "token": intent_token}
+        return None
+    if flow == FLOW_PORTFOLIO:
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        if mode in {"peer", "index", "other"}:
+            return {"flow": FLOW_PORTFOLIO, "mode": mode, "token": intent_token}
+        return None
+    return None
 
 
 def _po_default_name_for_model(model: str) -> str:
@@ -3239,6 +3268,10 @@ layout = dmc.Container(
         dcc.Store(id="po-series-selection-open-request-store", data=None),
         dcc.Store(id="po-series-selection-grid-status-store", data=None),
         dcc.Store(id="po-route-intent-consumed-token-store", data=None, storage_type="session"),
+        dcc.Store(id="po-db-add-request-store", data=None),
+        dcc.Store(id="po-raw-db-add-request-store", data=None),
+        dcc.Store(id="po-portfolio-add-request-store", data=None),
+        dcc.Store(id="po-underlying-add-request-store", data=None),
         dcc.Store(id="po-portfolio-add-mode-store", data=None),
         dcc.Store(id="po-portfolio-add-rows-store", data=[]),
         dcc.Store(id="po-underlying-add-rows-store", data=[]),
@@ -3420,26 +3453,16 @@ def po_clear_server_cache(n_clicks):
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-menu-add-from-db", "n_clicks"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("po-route-intent-consumed-token-store", "data"),
+    Input("po-db-add-request-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_db_add_modal(menu_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+def po_open_db_add_modal(menu_clicks=None, open_request=None):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "po-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
-        intent_token = _po_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_DB,
-        )
-        if not intent_token:
+    if triggered_id == "po-db-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_DB:
             raise PreventUpdate
         result = compute_open_db_add_modal(DB_ENGINE)
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     if not menu_clicks:
         raise PreventUpdate
@@ -3478,32 +3501,20 @@ def po_close_db_add_modal(n_clicks):
     Input("po-menu-add-raw-factor", "n_clicks"),
     Input("po-menu-add-raw-funds", "n_clicks"),
     Input("po-menu-add-raw-performance", "n_clicks"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("po-route-intent-consumed-token-store", "data"),
+    Input("po-raw-db-add-request-store", "data"),
     prevent_initial_call=True,
 )
 def po_open_raw_db_add_modal(
     factor_clicks,
     funds_clicks,
     performance_clicks,
-    page_load_intervals=None,
-    route_intent=None,
-    consumed_token=None,
+    open_request=None,
 ):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "po-page-load-trigger":
-        if page_load_intervals is None:
+    if triggered_id == "po-raw-db-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_RAW:
             raise PreventUpdate
-        intent_token = _po_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_RAW,
-        )
-        if not intent_token:
-            raise PreventUpdate
-        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        mode = str(open_request.get("mode", "")).strip().lower()
         if mode not in {"factor", "funds", "performance"}:
             raise PreventUpdate
         result = compute_open_raw_db_add_modal(
@@ -3511,7 +3522,7 @@ def po_open_raw_db_add_modal(
             mrd_engine=MRD_ENGINE,
             perf_engine=PERF_ENGINE,
         )
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     mode = resolve_raw_db_add_mode("po", triggered_id)
     if not mode:
@@ -3903,39 +3914,27 @@ def po_validate_db_add_selection(selected_benches, raw_data, opened):
     Input("po-menu-add-portfolios-peer", "n_clicks"),
     Input("po-menu-add-portfolios-index", "n_clicks"),
     Input("po-menu-add-portfolios-other", "n_clicks"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("po-route-intent-consumed-token-store", "data"),
+    Input("po-portfolio-add-request-store", "data"),
     prevent_initial_call=True,
 )
 def po_open_portfolio_add_modal(
     peer_clicks,
     index_clicks,
     other_clicks,
-    page_load_intervals=None,
-    route_intent=None,
-    consumed_token=None,
+    open_request=None,
 ):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "po-page-load-trigger":
-        if page_load_intervals is None:
+    if triggered_id == "po-portfolio-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_PORTFOLIO:
             raise PreventUpdate
-        intent_token = _po_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_PORTFOLIO,
-        )
-        if not intent_token:
-            raise PreventUpdate
-        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        mode = str(open_request.get("mode", "")).strip().lower()
         if mode not in {"peer", "index", "other"}:
             raise PreventUpdate
         result = compute_open_portfolio_add_modal(
             mode=mode,
             db_engine=DB_ENGINE,
         )
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     mode = resolve_portfolio_add_mode("po", triggered_id)
     if not mode:
@@ -3961,26 +3960,16 @@ def po_open_portfolio_add_modal(
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-menu-add-portfolios-underlying", "n_clicks"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("po-route-intent-consumed-token-store", "data"),
+    Input("po-underlying-add-request-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_underlying_add_modal(menu_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+def po_open_underlying_add_modal(menu_clicks=None, open_request=None):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "po-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
-        intent_token = _po_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_UNDERLYING,
-        )
-        if not intent_token:
+    if triggered_id == "po-underlying-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_UNDERLYING:
             raise PreventUpdate
         result = compute_open_underlying_add_modal()
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     if not menu_clicks:
         raise PreventUpdate
@@ -5900,6 +5889,33 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+
+@callback(
+    Output("po-db-add-request-store", "data"),
+    Output("po-raw-db-add-request-store", "data"),
+    Output("po-portfolio-add-request-store", "data"),
+    Output("po-underlying-add-request-store", "data"),
+    Input("po-url-location", "pathname"),
+    Input("dashmat-route-intent-store", "data"),
+    State("po-route-intent-consumed-token-store", "data"),
+    prevent_initial_call=False,
+)
+def po_resolve_import_modal_request(pathname, route_intent, consumed_token):
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+    if page_path != PORTOPT_PATH:
+        raise PreventUpdate
+    request = _po_build_import_modal_request(route_intent, consumed_token)
+    if not request:
+        raise PreventUpdate
+    flow = request.get("flow")
+    return (
+        request if flow == FLOW_DB else no_update,
+        request if flow == FLOW_RAW else no_update,
+        request if flow == FLOW_PORTFOLIO else no_update,
+        request if flow == FLOW_UNDERLYING else no_update,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Restore application state when raw data loads
 # ---------------------------------------------------------------------------
@@ -5909,24 +5925,27 @@ clientside_callback(
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
     Output("po-series-select", "data"),
-    Input("dashmat-raw-data-metadata-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     State("po-periodicity-value-store", "data"),
     State("po-series-select-value-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_restore_state(raw_data_metadata, stored_periodicity, stored_series, stored_vol):
-    if not raw_data_metadata:
+def po_restore_state(raw_data_summary, stored_periodicity, stored_series, stored_vol):
+    if not raw_data_summary:
         raise PreventUpdate
     try:
         with timed_block("portopt.restore_state"):
-            metadata = raw_data_metadata or {}
-            columns = list(metadata.get("columns") or [])
+            summary = raw_data_summary or {}
+            columns = list(summary.get("columns") or [])
             if not columns:
                 raise PreventUpdate
 
-            resolved_orig_periodicity = metadata.get("original_periodicity") or "daily"
-            periodicity_options = get_available_periodicities(resolved_orig_periodicity)
+            resolved_orig_periodicity = summary.get("original_periodicity") or "daily"
+            periodicity_options = [
+                {"value": value, "label": PERIODICITY_LABELS.get(value, value)}
+                for value in (summary.get("available_periodicity_values") or [])
+            ] or get_available_periodicities(resolved_orig_periodicity)
 
             # Validate stored values
             valid_periodicity = stored_periodicity
@@ -5967,7 +5986,12 @@ def po_restore_state(raw_data_metadata, stored_periodicity, stored_series, store
 
 clientside_callback(
     """
-    function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+    function(pathname, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+        const pagePath = String(pathname || '').split('?')[0].replace(/\/$/, '') || '/';
+        if (pagePath !== '/portopt') {
+            const n = window.dash_clientside.no_update;
+            return [n, n, n, n, n, n, n, n, n, n, n, n, n, n, n];
+        }
         var safeModel = model || "risk_parity";
         var defaults = {
             "risk_parity": "RP",
@@ -6005,7 +6029,7 @@ clientside_callback(
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
     Output("po-base-controls-ready-store", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
+    Input("po-url-location", "pathname"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
     State("po-opt-step-store", "data"),
@@ -6028,14 +6052,19 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(n, mode, objective) {
+    function(pathname, mode, objective) {
+        const pagePath = String(pathname || '').split('?')[0].replace(/\/$/, '') || '/';
+        if (pagePath !== '/portopt') {
+            const n = window.dash_clientside.no_update;
+            return [n, n, n];
+        }
         return [mode || "ret_cov", objective || "maximize_sharpe", true];
     }
     """,
     Output("po-ex-ante-mode-select", "value"),
     Output("po-objective-select", "value"),
     Output("po-ex-ante-controls-ready-store", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
+    Input("po-url-location", "pathname"),
     State("po-ex-ante-mode-store", "data"),
     State("po-objective-store", "data"),
     prevent_initial_call=True,
@@ -7214,8 +7243,8 @@ clientside_callback(
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
-    Input("dashmat-raw-data-metadata-store", "data"),
-    State("po-url-location", "pathname"),
+    Input("dashmat-raw-data-summary-store", "data"),
+    Input("po-url-location", "pathname"),
     State("po-series-select", "data"),
     State("po-series-selection-open-request-store", "data"),
     State("po-series-selection-grid-status-store", "data"),
@@ -7225,7 +7254,7 @@ clientside_callback(
 )
 def po_open_modal(
     n_clicks,
-    raw_data_metadata,
+    raw_data_summary,
     pathname,
     selected_series,
     current_request_token,
@@ -7239,11 +7268,14 @@ def po_open_modal(
     triggered_id = _safe_triggered_id()
     consumed_route_intent = no_update
     should_open = False
+    current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
 
     if triggered_id == "po-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id == "dashmat-raw-data-metadata-store":
-        if not raw_data_metadata:
+    elif triggered_id in {"dashmat-raw-data-summary-store", "po-url-location"}:
+        if not raw_data_summary:
+            raise PreventUpdate
+        if current_path != PORTOPT_PATH:
             raise PreventUpdate
         consumed_route_intent = _po_route_intent_token_to_consume(
             route_intent,
@@ -7253,10 +7285,7 @@ def po_open_modal(
         if consumed_route_intent:
             should_open = True
         else:
-            current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-            if current_path != PORTOPT_PATH:
-                raise PreventUpdate
-            columns = list((raw_data_metadata or {}).get("columns") or [])
+            columns = list((raw_data_summary or {}).get("columns") or [])
             selected_set = set(selected_series or [])
             should_open = bool(columns) and not bool(selected_set.intersection(columns))
 
@@ -7929,28 +7958,30 @@ def po_on_modal_cancel(n_clicks):
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
     Output("po-page-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-metadata-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
     Input("po-base-controls-ready-store", "data"),
     Input("po-ex-ante-controls-ready-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("po-date-range-store", "data"),
     State("po-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def po_init_date_range(
-    raw_data_metadata,
+    raw_data_summary,
     periodicity,
     selected_series,
     base_controls_ready,
     ex_ante_controls_ready,
+    raw_data,
     stored_range,
     current_page_ready,
 ):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
-    if not raw_data_metadata or not selected_series or not base_controls_ready or not ex_ante_controls_ready:
+    if not raw_data or not raw_data_summary or not selected_series or not base_controls_ready or not ex_ante_controls_ready:
         return None, None, disabled_style, True, True, True, None, no_update
 
     try:
@@ -7959,9 +7990,17 @@ def po_init_date_range(
             periodicity=periodicity or "daily",
             series_count=len(selected_series or ()),
         ):
-            candidates = compute_date_range_candidates_from_global_metadata(
-                raw_data_metadata,
+            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash")
+            if not raw_data_hash:
+                return None, None, disabled_style, True, True, True, None, no_update
+
+            metadata = get_periodicity_range_metadata(
+                raw_data_hash,
+                raw_data,
                 periodicity or "daily",
+            )
+            candidates = compute_date_range_candidates_from_metadata(
+                metadata,
                 tuple(selected_series or ()),
             )
             if not candidates.get("available_series"):
@@ -7999,22 +8038,31 @@ def po_init_date_range(
     Input("po-common-range-button", "n_clicks"),
     Input("po-common-daily-button", "n_clicks"),
     Input("po-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-metadata-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data_metadata, periodicity, selected_series):
-    if not raw_data_metadata or not selected_series:
+def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, raw_data_summary, periodicity, selected_series):
+    if not raw_data or not raw_data_summary or not selected_series:
         raise PreventUpdate
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        candidates = compute_date_range_candidates_from_global_metadata(
-            raw_data_metadata,
+        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash")
+        if not raw_data_hash:
+            raise PreventUpdate
+
+        metadata = get_periodicity_range_metadata(
+            raw_data_hash,
+            raw_data,
             periodicity or "daily",
+        )
+        candidates = compute_date_range_candidates_from_metadata(
+            metadata,
             tuple(selected_series or ()),
         )
         if not candidates.get("available_series"):
@@ -8583,11 +8631,10 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
 @callback(
     Output("po-results-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def po_sync_results_with_raw_data(raw_data, _n, results):
+def po_sync_results_with_raw_data(raw_data, results):
     if not results:
         raise PreventUpdate
     if not raw_data:

@@ -21,7 +21,8 @@ from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
     compute_date_range_candidates,
-    compute_date_range_candidates_from_global_metadata,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -212,6 +213,33 @@ def _at_route_intent_token_to_consume(route_intent, action, consumed_token, *, f
         consumed_token,
         flow=flow,
     )
+
+
+def _at_build_import_modal_request(route_intent, consumed_token):
+    intent_token = _at_route_intent_token_to_consume(
+        route_intent,
+        ACTION_OPEN_IMPORT_MODAL,
+        consumed_token,
+    )
+    if not intent_token:
+        return None
+
+    flow = str(route_intent_value(route_intent, "flow", "")).strip().lower()
+    if flow == FLOW_DB:
+        return {"flow": FLOW_DB, "token": intent_token}
+    if flow == FLOW_UNDERLYING:
+        return {"flow": FLOW_UNDERLYING, "token": intent_token}
+    if flow == FLOW_RAW:
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        if mode in {"factor", "funds", "performance"}:
+            return {"flow": FLOW_RAW, "mode": mode, "token": intent_token}
+        return None
+    if flow == FLOW_PORTFOLIO:
+        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        if mode in {"peer", "index", "other"}:
+            return {"flow": FLOW_PORTFOLIO, "mode": mode, "token": intent_token}
+        return None
+    return None
 
 
 def _mapping_payload(value) -> str:
@@ -1201,26 +1229,16 @@ def at_toggle_save_session(raw_data):
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Output("at-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("at-menu-add-from-db", "n_clicks"),
-    Input("at-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("at-route-intent-consumed-token-store", "data"),
+    Input("at-db-add-request-store", "data"),
     prevent_initial_call=True,
 )
-def open_db_add_modal(menu_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+def open_db_add_modal(menu_clicks=None, open_request=None):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "at-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
-        intent_token = _at_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_DB,
-        )
-        if not intent_token:
+    if triggered_id == "at-db-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_DB:
             raise PreventUpdate
         result = compute_open_db_add_modal(DB_ENGINE)
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     if not menu_clicks:
         raise PreventUpdate
@@ -1259,32 +1277,20 @@ def close_db_add_modal(n_clicks):
     Input("at-menu-add-raw-factor", "n_clicks"),
     Input("at-menu-add-raw-funds", "n_clicks"),
     Input("at-menu-add-raw-performance", "n_clicks"),
-    Input("at-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("at-route-intent-consumed-token-store", "data"),
+    Input("at-raw-db-add-request-store", "data"),
     prevent_initial_call=True,
 )
 def at_open_raw_db_add_modal(
     factor_clicks,
     funds_clicks,
     performance_clicks,
-    page_load_intervals=None,
-    route_intent=None,
-    consumed_token=None,
+    open_request=None,
 ):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "at-page-load-trigger":
-        if page_load_intervals is None:
+    if triggered_id == "at-raw-db-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_RAW:
             raise PreventUpdate
-        intent_token = _at_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_RAW,
-        )
-        if not intent_token:
-            raise PreventUpdate
-        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        mode = str(open_request.get("mode", "")).strip().lower()
         if mode not in {"factor", "funds", "performance"}:
             raise PreventUpdate
         result = compute_open_raw_db_add_modal(
@@ -1292,7 +1298,7 @@ def at_open_raw_db_add_modal(
             mrd_engine=MRD_ENGINE,
             perf_engine=PERF_ENGINE,
         )
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     mode = resolve_raw_db_add_mode("at", triggered_id)
     if not mode:
@@ -1760,39 +1766,27 @@ def validate_db_add_selection(selected_benches, raw_data, opened):
     Input("at-menu-add-portfolios-peer", "n_clicks"),
     Input("at-menu-add-portfolios-index", "n_clicks"),
     Input("at-menu-add-portfolios-other", "n_clicks"),
-    Input("at-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("at-route-intent-consumed-token-store", "data"),
+    Input("at-portfolio-add-request-store", "data"),
     prevent_initial_call=True,
 )
 def at_open_portfolio_add_modal(
     peer_clicks,
     index_clicks,
     other_clicks,
-    page_load_intervals=None,
-    route_intent=None,
-    consumed_token=None,
+    open_request=None,
 ):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "at-page-load-trigger":
-        if page_load_intervals is None:
+    if triggered_id == "at-portfolio-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_PORTFOLIO:
             raise PreventUpdate
-        intent_token = _at_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_PORTFOLIO,
-        )
-        if not intent_token:
-            raise PreventUpdate
-        mode = str(route_intent_value(route_intent, "mode", "")).strip().lower()
+        mode = str(open_request.get("mode", "")).strip().lower()
         if mode not in {"peer", "index", "other"}:
             raise PreventUpdate
         result = compute_open_portfolio_add_modal(
             mode=mode,
             db_engine=DB_ENGINE,
         )
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     mode = resolve_portfolio_add_mode("at", triggered_id)
     if not mode:
@@ -1818,26 +1812,16 @@ def at_open_portfolio_add_modal(
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Output("at-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("at-menu-add-portfolios-underlying", "n_clicks"),
-    Input("at-page-load-trigger", "n_intervals"),
-    State("dashmat-route-intent-store", "data"),
-    State("at-route-intent-consumed-token-store", "data"),
+    Input("at-underlying-add-request-store", "data"),
     prevent_initial_call=True,
 )
-def at_open_underlying_add_modal(menu_clicks, page_load_intervals=None, route_intent=None, consumed_token=None):
+def at_open_underlying_add_modal(menu_clicks=None, open_request=None):
     triggered_id = _safe_triggered_id()
-    if triggered_id == "at-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
-        intent_token = _at_route_intent_token_to_consume(
-            route_intent,
-            ACTION_OPEN_IMPORT_MODAL,
-            consumed_token,
-            flow=FLOW_UNDERLYING,
-        )
-        if not intent_token:
+    if triggered_id == "at-underlying-add-request-store":
+        if not isinstance(open_request, dict) or open_request.get("flow") != FLOW_UNDERLYING:
             raise PreventUpdate
         result = compute_open_underlying_add_modal()
-        return (*result, False, intent_token)
+        return (*result, False, open_request.get("token"))
 
     if not menu_clicks:
         raise PreventUpdate
@@ -4083,6 +4067,10 @@ layout = dmc.Container(
         dcc.Store(id="at-series-selection-open-request-store", data=None),
         dcc.Store(id="at-series-selection-grid-status-store", data=None),
         dcc.Store(id="at-route-intent-consumed-token-store", data=None, storage_type="session"),
+        dcc.Store(id="at-db-add-request-store", data=None),
+        dcc.Store(id="at-raw-db-add-request-store", data=None),
+        dcc.Store(id="at-portfolio-add-request-store", data=None),
+        dcc.Store(id="at-underlying-add-request-store", data=None),
         dcc.Store(id="at-pending-working-config-store", data=None, storage_type="session"),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
@@ -4207,6 +4195,32 @@ clientside_callback(
 
 
 @callback(
+    Output("at-db-add-request-store", "data"),
+    Output("at-raw-db-add-request-store", "data"),
+    Output("at-portfolio-add-request-store", "data"),
+    Output("at-underlying-add-request-store", "data"),
+    Input("at-url-location", "pathname"),
+    Input("dashmat-route-intent-store", "data"),
+    State("at-route-intent-consumed-token-store", "data"),
+    prevent_initial_call=False,
+)
+def at_resolve_import_modal_request(pathname, route_intent, consumed_token):
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+    if page_path != ANALYTICS_PATH:
+        raise PreventUpdate
+    request = _at_build_import_modal_request(route_intent, consumed_token)
+    if not request:
+        raise PreventUpdate
+    flow = request.get("flow")
+    return (
+        request if flow == FLOW_DB else no_update,
+        request if flow == FLOW_RAW else no_update,
+        request if flow == FLOW_PORTFOLIO else no_update,
+        request if flow == FLOW_UNDERLYING else no_update,
+    )
+
+
+@callback(
     Output("at-periodicity-select", "data", allow_duplicate=True),
     Output("at-periodicity-select", "value", allow_duplicate=True),
     Output("at-returns-type-select", "value"),
@@ -4227,7 +4241,7 @@ clientside_callback(
     Output("at-series-select", "data"),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Output("at-page-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-metadata-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     State("at-periodicity-value-store", "data"),
     State("at-series-select-value-store", "data"),
     State("at-returns-type-value-store", "data"),
@@ -4250,7 +4264,7 @@ clientside_callback(
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(
-    raw_data_metadata,
+    raw_data_summary,
     stored_periodicity,
     stored_series,
     stored_returns,
@@ -4272,7 +4286,7 @@ def restore_application_state(
     current_page_ready,
 ):
     ready_output = no_update if current_page_ready else False
-    if not raw_data_metadata:
+    if not raw_data_summary:
         # Reset defaults (visibility handled by clientside callback)
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
@@ -4282,14 +4296,14 @@ def restore_application_state(
 
     try:
         with timed_block("analyticstool.restore_application_state"):
-            metadata = raw_data_metadata or {}
-            columns = list(metadata.get("columns") or [])
-            resolved_orig_periodicity = metadata.get("original_periodicity") or "daily"
+            summary = raw_data_summary or {}
+            columns = list(summary.get("columns") or [])
+            resolved_orig_periodicity = summary.get("original_periodicity") or "daily"
 
             # Periodicity
             periodicity_options = [
                 {"value": value, "label": PERIODICITY_LABELS.get(value, value)}
-                for value in (metadata.get("available_periodicity_values") or [])
+                for value in (summary.get("available_periodicity_values") or [])
             ] or get_available_periodicities(resolved_orig_periodicity)
             valid_values = {option["value"] for option in periodicity_options}
             valid_periodicity = (
@@ -4646,7 +4660,7 @@ def _at_import_success_common_outputs(
     Output("at-alert-message", "hide", allow_duplicate=True),
     Output("at-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
-    Input("dashmat-raw-data-metadata-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     State("at-url-location", "pathname"),
     State("at-series-select", "data"),
     State("at-series-selection-open-request-store", "data"),
@@ -4658,7 +4672,7 @@ def _at_import_success_common_outputs(
 )
 def open_modal(
     n_clicks,
-    raw_data_metadata,
+    raw_data_summary,
     pathname,
     selected_series,
     current_request_token,
@@ -4676,8 +4690,8 @@ def open_modal(
 
     if triggered_id == "at-open-series-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id == "dashmat-raw-data-metadata-store":
-        if not raw_data_metadata:
+    elif triggered_id == "dashmat-raw-data-summary-store":
+        if not raw_data_summary:
             raise PreventUpdate
         consumed_route_intent = _at_route_intent_token_to_consume(
             route_intent,
@@ -4692,7 +4706,7 @@ def open_modal(
             current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
             if current_path != ANALYTICS_PATH:
                 raise PreventUpdate
-            columns = list((raw_data_metadata or {}).get("columns") or [])
+            columns = list((raw_data_summary or {}).get("columns") or [])
             selected_set = set(selected_series or [])
             should_open = bool(columns) and not bool(selected_set.intersection(columns))
 
@@ -8092,9 +8106,10 @@ def at_resolve_series_selection_modal(request_token, status_data, pending_workin
     Output("at-date-range-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Output("at-page-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-metadata-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
+    State("dashmat-raw-data-store", "data"),
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
@@ -8102,9 +8117,10 @@ def at_resolve_series_selection_modal(request_token, status_data, pending_workin
     prevent_initial_call="initial_duplicate",
 )
 def initialize_date_range(
-    raw_data_metadata,
+    raw_data_summary,
     periodicity,
     selected_series,
+    raw_data,
     stored_range,
     current_start_date,
     current_end_date,
@@ -8114,7 +8130,7 @@ def initialize_date_range(
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
-    if not raw_data_metadata or not selected_series:
+    if not raw_data or not raw_data_summary or not selected_series:
         return None, None, disabled_style, True, True, True, None, False, no_update
 
     try:
@@ -8123,9 +8139,17 @@ def initialize_date_range(
             periodicity=periodicity or "daily",
             series_count=len(selected_series or ()),
         ):
-            candidates = compute_date_range_candidates_from_global_metadata(
-                raw_data_metadata,
+            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash")
+            if not raw_data_hash:
+                return None, None, disabled_style, True, True, True, None, False, no_update
+
+            metadata = get_periodicity_range_metadata(
+                raw_data_hash,
+                raw_data,
                 periodicity or "daily",
+            )
+            candidates = compute_date_range_candidates_from_metadata(
+                metadata,
                 tuple(selected_series or ()),
             )
             if not candidates.get("available_series"):
@@ -8175,14 +8199,15 @@ def initialize_date_range(
     Input("at-common-range-button", "n_clicks"),
     Input("at-common-daily-button", "n_clicks"),
     Input("at-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-metadata-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data_metadata, periodicity, selected_series):
+def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, raw_data_summary, periodicity, selected_series):
     """Update date range based on button clicks."""
-    if not raw_data_metadata or not selected_series:
+    if not raw_data or not raw_data_summary or not selected_series:
         raise PreventUpdate
 
     ctx = callback_context
@@ -8192,9 +8217,17 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
     try:
-        candidates = compute_date_range_candidates_from_global_metadata(
-            raw_data_metadata,
+        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash")
+        if not raw_data_hash:
+            raise PreventUpdate
+
+        metadata = get_periodicity_range_metadata(
+            raw_data_hash,
+            raw_data,
             periodicity or "daily",
+        )
+        candidates = compute_date_range_candidates_from_metadata(
+            metadata,
             tuple(selected_series or ()),
         )
         if not candidates.get("available_series"):
