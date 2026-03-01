@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-
 import pytest
 from dash.exceptions import PreventUpdate
 
@@ -39,21 +37,22 @@ def test_update_global_nav_links_for_non_test_role_with_data():
     assert regression_href == "/regression"
 
 
-def test_update_raw_data_summary_returns_none_without_data():
+def test_update_raw_data_metadata_returns_none_without_data():
     import app as app_module
 
-    assert app_module.update_raw_data_summary(None, "daily") is None
+    assert app_module.update_raw_data_metadata(None, "daily") is None
 
 
-def test_update_raw_data_summary_builds_expected_payload(raw_json):
+def test_update_raw_data_metadata_builds_expected_payload(raw_json):
     import app as app_module
 
-    summary = app_module.update_raw_data_summary(raw_json, "daily")
+    metadata = app_module.update_raw_data_metadata(raw_json, "daily")
 
-    assert summary["raw_data_hash"] == hashlib.md5(raw_json.encode("utf-8")).hexdigest()
-    assert summary["columns"] == ["Asset_A", "Asset_B", "Asset_C", "Asset_D"]
-    assert summary["original_periodicity"] == "daily"
-    assert summary["available_periodicity_values"][0] == "daily_trading"
+    assert metadata["columns"] == ["Asset_A", "Asset_B", "Asset_C", "Asset_D"]
+    assert metadata["original_periodicity"] == "daily"
+    assert metadata["available_periodicity_values"][0] == "daily_trading"
+    assert metadata["periodicities"]["daily_trading"]["dataset_start"] is not None
+    assert "Asset_A" in metadata["periodicities"]["daily_trading"]["series_ranges"]
 
 
 def test_restricted_href_for_path_resolves_for_test_role():

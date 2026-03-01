@@ -206,12 +206,7 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
 
     monkeypatch.setattr(
         analyticstool,
-        "get_periodicity_range_metadata",
-        lambda *_args, **_kwargs: {"mock": True},
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "compute_date_range_candidates_from_metadata",
+        "compute_date_range_candidates_from_global_metadata",
         lambda *_args, **_kwargs: {
             "available_series": ["Asset_A"],
             "common_daily_start": "2024-01-01",
@@ -226,10 +221,9 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
 
     start, end, _style, _common_disabled, _daily_disabled, _max_disabled, range_store, ready, page_ready = (
         analyticstool.initialize_date_range(
+            {"raw_data_hash": "hash"},
             "daily",
             ["Asset_A"],
-            "raw-json",
-            {"raw_data_hash": "hash"},
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
@@ -260,9 +254,6 @@ def test_restore_application_state_marks_empty_page_ready_after_page_load(page_m
     analyticstool, _ = page_modules
 
     result = analyticstool.restore_application_state(
-        1,
-        None,
-        None,
         None,
         None,
         None,
@@ -286,16 +277,18 @@ def test_restore_application_state_marks_empty_page_ready_after_page_load(page_m
     )
 
     assert result[-2] is False
-    assert result[-1] is True
+    assert result[-1] is False
 
 
 def test_restore_application_state_keeps_loaded_page_ready_unchanged(page_modules, raw_json):
     analyticstool, _ = page_modules
 
     result = analyticstool.restore_application_state(
-        1,
-        raw_json,
-        "daily",
+        {
+            "columns": ["Asset_A", "Asset_B", "Asset_C", "Asset_D"],
+            "available_periodicity_values": ["daily_trading", "daily", "monthly"],
+            "original_periodicity": "daily",
+        },
         "daily_trading",
         ["Asset_A"],
         "total",
@@ -314,7 +307,6 @@ def test_restore_application_state_keeps_loaded_page_ready_unchanged(page_module
         None,
         None,
         [],
-        None,
         False,
     )
 
@@ -1317,13 +1309,12 @@ def test_open_modal_ignores_stale_configure_after_import_route_intent(monkeypatc
     analyticstool, _ = page_modules
     route_intent = build_route_intent("analyticstool", ACTION_CONFIGURE_AFTER_IMPORT)
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
-    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="at-page-load-trigger"))
+    monkeypatch.setattr(analyticstool, "callback_context", SimpleNamespace(triggered_id="dashmat-raw-data-metadata-store"))
 
     with pytest.raises(PreventUpdate):
         analyticstool.open_modal(
             None,
-            1,
-            raw_json,
+            {"columns": ["Asset_A"]},
             "/analyticstool",
             ["Asset_A"],
             None,

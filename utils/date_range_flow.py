@@ -1,4 +1,4 @@
-"""Shared date-range helper flows for analytics and portopt pages."""
+"""Shared date-range helper flows for analytics, portfolio optimization, and regression."""
 
 from __future__ import annotations
 
@@ -67,6 +67,52 @@ def _daily_phase_map_for_df(df) -> dict[str, dict[str, str | None]]:
     return out
 
 
+def build_raw_data_metadata(raw_data: str, original_periodicity: str) -> dict | None:
+    """Build shared client-side metadata once per raw-data change."""
+    if not raw_data:
+        return None
+
+    with timed_block("shared.raw_data_metadata"):
+        resolved_original = original_periodicity or "daily"
+        base_df = json_to_df(raw_data)
+        if base_df is None or base_df.empty:
+            return None
+
+        periodicity_options = get_available_periodicities(resolved_original)
+        periodicity_values = [option["value"] for option in periodicity_options]
+        metadata = {
+            "raw_data_hash": hashlib.md5(raw_data.encode("utf-8")).hexdigest(),
+            "original_periodicity": resolved_original,
+            "columns": [str(col) for col in base_df.columns],
+            "available_periodicity_values": periodicity_values,
+            "periodicities": {},
+            "daily_phase_ranges": None,
+        }
+
+        for periodicity in periodicity_values:
+            resampled_df = resample_returns(base_df, periodicity)
+            block = {
+                "dataset_start": None,
+                "dataset_end": None,
+                "series_ranges": {},
+            }
+            if resampled_df is not None and not resampled_df.empty:
+                block["dataset_start"] = _format_ts(resampled_df.index.min())
+                block["dataset_end"] = _format_ts(resampled_df.index.max())
+                block["series_ranges"] = _range_map_for_df(resampled_df)
+            metadata["periodicities"][periodicity] = block
+
+        if resolved_original == "daily":
+            daily_trading_df = resample_returns(base_df, "daily_trading")
+            metadata["daily_phase_ranges"] = (
+                _daily_phase_map_for_df(daily_trading_df)
+                if daily_trading_df is not None and not daily_trading_df.empty
+                else {}
+            )
+
+        return metadata
+
+
 def build_raw_data_summary(raw_data: str, original_periodicity: str) -> dict | None:
     """Build a small client-visible summary for shared raw data."""
     if not raw_data:
@@ -83,6 +129,58 @@ def build_raw_data_summary(raw_data: str, original_periodicity: str) -> dict | N
             ],
             "original_periodicity": resolved_original,
         }
+
+
+def compute_date_range_candidates_from_global_metadata(
+    metadata: dict,
+    periodicity: str,
+    selected_series: tuple[str, ...],
+) -> dict:
+    """Compute date-range candidates from shared raw-data metadata only."""
+    if not metadata or not selected_series:
+        return dict(_EMPTY_CANDIDATES)
+
+    periodicity_block = ((metadata.get("periodicities") or {}).get(periodicity or "daily")) or {}
+    series_ranges = periodicity_block.get("series_ranges") or {}
+    available_series = tuple(series for series in selected_series if series in series_ranges)
+    if not available_series:
+        return dict(_EMPTY_CANDIDATES)
+
+    result = dict(_EMPTY_CANDIDATES)
+    result["available_series"] = available_series
+    result["max_start"] = periodicity_block.get("dataset_start")
+    result["max_end"] = periodicity_block.get("dataset_end")
+
+    starts = [series_ranges[series].get("start") for series in available_series if series_ranges[series].get("start")]
+    ends = [series_ranges[series].get("end") for series in available_series if series_ranges[series].get("end")]
+    if len(starts) == len(available_series) and len(ends) == len(available_series):
+        common_start = max(starts)
+        common_end = min(ends)
+        if common_start <= common_end:
+            result["common_start"] = common_start
+            result["common_end"] = common_end
+
+    daily_phase_ranges = metadata.get("daily_phase_ranges") or {}
+    daily_available = [series for series in available_series if series in daily_phase_ranges]
+    if daily_available:
+        daily_starts = [
+            daily_phase_ranges[series].get("start")
+            for series in daily_available
+            if daily_phase_ranges[series].get("start")
+        ]
+        daily_ends = [
+            daily_phase_ranges[series].get("end")
+            for series in daily_available
+            if daily_phase_ranges[series].get("end")
+        ]
+        if len(daily_starts) == len(daily_available) and len(daily_ends) == len(daily_available):
+            common_daily_start = max(daily_starts)
+            common_daily_end = min(daily_ends)
+            if common_daily_start <= common_daily_end:
+                result["common_daily_start"] = common_daily_start
+                result["common_daily_end"] = common_daily_end
+
+    return result
 
 
 def get_periodicity_range_metadata(raw_data_hash: str, raw_data: str, periodicity: str) -> dict:

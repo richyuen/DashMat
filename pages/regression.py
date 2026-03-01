@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from io import BytesIO
 import json
 import re
@@ -22,8 +21,7 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import get_sheet_names
 from utils.date_range_flow import (
-    compute_date_range_candidates_from_metadata,
-    get_periodicity_range_metadata,
+    compute_date_range_candidates_from_global_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -4024,20 +4022,55 @@ def reg_handle_sheet_select_ok(
 # Welcome / main visibility
 # ---------------------------------------------------------------------------
 
-@callback(
+clientside_callback(
+    """
+    function(metadata, nIntervals, originalPeriodicity, storedPeriodicity) {
+        const hideMain = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"};
+        const showMain = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"};
+        const baseReady = !!(nIntervals && nIntervals >= 1);
+        if (!metadata) {
+            return [hideMain, [{"value": "daily", "label": "Daily"}], "daily", baseReady];
+        }
+
+        const labelMap = {
+            "daily_trading": "Daily (Trading)",
+            "daily": "Daily (Original)",
+            "monthly": "Monthly",
+            "weekly_monday": "Weekly (Monday)",
+            "weekly_tuesday": "Weekly (Tuesday)",
+            "weekly_wednesday": "Weekly (Wednesday)",
+            "weekly_thursday": "Weekly (Thursday)",
+            "weekly_friday": "Weekly (Friday)"
+        };
+        const values = (metadata.available_periodicity_values || []).length
+            ? metadata.available_periodicity_values
+            : (((metadata.original_periodicity || originalPeriodicity || "daily") === "monthly")
+                ? ["monthly"]
+                : Object.keys(labelMap));
+        const options = values.map((value) => ({value, label: labelMap[value] || value}));
+        const validValues = new Set(values);
+        const defaultValue = validValues.has(metadata.original_periodicity)
+            ? metadata.original_periodicity
+            : (values[0] || "daily");
+        const periodValue = validValues.has(storedPeriodicity) ? storedPeriodicity : defaultValue;
+        return [showMain, options, periodValue, baseReady];
+    }
+    """,
     Output("reg-main-container", "style"),
     Output("reg-periodicity-select", "data"),
     Output("reg-periodicity-select", "value"),
     Output("reg-base-controls-ready-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("dashmat-original-periodicity-store", "data"),
     State("reg-periodicity-value-store", "data"),
     prevent_initial_call=False,
 )
-def _reg_toggle_main_visibility(raw_data, n_intervals, original_periodicity, stored_periodicity):
+
+
+def _reg_toggle_main_visibility(raw_data_metadata, n_intervals, original_periodicity, stored_periodicity):
     _, main_style, options, value, base_ready = reg_toggle_welcome(
-        raw_data,
+        raw_data_metadata,
         n_intervals,
         original_periodicity,
         stored_periodicity,
@@ -4045,19 +4078,20 @@ def _reg_toggle_main_visibility(raw_data, n_intervals, original_periodicity, sto
     return main_style, options, value, base_ready
 
 
-def reg_toggle_welcome(raw_data, n_intervals, original_periodicity, stored_periodicity):
+def reg_toggle_welcome(raw_data_metadata, n_intervals, original_periodicity, stored_periodicity):
     hide_welcome = {"display": "none"}
     show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     hide_main = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     base_ready = bool(n_intervals and n_intervals >= 1)
-    if not raw_data:
+    if not raw_data_metadata:
         return hide_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily", base_ready
 
-    period_data = get_available_periodicities(original_periodicity or "daily")
+    resolved_original = (raw_data_metadata or {}).get("original_periodicity") or original_periodicity or "daily"
+    period_data = get_available_periodicities(resolved_original)
     valid_values = [option["value"] for option in period_data]
     default_value = (
-        original_periodicity
-        if original_periodicity in valid_values
+        resolved_original
+        if resolved_original in valid_values
         else (valid_values[0] if valid_values else "daily")
     )
     period_value = (
@@ -4148,8 +4182,7 @@ def _reg_series_status_is_final(status_data, token=None):
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-page-load-trigger", "n_intervals"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     State("reg-url-location", "pathname"),
     State("reg-series-select", "data"),
     State("reg-series-order-store", "data"),
@@ -4158,12 +4191,11 @@ def _reg_series_status_is_final(status_data, token=None):
     State("reg-series-selection-grid-status-store", "data"),
     State("dashmat-route-intent-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),
-    prevent_initial_call=True,
+    prevent_initial_call="initial_duplicate",
 )
 def reg_open_modal(
     n_clicks,
-    raw_data,
-    page_load_intervals,
+    raw_data_metadata,
     pathname,
     sel,
     order,
@@ -4182,32 +4214,23 @@ def reg_open_modal(
     should_open = False
     if triggered_id == "reg-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id == "dashmat-raw-data-store":
-        if raw_data:
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
+    elif triggered_id == "dashmat-raw-data-metadata-store":
+        if raw_data_metadata:
+            columns = list((raw_data_metadata or {}).get("columns") or [])
             known_order = list(order or [])
             new_columns = [c for c in columns if c not in known_order]
             should_open = bool(new_columns)
-    elif triggered_id == "reg-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
         consumed_route_intent = _reg_route_intent_token_to_consume(
             route_intent,
             ACTION_CONFIGURE_AFTER_IMPORT,
             consumed_token,
         )
-        if consumed_route_intent and raw_data:
+        if consumed_route_intent and raw_data_metadata:
             should_open = True
         else:
             page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-            if page_path == REGRESSION_PATH and raw_data:
-                try:
-                    columns = list(json_to_df(raw_data).columns)
-                except Exception:
-                    columns = []
+            if page_path == REGRESSION_PATH and raw_data_metadata:
+                columns = list((raw_data_metadata or {}).get("columns") or [])
                 selected = set(sel or [])
                 has_selected = bool(selected.intersection(columns))
                 has_dependent = bool(dep_var and dep_var in columns)
@@ -4685,21 +4708,20 @@ def reg_on_modal_cancel(n_clicks):
     Output("reg-maximum-range-button", "disabled"),
     Output("reg-date-range-store", "data", allow_duplicate=True),
     Output("reg-page-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     Input("reg-periodicity-select", "value"),
     Input("reg-series-select", "data"),
     Input("reg-dependent-var-store", "data"),
     Input("reg-base-controls-ready-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
     State("reg-date-range-store", "data"),
     State("reg-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def reg_init_date_range(raw_data, periodicity, x_series, dep_var, base_controls_ready, raw_data_summary, stored_range, current_page_ready):
+def reg_init_date_range(raw_data_metadata, periodicity, x_series, dep_var, base_controls_ready, stored_range, current_page_ready):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
     all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
-    if not raw_data or not all_series or not base_controls_ready:
+    if not raw_data_metadata or not all_series or not base_controls_ready:
         return None, None, disabled_style, True, True, None, no_update
     try:
         with timed_block(
@@ -4707,9 +4729,11 @@ def reg_init_date_range(raw_data, periodicity, x_series, dep_var, base_controls_
             periodicity=periodicity or "daily",
             series_count=len(all_series),
         ):
-            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
-            metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
-            candidates = compute_date_range_candidates_from_metadata(metadata, tuple(all_series))
+            candidates = compute_date_range_candidates_from_global_metadata(
+                raw_data_metadata,
+                periodicity or "daily",
+                tuple(all_series),
+            )
             if not candidates.get("available_series"):
                 return None, None, disabled_style, True, True, None, no_update
             start_date, end_date = resolve_initial_range(candidates, stored_range)
@@ -4752,25 +4776,26 @@ def reg_release_page_ready_on_series_modal(request_token, status_data, current_p
     Output("reg-date-range-store", "data", allow_duplicate=True),
     Input("reg-common-range-button", "n_clicks"),
     Input("reg-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
+    State("dashmat-raw-data-metadata-store", "data"),
     State("reg-periodicity-select", "value"),
     State("reg-series-select", "data"),
     State("reg-dependent-var-store", "data"),
     prevent_initial_call=True,
 )
-def reg_date_range_button(n_common, n_max, raw_data, raw_data_summary, periodicity, x_series, dep_var):
+def reg_date_range_button(n_common, n_max, raw_data_metadata, periodicity, x_series, dep_var):
     all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
-    if not raw_data or not all_series:
+    if not raw_data_metadata or not all_series:
         raise PreventUpdate
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
-        metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
-        candidates = compute_date_range_candidates_from_metadata(metadata, tuple(all_series))
+        candidates = compute_date_range_candidates_from_global_metadata(
+            raw_data_metadata,
+            periodicity or "daily",
+            tuple(all_series),
+        )
         start, end, _ = resolve_button_range(candidates, button_id)
         if not start or not end:
             raise PreventUpdate

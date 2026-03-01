@@ -1,7 +1,6 @@
 """Portfolio Optimization page for DashMat."""
 
 from dataclasses import dataclass
-import hashlib
 from io import BytesIO, StringIO
 import json
 
@@ -22,8 +21,7 @@ import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
-    compute_date_range_candidates_from_metadata,
-    get_periodicity_range_metadata,
+    compute_date_range_candidates_from_global_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -5911,27 +5909,23 @@ clientside_callback(
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
     Output("po-series-select", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    State("dashmat-original-periodicity-store", "data"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     State("po-periodicity-value-store", "data"),
     State("po-series-select-value-store", "data"),
     State("po-vol-scaler-value-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol, raw_data_summary):
-    if not raw_data:
+def po_restore_state(raw_data_metadata, stored_periodicity, stored_series, stored_vol):
+    if not raw_data_metadata:
         raise PreventUpdate
     try:
         with timed_block("portopt.restore_state"):
-            summary = raw_data_summary or {}
-            columns = list(summary.get("columns") or [])
-            if not columns:
-                columns = list(json_to_df(raw_data).columns)
+            metadata = raw_data_metadata or {}
+            columns = list(metadata.get("columns") or [])
             if not columns:
                 raise PreventUpdate
 
-            resolved_orig_periodicity = summary.get("original_periodicity") or orig_periodicity or "daily"
+            resolved_orig_periodicity = metadata.get("original_periodicity") or "daily"
             periodicity_options = get_available_periodicities(resolved_orig_periodicity)
 
             # Validate stored values
@@ -7220,20 +7214,18 @@ clientside_callback(
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     State("po-url-location", "pathname"),
     State("po-series-select", "data"),
     State("po-series-selection-open-request-store", "data"),
     State("po-series-selection-grid-status-store", "data"),
     State("dashmat-route-intent-store", "data"),
     State("po-route-intent-consumed-token-store", "data"),
-    prevent_initial_call=True,
+    prevent_initial_call="initial_duplicate",
 )
 def po_open_modal(
     n_clicks,
-    page_load_intervals,
-    raw_data,
+    raw_data_metadata,
     pathname,
     selected_series,
     current_request_token,
@@ -7250,8 +7242,8 @@ def po_open_modal(
 
     if triggered_id == "po-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id == "po-page-load-trigger":
-        if page_load_intervals is None or not raw_data:
+    elif triggered_id == "dashmat-raw-data-metadata-store":
+        if not raw_data_metadata:
             raise PreventUpdate
         consumed_route_intent = _po_route_intent_token_to_consume(
             route_intent,
@@ -7264,10 +7256,7 @@ def po_open_modal(
             current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
             if current_path != PORTOPT_PATH:
                 raise PreventUpdate
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
+            columns = list((raw_data_metadata or {}).get("columns") or [])
             selected_set = set(selected_series or [])
             should_open = bool(columns) and not bool(selected_set.intersection(columns))
 
@@ -7940,30 +7929,28 @@ def po_on_modal_cancel(n_clicks):
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
     Output("po-page-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
     Input("po-base-controls-ready-store", "data"),
     Input("po-ex-ante-controls-ready-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
     State("po-date-range-store", "data"),
     State("po-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def po_init_date_range(
-    raw_data,
+    raw_data_metadata,
     periodicity,
     selected_series,
     base_controls_ready,
     ex_ante_controls_ready,
-    raw_data_summary,
     stored_range,
     current_page_ready,
 ):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
-    if raw_data is None or not selected_series or not base_controls_ready or not ex_ante_controls_ready:
+    if not raw_data_metadata or not selected_series or not base_controls_ready or not ex_ante_controls_ready:
         return None, None, disabled_style, True, True, True, None, no_update
 
     try:
@@ -7972,9 +7959,11 @@ def po_init_date_range(
             periodicity=periodicity or "daily",
             series_count=len(selected_series or ()),
         ):
-            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
-            metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
-            candidates = compute_date_range_candidates_from_metadata(metadata, tuple(selected_series or ()))
+            candidates = compute_date_range_candidates_from_global_metadata(
+                raw_data_metadata,
+                periodicity or "daily",
+                tuple(selected_series or ()),
+            )
             if not candidates.get("available_series"):
                 return None, None, disabled_style, True, True, True, None, no_update
 
@@ -8010,23 +7999,24 @@ def po_init_date_range(
     Input("po-common-range-button", "n_clicks"),
     Input("po-common-daily-button", "n_clicks"),
     Input("po-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
+    State("dashmat-raw-data-metadata-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, raw_data_summary, periodicity, selected_series):
-    if raw_data is None or not selected_series:
+def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data_metadata, periodicity, selected_series):
+    if not raw_data_metadata or not selected_series:
         raise PreventUpdate
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
-        metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
-        candidates = compute_date_range_candidates_from_metadata(metadata, tuple(selected_series or ()))
+        candidates = compute_date_range_candidates_from_global_metadata(
+            raw_data_metadata,
+            periodicity or "daily",
+            tuple(selected_series or ()),
+        )
         if not candidates.get("available_series"):
             raise PreventUpdate
 

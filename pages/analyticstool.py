@@ -21,8 +21,7 @@ from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
     compute_date_range_candidates,
-    compute_date_range_candidates_from_metadata,
-    get_periodicity_range_metadata,
+    compute_date_range_candidates_from_global_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -32,6 +31,7 @@ from utils.upload_flow import (
     merge_uploaded_with_existing as _shared_merge_uploaded_with_existing,
 )
 from utils.returns import (
+    PERIODICITY_LABELS,
     align_monthly_index_to_month_end,
     calculate_calendar_year_returns,
     calculate_excess_returns,
@@ -4227,9 +4227,7 @@ clientside_callback(
     Output("at-series-select", "data"),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Output("at-page-ready-store", "data", allow_duplicate=True),
-    Input("at-page-load-trigger", "n_intervals"),
-    Input("dashmat-raw-data-store", "data"),
-    State("dashmat-original-periodicity-store", "data"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     State("at-periodicity-value-store", "data"),
     State("at-series-select-value-store", "data"),
     State("at-returns-type-value-store", "data"),
@@ -4248,14 +4246,11 @@ clientside_callback(
     State("at-monthly-series-store", "data"),
     State("at-pending-working-config-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
     State("at-page-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(
-    n_intervals,
-    raw_data,
-    orig_periodicity,
+    raw_data_metadata,
     stored_periodicity,
     stored_series,
     stored_returns,
@@ -4274,11 +4269,10 @@ def restore_application_state(
     stored_monthly_series,
     pending_working_config,
     pending_series,
-    raw_data_summary,
     current_page_ready,
 ):
-    ready_output = no_update if current_page_ready else bool(n_intervals and n_intervals >= 1 and not raw_data)
-    if not raw_data:
+    ready_output = no_update if current_page_ready else False
+    if not raw_data_metadata:
         # Reset defaults (visibility handled by clientside callback)
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
@@ -4288,15 +4282,15 @@ def restore_application_state(
 
     try:
         with timed_block("analyticstool.restore_application_state"):
-            summary = raw_data_summary or {}
-            columns = list(summary.get("columns") or [])
-            if not columns:
-                columns = list(json_to_df(raw_data).columns)
-
-            resolved_orig_periodicity = summary.get("original_periodicity") or orig_periodicity or "daily"
+            metadata = raw_data_metadata or {}
+            columns = list(metadata.get("columns") or [])
+            resolved_orig_periodicity = metadata.get("original_periodicity") or "daily"
 
             # Periodicity
-            periodicity_options = get_available_periodicities(resolved_orig_periodicity)
+            periodicity_options = [
+                {"value": value, "label": PERIODICITY_LABELS.get(value, value)}
+                for value in (metadata.get("available_periodicity_values") or [])
+            ] or get_available_periodicities(resolved_orig_periodicity)
             valid_values = {option["value"] for option in periodicity_options}
             valid_periodicity = (
                 stored_periodicity
@@ -4652,8 +4646,7 @@ def _at_import_success_common_outputs(
     Output("at-alert-message", "hide", allow_duplicate=True),
     Output("at-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
-    Input("at-page-load-trigger", "n_intervals"),
-    State("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-metadata-store", "data"),
     State("at-url-location", "pathname"),
     State("at-series-select", "data"),
     State("at-series-selection-open-request-store", "data"),
@@ -4661,12 +4654,11 @@ def _at_import_success_common_outputs(
     State("at-pending-working-config-store", "data"),
     State("dashmat-route-intent-store", "data"),
     State("at-route-intent-consumed-token-store", "data"),
-    prevent_initial_call=True,
+    prevent_initial_call="initial_duplicate",
 )
 def open_modal(
     n_clicks,
-    page_load_intervals,
-    raw_data,
+    raw_data_metadata,
     pathname,
     selected_series,
     current_request_token,
@@ -4684,8 +4676,8 @@ def open_modal(
 
     if triggered_id == "at-open-series-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id == "at-page-load-trigger":
-        if page_load_intervals is None or not raw_data:
+    elif triggered_id == "dashmat-raw-data-metadata-store":
+        if not raw_data_metadata:
             raise PreventUpdate
         consumed_route_intent = _at_route_intent_token_to_consume(
             route_intent,
@@ -4700,10 +4692,7 @@ def open_modal(
             current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
             if current_path != ANALYTICS_PATH:
                 raise PreventUpdate
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
+            columns = list((raw_data_metadata or {}).get("columns") or [])
             selected_set = set(selected_series or [])
             should_open = bool(columns) and not bool(selected_set.intersection(columns))
 
@@ -8103,10 +8092,9 @@ def at_resolve_series_selection_modal(request_token, status_data, pending_workin
     Output("at-date-range-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Output("at-page-ready-store", "data", allow_duplicate=True),
+    Input("dashmat-raw-data-metadata-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
-    State("dashmat-raw-data-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
@@ -8114,10 +8102,9 @@ def at_resolve_series_selection_modal(request_token, status_data, pending_workin
     prevent_initial_call="initial_duplicate",
 )
 def initialize_date_range(
+    raw_data_metadata,
     periodicity,
     selected_series,
-    raw_data,
-    raw_data_summary,
     stored_range,
     current_start_date,
     current_end_date,
@@ -8127,7 +8114,7 @@ def initialize_date_range(
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
-    if raw_data is None or not selected_series:
+    if not raw_data_metadata or not selected_series:
         return None, None, disabled_style, True, True, True, None, False, no_update
 
     try:
@@ -8136,14 +8123,9 @@ def initialize_date_range(
             periodicity=periodicity or "daily",
             series_count=len(selected_series or ()),
         ):
-            raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
-            metadata = get_periodicity_range_metadata(
-                raw_data_hash,
-                raw_data,
+            candidates = compute_date_range_candidates_from_global_metadata(
+                raw_data_metadata,
                 periodicity or "daily",
-            )
-            candidates = compute_date_range_candidates_from_metadata(
-                metadata,
                 tuple(selected_series or ()),
             )
             if not candidates.get("available_series"):
@@ -8193,15 +8175,14 @@ def initialize_date_range(
     Input("at-common-range-button", "n_clicks"),
     Input("at-common-daily-button", "n_clicks"),
     Input("at-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
+    State("dashmat-raw-data-metadata-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, raw_data_summary, periodicity, selected_series):
+def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data_metadata, periodicity, selected_series):
     """Update date range based on button clicks."""
-    if raw_data is None or not selected_series:
+    if not raw_data_metadata or not selected_series:
         raise PreventUpdate
 
     ctx = callback_context
@@ -8211,9 +8192,11 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
     try:
-        raw_data_hash = (raw_data_summary or {}).get("raw_data_hash") or hashlib.md5(raw_data.encode("utf-8")).hexdigest()
-        metadata = get_periodicity_range_metadata(raw_data_hash, raw_data, periodicity or "daily")
-        candidates = compute_date_range_candidates_from_metadata(metadata, tuple(selected_series or ()))
+        candidates = compute_date_range_candidates_from_global_metadata(
+            raw_data_metadata,
+            periodicity or "daily",
+            tuple(selected_series or ()),
+        )
         if not candidates.get("available_series"):
             raise PreventUpdate
 
