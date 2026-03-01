@@ -408,13 +408,13 @@ def test_reg_resolve_import_modal_request_ignores_stale_intent(regression_page):
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
 
     with pytest.raises(PreventUpdate):
-        regression_page.reg_resolve_import_modal_request("/regression", route_intent, None)
+        regression_page.reg_resolve_import_modal_request(1, route_intent, "regression", None)
 
 
 def test_reg_resolve_import_modal_request_returns_db_request(regression_page):
     route_intent = build_route_intent("regression", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
 
-    request = regression_page.reg_resolve_import_modal_request("/regression", route_intent, None)
+    request = regression_page.reg_resolve_import_modal_request(1, route_intent, "regression", None)
 
     assert request == (
         {"flow": FLOW_DB, "token": route_intent["token"]},
@@ -800,17 +800,18 @@ def test_reg_release_page_ready_on_series_modal_ignores_mismatched_or_nonfinal_s
         )
 
 
-def test_reg_open_modal_opens_on_regression_path_with_summary(monkeypatch, regression_page):
+def test_reg_open_modal_opens_on_regression_activation_with_summary(monkeypatch, regression_page):
     monkeypatch.setattr(
         regression_page,
         "callback_context",
-        SimpleNamespace(triggered_id="reg-url-location"),
+        SimpleNamespace(triggered_id="wb-regression-activation-store"),
     )
 
     out = regression_page.reg_open_modal(
         None,
         {"columns": ["Y", "X1", "X2"]},
-        "/regression",
+        1,
+        "regression",
         [],
         [],
         None,

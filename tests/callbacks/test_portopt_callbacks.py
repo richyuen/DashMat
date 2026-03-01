@@ -246,7 +246,7 @@ def test_po_resolve_import_modal_request_returns_db_request(page_modules):
     _, portopt = page_modules
     route_intent = build_route_intent("portopt", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
 
-    request = portopt.po_resolve_import_modal_request("/portopt", route_intent, None)
+    request = portopt.po_resolve_import_modal_request(1, route_intent, "portopt", None)
 
     assert request == (
         {"flow": FLOW_DB, "token": route_intent["token"]},
@@ -279,7 +279,7 @@ def test_po_resolve_import_modal_request_ignores_stale_intent(page_modules):
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
 
     with pytest.raises(PreventUpdate):
-        portopt.po_resolve_import_modal_request("/portopt", route_intent, None)
+        portopt.po_resolve_import_modal_request(1, route_intent, "portopt", None)
 
 
 def test_po_populate_returns_grid_adds_header_tooltips(page_modules):
@@ -764,18 +764,19 @@ def test_po_sync_results_with_raw_data_prunes_missing_portfolios(page_modules, r
     assert pruned == {"KeepMe": {"x": 1}}
 
 
-def test_po_open_modal_opens_on_portopt_path_with_summary(monkeypatch, page_modules):
+def test_po_open_modal_opens_on_portopt_activation_with_summary(monkeypatch, page_modules):
     _, portopt = page_modules
     monkeypatch.setattr(
         portopt,
         "callback_context",
-        SimpleNamespace(triggered_id="po-url-location"),
+        SimpleNamespace(triggered_id="wb-portopt-activation-store"),
     )
 
     out = portopt.po_open_modal(
         None,
         {"columns": ["P1", "P2"]},
-        "/portopt",
+        1,
+        "portopt",
         [],
         None,
         None,
@@ -787,19 +788,20 @@ def test_po_open_modal_opens_on_portopt_path_with_summary(monkeypatch, page_modu
     assert out[1:] == ("", "blue", True, None)
 
 
-def test_po_open_modal_ignores_non_portopt_path(monkeypatch, page_modules):
+def test_po_open_modal_ignores_inactive_module(monkeypatch, page_modules):
     _, portopt = page_modules
     monkeypatch.setattr(
         portopt,
         "callback_context",
-        SimpleNamespace(triggered_id="po-url-location"),
+        SimpleNamespace(triggered_id="wb-portopt-activation-store"),
     )
 
     with pytest.raises(PreventUpdate):
         portopt.po_open_modal(
             None,
             {"columns": ["P1", "P2"]},
-            "/analyticstool",
+            1,
+            "analyticstool",
             [],
             None,
             None,

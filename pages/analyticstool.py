@@ -13,7 +13,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback, callback_context
+from dash import Input, Output, State, callback, dcc, html, no_update, ALL, clientside_callback, callback_context
 from dash.exceptions import PreventUpdate
 
 import cache_config
@@ -52,7 +52,7 @@ from utils.statistics import (
     calculate_statistics_cached,
     generate_correlogram_cached,
 )
-from utils.page_paths import ANALYTICS_PATH, landing_href
+from utils.page_paths import landing_href
 from utils.route_intent import (
     ACTION_CONFIGURE_AFTER_IMPORT,
     ACTION_OPEN_IMPORT_MODAL,
@@ -111,7 +111,6 @@ from utils.dashmat_welcome_modal import (
     js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
-    js_workspace_empty_state_router,
     resolve_portfolio_add_mode,
     resolve_raw_db_add_mode,
 )
@@ -174,7 +173,7 @@ from utils.regime_definitions import (
     validate_regime_definition_payload,
 )
 
-register_page(__name__, path=ANALYTICS_PATH, name="Analytics Tool", title="Analytics Tool")
+MODULE_KEY = "analyticstool"
 
 # Performance optimization constants
 
@@ -4111,6 +4110,7 @@ layout = dmc.Container(
         dcc.Store(id="at-correlogram-meta-store", data={}),
         dcc.Store(id="at-correlogram-target-key-store", data=None),
         dcc.Store(id="at-correlogram-rendered-key-store", data=None),
+        dcc.Store(id="at-last-synced-summary-hash-store", data=None, storage_type="memory"),
 
         # UI Blocker for file dialog (Overlay)
         dcc.Store(id="at-page-ready-store", data=False),
@@ -4123,20 +4123,15 @@ layout = dmc.Container(
             loaderProps={"variant": "bars"},
         ),
 
-        # One-shot interval to trigger visibility check after session-storage hydration
-        dcc.Interval(id="at-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
     ],
 )
 
 layout = apply_tooltips_to_layout(layout, page_key="analyticstool")
 
 
-# Toggle welcome/main visibility based on dashmat-raw-data-store.
-# Uses a one-shot Interval to guarantee session-storage has hydrated on
-# cross-page navigation, plus dashmat-raw-data-store Input for same-page uploads.
 clientside_callback(
     """
-    function(n_intervals, data) {
+    function(data) {
         if (data) {
             return {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
         }
@@ -4144,29 +4139,7 @@ clientside_callback(
     }
     """,
     Output("at-main-app-container", "style"),
-    Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
-)
-
-
-clientside_callback(
-    js_workspace_empty_state_router(
-        ANALYTICS_PATH,
-        "analyticstool",
-        landing_href("analyticstool"),
-        "at-route-intent-consumed-token-store",
-    ),
-    Output("at-nav-effect-dummy", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-page-load-trigger", "n_intervals"),
-    Input("at-db-add-modal", "opened"),
-    Input("at-raw-db-add-modal", "opened"),
-    Input("at-portfolio-add-modal", "opened"),
-    Input("at-underlying-add-modal", "opened"),
-    State("at-url-location", "pathname"),
-    State("dashmat-route-intent-store", "data"),
-    State("at-route-intent-consumed-token-store", "data"),
-    prevent_initial_call=False,
 )
 
 
@@ -4199,14 +4172,14 @@ clientside_callback(
     Output("at-raw-db-add-request-store", "data"),
     Output("at-portfolio-add-request-store", "data"),
     Output("at-underlying-add-request-store", "data"),
-    Input("at-url-location", "pathname"),
+    Input("wb-analytics-activation-store", "data"),
     Input("dashmat-route-intent-store", "data"),
+    State("wb-active-module-store", "data"),
     State("at-route-intent-consumed-token-store", "data"),
     prevent_initial_call=False,
 )
-def at_resolve_import_modal_request(pathname, route_intent, consumed_token):
-    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-    if page_path != ANALYTICS_PATH:
+def at_resolve_import_modal_request(_activation_token, route_intent, active_module, consumed_token):
+    if active_module != MODULE_KEY:
         raise PreventUpdate
     request = _at_build_import_modal_request(route_intent, consumed_token)
     if not request:
@@ -4241,7 +4214,9 @@ def at_resolve_import_modal_request(pathname, route_intent, consumed_token):
     Output("at-series-select", "data"),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Output("at-page-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-summary-store", "data"),
+    Output("at-last-synced-summary-hash-store", "data"),
+    Input("wb-analytics-activation-store", "data"),
+    State("dashmat-raw-data-summary-store", "data"),
     State("at-periodicity-value-store", "data"),
     State("at-series-select-value-store", "data"),
     State("at-returns-type-value-store", "data"),
@@ -4261,9 +4236,11 @@ def at_resolve_import_modal_request(pathname, route_intent, consumed_token):
     State("at-pending-working-config-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
     State("at-page-ready-store", "data"),
+    State("at-last-synced-summary-hash-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(
+    _activation_token,
     raw_data_summary,
     stored_periodicity,
     stored_series,
@@ -4284,6 +4261,7 @@ def restore_application_state(
     pending_working_config,
     pending_series,
     current_page_ready,
+    last_synced_summary_hash,
 ):
     ready_output = no_update if current_page_ready else False
     if not raw_data_summary:
@@ -4291,12 +4269,15 @@ def restore_application_state(
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], False, ready_output
+            "box", 5, "raw", "annual", [], False, ready_output, None
         )
 
     try:
         with timed_block("analyticstool.restore_application_state"):
             summary = raw_data_summary or {}
+            summary_hash = summary.get("raw_data_hash")
+            if current_page_ready and summary_hash and summary_hash == last_synced_summary_hash:
+                raise PreventUpdate
             columns = list(summary.get("columns") or [])
             resolved_orig_periodicity = summary.get("original_periodicity") or "daily"
 
@@ -4371,7 +4352,8 @@ def restore_application_state(
             return (
                 periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
                 roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-                factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, next_state_ready, next_page_ready
+                factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, next_state_ready, next_page_ready,
+                summary_hash,
             )
 
     except Exception:
@@ -4379,7 +4361,7 @@ def restore_application_state(
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], False, no_update
+            "box", 5, "raw", "annual", [], False, no_update, no_update
         )
 
 
@@ -4406,7 +4388,7 @@ clientside_callback(
         if (!n_clicks) {
             return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return ['/portopt', ''];
+        return ['/workbench', '?module=portopt'];
     }
     """,
     Output("_pages_location", "pathname", allow_duplicate=True),
@@ -4422,7 +4404,7 @@ clientside_callback(
         if (!n_clicks) {
             return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return ['/regression', ''];
+        return ['/workbench', '?module=regression'];
     }
     """,
     Output("_pages_location", "pathname", allow_duplicate=True),
@@ -4661,7 +4643,8 @@ def _at_import_success_common_outputs(
     Output("at-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
     Input("dashmat-raw-data-summary-store", "data"),
-    State("at-url-location", "pathname"),
+    Input("wb-analytics-activation-store", "data"),
+    State("wb-active-module-store", "data"),
     State("at-series-select", "data"),
     State("at-series-selection-open-request-store", "data"),
     State("at-series-selection-grid-status-store", "data"),
@@ -4673,7 +4656,8 @@ def _at_import_success_common_outputs(
 def open_modal(
     n_clicks,
     raw_data_summary,
-    pathname,
+    _activation_token,
+    active_module,
     selected_series,
     current_request_token,
     current_status,
@@ -4690,7 +4674,9 @@ def open_modal(
 
     if triggered_id == "at-open-series-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id == "dashmat-raw-data-summary-store":
+    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-analytics-activation-store"}:
+        if active_module != MODULE_KEY:
+            raise PreventUpdate
         if not raw_data_summary:
             raise PreventUpdate
         consumed_route_intent = _at_route_intent_token_to_consume(
@@ -4702,9 +4688,6 @@ def open_modal(
             should_open = True
         else:
             if isinstance(pending_working_config, dict):
-                raise PreventUpdate
-            current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-            if current_path != ANALYTICS_PATH:
                 raise PreventUpdate
             columns = list((raw_data_summary or {}).get("columns") or [])
             selected_set = set(selected_series or [])

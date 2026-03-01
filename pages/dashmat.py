@@ -15,7 +15,7 @@ from utils.dashmat_welcome_modal import (
     build_welcome_screen,
     js_trigger_upload_with_cancel,
 )
-from utils.page_paths import LANDING_PATH, module_to_workspace_path, normalize_landing_module
+from utils.page_paths import LANDING_PATH, normalize_module, workbench_href
 from utils.route_intent import (
     ACTION_CONFIGURE_AFTER_IMPORT,
     ACTION_OPEN_IMPORT_MODAL,
@@ -106,7 +106,7 @@ layout = dmc.Container(
                                     children=[
                                         dcc.Link(
                                             id="dm-open-workspace-link",
-                                            href=module_to_workspace_path("analyticstool"),
+                                            href=workbench_href("analyticstool"),
                                             refresh=False,
                                             style={"display": "none", "textDecoration": "none", "color": "inherit"},
                                             children=dmc.Button(
@@ -152,11 +152,11 @@ layout = apply_tooltips_to_layout(layout, page_key="dashmat")
 
 def _normalized_query_module(search: str | None) -> str:
     params = parse_qs((search or "").lstrip("?"))
-    return normalize_landing_module((params.get("module") or [None])[0])
+    return normalize_module((params.get("module") or [None])[0])
 
 
 def dm_search_for_module_selection(module_value: str | None, current_search: str | None) -> str | None:
-    next_module = normalize_landing_module(module_value)
+    next_module = normalize_module(module_value)
     current_search_value = str(current_search or "")
     if next_module == "analyticstool":
         return "" if current_search_value else None
@@ -248,10 +248,10 @@ clientside_callback(
     prevent_initial_call=False,
 )
 def dm_update_workspace_cta(module_value, raw_data):
-    module_name = normalize_landing_module(module_value)
+    module_name = normalize_module(module_value)
     visible_style = {"textDecoration": "none", "color": "inherit"}
     return (
-        module_to_workspace_path(module_name),
+        workbench_href(module_name),
         _MODULE_RESTORE_LABELS[module_name],
         visible_style if raw_data else {**visible_style, "display": "none"},
     )
@@ -298,14 +298,14 @@ def dm_route_non_file_imports(
     if not trigger_meta or not triggered_clicks.get(triggered_id):
         raise PreventUpdate
 
-    module_name = normalize_landing_module(module_value)
+    module_name = normalize_module(module_value)
     intent = build_route_intent(
         module_name,
         ACTION_OPEN_IMPORT_MODAL,
         flow=trigger_meta["flow"],
         mode=trigger_meta.get("mode"),
     )
-    return intent, module_to_workspace_path(module_name), ""
+    return intent, "/workbench", f"?module={module_name}"
 
 
 def _dm_upload_success_outputs(
@@ -313,13 +313,13 @@ def _dm_upload_success_outputs(
     combined_periodicity,
     target_module,
 ):
-    module_name = normalize_landing_module(target_module)
+    module_name = normalize_module(target_module)
     return (
         df_to_json(merged_df),
         combined_periodicity,
         build_route_intent(module_name, ACTION_CONFIGURE_AFTER_IMPORT),
-        module_to_workspace_path(module_name),
-        "",
+        "/workbench",
+        f"?module={module_name}",
         "",
         "blue",
         True,

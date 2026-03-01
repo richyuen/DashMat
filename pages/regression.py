@@ -14,7 +14,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import (
     Input, Output, State, callback, dcc, html, no_update,
-    register_page, clientside_callback, callback_context,
+    clientside_callback, callback_context,
 )
 from dash.exceptions import PreventUpdate
 
@@ -85,11 +85,10 @@ from utils.dashmat_welcome_modal import (
     js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
-    js_workspace_empty_state_router,
     resolve_portfolio_add_mode,
     resolve_raw_db_add_mode,
 )
-from utils.page_paths import REGRESSION_PATH, landing_href
+from utils.page_paths import landing_href
 from utils.route_intent import (
     ACTION_CONFIGURE_AFTER_IMPORT,
     ACTION_OPEN_IMPORT_MODAL,
@@ -120,7 +119,7 @@ from utils.underlying_category_imports import (
     load_underlying_category_series,
 )
 
-register_page(__name__, path=REGRESSION_PATH, name="Regression", title="Regression")
+MODULE_KEY = "regression"
 
 REG_CONFIG = PagePrefixConfig(
     prefix="reg",
@@ -2355,7 +2354,7 @@ clientside_callback(
         if (!n_clicks) {
             return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return ['/analyticstool', ''];
+        return ['/workbench', '?module=analyticstool'];
     }
     """,
     Output("_pages_location", "pathname", allow_duplicate=True),
@@ -2370,7 +2369,7 @@ clientside_callback(
         if (!n_clicks) {
             return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return ['/portopt', ''];
+        return ['/workbench', '?module=portopt'];
     }
     """,
     Output("_pages_location", "pathname", allow_duplicate=True),
@@ -4096,27 +4095,6 @@ def reg_toggle_welcome(raw_data_summary, n_intervals, original_periodicity, stor
 
 
 clientside_callback(
-    js_workspace_empty_state_router(
-        REGRESSION_PATH,
-        "regression",
-        landing_href("regression"),
-        "reg-route-intent-consumed-token-store",
-    ),
-    Output("reg-nav-effect-dummy", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-page-load-trigger", "n_intervals"),
-    Input("reg-db-add-modal", "opened"),
-    Input("reg-raw-db-add-modal", "opened"),
-    Input("reg-portfolio-add-modal", "opened"),
-    Input("reg-underlying-add-modal", "opened"),
-    State("reg-url-location", "pathname"),
-    State("dashmat-route-intent-store", "data"),
-    State("reg-route-intent-consumed-token-store", "data"),
-    prevent_initial_call=False,
-)
-
-
-clientside_callback(
     """
     function(consumedToken, routeIntent) {
         if (!consumedToken || !routeIntent || String(routeIntent.token || '') !== String(consumedToken || '')) {
@@ -4145,14 +4123,14 @@ clientside_callback(
     Output("reg-raw-db-add-request-store", "data"),
     Output("reg-portfolio-add-request-store", "data"),
     Output("reg-underlying-add-request-store", "data"),
-    Input("reg-url-location", "pathname"),
+    Input("wb-regression-activation-store", "data"),
     Input("dashmat-route-intent-store", "data"),
+    State("wb-active-module-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=False,
 )
-def reg_resolve_import_modal_request(pathname, route_intent, consumed_token):
-    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-    if page_path != REGRESSION_PATH:
+def reg_resolve_import_modal_request(_activation_token, route_intent, active_module, consumed_token):
+    if active_module != MODULE_KEY:
         raise PreventUpdate
     request = _reg_build_import_modal_request(route_intent, consumed_token)
     if not request:
@@ -4202,7 +4180,8 @@ def _reg_series_status_is_final(status_data, token=None):
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-summary-store", "data"),
-    Input("reg-url-location", "pathname"),
+    Input("wb-regression-activation-store", "data"),
+    State("wb-active-module-store", "data"),
     State("reg-series-select", "data"),
     State("reg-series-order-store", "data"),
     State("reg-dependent-var-store", "data"),
@@ -4215,7 +4194,8 @@ def _reg_series_status_is_final(status_data, token=None):
 def reg_open_modal(
     n_clicks,
     raw_data_summary,
-    pathname,
+    _activation_token,
+    active_module,
     sel,
     order,
     dep_var,
@@ -4230,12 +4210,11 @@ def reg_open_modal(
     if current_request_token and not _reg_series_status_is_final(current_status, current_request_token):
         raise PreventUpdate
 
-    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
     should_open = False
     if triggered_id == "reg-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id in {"dashmat-raw-data-summary-store", "reg-url-location"}:
-        if page_path != REGRESSION_PATH:
+    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-regression-activation-store"}:
+        if active_module != MODULE_KEY:
             raise PreventUpdate
         if raw_data_summary:
             columns = list((raw_data_summary or {}).get("columns") or [])
@@ -4250,7 +4229,7 @@ def reg_open_modal(
         if consumed_route_intent and raw_data_summary:
             should_open = True
         else:
-            if page_path == REGRESSION_PATH and raw_data_summary:
+            if active_module == MODULE_KEY and raw_data_summary:
                 columns = list((raw_data_summary or {}).get("columns") or [])
                 selected = set(sel or [])
                 has_selected = bool(selected.intersection(columns))

@@ -16,6 +16,6 @@ def test_update_home_nav_links_for_non_test_role():
     import pages.home as home
 
     analytics_href, portopt_href, regression_href = home.update_home_nav_links({"role": "Admin"})
-    assert analytics_href == "/dashmat?module=analyticstool"
-    assert portopt_href == "/dashmat?module=portopt"
-    assert regression_href == "/dashmat?module=regression"
+    assert analytics_href == "/landing?module=analyticstool"
+    assert portopt_href == "/landing?module=portopt"
+    assert regression_href == "/landing?module=regression"

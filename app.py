@@ -1,5 +1,7 @@
 """DashMat - Market Returns Time Series Dashboard."""
 
+from urllib.parse import parse_qs
+
 import dash_mantine_components as dmc
 from dash import Dash, Input, Output, dcc, page_container
 from dash_iconify import DashIconify
@@ -7,12 +9,13 @@ from dash.exceptions import PreventUpdate
 from cache_config import init_cache
 from utils.date_range_flow import build_raw_data_summary
 from utils.page_paths import (
-    ANALYTICS_PATH,
     HOME_PATH,
     LANDING_PATH,
-    PORTOPT_PATH,
-    REGRESSION_PATH,
     landing_href,
+    module_to_label,
+    normalize_module,
+    workbench_href,
+    WORKBENCH_PATH,
 )
 
 # Initialize the app with multi-page support
@@ -35,12 +38,8 @@ def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> st
 
     if pathname in (LANDING_PATH, f"{LANDING_PATH}/"):
         return "/restricted?target=DashMat"
-    if pathname in ("/analyticstool", "/analyticstool/"):
-        return "/restricted?target=Analytics%20Tool"
-    if pathname in ("/portopt", "/portopt/"):
-        return "/restricted?target=Portfolio%20Optimization"
-    if pathname in ("/regression", "/regression/"):
-        return "/restricted?target=Regression"
+    if pathname in (WORKBENCH_PATH, f"{WORKBENCH_PATH}/"):
+        return None
     return None
 
 # Layout wraps page content with MantineProvider
@@ -52,6 +51,11 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-pending-new-series-store", data=[], storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-route-intent-store", data=None, storage_type="session"),
+    dcc.Store(id="wb-active-module-store", data="analyticstool", storage_type="memory"),
+    dcc.Store(id="wb-previous-module-store", data=None, storage_type="memory"),
+    dcc.Store(id="wb-analytics-activation-store", data=0, storage_type="memory"),
+    dcc.Store(id="wb-portopt-activation-store", data=0, storage_type="memory"),
+    dcc.Store(id="wb-regression-activation-store", data=0, storage_type="memory"),
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     dmc.AppShell(
         header={"height": 45},
@@ -174,7 +178,12 @@ def update_global_nav_links(userinfo, raw_data):
         )
 
     if raw_data:
-        return HOME_PATH, ANALYTICS_PATH, PORTOPT_PATH, REGRESSION_PATH
+        return (
+            HOME_PATH,
+            workbench_href("analyticstool"),
+            workbench_href("portopt"),
+            workbench_href("regression"),
+        )
 
     return (
         HOME_PATH,
@@ -187,10 +196,14 @@ def update_global_nav_links(userinfo, raw_data):
 @app.callback(
     Output("_pages_location", "href"),
     Input("_pages_location", "pathname"),
+    Input("_pages_location", "search"),
     Input("userinfo", "data"),
     prevent_initial_call=False,
 )
-def guard_protected_pages(pathname, userinfo):
+def guard_protected_pages(pathname, search, userinfo):
+    if (userinfo or {}).get("role") == "Test" and pathname in (WORKBENCH_PATH, f"{WORKBENCH_PATH}/"):
+        module_name = normalize_module((parse_qs(str(search or "").lstrip("?")).get("module") or [None])[0])
+        return f"/restricted?target={module_to_label(module_name).replace(' ', '%20')}"
     restricted_href = _restricted_href_for_path(pathname, userinfo)
     if not restricted_href:
         raise PreventUpdate

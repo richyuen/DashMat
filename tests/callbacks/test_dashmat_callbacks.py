@@ -56,8 +56,8 @@ def test_dm_route_non_file_imports_builds_intent_for_real_click(monkeypatch):
     assert intent["target_module"] == "portopt"
     assert intent["action"] == "open_import_modal"
     assert intent["flow"] == "db"
-    assert pathname == "/portopt"
-    assert search == ""
+    assert pathname == "/workbench"
+    assert search == "?module=portopt"
 
 
 def test_dm_update_workspace_cta_hides_restore_button_without_session_data():
@@ -66,7 +66,7 @@ def test_dm_update_workspace_cta_hides_restore_button_without_session_data():
 
     href, label, style = dashmat.dm_update_workspace_cta("portopt", None)
 
-    assert href == "/portopt"
+    assert href == "/workbench?module=portopt"
     assert label == "Restore existing session in Portfolio Optimization"
     assert style == {"textDecoration": "none", "color": "inherit", "display": "none"}
 
@@ -77,7 +77,7 @@ def test_dm_update_workspace_cta_shows_restore_button_with_session_data():
 
     href, label, style = dashmat.dm_update_workspace_cta("regression", {"data": "present"})
 
-    assert href == "/regression"
+    assert href == "/workbench?module=regression"
     assert label == "Restore existing session in Regression"
     assert style == {"textDecoration": "none", "color": "inherit"}
 
@@ -91,6 +91,6 @@ def test_dm_upload_success_outputs_include_spa_navigation_targets():
 
     outputs = dashmat._dm_upload_success_outputs(frame, "monthly", "analyticstool")
 
-    assert outputs[3] == "/analyticstool"
-    assert outputs[4] == ""
+    assert outputs[3] == "/workbench"
+    assert outputs[4] == "?module=analyticstool"
     assert outputs[5] == ""

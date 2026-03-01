@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 from sqlalchemy import text
 from dash import (
     Input, Output, State, callback, dcc, html, no_update,
-    register_page, ALL, clientside_callback, callback_context,
+    ALL, clientside_callback, callback_context,
 )
 from dash.exceptions import PreventUpdate
 
@@ -115,7 +115,6 @@ from utils.dashmat_welcome_modal import (
     js_set_ui_blocker_true_on_any,
     js_trigger_upload_with_cancel,
     js_underlying_delete_row,
-    js_workspace_empty_state_router,
     resolve_portfolio_add_mode,
     resolve_raw_db_add_mode,
 )
@@ -142,7 +141,7 @@ from utils.raw_data_imports import (
     load_fund_series,
     load_performance_series,
 )
-from utils.page_paths import PORTOPT_PATH, landing_href
+from utils.page_paths import landing_href
 from utils.route_intent import (
     ACTION_CONFIGURE_AFTER_IMPORT,
     ACTION_OPEN_IMPORT_MODAL,
@@ -154,7 +153,7 @@ from utils.route_intent import (
     route_intent_value,
 )
 
-register_page(__name__, path=PORTOPT_PATH, name="Portfolio Optimization", title="Portfolio Optimization")
+MODULE_KEY = "portopt"
 
 PO_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     prefix="po",
@@ -3397,7 +3396,7 @@ clientside_callback(
         if (!n_clicks) {
             return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return ['/analyticstool', ''];
+        return ['/workbench', '?module=analyticstool'];
     }
     """,
     Output("_pages_location", "pathname", allow_duplicate=True),
@@ -3413,7 +3412,7 @@ clientside_callback(
         if (!n_clicks) {
             return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        return ['/regression', ''];
+        return ['/workbench', '?module=regression'];
     }
     """,
     Output("_pages_location", "pathname", allow_duplicate=True),
@@ -5846,27 +5845,6 @@ clientside_callback(
 
 
 clientside_callback(
-    js_workspace_empty_state_router(
-        PORTOPT_PATH,
-        "portopt",
-        landing_href("portopt"),
-        "po-route-intent-consumed-token-store",
-    ),
-    Output("po-nav-effect-dummy", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
-    Input("po-db-add-modal", "opened"),
-    Input("po-raw-db-add-modal", "opened"),
-    Input("po-portfolio-add-modal", "opened"),
-    Input("po-underlying-add-modal", "opened"),
-    State("po-url-location", "pathname"),
-    State("dashmat-route-intent-store", "data"),
-    State("po-route-intent-consumed-token-store", "data"),
-    prevent_initial_call=False,
-)
-
-
-clientside_callback(
     """
     function(consumedToken, routeIntent) {
         if (!consumedToken || !routeIntent || String(routeIntent.token || '') !== String(consumedToken || '')) {
@@ -5895,14 +5873,14 @@ clientside_callback(
     Output("po-raw-db-add-request-store", "data"),
     Output("po-portfolio-add-request-store", "data"),
     Output("po-underlying-add-request-store", "data"),
-    Input("po-url-location", "pathname"),
+    Input("wb-portopt-activation-store", "data"),
     Input("dashmat-route-intent-store", "data"),
+    State("wb-active-module-store", "data"),
     State("po-route-intent-consumed-token-store", "data"),
     prevent_initial_call=False,
 )
-def po_resolve_import_modal_request(pathname, route_intent, consumed_token):
-    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-    if page_path != PORTOPT_PATH:
+def po_resolve_import_modal_request(_activation_token, route_intent, active_module, consumed_token):
+    if active_module != MODULE_KEY:
         raise PreventUpdate
     request = _po_build_import_modal_request(route_intent, consumed_token)
     if not request:
@@ -5986,9 +5964,8 @@ def po_restore_state(raw_data_summary, stored_periodicity, stored_series, stored
 
 clientside_callback(
     """
-    function(pathname, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
-        const pagePath = String(pathname || '').split('?')[0].replace(/\/$/, '') || '/';
-        if (pagePath !== '/portopt') {
+    function(activationToken, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+        if (!activationToken) {
             const n = window.dash_clientside.no_update;
             return [n, n, n, n, n, n, n, n, n, n, n, n, n, n, n];
         }
@@ -6029,7 +6006,7 @@ clientside_callback(
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
     Output("po-base-controls-ready-store", "data"),
-    Input("po-url-location", "pathname"),
+    Input("wb-portopt-activation-store", "data"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
     State("po-opt-step-store", "data"),
@@ -6052,9 +6029,8 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(pathname, mode, objective) {
-        const pagePath = String(pathname || '').split('?')[0].replace(/\/$/, '') || '/';
-        if (pagePath !== '/portopt') {
+    function(activationToken, mode, objective) {
+        if (!activationToken) {
             const n = window.dash_clientside.no_update;
             return [n, n, n];
         }
@@ -6064,7 +6040,7 @@ clientside_callback(
     Output("po-ex-ante-mode-select", "value"),
     Output("po-objective-select", "value"),
     Output("po-ex-ante-controls-ready-store", "data"),
-    Input("po-url-location", "pathname"),
+    Input("wb-portopt-activation-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-objective-store", "data"),
     prevent_initial_call=True,
@@ -7244,7 +7220,8 @@ clientside_callback(
     Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-summary-store", "data"),
-    Input("po-url-location", "pathname"),
+    Input("wb-portopt-activation-store", "data"),
+    State("wb-active-module-store", "data"),
     State("po-series-select", "data"),
     State("po-series-selection-open-request-store", "data"),
     State("po-series-selection-grid-status-store", "data"),
@@ -7255,7 +7232,8 @@ clientside_callback(
 def po_open_modal(
     n_clicks,
     raw_data_summary,
-    pathname,
+    _activation_token,
+    active_module,
     selected_series,
     current_request_token,
     current_status,
@@ -7268,14 +7246,13 @@ def po_open_modal(
     triggered_id = _safe_triggered_id()
     consumed_route_intent = no_update
     should_open = False
-    current_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
 
     if triggered_id == "po-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id in {"dashmat-raw-data-summary-store", "po-url-location"}:
-        if not raw_data_summary:
+    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-portopt-activation-store"}:
+        if active_module != MODULE_KEY:
             raise PreventUpdate
-        if current_path != PORTOPT_PATH:
+        if not raw_data_summary:
             raise PreventUpdate
         consumed_route_intent = _po_route_intent_token_to_consume(
             route_intent,
