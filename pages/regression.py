@@ -4178,6 +4178,7 @@ def _reg_series_status_is_final(status_data, token=None):
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
+    Input("reg-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-summary-store", "data"),
     Input("wb-active-module-store", "data"),
     State("reg-series-select", "data"),
@@ -4191,6 +4192,7 @@ def _reg_series_status_is_final(status_data, token=None):
 )
 def reg_open_modal(
     n_clicks,
+    page_load_intervals,
     raw_data_summary,
     active_module,
     sel,
@@ -4210,7 +4212,9 @@ def reg_open_modal(
     should_open = False
     if triggered_id == "reg-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-active-module-store"}:
+    elif triggered_id in {"reg-page-load-trigger", "dashmat-raw-data-summary-store", "wb-active-module-store"}:
+        if triggered_id == "reg-page-load-trigger" and not page_load_intervals:
+            raise PreventUpdate
         if active_module != MODULE_KEY:
             raise PreventUpdate
         if raw_data_summary:

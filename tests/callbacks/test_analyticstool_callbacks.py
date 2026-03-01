@@ -249,11 +249,13 @@ def test_analyticstool_layout_includes_page_ready_store_and_visible_overlay(page
 
     ready_store = _find_component_by_id(analyticstool.layout, "at-page-ready-store")
     overlay = _find_component_by_id(analyticstool.layout, "at-ui-blocker-overlay")
+    page_load_trigger = _find_component_by_id(analyticstool.layout, "at-page-load-trigger")
 
     assert ready_store is not None
     assert _component_prop(ready_store, "data") is False
     assert overlay is not None
     assert _component_prop(overlay, "visible") is True
+    assert page_load_trigger is not None
 
 
 def test_restore_application_state_marks_empty_page_ready_after_page_load(page_modules):

@@ -817,6 +817,7 @@ def test_reg_open_modal_opens_on_regression_activation_with_summary(monkeypatch,
 
     out = regression_page.reg_open_modal(
         None,
+        1,
         {"columns": ["Y", "X1", "X2"]},
         "regression",
         [],

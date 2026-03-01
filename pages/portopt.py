@@ -5902,13 +5902,14 @@ def po_resolve_import_modal_request(active_module, route_intent, consumed_token)
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
     Output("po-series-select", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-summary-store", "data"),
     State("po-periodicity-value-store", "data"),
     State("po-series-select-value-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_restore_state(raw_data_summary, stored_periodicity, stored_series, stored_vol):
+def po_restore_state(_page_load, raw_data_summary, stored_periodicity, stored_series, stored_vol):
     if not raw_data_summary:
         raise PreventUpdate
     try:
@@ -5963,7 +5964,11 @@ def po_restore_state(raw_data_summary, stored_periodicity, stored_series, stored
 
 clientside_callback(
     """
-    function(activeModule, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+    function(nIntervals, activeModule, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+        if (!nIntervals) {
+            const n = window.dash_clientside.no_update;
+            return [n, n, n, n, n, n, n, n, n, n, n, n, n, n, n];
+        }
         if (activeModule !== 'portopt') {
             const n = window.dash_clientside.no_update;
             return [n, n, n, n, n, n, n, n, n, n, n, n, n, n, n];
@@ -6005,6 +6010,7 @@ clientside_callback(
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
     Output("po-base-controls-ready-store", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
     Input("wb-active-module-store", "data"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
@@ -6028,7 +6034,11 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(activeModule, mode, objective) {
+    function(nIntervals, activeModule, mode, objective) {
+        if (!nIntervals) {
+            const n = window.dash_clientside.no_update;
+            return [n, n, n];
+        }
         if (activeModule !== 'portopt') {
             const n = window.dash_clientside.no_update;
             return [n, n, n];
@@ -6039,6 +6049,7 @@ clientside_callback(
     Output("po-ex-ante-mode-select", "value"),
     Output("po-objective-select", "value"),
     Output("po-ex-ante-controls-ready-store", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
     Input("wb-active-module-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-objective-store", "data"),
@@ -7218,6 +7229,7 @@ clientside_callback(
     Output("po-alert-message", "hide", allow_duplicate=True),
     Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
+    Input("po-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-summary-store", "data"),
     Input("wb-active-module-store", "data"),
     State("po-series-select", "data"),
@@ -7229,6 +7241,7 @@ clientside_callback(
 )
 def po_open_modal(
     n_clicks,
+    page_load_intervals,
     raw_data_summary,
     active_module,
     selected_series,
@@ -7246,7 +7259,9 @@ def po_open_modal(
 
     if triggered_id == "po-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-active-module-store"}:
+    elif triggered_id in {"po-page-load-trigger", "dashmat-raw-data-summary-store", "wb-active-module-store"}:
+        if triggered_id == "po-page-load-trigger" and not page_load_intervals:
+            raise PreventUpdate
         if active_module != MODULE_KEY:
             raise PreventUpdate
         if not raw_data_summary:

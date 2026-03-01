@@ -8,21 +8,27 @@ def test_wb_render_active_module_returns_analytics_layout():
     import app  # noqa: F401
     import pages.workbench as workbench
 
-    assert workbench.wb_render_active_module("analyticstool", "/workbench") is workbench.analyticstool.layout
+    rendered = workbench.wb_render_active_module("analyticstool", "/workbench")
+    assert type(rendered) is type(workbench.analyticstool.layout)
+    assert rendered is not workbench.analyticstool.layout
 
 
 def test_wb_render_active_module_returns_portopt_layout():
     import app  # noqa: F401
     import pages.workbench as workbench
 
-    assert workbench.wb_render_active_module("portopt", "/workbench") is workbench.portopt.layout
+    rendered = workbench.wb_render_active_module("portopt", "/workbench")
+    assert type(rendered) is type(workbench.portopt.layout)
+    assert rendered is not workbench.portopt.layout
 
 
 def test_wb_render_active_module_returns_regression_layout():
     import app  # noqa: F401
     import pages.workbench as workbench
 
-    assert workbench.wb_render_active_module("regression", "/workbench") is workbench.regression.layout
+    rendered = workbench.wb_render_active_module("regression", "/workbench")
+    assert type(rendered) is type(workbench.regression.layout)
+    assert rendered is not workbench.regression.layout
 
 
 def test_wb_render_active_module_ignores_non_workbench_path():

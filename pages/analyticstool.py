@@ -4095,6 +4095,7 @@ layout = dmc.Container(
             style={"display": "none"},
         ),
         dcc.Location(id="at-url-location", refresh=False),
+        dcc.Interval(id="at-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
         dcc.Store(id="at-nav-effect-dummy", data=None),
         dcc.Store(id="at-route-intent-clear-dummy", data=None),
         # Moved series-select and edit-mode to global scope
@@ -4131,7 +4132,7 @@ layout = apply_tooltips_to_layout(layout, page_key="analyticstool")
 
 clientside_callback(
     """
-    function(data) {
+    function(n_intervals, data) {
         if (data) {
             return {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
         }
@@ -4139,6 +4140,7 @@ clientside_callback(
     }
     """,
     Output("at-main-app-container", "style"),
+    Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
 )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from urllib.parse import parse_qs
 
 from dash import Input, Output, State, callback, html, register_page
@@ -79,10 +80,10 @@ def wb_render_active_module(active_module, pathname):
         raise PreventUpdate
     active_module = normalize_module(active_module)
     if active_module == "portopt":
-        return portopt.layout
+        return copy.deepcopy(portopt.layout)
     if active_module == "regression":
-        return regression.layout
-    return analyticstool.layout
+        return copy.deepcopy(regression.layout)
+    return copy.deepcopy(analyticstool.layout)
 
 
 @callback(

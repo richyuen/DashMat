@@ -782,6 +782,7 @@ def test_po_open_modal_opens_on_portopt_activation_with_summary(monkeypatch, pag
 
     out = portopt.po_open_modal(
         None,
+        1,
         {"columns": ["P1", "P2"]},
         "portopt",
         [],
@@ -806,6 +807,7 @@ def test_po_open_modal_ignores_inactive_module(monkeypatch, page_modules):
     with pytest.raises(PreventUpdate):
         portopt.po_open_modal(
             None,
+            1,
             {"columns": ["P1", "P2"]},
             "analyticstool",
             [],
