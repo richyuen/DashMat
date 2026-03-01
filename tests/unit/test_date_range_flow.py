@@ -5,9 +5,10 @@ import hashlib
 import pandas as pd
 
 from utils.date_range_flow import (
-    build_raw_data_metadata,
+    build_raw_data_summary,
     compute_date_range_candidates,
-    compute_date_range_candidates_from_global_metadata,
+    compute_date_range_candidates_from_metadata,
+    get_periodicity_range_metadata,
     resolve_button_range,
     resolve_initial_range,
 )
@@ -38,14 +39,14 @@ def test_compute_date_range_candidates_produces_bounds():
     assert candidates["common_daily_end"] == "2024-01-03"
 
 
-def test_build_raw_data_metadata_returns_expected_top_level_payload():
+def test_build_raw_data_summary_returns_expected_top_level_payload():
     raw_data = _raw_daily_df()
 
-    metadata = build_raw_data_metadata(raw_data, "daily")
+    summary = build_raw_data_summary(raw_data, "daily")
 
-    assert metadata["raw_data_hash"] == hashlib.md5(raw_data.encode("utf-8")).hexdigest()
-    assert metadata["columns"] == ["A", "B"]
-    assert metadata["available_periodicity_values"] == [
+    assert summary["raw_data_hash"] == hashlib.md5(raw_data.encode("utf-8")).hexdigest()
+    assert summary["columns"] == ["A", "B"]
+    assert summary["available_periodicity_values"] == [
         "daily_trading",
         "daily",
         "monthly",
@@ -55,17 +56,15 @@ def test_build_raw_data_metadata_returns_expected_top_level_payload():
         "weekly_thursday",
         "weekly_friday",
     ]
-    assert metadata["original_periodicity"] == "daily"
-    assert metadata["periodicities"]["daily_trading"]["dataset_start"] == "2024-01-02"
-    assert metadata["periodicities"]["daily_trading"]["dataset_end"] == "2024-01-03"
-    assert metadata["daily_phase_ranges"]["A"]["start"] == "2024-01-02"
+    assert summary["original_periodicity"] == "daily"
 
 
-def test_compute_date_range_candidates_from_global_metadata_matches_compatibility_helper():
+def test_compute_date_range_candidates_from_metadata_matches_compatibility_helper():
     raw_data = _raw_daily_df()
-    metadata = build_raw_data_metadata(raw_data, "daily")
+    summary = build_raw_data_summary(raw_data, "daily")
+    metadata = get_periodicity_range_metadata(summary["raw_data_hash"], raw_data, "daily_trading")
 
-    candidates = compute_date_range_candidates_from_global_metadata(metadata, "daily_trading", ("A", "B"))
+    candidates = compute_date_range_candidates_from_metadata(metadata, ("A", "B"))
 
     assert candidates == compute_date_range_candidates(raw_data, "daily_trading", ("A", "B"))
 

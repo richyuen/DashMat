@@ -7,7 +7,12 @@ import hashlib
 import cache_config
 from utils.core_categories import infer_daily_start_from_returns
 from utils.perf_timing import timed_block
-from utils.returns import get_available_periodicities, json_to_df, resample_returns
+from utils.returns import (
+    get_available_periodicities,
+    json_to_df,
+    resample_returns,
+    resample_returns_cached,
+)
 
 
 _EMPTY_CANDIDATES = {
@@ -198,14 +203,14 @@ def get_periodicity_range_metadata(raw_data_hash: str, raw_data: str, periodicit
         "shared.periodicity_range_metadata",
         periodicity=resolved_periodicity,
     ):
-        base_df = json_to_df(raw_data)
-        if base_df is None or base_df.empty:
-            metadata = _empty_metadata(raw_data_hash, resolved_periodicity)
+        metadata = _empty_metadata(raw_data_hash, resolved_periodicity)
+        try:
+            resampled_df = resample_returns_cached(raw_data, resolved_periodicity)
+            daily_trading_df = resample_returns_cached(raw_data, "daily_trading")
+        except Exception:
             cache_config.cache.set(cache_key, metadata, timeout=0)
             return metadata
 
-        resampled_df = resample_returns(base_df, resolved_periodicity)
-        metadata = _empty_metadata(raw_data_hash, resolved_periodicity)
         metadata["_resampled_df"] = resampled_df
 
         if resampled_df is not None and not resampled_df.empty:
@@ -213,11 +218,11 @@ def get_periodicity_range_metadata(raw_data_hash: str, raw_data: str, periodicit
             metadata["dataset_end"] = _format_ts(resampled_df.index.max())
             metadata["series_ranges"] = _range_map_for_df(resampled_df)
 
-        daily_trading_df = resample_returns(base_df, "daily_trading")
-        if daily_trading_df is not None and not daily_trading_df.empty:
-            metadata["daily_phase_ranges"] = _daily_phase_map_for_df(daily_trading_df)
-        else:
-            metadata["daily_phase_ranges"] = {}
+        metadata["daily_phase_ranges"] = (
+            _daily_phase_map_for_df(daily_trading_df)
+            if daily_trading_df is not None and not daily_trading_df.empty
+            else {}
+        )
 
         cache_config.cache.set(cache_key, metadata, timeout=0)
         return metadata
