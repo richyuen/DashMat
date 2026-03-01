@@ -26,6 +26,10 @@ from utils.raw_data_imports import (
     get_fund_options_cached,
     get_performance_options_cached,
 )
+from utils.underlying_category_imports import (
+    UNDERLYING_CATEGORY_BASE_OPTIONS,
+    UNDERLYING_CATEGORY_TYPE_OPTIONS,
+)
 
 
 def _sid(prefix: str, suffix: str) -> str:
@@ -198,6 +202,14 @@ def build_welcome_screen(cfg: PagePrefixConfig):
                                             size="sm",
                                             fullWidth=True,
                                             id=_sid(cfg.prefix, "welcome-add-portfolios-other-btn"),
+                                        ),
+                                        dmc.Button(
+                                            "Underlying categories",
+                                            leftSection=DashIconify(icon="tabler:hierarchy-2"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id=_sid(cfg.prefix, "welcome-add-portfolios-underlying-btn"),
                                         ),
                                     ],
                                 ),
@@ -580,6 +592,145 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
     )
 
 
+def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
+    return dmc.Modal(
+        id=_sid(prefix, "underlying-add-modal"),
+        title=dmc.Group(
+            gap="xs",
+            children=[
+                dmc.ThemeIcon(DashIconify(icon="tabler:hierarchy-2"), color="indigo", variant="light", size="sm"),
+                dmc.Text("Add underlying categories", fw=600, size="sm"),
+            ],
+        ),
+        size="900px",
+        centered=True,
+        closeOnClickOutside=True,
+        withCloseButton=True,
+        radius="lg",
+        className="dashmat-modal",
+        overlayProps={"blur": 2, "opacity": 0.45},
+        transitionProps={"transition": "fade", "duration": 180},
+        children=[
+            dmc.Alert(
+                id=_sid(prefix, "underlying-add-error-alert"),
+                title="Cannot stage import",
+                color="red",
+                hide=True,
+                mb="sm",
+            ),
+            dmc.Stack(
+                gap="sm",
+                children=[
+                    dmc.Group(
+                        gap="sm",
+                        align="flex-start",
+                        children=[
+                            dmc.Select(
+                                id=_sid(prefix, "underlying-add-base-select"),
+                                label="Base",
+                                data=list(UNDERLYING_CATEGORY_BASE_OPTIONS),
+                                value=None,
+                                clearable=False,
+                                searchable=False,
+                                maxDropdownHeight=240,
+                                w=180,
+                                placeholder="Select base",
+                            ),
+                            dmc.MultiSelect(
+                                id=_sid(prefix, "underlying-add-type-multiselect"),
+                                label="Type",
+                                data=list(UNDERLYING_CATEGORY_TYPE_OPTIONS),
+                                value=[],
+                                searchable=False,
+                                clearable=True,
+                                maxDropdownHeight=240,
+                                w=280,
+                                placeholder="Select one or more types",
+                            ),
+                        ],
+                    ),
+                    dmc.MultiSelect(
+                        id=_sid(prefix, "underlying-add-desc-multiselect"),
+                        label="Desc",
+                        data=[],
+                        value=[],
+                        searchable=True,
+                        clearable=True,
+                        disabled=True,
+                        nothingFoundMessage="No underlying categories found",
+                        maxDropdownHeight=480,
+                        w="100%",
+                        placeholder="Select one or more underlying categories",
+                    ),
+                    dmc.Group(
+                        gap="xs",
+                        children=[
+                            dmc.Button(
+                                "Add Series",
+                                id=_sid(prefix, "underlying-add-row-btn"),
+                                variant="outline",
+                                size="xs",
+                                leftSection=DashIconify(icon="tabler:plus"),
+                            ),
+                            dmc.Button(
+                                "Delete One",
+                                id=_sid(prefix, "underlying-delete-row-btn"),
+                                variant="outline",
+                                size="xs",
+                                color="red",
+                                leftSection=DashIconify(icon="tabler:row-remove"),
+                            ),
+                            dmc.Button(
+                                "Clear All",
+                                id=_sid(prefix, "underlying-clear-rows-btn"),
+                                variant="outline",
+                                size="xs",
+                                color="red",
+                                leftSection=DashIconify(icon="tabler:trash"),
+                            ),
+                        ],
+                    ),
+                    dag.AgGrid(
+                        id=_sid(prefix, "underlying-add-grid"),
+                        className="ag-theme-alpine",
+                        enableEnterpriseModules=True,
+                        licenseKey=ag_grid_license_key,
+                        columnDefs=[
+                            {"field": "Series", "headerName": "Series", "minWidth": 280, "flex": 2, "headerClass": "dashmat-center-header"},
+                            {"field": "Portfolio", "headerName": "Portfolio", "width": 180, "headerClass": "dashmat-center-header"},
+                            {"field": "Desc", "headerName": "Desc", "minWidth": 220, "flex": 1, "headerClass": "dashmat-center-header"},
+                        ],
+                        rowData=[],
+                        defaultColDef={
+                            "resizable": True,
+                            "sortable": False,
+                            "suppressHeaderMenuButton": True,
+                            "cellStyle": {"textAlign": "center"},
+                            "headerClass": "dashmat-center-header",
+                        },
+                        style={"height": "230px"},
+                        dashGridOptions={
+                            "rowSelection": "single",
+                            "suppressRowClickSelection": False,
+                            "animateRows": True,
+                            "suppressExcelExport": True,
+                            "suppressCsvExport": True,
+                        },
+                    ),
+                    dmc.Group(
+                        mt="sm",
+                        justify="flex-end",
+                        children=[
+                            dmc.Button("Cancel", id=_sid(prefix, "underlying-add-cancel-button"), variant="outline", color="red"),
+                            dmc.Button("OK", id=_sid(prefix, "underlying-add-ok-button"), color="blue", disabled=True),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
 def build_sheet_select_modal(prefix: str):
     return dmc.Modal(
         id=_sid(prefix, "sheet-select-modal"),
@@ -927,6 +1078,30 @@ def compute_close_portfolio_add_modal(n_clicks):
     return False, [], []
 
 
+def compute_open_underlying_add_modal(menu_clicks, welcome_clicks):
+    if not menu_clicks and not welcome_clicks:
+        raise PreventUpdate
+
+    return (
+        True,
+        "Add underlying categories",
+        None,
+        [],
+        [],
+        [],
+        True,
+        [],
+        [],
+        True,
+    )
+
+
+def compute_close_underlying_add_modal(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False, None, [], [], [], True, [], []
+
+
 def compute_open_raw_db_add_modal(
     prefix: str,
     triggered_id,
@@ -1113,6 +1288,26 @@ def js_portfolio_delete_row() -> str:
         var selectedKey = String((selectedRows[0] || {}).Portfolio || "").trim();
         var kept = rows.filter(function(r) {
             return String((r && r.Portfolio) || "").trim() !== selectedKey;
+        });
+        return [kept, kept, noUpdate, true];
+    }
+    """
+
+
+def js_underlying_delete_row() -> str:
+    return """
+    function(nDelete, stagedRows, selectedRows) {
+        var noUpdate = window.dash_clientside.no_update;
+        if (!nDelete) {
+            return [noUpdate, noUpdate, noUpdate, noUpdate];
+        }
+        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
+        if (!selectedRows || !selectedRows.length) {
+            return [rows, rows, "Select one staged row to delete.", false];
+        }
+        var selectedSeries = String((selectedRows[0] || {}).Series || "").trim();
+        var kept = rows.filter(function(r) {
+            return String((r && r.Series) || "").trim() !== selectedSeries;
         });
         return [kept, kept, noUpdate, true];
     }

@@ -235,6 +235,18 @@ PORTFOLIO_ROWS: list[dict] = [
     },
 ]
 
+UNDERLYING_CATEGORY_ITEM = "PeerRet"
+UNDERLYING_CATEGORY_PORTFOLIO_DESCS: dict[str, tuple[str, ...]] = {
+    "CoreTD": ("Large Cap", "Small Cap", "Core Bond", "High Yield"),
+    "CoreAlloc": ("Large Cap", "International Equity", "Core Bond", "Real Assets"),
+    "Core529": ("Large Cap", "International Equity", "Core Bond"),
+    "CoreModel": ("Large Cap", "Small Cap", "International Equity", "Real Assets"),
+    "BaseTD": ("Large Cap", "Small Cap", "Core Bond"),
+    "BaseAlloc": ("Large Cap", "International Equity", "Real Assets"),
+    "Base529": ("Large Cap", "Core Bond"),
+    "BaseModel": ("Large Cap", "International Equity", "High Yield", "Real Assets"),
+}
+
 
 def _load_monthly_returns() -> pd.DataFrame:
     path = get_sample_file_path("monthly")
@@ -474,6 +486,87 @@ def _build_portfolio_seed_series(daily_df: pd.DataFrame) -> tuple[dict[str, pd.S
         ret = pd.Series(series.values, index=idx, dtype=float)
         index_series[key] = _returns_to_levels(ret, start_level=100.0)
     return peer_series, index_series
+
+
+def _build_underlying_category_seed_series(daily_df: pd.DataFrame) -> dict[str, pd.Series]:
+    """Build deterministic daily-level PeerTS series for underlying categories."""
+    if daily_df.empty:
+        return {}
+
+    idx = _seed_daily_index(daily_df)
+    if len(idx) == 0:
+        return {}
+
+    source_df = daily_df.reindex(idx)
+    spx = _pick_seed_column(source_df, "SPX", 0)
+    mid = _pick_seed_column(source_df, "RMID", 1)
+    small = _pick_seed_column(source_df, "R2000", 2)
+    eafe = _pick_seed_column(source_df, "EAFE", 3)
+    em = _pick_seed_column(source_df, "EM", 4)
+    reit = _pick_seed_column(source_df, "MSCIUSREIT", 5)
+    agg = _pick_seed_column(source_df, "BCAgg", 6)
+    hy = _pick_seed_column(source_df, "BCHY", 7)
+    global_agg = _pick_seed_column(source_df, "BCGAgg", 8)
+    x = np.arange(len(idx), dtype=float)
+
+    desc_returns: dict[str, pd.Series] = {
+        "Large Cap": pd.Series(0.88 * spx + 0.12 * agg + 0.00005 * np.sin(0.017 * x), index=idx, dtype=float),
+        "Small Cap": pd.Series(0.78 * small + 0.14 * mid + 0.08 * agg + 0.00007 * np.cos(0.021 * x), index=idx, dtype=float),
+        "International Equity": pd.Series(
+            0.58 * eafe + 0.27 * em + 0.15 * global_agg + 0.00006 * np.sin(0.019 * x + 0.4),
+            index=idx,
+            dtype=float,
+        ),
+        "Core Bond": pd.Series(0.80 * agg + 0.20 * global_agg + 0.00003 * np.cos(0.015 * x + 0.7), index=idx, dtype=float),
+        "High Yield": pd.Series(0.66 * hy + 0.22 * agg + 0.12 * spx + 0.00005 * np.sin(0.023 * x + 0.8), index=idx, dtype=float),
+        "Real Assets": pd.Series(
+            0.52 * reit + 0.24 * eafe + 0.12 * em + 0.12 * agg + 0.00008 * np.cos(0.018 * x + 0.2),
+            index=idx,
+            dtype=float,
+        ),
+    }
+
+    portfolio_tilts: dict[str, dict[str, float]] = {
+        "CoreTD": {"scale": 1.00, "drift": 0.00002, "blend": 0.08},
+        "CoreAlloc": {"scale": 0.97, "drift": 0.00001, "blend": 0.14},
+        "Core529": {"scale": 0.95, "drift": 0.000015, "blend": 0.10},
+        "CoreModel": {"scale": 1.02, "drift": 0.00002, "blend": 0.12},
+        "BaseTD": {"scale": 0.93, "drift": 0.00001, "blend": 0.06},
+        "BaseAlloc": {"scale": 0.90, "drift": 0.000005, "blend": 0.15},
+        "Base529": {"scale": 0.89, "drift": 0.00001, "blend": 0.09},
+        "BaseModel": {"scale": 0.96, "drift": 0.000015, "blend": 0.13},
+    }
+    portfolio_anchors: dict[str, pd.Series] = {
+        "TD": pd.Series(0.64 * spx + 0.36 * agg, index=idx, dtype=float),
+        "Alloc": pd.Series(0.48 * spx + 0.52 * agg, index=idx, dtype=float),
+        "529": pd.Series(0.58 * spx + 0.42 * agg, index=idx, dtype=float),
+        "Model": pd.Series(0.60 * spx + 0.25 * agg + 0.15 * eafe, index=idx, dtype=float),
+    }
+
+    out: dict[str, pd.Series] = {}
+    for portfolio_index, (portfolio, descs) in enumerate(UNDERLYING_CATEGORY_PORTFOLIO_DESCS.items()):
+        tilt = portfolio_tilts[portfolio]
+        anchor_key = portfolio[4:] if portfolio.startswith("Base") else portfolio[4:]
+        anchor_series = portfolio_anchors.get(anchor_key, portfolio_anchors["TD"])
+        start_level = 100.0 + (portfolio_index * 4.0)
+        for desc_index, desc in enumerate(descs):
+            base_series = desc_returns[desc]
+            modulation = pd.Series(
+                0.00004 * np.sin(0.013 * x + (portfolio_index + 1) * 0.45 + (desc_index + 1) * 0.30),
+                index=idx,
+                dtype=float,
+            )
+            ret = ((1.0 - tilt["blend"]) * base_series) + (tilt["blend"] * anchor_series) + tilt["drift"] + modulation
+            ret = pd.Series(ret.values, index=idx, dtype=float).clip(lower=-0.08, upper=0.08)
+            out[f"{portfolio}|{UNDERLYING_CATEGORY_ITEM}|{desc}"] = _returns_to_levels(
+                ret,
+                start_level=start_level + desc_index,
+            )
+    return out
+
+
+def build_underlying_category_seed_rows(daily_df: pd.DataFrame) -> list[dict]:
+    return _portfolio_ts_rows(_build_underlying_category_seed_series(daily_df))
 
 
 def _build_alt_seed_series(daily_df: pd.DataFrame) -> dict[str, pd.Series]:
@@ -1402,8 +1495,10 @@ def main() -> None:
         core_cat_benches = sorted(core_cat_benches + [MTH_TO_DLY_BENCH])
     core_cat_rows = _core_category_rows(core_cat_benches)
     peer_series_map, index_series_map = _build_portfolio_seed_series(daily_df)
+    underlying_peer_rows = build_underlying_category_seed_rows(daily_df)
     alt_series_map = _build_alt_seed_series(daily_df)
     peer_ts_rows = _portfolio_ts_rows(peer_series_map)
+    peer_ts_rows.extend(underlying_peer_rows)
     index_ts_rows = _portfolio_ts_rows(index_series_map)
     alt_ts_rows = _alt_ts_rows(alt_series_map)
     mrd_account_rows, mrd_factor_rows = _mrd_rows(daily_df)
