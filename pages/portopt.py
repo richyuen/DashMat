@@ -5873,13 +5873,12 @@ clientside_callback(
     Output("po-raw-db-add-request-store", "data"),
     Output("po-portfolio-add-request-store", "data"),
     Output("po-underlying-add-request-store", "data"),
-    Input("wb-portopt-activation-store", "data"),
+    Input("wb-active-module-store", "data"),
     Input("dashmat-route-intent-store", "data"),
-    State("wb-active-module-store", "data"),
     State("po-route-intent-consumed-token-store", "data"),
     prevent_initial_call=False,
 )
-def po_resolve_import_modal_request(_activation_token, route_intent, active_module, consumed_token):
+def po_resolve_import_modal_request(active_module, route_intent, consumed_token):
     if active_module != MODULE_KEY:
         raise PreventUpdate
     request = _po_build_import_modal_request(route_intent, consumed_token)
@@ -5964,8 +5963,8 @@ def po_restore_state(raw_data_summary, stored_periodicity, stored_series, stored
 
 clientside_callback(
     """
-    function(activationToken, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
-        if (!activationToken) {
+    function(activeModule, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+        if (activeModule !== 'portopt') {
             const n = window.dash_clientside.no_update;
             return [n, n, n, n, n, n, n, n, n, n, n, n, n, n, n];
         }
@@ -6006,7 +6005,7 @@ clientside_callback(
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
     Output("po-base-controls-ready-store", "data"),
-    Input("wb-portopt-activation-store", "data"),
+    Input("wb-active-module-store", "data"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
     State("po-opt-step-store", "data"),
@@ -6029,8 +6028,8 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(activationToken, mode, objective) {
-        if (!activationToken) {
+    function(activeModule, mode, objective) {
+        if (activeModule !== 'portopt') {
             const n = window.dash_clientside.no_update;
             return [n, n, n];
         }
@@ -6040,7 +6039,7 @@ clientside_callback(
     Output("po-ex-ante-mode-select", "value"),
     Output("po-objective-select", "value"),
     Output("po-ex-ante-controls-ready-store", "data"),
-    Input("wb-portopt-activation-store", "data"),
+    Input("wb-active-module-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-objective-store", "data"),
     prevent_initial_call=True,
@@ -7220,8 +7219,7 @@ clientside_callback(
     Output("po-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-summary-store", "data"),
-    Input("wb-portopt-activation-store", "data"),
-    State("wb-active-module-store", "data"),
+    Input("wb-active-module-store", "data"),
     State("po-series-select", "data"),
     State("po-series-selection-open-request-store", "data"),
     State("po-series-selection-grid-status-store", "data"),
@@ -7232,7 +7230,6 @@ clientside_callback(
 def po_open_modal(
     n_clicks,
     raw_data_summary,
-    _activation_token,
     active_module,
     selected_series,
     current_request_token,
@@ -7249,7 +7246,7 @@ def po_open_modal(
 
     if triggered_id == "po-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-portopt-activation-store"}:
+    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-active-module-store"}:
         if active_module != MODULE_KEY:
             raise PreventUpdate
         if not raw_data_summary:

@@ -4123,13 +4123,12 @@ clientside_callback(
     Output("reg-raw-db-add-request-store", "data"),
     Output("reg-portfolio-add-request-store", "data"),
     Output("reg-underlying-add-request-store", "data"),
-    Input("wb-regression-activation-store", "data"),
+    Input("wb-active-module-store", "data"),
     Input("dashmat-route-intent-store", "data"),
-    State("wb-active-module-store", "data"),
     State("reg-route-intent-consumed-token-store", "data"),
     prevent_initial_call=False,
 )
-def reg_resolve_import_modal_request(_activation_token, route_intent, active_module, consumed_token):
+def reg_resolve_import_modal_request(active_module, route_intent, consumed_token):
     if active_module != MODULE_KEY:
         raise PreventUpdate
     request = _reg_build_import_modal_request(route_intent, consumed_token)
@@ -4180,8 +4179,7 @@ def _reg_series_status_is_final(status_data, token=None):
     Output("reg-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-summary-store", "data"),
-    Input("wb-regression-activation-store", "data"),
-    State("wb-active-module-store", "data"),
+    Input("wb-active-module-store", "data"),
     State("reg-series-select", "data"),
     State("reg-series-order-store", "data"),
     State("reg-dependent-var-store", "data"),
@@ -4194,7 +4192,6 @@ def _reg_series_status_is_final(status_data, token=None):
 def reg_open_modal(
     n_clicks,
     raw_data_summary,
-    _activation_token,
     active_module,
     sel,
     order,
@@ -4213,7 +4210,7 @@ def reg_open_modal(
     should_open = False
     if triggered_id == "reg-open-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-regression-activation-store"}:
+    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-active-module-store"}:
         if active_module != MODULE_KEY:
             raise PreventUpdate
         if raw_data_summary:

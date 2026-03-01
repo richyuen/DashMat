@@ -52,10 +52,6 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-route-intent-store", data=None, storage_type="session"),
     dcc.Store(id="wb-active-module-store", data="analyticstool", storage_type="memory"),
-    dcc.Store(id="wb-previous-module-store", data=None, storage_type="memory"),
-    dcc.Store(id="wb-analytics-activation-store", data=0, storage_type="memory"),
-    dcc.Store(id="wb-portopt-activation-store", data=0, storage_type="memory"),
-    dcc.Store(id="wb-regression-activation-store", data=0, storage_type="memory"),
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     dmc.AppShell(
         header={"height": 45},
@@ -208,6 +204,7 @@ def guard_protected_pages(pathname, search, userinfo):
     if not restricted_href:
         raise PreventUpdate
     return restricted_href
+
 
 # Theme consumer callbacks are defined in page modules for charts.
 

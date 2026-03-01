@@ -260,7 +260,7 @@ def test_restore_application_state_marks_empty_page_ready_after_page_load(page_m
     analyticstool, _ = page_modules
 
     result = analyticstool.restore_application_state(
-        1,
+        "analyticstool",
         None,
         None,
         None,
@@ -293,7 +293,7 @@ def test_restore_application_state_keeps_loaded_page_ready_unchanged(page_module
     analyticstool, _ = page_modules
 
     result = analyticstool.restore_application_state(
-        1,
+        "analyticstool",
         {
             "columns": ["Asset_A", "Asset_B", "Asset_C", "Asset_D"],
             "available_periodicity_values": ["daily_trading", "daily", "monthly"],
@@ -324,6 +324,55 @@ def test_restore_application_state_keeps_loaded_page_ready_unchanged(page_module
     assert result[-3] is False
     assert result[-2] is no_update
     assert result[-1] is None
+
+
+def test_restore_application_state_marks_page_ready_when_pending_working_config_exists(page_modules):
+    analyticstool, _ = page_modules
+
+    pending_working_config = analyticstool._at_build_pending_working_config(
+        "monthly",
+        ["Asset_A"],
+        ["Asset_A"],
+        {},
+        {},
+        {"Asset_A": True},
+        "tok",
+        {"mode": "hide"},
+    )
+
+    result = analyticstool.restore_application_state(
+        "analyticstool",
+        {
+            "raw_data_hash": "summary-hash",
+            "columns": ["Asset_A", "Asset_B"],
+            "available_periodicity_values": ["daily_trading", "daily", "monthly"],
+            "original_periodicity": "daily",
+        },
+        "daily_trading",
+        [],
+        "total",
+        0,
+        "statistics",
+        "1y",
+        "total_return",
+        "annualized",
+        "chart",
+        "chart",
+        "chart",
+        "box",
+        5,
+        "raw",
+        "annual",
+        None,
+        pending_working_config,
+        [],
+        False,
+        None,
+    )
+
+    assert result[-3] is False
+    assert result[-2] is True
+    assert result[-1] == "summary-hash"
 
 
 def test_at_overlay_visible_uses_ready_and_blocker(page_modules):
@@ -395,7 +444,11 @@ def test_at_resolve_import_modal_request_returns_db_request(page_modules):
     analyticstool, _ = page_modules
     route_intent = build_route_intent("analyticstool", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
 
-    request = analyticstool.at_resolve_import_modal_request(1, route_intent, "analyticstool", None)
+    request = analyticstool.at_resolve_import_modal_request(
+        "analyticstool",
+        route_intent,
+        None,
+    )
 
     assert request == (
         {"flow": FLOW_DB, "token": route_intent["token"]},
@@ -428,7 +481,11 @@ def test_at_resolve_import_modal_request_ignores_stale_intent(page_modules):
     route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
 
     with pytest.raises(PreventUpdate):
-        analyticstool.at_resolve_import_modal_request(1, route_intent, "analyticstool", None)
+        analyticstool.at_resolve_import_modal_request(
+            "analyticstool",
+            route_intent,
+            None,
+        )
 
 
 def test_update_statistics_requires_ready_state(page_modules):
@@ -1343,7 +1400,6 @@ def test_open_modal_ignores_stale_configure_after_import_route_intent(monkeypatc
         analyticstool.open_modal(
             None,
             {"columns": ["Asset_A"]},
-            1,
             "analyticstool",
             ["Asset_A"],
             None,

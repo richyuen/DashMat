@@ -4172,13 +4172,12 @@ clientside_callback(
     Output("at-raw-db-add-request-store", "data"),
     Output("at-portfolio-add-request-store", "data"),
     Output("at-underlying-add-request-store", "data"),
-    Input("wb-analytics-activation-store", "data"),
+    Input("wb-active-module-store", "data"),
     Input("dashmat-route-intent-store", "data"),
-    State("wb-active-module-store", "data"),
     State("at-route-intent-consumed-token-store", "data"),
     prevent_initial_call=False,
 )
-def at_resolve_import_modal_request(_activation_token, route_intent, active_module, consumed_token):
+def at_resolve_import_modal_request(active_module, route_intent, consumed_token):
     if active_module != MODULE_KEY:
         raise PreventUpdate
     request = _at_build_import_modal_request(route_intent, consumed_token)
@@ -4215,8 +4214,8 @@ def at_resolve_import_modal_request(_activation_token, route_intent, active_modu
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Output("at-page-ready-store", "data", allow_duplicate=True),
     Output("at-last-synced-summary-hash-store", "data"),
-    Input("wb-analytics-activation-store", "data"),
-    State("dashmat-raw-data-summary-store", "data"),
+    Input("wb-active-module-store", "data"),
+    Input("dashmat-raw-data-summary-store", "data"),
     State("at-periodicity-value-store", "data"),
     State("at-series-select-value-store", "data"),
     State("at-returns-type-value-store", "data"),
@@ -4240,7 +4239,7 @@ def at_resolve_import_modal_request(_activation_token, route_intent, active_modu
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(
-    _activation_token,
+    active_module,
     raw_data_summary,
     stored_periodicity,
     stored_series,
@@ -4263,6 +4262,8 @@ def restore_application_state(
     current_page_ready,
     last_synced_summary_hash,
 ):
+    if active_module != MODULE_KEY:
+        raise PreventUpdate
     ready_output = no_update if current_page_ready else False
     if not raw_data_summary:
         # Reset defaults (visibility handled by clientside callback)
@@ -4643,8 +4644,7 @@ def _at_import_success_common_outputs(
     Output("at-route-intent-consumed-token-store", "data", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
     Input("dashmat-raw-data-summary-store", "data"),
-    Input("wb-analytics-activation-store", "data"),
-    State("wb-active-module-store", "data"),
+    Input("wb-active-module-store", "data"),
     State("at-series-select", "data"),
     State("at-series-selection-open-request-store", "data"),
     State("at-series-selection-grid-status-store", "data"),
@@ -4656,7 +4656,6 @@ def _at_import_success_common_outputs(
 def open_modal(
     n_clicks,
     raw_data_summary,
-    _activation_token,
     active_module,
     selected_series,
     current_request_token,
@@ -4674,7 +4673,7 @@ def open_modal(
 
     if triggered_id == "at-open-series-modal-button":
         should_open = bool(n_clicks)
-    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-analytics-activation-store"}:
+    elif triggered_id in {"dashmat-raw-data-summary-store", "wb-active-module-store"}:
         if active_module != MODULE_KEY:
             raise PreventUpdate
         if not raw_data_summary:

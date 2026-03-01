@@ -403,18 +403,14 @@ def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     assert regression_page.reg_open_db_add_modal(1) == (*expected, False, regression_page.no_update)
 
 
-def test_reg_resolve_import_modal_request_ignores_stale_intent(regression_page):
-    route_intent = build_route_intent("regression", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
-    route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
-
-    with pytest.raises(PreventUpdate):
-        regression_page.reg_resolve_import_modal_request(1, route_intent, "regression", None)
-
-
 def test_reg_resolve_import_modal_request_returns_db_request(regression_page):
     route_intent = build_route_intent("regression", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
 
-    request = regression_page.reg_resolve_import_modal_request(1, route_intent, "regression", None)
+    request = regression_page.reg_resolve_import_modal_request(
+        "regression",
+        route_intent,
+        None,
+    )
 
     assert request == (
         {"flow": FLOW_DB, "token": route_intent["token"]},
@@ -436,6 +432,18 @@ def test_reg_open_db_add_modal_uses_request_store_token(monkeypatch, regression_
     out = regression_page.reg_open_db_add_modal(None, {"flow": FLOW_DB, "token": "tok"})
 
     assert out == (*expected, False, "tok")
+
+
+def test_reg_resolve_import_modal_request_ignores_stale_intent(regression_page):
+    route_intent = build_route_intent("regression", ACTION_OPEN_IMPORT_MODAL, flow=FLOW_DB)
+    route_intent["created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=61)).isoformat()
+
+    with pytest.raises(PreventUpdate):
+        regression_page.reg_resolve_import_modal_request(
+            "regression",
+            route_intent,
+            None,
+        )
 
 
 def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, regression_page):
@@ -804,13 +812,12 @@ def test_reg_open_modal_opens_on_regression_activation_with_summary(monkeypatch,
     monkeypatch.setattr(
         regression_page,
         "callback_context",
-        SimpleNamespace(triggered_id="wb-regression-activation-store"),
+        SimpleNamespace(triggered_id="wb-active-module-store"),
     )
 
     out = regression_page.reg_open_modal(
         None,
         {"columns": ["Y", "X1", "X2"]},
-        1,
         "regression",
         [],
         [],
