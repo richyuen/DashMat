@@ -9,7 +9,7 @@ from dash import no_update
 from dash.exceptions import PreventUpdate
 
 from utils.regression import RegressionWindowResult
-from utils.returns import df_to_json
+from utils.returns import build_raw_data_metadata, df_to_json
 from utils.shared_metrics import STATS_CONFIG
 
 
@@ -87,6 +87,10 @@ def _find_component_by_id(node, target_id):
             if found is not None:
                 return found
     return None
+
+
+def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
+    return build_raw_data_metadata(raw_json, original_periodicity)
 
 
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
@@ -495,7 +499,7 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
         ]
 
     monkeypatch.setattr(regression_page, "get_available_periodicities", _fake_get_available_periodicities)
-    options, value = regression_page.reg_toggle_welcome("raw", "daily", "monthly")
+    options, value = regression_page.reg_toggle_welcome({"has_data": True, "original_periodicity": "daily"}, "monthly")
 
     assert captured["arg"] == "daily"
     assert options == [{"value": "daily", "label": "Daily"}, {"value": "monthly", "label": "Monthly"}]
@@ -507,7 +511,7 @@ def test_reg_open_modal_page_load_selects_all_x_when_no_x_selected(monkeypatch, 
 
     result = regression_page.reg_open_modal(
         None,
-        raw_json,
+        _raw_meta(raw_json),
         1,
         "/regression",
         [],
@@ -535,7 +539,7 @@ def test_reg_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeyp
 
     result = regression_page.reg_open_modal(
         None,
-        raw_json,
+        _raw_meta(raw_json),
         1,
         "/regression",
         [],
@@ -568,7 +572,7 @@ def test_reg_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch
 
     result = regression_page.reg_open_modal(
         None,
-        df_to_json(raw_df),
+        _raw_meta(df_to_json(raw_df)),
         1,
         "/regression",
         [],
@@ -594,7 +598,7 @@ def test_reg_open_modal_page_load_adds_only_generic_new_x_without_resetting_y(mo
 
     result = regression_page.reg_open_modal(
         None,
-        raw_json,
+        _raw_meta(raw_json),
         1,
         "/regression",
         ["Asset_A"],
@@ -622,7 +626,7 @@ def test_reg_open_modal_ignores_po_only_series_on_revisit(monkeypatch, regressio
 
     result = regression_page.reg_open_modal(
         None,
-        raw_json,
+        _raw_meta(raw_json),
         1,
         "/regression",
         ["Asset_A"],
@@ -743,7 +747,7 @@ def _collect_ag_grids(node):
 
 
 def test_reg_toggle_welcome_no_data_shows_top_aligned_welcome(regression_page):
-    options, value = regression_page.reg_toggle_welcome(None, None, None)
+    options, value = regression_page.reg_toggle_welcome(None, None)
     assert options == [{"value": "daily", "label": "Daily"}]
     assert value == "daily"
 

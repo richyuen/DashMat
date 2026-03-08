@@ -18,8 +18,24 @@ _EMPTY_CANDIDATES = {
 }
 
 
+def _normalize_selected_series(selected_series) -> tuple[str, ...]:
+    seen = set()
+    normalized = []
+    for series in selected_series or ():
+        if series in seen:
+            continue
+        seen.add(series)
+        normalized.append(series)
+    return tuple(sorted(normalized))
+
+
 @cache_config.cache.memoize(timeout=0)
-def compute_date_range_candidates(raw_data: str, periodicity: str, selected_series: tuple[str, ...]) -> dict:
+def _compute_date_range_candidates_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple[str, ...],
+    include_common_daily: bool,
+) -> dict:
     """Compute reusable range candidates for selected series.
 
     This function is memoized so repeat callbacks with identical inputs reuse
@@ -43,15 +59,31 @@ def compute_date_range_candidates(raw_data: str, periodicity: str, selected_seri
         result["common_start"] = subset.index.min().strftime("%Y-%m-%d")
         result["common_end"] = subset.index.max().strftime("%Y-%m-%d")
 
-    daily_df = resample_returns_cached(raw_data, "daily_trading")
-    daily_available = [series for series in selected_series if series in daily_df.columns]
-    if daily_available:
-        common_daily = get_common_daily_range(daily_df, daily_available)
-        if common_daily:
-            result["common_daily_start"] = common_daily[0].strftime("%Y-%m-%d")
-            result["common_daily_end"] = common_daily[1].strftime("%Y-%m-%d")
+    if include_common_daily:
+        daily_df = resample_returns_cached(raw_data, "daily_trading")
+        daily_available = [series for series in selected_series if series in daily_df.columns]
+        if daily_available:
+            common_daily = get_common_daily_range(daily_df, daily_available)
+            if common_daily:
+                result["common_daily_start"] = common_daily[0].strftime("%Y-%m-%d")
+                result["common_daily_end"] = common_daily[1].strftime("%Y-%m-%d")
 
     return result
+
+
+def compute_date_range_candidates(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple[str, ...],
+    include_common_daily: bool = True,
+) -> dict:
+    normalized_series = _normalize_selected_series(selected_series)
+    return _compute_date_range_candidates_cached(
+        raw_data,
+        periodicity,
+        normalized_series,
+        include_common_daily,
+    )
 
 
 def resolve_initial_range(candidates: dict, stored_range) -> tuple[str | None, str | None]:

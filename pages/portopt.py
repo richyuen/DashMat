@@ -3475,6 +3475,7 @@ layout = dmc.Container(
         dcc.Store(id="po-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
+        dcc.Store(id="po-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
@@ -3657,6 +3658,7 @@ clientside_callback(
         if (n_clicks) {
             const keysToRemove = [
                 'dashmat-raw-data-store',
+                'dashmat-raw-data-meta-store',
                 'dashmat-original-periodicity-store',
                 'dashmat-pending-new-series-store',
                 'dashmat-saved-series-cache-store',
@@ -5964,22 +5966,22 @@ clientside_callback(
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
     Output("po-series-select", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    State("dashmat-original-periodicity-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     State("po-periodicity-value-store", "data"),
     State("po-series-select-value-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_series, stored_vol):
-    if not raw_data:
+def po_restore_state(raw_meta, stored_periodicity, stored_series, stored_vol):
+    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
         raise PreventUpdate
     try:
-        df = json_to_df(raw_data)
-        if df is None or df.empty:
+        columns = raw_meta.get("columns") or []
+        if not columns:
             raise PreventUpdate
-            
-        periodicity_options = get_available_periodicities(orig_periodicity or "daily")
+
+        periodicity_options = raw_meta.get("periodicity_options") or [{"value": "daily_trading", "label": "Daily (Trading)"}]
+        orig_periodicity = raw_meta.get("original_periodicity") or "daily"
         
         # Validate stored values
         valid_periodicity = stored_periodicity
@@ -5990,7 +5992,7 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         
         # Validate series
         current_selection = stored_series or []
-        valid_selection = [s for s in current_selection if s in df.columns]
+        valid_selection = [s for s in current_selection if s in columns]
 
         return (
             periodicity_options,
@@ -7260,15 +7262,14 @@ clientside_callback(
 # Series selection modal: open
 # ---------------------------------------------------------------------------
 
-def _po_get_modal_series_state(raw_data, current_select, current_order, po_origin_series):
-    if not raw_data:
-        return [], [], []
-
-    try:
-        columns = list(json_to_df(raw_data).columns)
-    except Exception:
-        return [], [], []
-
+def _po_get_modal_series_state(raw_meta, current_select, current_order, po_origin_series):
+    columns = []
+    if isinstance(raw_meta, dict):
+        maybe_columns = raw_meta.get("columns")
+        if isinstance(maybe_columns, list):
+            columns = maybe_columns
+    elif isinstance(raw_meta, (list, tuple)):
+        columns = list(raw_meta)
     if not columns:
         return [], [], []
 
@@ -7299,7 +7300,7 @@ def _po_get_modal_series_state(raw_data, current_select, current_order, po_origi
     Input("po-open-modal-button", "n_clicks"),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-url-location", "pathname"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -7317,7 +7318,7 @@ def po_open_modal(
     n_clicks,
     page_load_intervals,
     pathname,
-    raw_data,
+    raw_meta,
     current_select,
     current_bench,
     current_cmabench,
@@ -7359,7 +7360,7 @@ def po_open_modal(
         raise PreventUpdate
 
     columns, selected_valid, generic_new = _po_get_modal_series_state(
-        raw_data,
+        raw_meta,
         current_select,
         current_order,
         po_origin_series,
@@ -8214,6 +8215,21 @@ def po_on_modal_cancel(n_clicks):
 # ---------------------------------------------------------------------------
 
 @callback(
+    Output("po-range-candidates-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("po-periodicity-select", "value"),
+    Input("po-series-select", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def po_update_range_candidates(raw_data, periodicity, selected_series):
+    return compute_date_range_candidates(
+        raw_data or "",
+        periodicity or "daily",
+        tuple(selected_series or ()),
+    )
+
+
+@callback(
     Output("po-start-date-picker", "value"),
     Output("po-end-date-picker", "value"),
     Output("po-date-picker-wrapper", "style"),
@@ -8221,28 +8237,18 @@ def po_on_modal_cancel(n_clicks):
     Output("po-common-daily-button", "disabled"),
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("po-periodicity-select", "value"),
-    Input("po-series-select", "data"),
+    Input("po-range-candidates-store", "data"),
     State("po-date-range-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
+def po_init_date_range(candidates, stored_range):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
-    if raw_data is None or not selected_series:
+    if not isinstance(candidates, dict) or not candidates.get("available_series"):
         return None, None, disabled_style, True, True, True, None
 
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
-        if not candidates.get("available_series"):
-            return None, None, disabled_style, True, True, True, None
-
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
             return None, None, disabled_style, True, True, True, None
@@ -8274,27 +8280,17 @@ def po_init_date_range(raw_data, periodicity, selected_series, stored_range):
     Input("po-common-range-button", "n_clicks"),
     Input("po-common-daily-button", "n_clicks"),
     Input("po-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
-    State("po-periodicity-select", "value"),
-    State("po-series-select", "data"),
+    State("po-range-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, periodicity, selected_series):
-    if raw_data is None or not selected_series:
+def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candidates):
+    if not isinstance(candidates, dict) or not candidates.get("available_series"):
         raise PreventUpdate
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
-        if not candidates.get("available_series"):
-            raise PreventUpdate
-
         start_date, end_date, force_daily = resolve_button_range(candidates, button_id)
         if not start_date or not end_date:
             raise PreventUpdate

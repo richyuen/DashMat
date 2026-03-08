@@ -34,6 +34,25 @@ def test_compute_date_range_candidates_produces_bounds():
     assert candidates["common_daily_end"] == "2024-01-03"
 
 
+def test_compute_date_range_candidates_ignores_series_order_and_duplicates():
+    ordered = compute_date_range_candidates(_raw_daily_df(), "daily_trading", ("A", "B", "A"))
+    reordered = compute_date_range_candidates(_raw_daily_df(), "daily_trading", ("B", "A"))
+
+    assert ordered == reordered
+
+
+def test_compute_date_range_candidates_can_skip_common_daily():
+    candidates = compute_date_range_candidates(
+        _raw_daily_df(),
+        "daily_trading",
+        ("A", "B"),
+        include_common_daily=False,
+    )
+
+    assert candidates["common_daily_start"] is None
+    assert candidates["common_daily_end"] is None
+
+
 def test_resolve_initial_range_prefers_stored_when_in_bounds():
     candidates = {
         "max_start": "2024-01-01",

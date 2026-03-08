@@ -10,6 +10,7 @@ from utils.returns import (
     align_monthly_index_to_month_end,
     align_monthly_series_to_month_end,
     annualization_factor,
+    build_raw_data_metadata,
     calculate_excess_returns,
     df_to_json,
     fill_calendar_gaps,
@@ -71,6 +72,22 @@ def test_resample_returns_monthly_compounds_returns():
 
 def test_get_available_periodicities_for_monthly_input_is_monthly_only():
     assert get_available_periodicities("monthly") == [{"value": "monthly", "label": "Monthly"}]
+
+
+def test_build_raw_data_metadata_returns_columns_and_periodicity_options():
+    idx = pd.date_range("2024-01-01", periods=2, freq="D")
+    df = pd.DataFrame({"A": [0.01, 0.02], "B": [0.0, 0.01]}, index=idx)
+    df.index.name = "Date"
+
+    metadata = build_raw_data_metadata(df_to_json(df), "daily")
+
+    assert metadata["has_data"] is True
+    assert metadata["columns"] == ["A", "B"]
+    assert metadata["original_periodicity"] == "daily"
+    assert metadata["default_periodicity"] == "daily"
+    assert any(option["value"] == "daily_trading" for option in metadata["periodicity_options"])
+    assert metadata["min_date"] == "2024-01-01"
+    assert metadata["max_date"] == "2024-01-02"
 
 
 def test_merge_returns_renames_overlapping_columns():

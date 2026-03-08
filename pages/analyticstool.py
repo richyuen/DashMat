@@ -3946,6 +3946,7 @@ layout = dmc.Container(
         dcc.Store(id="at-regime-def-db-available-store", data=False, storage_type="session"),
         dcc.Store(id="at-regime-series-store", data={"series_data": {}}, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
+        dcc.Store(id="at-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-initial-tab-render-ready-store", data=False, storage_type="memory"),
@@ -4072,8 +4073,7 @@ clientside_callback(
     Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Input("at-page-load-trigger", "n_intervals"),
-    Input("dashmat-raw-data-store", "data"),
-    State("dashmat-original-periodicity-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     State("at-periodicity-value-store", "data"),
     State("at-series-select-value-store", "data"),
     State("at-returns-type-value-store", "data"),
@@ -4097,8 +4097,7 @@ clientside_callback(
 )
 def restore_application_state(
     n_intervals,
-    raw_data,
-    orig_periodicity,
+    raw_meta,
     stored_periodicity,
     stored_series,
     stored_returns,
@@ -4119,7 +4118,7 @@ def restore_application_state(
     po_origin_series,
     page_visited,
 ):
-    if not raw_data:
+    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
         # Reset defaults (visibility handled by clientside callback)
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
@@ -4128,11 +4127,14 @@ def restore_application_state(
         )
 
     try:
-        df = json_to_df(raw_data)
-        
         # Periodicity
-        periodicity_options = get_available_periodicities(orig_periodicity or "daily")
-        valid_periodicity = stored_periodicity if stored_periodicity in [p["value"] for p in periodicity_options] else ("daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading"))
+        periodicity_options = raw_meta.get("periodicity_options") or [{"value": "daily_trading", "label": "Daily (Trading)"}]
+        valid_values = [p["value"] for p in periodicity_options]
+        orig_periodicity = raw_meta.get("original_periodicity") or "daily"
+        default_periodicity = "daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading")
+        if default_periodicity not in valid_values:
+            default_periodicity = valid_values[0] if valid_values else "daily_trading"
+        valid_periodicity = stored_periodicity if stored_periodicity in valid_values else default_periodicity
         
         # Returns Type
         valid_returns = stored_returns if stored_returns in ["total", "excess"] else "total"
@@ -4169,7 +4171,7 @@ def restore_application_state(
         
         # Monthly Series Options & Selection
         columns, valid_selection, _generic_new, po_new = _at_get_series_page_state(
-            raw_data,
+            raw_meta,
             stored_series,
             stored_order,
             po_origin_series,
@@ -4319,6 +4321,7 @@ clientside_callback(
             // Clear all sessionStorage keys for both pages
             const keysToRemove = [
                 'dashmat-raw-data-store',
+                'dashmat-raw-data-meta-store',
                 'dashmat-original-periodicity-store',
                 'dashmat-pending-new-series-store',
                 'dashmat-saved-series-cache-store',
@@ -4430,16 +4433,15 @@ clientside_callback(
 )
 
 
-def _at_get_series_page_state(raw_data, current_select, current_order, po_origin_series):
+def _at_get_series_page_state(raw_meta, current_select, current_order, po_origin_series):
     """Classify raw columns into page-known, saved-origin, and generic new series."""
-    if not raw_data:
-        return [], [], [], []
-
-    try:
-        columns = list(json_to_df(raw_data).columns)
-    except Exception:
-        return [], [], [], []
-
+    columns = []
+    if isinstance(raw_meta, dict):
+        maybe_columns = raw_meta.get("columns")
+        if isinstance(maybe_columns, list):
+            columns = maybe_columns
+    elif isinstance(raw_meta, (list, tuple)):
+        columns = list(raw_meta)
     if not columns:
         return [], [], [], []
 
@@ -4470,7 +4472,7 @@ def _at_get_series_page_state(raw_data, current_select, current_order, po_origin
     Input("at-open-series-modal-button", "n_clicks"),
     Input("at-page-load-trigger", "n_intervals"),
     State("at-url-location", "pathname"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
@@ -4484,7 +4486,7 @@ def open_modal(
     n_clicks,
     page_load_intervals,
     pathname,
-    raw_data,
+    raw_meta,
     current_select,
     current_bench,
     current_ls,
@@ -4517,7 +4519,7 @@ def open_modal(
         raise PreventUpdate
 
     columns, selected_valid, generic_new, po_new = _at_get_series_page_state(
-        raw_data,
+        raw_meta,
         current_select,
         current_order,
         po_origin_series,
@@ -7535,6 +7537,21 @@ def update_vol_scaling_assignments(cell_change, row_data, raw_data):
 
 
 @callback(
+    Output("at-range-candidates-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def update_at_range_candidates(raw_data, periodicity, selected_series):
+    return compute_date_range_candidates(
+        raw_data or "",
+        periodicity or "daily",
+        tuple(selected_series or ()),
+    )
+
+
+@callback(
     Output("at-start-date-picker", "value"),
     Output("at-end-date-picker", "value"),
     Output("at-date-picker-wrapper", "style"),
@@ -7543,18 +7560,14 @@ def update_vol_scaling_assignments(cell_change, row_data, raw_data):
     Output("at-maximum-range-button", "disabled"),
     Output("at-date-range-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
+    Input("at-range-candidates-store", "data"),
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
     prevent_initial_call="initial_duplicate",
 )
 def initialize_date_range(
-    raw_data,
-    periodicity,
-    selected_series,
+    candidates,
     stored_range,
     current_start_date,
     current_end_date,
@@ -7563,18 +7576,10 @@ def initialize_date_range(
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
-    if raw_data is None or not selected_series:
+    if not isinstance(candidates, dict) or not candidates.get("available_series"):
         return None, None, disabled_style, True, True, True, None, False
 
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
-        if not candidates.get("available_series"):
-            return None, None, disabled_style, True, True, True, None, False
-
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
             return None, None, disabled_style, True, True, True, None, False
@@ -7618,14 +7623,12 @@ def initialize_date_range(
     Input("at-common-range-button", "n_clicks"),
     Input("at-common-daily-button", "n_clicks"),
     Input("at-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
-    State("at-periodicity-select", "value"),
-    State("at-series-select", "data"),
+    State("at-range-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, raw_data, periodicity, selected_series):
+def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candidates):
     """Update date range based on button clicks."""
-    if raw_data is None or not selected_series:
+    if not isinstance(candidates, dict) or not candidates.get("available_series"):
         raise PreventUpdate
 
     ctx = callback_context
@@ -7635,14 +7638,6 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ra
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
-        if not candidates.get("available_series"):
-            raise PreventUpdate
-
         start_date, end_date, force_daily = resolve_button_range(candidates, button_id)
         if not start_date or not end_date:
             raise PreventUpdate
@@ -8340,6 +8335,7 @@ def update_correlogram_meta(selected_series, active_tab):
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-range-candidates-store", "data"),
     Input("at-correlation-view-switch", "value"),
     Input("at-correlation-exp-wt-switch", "checked"),
     Input("at-correlation-halflife-input", "value"),
@@ -8361,6 +8357,7 @@ def update_correlogram_target_key(
     state_ready,
     vol_scaler,
     vol_scaling_assignments,
+    range_candidates,
     correlation_view,
     exp_weighted,
     decay_value,
@@ -8376,12 +8373,7 @@ def update_correlogram_target_key(
 
     effective_date_range = date_range
     try:
-        candidates = compute_date_range_candidates(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series or ()),
-        )
-        start_date, end_date = resolve_initial_range(candidates, date_range)
+        start_date, end_date = resolve_initial_range(range_candidates or {}, date_range)
         if start_date and end_date:
             effective_date_range = {"start": start_date, "end": end_date}
     except Exception:

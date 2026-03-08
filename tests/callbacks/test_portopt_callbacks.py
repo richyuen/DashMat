@@ -10,7 +10,7 @@ import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
 
-from utils.returns import df_to_json
+from utils.returns import build_raw_data_metadata, df_to_json
 
 
 def _sample_window_weights() -> list[dict]:
@@ -58,6 +58,10 @@ def _collect_component_text(node):
         for value in props.values():
             out.extend(_collect_component_text(value))
     return out
+
+
+def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
+    return build_raw_data_metadata(raw_json, original_periodicity)
 
 
 def _find_component_by_id(node, target_id):
@@ -109,8 +113,7 @@ def test_po_restore_state_keeps_empty_selection_when_nothing_is_stored(page_modu
     _, portopt = page_modules
 
     restored = portopt.po_restore_state(
-        raw_json,
-        "daily",
+        _raw_meta(raw_json),
         "daily_trading",
         [],
         None,
@@ -127,7 +130,7 @@ def test_po_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, pa
         None,
         1,
         "/portopt",
-        raw_json,
+        _raw_meta(raw_json),
         [],
         {},
         {},
@@ -154,7 +157,7 @@ def test_po_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modul
         None,
         1,
         "/portopt",
-        raw_json,
+        _raw_meta(raw_json),
         ["Asset_A"],
         {},
         {},
@@ -180,7 +183,7 @@ def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypat
         None,
         1,
         "/portopt",
-        raw_json,
+        _raw_meta(raw_json),
         ["Asset_A"],
         {},
         {},
@@ -207,7 +210,7 @@ def test_po_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypa
         None,
         1,
         "/portopt",
-        raw_json,
+        _raw_meta(raw_json),
         [],
         {},
         {},
@@ -239,7 +242,7 @@ def test_po_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch,
         None,
         1,
         "/portopt",
-        df_to_json(raw_df),
+        _raw_meta(df_to_json(raw_df)),
         [],
         {},
         {},

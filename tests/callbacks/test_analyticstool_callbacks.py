@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from utils.returns import build_raw_data_metadata
 
 
 def _collect_component_text(node):
@@ -61,6 +62,10 @@ def _find_component_by_id(node, target_id):
             if found is not None:
                 return found
     return None
+
+
+def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
+    return build_raw_data_metadata(raw_json, original_periodicity)
 
 
 def _stack_section_titles(stack_component):
@@ -186,24 +191,17 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
 
     monkeypatch.setattr(
         analyticstool,
-        "compute_date_range_candidates",
-        lambda *_args, **_kwargs: {
-            "available_series": ["Asset_A"],
-            "common_daily_start": "2024-01-01",
-            "common_daily_end": "2024-12-31",
-        },
-    )
-    monkeypatch.setattr(
-        analyticstool,
         "resolve_initial_range",
         lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
     )
 
     start, end, _style, _common_disabled, _daily_disabled, _max_disabled, range_store, ready = (
         analyticstool.initialize_date_range(
-            "raw-json",
-            "daily",
-            ["Asset_A"],
+            {
+                "available_series": ["Asset_A"],
+                "common_daily_start": "2024-01-01",
+                "common_daily_end": "2024-12-31",
+            },
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
@@ -221,8 +219,7 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
 
     restored = analyticstool.restore_application_state(
         1,
-        raw_json,
-        "daily",
+        _raw_meta(raw_json),
         "daily_trading",
         [],
         None,
@@ -254,8 +251,7 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
 
     restored = analyticstool.restore_application_state(
         1,
-        raw_json,
-        "daily",
+        _raw_meta(raw_json),
         "daily_trading",
         ["Asset_A"],
         None,
@@ -290,7 +286,7 @@ def test_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, page_
         None,
         1,
         "/analyticstool",
-        raw_json,
+        _raw_meta(raw_json),
         [],
         {},
         {},
@@ -313,7 +309,7 @@ def test_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules,
         None,
         1,
         "/analyticstool",
-        raw_json,
+        _raw_meta(raw_json),
         ["Asset_A"],
         {},
         {},
@@ -335,7 +331,7 @@ def test_open_modal_auto_opens_for_generic_new_and_keeps_po_series_selected(monk
         None,
         1,
         "/analyticstool",
-        raw_json,
+        _raw_meta(raw_json),
         ["Asset_A"],
         {},
         {},
@@ -606,6 +602,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         True,
         0,
         {},
+        {},
         "correlation",
         False,
         63,
@@ -625,6 +622,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         date_range,
         True,
         0,
+        {},
         {},
         "correlation",
         True,
@@ -650,6 +648,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
             date_range,
             True,
             0,
+            {},
             {},
             "correlation",
             True,
@@ -679,6 +678,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         True,
         0,
         {},
+        {},
         "correlation",
         False,
         63,
@@ -698,6 +698,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         date_range,
         True,
         0,
+        {},
         {},
         "correlation",
         False,
@@ -729,6 +730,7 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
         True,
         0,
         {},
+        {},
         "scatter",
         False,
         63,
@@ -750,6 +752,7 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
             date_range,
             True,
             0,
+            {},
             {},
             "scatter",
             False,

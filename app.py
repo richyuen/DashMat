@@ -6,6 +6,7 @@ from dash import Dash, Input, Output, dcc, page_container
 from dash_iconify import DashIconify
 from dash.exceptions import PreventUpdate
 from cache_config import init_cache
+from utils.returns import build_raw_data_metadata
 
 # Initialize the app with multi-page support
 app = Dash(
@@ -50,6 +51,7 @@ REGRESSION_PATH = _registry_path("pages.regression", "/regression")
 # Shared stores are defined here so they are accessible across all pages
 _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
@@ -174,6 +176,16 @@ def guard_protected_pages(pathname, userinfo):
     if not restricted_href:
         raise PreventUpdate
     return restricted_href
+
+
+@app.callback(
+    Output("dashmat-raw-data-meta-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-original-periodicity-store", "data"),
+    prevent_initial_call=False,
+)
+def refresh_raw_data_meta_store(raw_data, original_periodicity):
+    return build_raw_data_metadata(raw_data, original_periodicity)
 
 # Theme consumer callbacks are defined in page modules for charts.
 

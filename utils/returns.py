@@ -368,6 +368,52 @@ def get_available_periodicities(original_periodicity: str) -> list[dict]:
     ]
 
 
+@cache_config.cache.memoize(timeout=0)
+def build_raw_data_metadata(json_str: str | None, original_periodicity: str | None) -> dict:
+    """Build compact shared metadata for the current raw-data payload."""
+    resolved_periodicity = original_periodicity or "daily"
+    periodicity_options = get_available_periodicities(resolved_periodicity)
+    valid_values = [option["value"] for option in periodicity_options]
+    default_periodicity = (
+        resolved_periodicity
+        if resolved_periodicity in valid_values
+        else (valid_values[0] if valid_values else "daily_trading")
+    )
+
+    if not json_str:
+        return {
+            "has_data": False,
+            "columns": [],
+            "original_periodicity": resolved_periodicity,
+            "periodicity_options": periodicity_options,
+            "default_periodicity": default_periodicity,
+            "min_date": None,
+            "max_date": None,
+        }
+
+    df = json_to_df(json_str)
+    if df.empty:
+        return {
+            "has_data": False,
+            "columns": [],
+            "original_periodicity": resolved_periodicity,
+            "periodicity_options": periodicity_options,
+            "default_periodicity": default_periodicity,
+            "min_date": None,
+            "max_date": None,
+        }
+
+    return {
+        "has_data": bool(df.columns.size),
+        "columns": list(df.columns),
+        "original_periodicity": resolved_periodicity,
+        "periodicity_options": periodicity_options,
+        "default_periodicity": default_periodicity,
+        "min_date": df.index.min().strftime("%Y-%m-%d"),
+        "max_date": df.index.max().strftime("%Y-%m-%d"),
+    }
+
+
 def merge_returns(existing_df: pd.DataFrame | None, new_df: pd.DataFrame) -> pd.DataFrame:
     """Merge new returns data with existing data.
 
