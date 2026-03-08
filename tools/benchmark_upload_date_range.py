@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import cache_config
-from utils.date_range_flow import compute_date_range_candidates
+from utils.date_range_flow import compute_common_daily_candidates, compute_date_range_candidates
 from utils.upload_flow import import_selected_workbook_sheets
 
 
@@ -90,6 +90,12 @@ def main() -> None:
         repeats=1,
         warmups=0,
     )
+    cache_config.cache.clear()
+    first_common_daily_ms = _time_ms(
+        lambda: compute_common_daily_candidates(raw_json, series),
+        repeats=1,
+        warmups=0,
+    )
     cached_range_ms = _time_ms(
         lambda: compute_date_range_candidates(raw_json, "daily_trading", series),
         repeats=7,
@@ -98,7 +104,8 @@ def main() -> None:
 
     print("== Upload + Date Range Benchmark ==")
     print(f"upload.multi_sheet_import.median_ms={upload_ms:.2f}")
-    print(f"date_range.first_call.ms={first_range_ms:.2f}")
+    print(f"date_range.base_first_call.ms={first_range_ms:.2f}")
+    print(f"date_range.common_daily_first_call.ms={first_common_daily_ms:.2f}")
     print(f"date_range.cached_median_ms={cached_range_ms:.2f}")
 
 

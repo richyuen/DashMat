@@ -47,7 +47,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
-from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
+from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
 from utils.saved_series import save_series_to_raw_data, saved_series_store_names
@@ -559,9 +559,13 @@ def _reg_default_chart_visibility(label: str):
     return "legendonly"
 
 
-def _reg_build_display_series(entry, raw_data):
+@cache_config.cache.memoize(timeout=0)
+def _reg_build_display_series_cached(entry_payload, raw_data):
     """Build canonical series used across Statistics/Returns/Growth/Scatter."""
-    entry = entry or {}
+    try:
+        entry = json.loads(entry_payload) if entry_payload else {}
+    except Exception:
+        entry = {}
     periodicity = entry.get("periodicity", "daily")
     dep_var = entry.get("dependent_var")
     config = entry.get("config") or {}
@@ -656,11 +660,23 @@ def _reg_build_display_series(entry, raw_data):
         series_map["Residual"] = residual
 
     if not series_map:
-        return pd.DataFrame(), []
+        return None, []
 
     display_df = pd.concat(series_map, axis=1).sort_index()
     display_df = display_df.loc[:, [c for c in series_map.keys() if c in display_df.columns]]
-    return display_df, list(display_df.columns)
+    return df_to_json(display_df), list(display_df.columns)
+
+
+def _reg_build_display_series(entry, raw_data):
+    entry_payload = canonical_json_dumps(entry or {})
+    display_json, ordered_cols = _reg_build_display_series_cached(entry_payload, raw_data)
+    if not display_json or not ordered_cols:
+        return pd.DataFrame(), []
+    try:
+        display_df = json_to_df(display_json)
+    except Exception:
+        return pd.DataFrame(), []
+    return display_df, ordered_cols
 
 
 def _reg_prefixed(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
@@ -4253,7 +4269,6 @@ def reg_update_range_candidates(raw_data, periodicity, x_series, dep_var):
         raw_data or "",
         periodicity or "daily",
         all_series,
-        include_common_daily=False,
     )
 
 

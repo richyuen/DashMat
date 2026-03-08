@@ -199,6 +199,8 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
         analyticstool.initialize_date_range(
             {
                 "available_series": ["Asset_A"],
+            },
+            {
                 "common_daily_start": "2024-01-01",
                 "common_daily_end": "2024-12-31",
             },
@@ -1505,7 +1507,7 @@ def test_use_regime_blocks_db_name_collision_for_edited_db_draft(monkeypatch, pa
     assert out[7] == "orange"
 
 
-def test_preload_factor_and_regime_definitions_on_page_load(monkeypatch, page_modules):
+def test_lazy_load_factor_and_regime_definitions_on_first_tab_open(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     monkeypatch.setattr(analyticstool, "factor_tables_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(analyticstool, "regime_tables_available", lambda *_args, **_kwargs: True)
@@ -1520,9 +1522,19 @@ def test_preload_factor_and_regime_definitions_on_page_load(monkeypatch, page_mo
         lambda *_args, **_kwargs: [{"RegimeName": "SavedRegime"}],
     )
 
-    factor_available, factor_rows, regime_available, regime_rows = analyticstool.at_preload_factor_and_regime_definitions(1)
+    factor_available, factor_rows, factor_loaded = analyticstool.at_lazy_load_factor_definitions(
+        "factor_analysis",
+        False,
+    )
+    regime_available, regime_rows, regime_loaded = analyticstool.at_lazy_load_regime_definitions(
+        "regime_analysis",
+        False,
+    )
+
     assert factor_available is True
     assert regime_available is True
+    assert factor_loaded is True
+    assert regime_loaded is True
     assert factor_rows == [{"FactorName": "SavedFactor"}]
     assert regime_rows == [{"RegimeName": "SavedRegime"}]
 

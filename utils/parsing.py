@@ -1,6 +1,9 @@
 """Parsing utilities for CSV/Excel files with returns data."""
 
 import base64
+from collections import OrderedDict
+from dataclasses import dataclass
+import hashlib
 import io
 from typing import Any
 
@@ -10,6 +13,47 @@ import pandas as pd
 
 class _MorningstarLayoutNotFoundError(ValueError):
     """Raised when a workbook sheet is not in Morningstar report layout."""
+
+
+_UPLOAD_CONTEXT_CACHE_MAX = 4
+_UPLOAD_CONTEXT_CACHE: OrderedDict[str, "_UploadContext"] = OrderedDict()
+
+
+@dataclass
+class _UploadContext:
+    decoded: bytes
+    workbook: Any | None = None
+    excel_file: pd.ExcelFile | None = None
+    sheet_names: list[str] | None = None
+
+
+def _upload_cache_key(contents: str, filename: str) -> str:
+    digest = hashlib.sha1()
+    digest.update(filename.encode("utf-8", errors="ignore"))
+    digest.update(b"\0")
+    digest.update(contents.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _get_upload_context(contents: str, filename: str) -> _UploadContext:
+    key = _upload_cache_key(contents, filename)
+    cached = _UPLOAD_CONTEXT_CACHE.get(key)
+    if cached is not None:
+        _UPLOAD_CONTEXT_CACHE.move_to_end(key)
+        return cached
+
+    _content_type, content_string = contents.split(",", 1)
+    decoded = base64.b64decode(content_string)
+    context = _UploadContext(decoded=decoded)
+    if filename.endswith((".xlsx", ".xls")):
+        context.workbook = load_workbook(io.BytesIO(decoded), data_only=True)
+        context.excel_file = pd.ExcelFile(io.BytesIO(decoded))
+        context.sheet_names = list(context.workbook.sheetnames)
+
+    _UPLOAD_CONTEXT_CACHE[key] = context
+    while len(_UPLOAD_CONTEXT_CACHE) > _UPLOAD_CONTEXT_CACHE_MAX:
+        _UPLOAD_CONTEXT_CACHE.popitem(last=False)
+    return context
 
 
 def get_sheet_names(contents: str, filename: str) -> list[str]:
@@ -24,10 +68,8 @@ def get_sheet_names(contents: str, filename: str) -> list[str]:
     """
     if not filename.endswith((".xlsx", ".xls")):
         return []
-    _content_type, content_string = contents.split(",")
-    decoded = base64.b64decode(content_string)
-    xls = pd.ExcelFile(io.BytesIO(decoded))
-    return xls.sheet_names
+    context = _get_upload_context(contents, filename)
+    return list(context.sheet_names or [])
 
 
 def parse_uploaded_file(contents: str, filename: str, sheet_name=0) -> pd.DataFrame:
@@ -62,8 +104,8 @@ def parse_uploaded_sheets(
     Returns:
         Mapping of resolved sheet name -> parsed returns DataFrame.
     """
-    _content_type, content_string = contents.split(",")
-    decoded = base64.b64decode(content_string)
+    context = _get_upload_context(contents, filename)
+    decoded = context.decoded
 
     if filename.endswith(".csv"):
         if len(sheet_names) > 1:
@@ -75,8 +117,10 @@ def parse_uploaded_sheets(
     if not filename.endswith((".xlsx", ".xls")):
         raise ValueError(f"Unsupported file type: {filename}")
 
-    wb = load_workbook(io.BytesIO(decoded), data_only=True)
-    xls = pd.ExcelFile(io.BytesIO(decoded))
+    wb = context.workbook
+    xls = context.excel_file
+    if wb is None or xls is None:
+        raise ValueError(f"Failed to initialize workbook context for: {filename}")
     requested = _resolve_requested_sheet_names(wb, sheet_names)
 
     results: dict[str, pd.DataFrame] = {}

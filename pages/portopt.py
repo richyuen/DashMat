@@ -21,6 +21,7 @@ import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
+    compute_common_daily_candidates,
     compute_date_range_candidates,
     resolve_button_range,
     resolve_initial_range,
@@ -61,7 +62,7 @@ from utils.exponential_weighting import decay_input_mode, normalize_decay_input,
 from utils.excel_export import format_excel_dates, format_mdy_date, write_excel_with_autofit
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
 from utils.perf_timing import timed_block
-from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
+from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.shared_metrics import (
     STATS_CONFIG,
     risk_free_json_from_store as _risk_free_json_from_store,
@@ -269,6 +270,70 @@ def _po_single_portfolio_return(results, portfolio_name: str) -> pd.Series:
     return s.dropna().rename(portfolio_name)
 
 
+@cache_config.cache.memoize(timeout=0)
+def _po_build_display_series_cached(
+    selected_portfolio,
+    returns_json,
+    config_payload,
+    raw_data,
+    periodicity,
+    benchmark_payload,
+    long_short_payload,
+    date_range_payload,
+    vol_scaler,
+    vol_scaling_payload,
+):
+    if not selected_portfolio or not returns_json:
+        return None, []
+
+    series_map = {}
+    try:
+        portfolio_series = pd.read_json(StringIO(returns_json), typ="series")
+        portfolio_series.index = pd.to_datetime(portfolio_series.index)
+        portfolio_series = portfolio_series.dropna().rename(selected_portfolio)
+    except Exception:
+        portfolio_series = pd.Series(dtype=float)
+    if not portfolio_series.empty:
+        series_map[selected_portfolio] = portfolio_series
+
+    try:
+        config = json.loads(config_payload) if config_payload else {}
+    except Exception:
+        config = {}
+    source_series = list(dict.fromkeys((config or {}).get("selected_series") or []))
+    if raw_data and source_series:
+        working_bundle = _PoWorkingReturnsBundle(
+            raw_data=raw_data,
+            periodicity=periodicity or "daily",
+            benchmark_payload=benchmark_payload,
+            long_short_payload=long_short_payload,
+            date_range_payload=date_range_payload,
+            vol_scaler=vol_scaler or 0,
+            vol_scaling_payload=vol_scaling_payload,
+        )
+        try:
+            working_df = _po_get_working_returns(working_bundle, source_series)
+        except Exception:
+            working_df = pd.DataFrame()
+        for name in source_series:
+            if not name or name == selected_portfolio or name not in working_df.columns:
+                continue
+            s = working_df[name].dropna()
+            if not s.empty:
+                series_map[name] = s.rename(name)
+
+    if not series_map:
+        return None, []
+
+    display_df = pd.concat(series_map, axis=1).sort_index()
+    ordered_cols = [c for c in series_map.keys() if c in display_df.columns]
+    if not ordered_cols:
+        return None, []
+    display_df = display_df[ordered_cols]
+    display_df.index.name = "Date"
+    return df_to_json(display_df), ordered_cols
+
+
 def _po_build_display_series(
     results,
     selected_portfolio,
@@ -283,43 +348,34 @@ def _po_build_display_series(
     if not selected_portfolio or not results or selected_portfolio not in results:
         return pd.DataFrame(), []
 
-    series_map = {}
-    portfolio_series = _po_single_portfolio_return(results, selected_portfolio)
-    if not portfolio_series.empty:
-        series_map[selected_portfolio] = portfolio_series
-
-    config = ((results or {}).get(selected_portfolio) or {}).get("config", {}) or {}
-    source_series = list(dict.fromkeys(config.get("selected_series") or []))
-    if raw_data and source_series:
-        working_bundle = _build_po_working_bundle(
-            raw_data,
-            periodicity,
-            benchmark_assignments,
-            long_short_assignments,
-            date_range,
-            vol_scaler,
-            vol_scaling_assignments,
-        )
-        try:
-            working_df = _po_get_working_returns(working_bundle, source_series)
-        except Exception:
-            working_df = pd.DataFrame()
-        for name in source_series:
-            if not name or name == selected_portfolio or name not in working_df.columns:
-                continue
-            s = working_df[name].dropna()
-            if not s.empty:
-                series_map[name] = s.rename(name)
-
-    if not series_map:
+    entry = (results or {}).get(selected_portfolio) or {}
+    bundle = _build_po_working_bundle(
+        raw_data,
+        periodicity,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+    )
+    display_json, ordered_cols = _po_build_display_series_cached(
+        selected_portfolio,
+        entry.get("returns_json"),
+        canonical_json_dumps(entry.get("config") or {}),
+        bundle.raw_data,
+        bundle.periodicity,
+        bundle.benchmark_payload,
+        bundle.long_short_payload,
+        bundle.date_range_payload,
+        bundle.vol_scaler,
+        bundle.vol_scaling_payload,
+    )
+    if not display_json or not ordered_cols:
         return pd.DataFrame(), []
-
-    display_df = pd.concat(series_map, axis=1).sort_index()
-    ordered_cols = [c for c in series_map.keys() if c in display_df.columns]
-    if not ordered_cols:
+    try:
+        display_df = json_to_df(display_json)
+    except Exception:
         return pd.DataFrame(), []
-    display_df = display_df[ordered_cols]
-    display_df.index.name = "Date"
     return display_df, ordered_cols
 
 
@@ -3476,6 +3532,7 @@ layout = dmc.Container(
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-range-candidates-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-common-daily-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
@@ -7700,9 +7757,10 @@ def _po_latest_series_grid_change(cell_change):
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("po-series-selection-grid", "rowData", allow_optional=True),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_benchmarks(cell_change, row_data, raw_data):
+def po_update_benchmarks(cell_change, row_data, raw_data, raw_meta):
     change = _po_latest_series_grid_change(cell_change)
     if not change:
         raise PreventUpdate
@@ -7710,7 +7768,9 @@ def po_update_benchmarks(cell_change, row_data, raw_data):
         raise PreventUpdate
     if raw_data is None or not row_data:
         return {}
-    valid_series = set(json_to_df(raw_data).columns)
+    valid_series = set((raw_meta or {}).get("columns") or [])
+    if not valid_series:
+        valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
     for row in row_data:
         if not isinstance(row, dict):
@@ -7765,9 +7825,10 @@ def po_update_cmabench(cell_change, row_data):
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("po-series-selection-grid", "rowData", allow_optional=True),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_ls(cell_change, row_data, raw_data):
+def po_update_ls(cell_change, row_data, raw_data, raw_meta):
     change = _po_latest_series_grid_change(cell_change)
     if not change:
         raise PreventUpdate
@@ -7775,7 +7836,9 @@ def po_update_ls(cell_change, row_data, raw_data):
         raise PreventUpdate
     if raw_data is None or not row_data:
         return {}
-    valid_series = set(json_to_df(raw_data).columns)
+    valid_series = set((raw_meta or {}).get("columns") or [])
+    if not valid_series:
+        valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
     for row in row_data:
         if not isinstance(row, dict):
@@ -7795,9 +7858,10 @@ def po_update_ls(cell_change, row_data, raw_data):
     Input("po-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("po-series-selection-grid", "rowData", allow_optional=True),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_vol_scaling(cell_change, row_data, raw_data):
+def po_update_vol_scaling(cell_change, row_data, raw_data, raw_meta):
     change = _po_latest_series_grid_change(cell_change)
     if not change:
         raise PreventUpdate
@@ -7805,7 +7869,9 @@ def po_update_vol_scaling(cell_change, row_data, raw_data):
         raise PreventUpdate
     if raw_data is None or not row_data:
         return {}
-    valid_series = set(json_to_df(raw_data).columns)
+    valid_series = set((raw_meta or {}).get("columns") or [])
+    if not valid_series:
+        valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
     for row in row_data:
         if not isinstance(row, dict):
@@ -8230,6 +8296,19 @@ def po_update_range_candidates(raw_data, periodicity, selected_series):
 
 
 @callback(
+    Output("po-common-daily-candidates-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("po-series-select", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def po_update_common_daily_candidates(raw_data, selected_series):
+    return compute_common_daily_candidates(
+        raw_data or "",
+        tuple(selected_series or ()),
+    )
+
+
+@callback(
     Output("po-start-date-picker", "value"),
     Output("po-end-date-picker", "value"),
     Output("po-date-picker-wrapper", "style"),
@@ -8238,10 +8317,11 @@ def po_update_range_candidates(raw_data, periodicity, selected_series):
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
     Input("po-range-candidates-store", "data"),
+    Input("po-common-daily-candidates-store", "data"),
     State("po-date-range-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_date_range(candidates, stored_range):
+def po_init_date_range(candidates, common_daily_candidates, stored_range):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
@@ -8253,7 +8333,11 @@ def po_init_date_range(candidates, stored_range):
         if not start_date or not end_date:
             return None, None, disabled_style, True, True, True, None
 
-        has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
+        has_common_daily = bool(
+            isinstance(common_daily_candidates, dict)
+            and common_daily_candidates.get("common_daily_start")
+            and common_daily_candidates.get("common_daily_end")
+        )
         return (
             start_date,
             end_date,
@@ -8281,9 +8365,10 @@ def po_init_date_range(candidates, stored_range):
     Input("po-common-daily-button", "n_clicks"),
     Input("po-maximum-range-button", "n_clicks"),
     State("po-range-candidates-store", "data"),
+    State("po-common-daily-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candidates):
+def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candidates, common_daily_candidates):
     if not isinstance(candidates, dict) or not candidates.get("available_series"):
         raise PreventUpdate
     ctx = callback_context
@@ -8291,7 +8376,11 @@ def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candid
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        start_date, end_date, force_daily = resolve_button_range(candidates, button_id)
+        start_date, end_date, force_daily = resolve_button_range(
+            candidates,
+            button_id,
+            common_daily_candidates,
+        )
         if not start_date or not end_date:
             raise PreventUpdate
 

@@ -208,6 +208,39 @@ def test_parse_uploaded_sheets_excel_resolves_indices_and_deduplicates_requests(
     assert list(parsed["S2"].columns) == ["B"]
 
 
+def test_excel_upload_context_reuses_workbook_between_sheet_listing_and_parse(monkeypatch):
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        pd.DataFrame({"Date": ["2024-01-01"], "A": [0.1]}).to_excel(writer, sheet_name="S1", index=False)
+        pd.DataFrame({"Date": ["2024-01-02"], "B": [0.2]}).to_excel(writer, sheet_name="S2", index=False)
+    payload = (
+        "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"
+        + base64.b64encode(bio.getvalue()).decode("ascii")
+    )
+
+    real_excel_file = parsing.pd.ExcelFile
+    real_load_workbook = parsing.load_workbook
+    parsing._UPLOAD_CONTEXT_CACHE.clear()
+    calls = {"excel_file": 0, "load_workbook": 0}
+
+    def counted_excel_file(*args, **kwargs):
+        calls["excel_file"] += 1
+        return real_excel_file(*args, **kwargs)
+
+    def counted_load_workbook(*args, **kwargs):
+        calls["load_workbook"] += 1
+        return real_load_workbook(*args, **kwargs)
+
+    monkeypatch.setattr(parsing.pd, "ExcelFile", counted_excel_file)
+    monkeypatch.setattr(parsing, "load_workbook", counted_load_workbook)
+
+    assert get_sheet_names(payload, "multi.xlsx") == ["S1", "S2"]
+    parsed = parse_uploaded_sheets(payload, "multi.xlsx", ["S2"])
+
+    assert list(parsed.keys()) == ["S2"]
+    assert calls == {"excel_file": 1, "load_workbook": 1}
+
+
 def test_parse_uploaded_sheets_ignore_errors_skips_bad_sheet():
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:

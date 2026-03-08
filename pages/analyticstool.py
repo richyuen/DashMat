@@ -20,6 +20,7 @@ import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
+    compute_common_daily_candidates,
     compute_date_range_candidates,
     resolve_button_range,
     resolve_initial_range,
@@ -3939,14 +3940,17 @@ layout = dmc.Container(
         dcc.Store(id="at-factor-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-def-modal-draft-store", data=None, storage_type="session"),
         dcc.Store(id="at-factor-def-db-available-store", data=False, storage_type="session"),
+        dcc.Store(id="at-factor-def-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-regime-definition-store", data=None, storage_type="session"),
         dcc.Store(id="at-regime-definitions-db-store", data=[], storage_type="session"),
         dcc.Store(id="at-regime-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-regime-def-modal-draft-store", data=None, storage_type="session"),
         dcc.Store(id="at-regime-def-db-available-store", data=False, storage_type="session"),
+        dcc.Store(id="at-regime-def-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-regime-series-store", data={"series_data": {}}, storage_type="session"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-range-candidates-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-common-daily-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-initial-tab-render-ready-store", data=False, storage_type="memory"),
@@ -4206,17 +4210,17 @@ def restore_application_state(
 @callback(
     Output("at-factor-def-db-available-store", "data", allow_duplicate=True),
     Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
-    Output("at-regime-def-db-available-store", "data", allow_duplicate=True),
-    Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
-    Input("at-page-load-trigger", "n_intervals"),
-    prevent_initial_call="initial_duplicate",
+    Output("at-factor-def-loaded-store", "data", allow_duplicate=True),
+    Input("at-main-tabs", "value"),
+    State("at-factor-def-loaded-store", "data"),
+    prevent_initial_call=True,
 )
-def at_preload_factor_and_regime_definitions(_n_intervals):
+def at_lazy_load_factor_definitions(active_tab, loaded):
+    if active_tab != "factor_analysis" or loaded:
+        raise PreventUpdate
+
     factor_available = False
     factor_definitions = []
-    regime_available = False
-    regime_definitions = []
-
     try:
         factor_available = bool(factor_tables_available(DB_ENGINE))
         if factor_available:
@@ -4225,6 +4229,23 @@ def at_preload_factor_and_regime_definitions(_n_intervals):
         factor_available = False
         factor_definitions = []
 
+    return factor_available, factor_definitions, True
+
+
+@callback(
+    Output("at-regime-def-db-available-store", "data", allow_duplicate=True),
+    Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-regime-def-loaded-store", "data", allow_duplicate=True),
+    Input("at-main-tabs", "value"),
+    State("at-regime-def-loaded-store", "data"),
+    prevent_initial_call=True,
+)
+def at_lazy_load_regime_definitions(active_tab, loaded):
+    if active_tab != "regime_analysis" or loaded:
+        raise PreventUpdate
+
+    regime_available = False
+    regime_definitions = []
     try:
         regime_available = bool(regime_tables_available(DB_ENGINE))
         if regime_available:
@@ -4233,7 +4254,7 @@ def at_preload_factor_and_regime_definitions(_n_intervals):
         regime_available = False
         regime_definitions = []
 
-    return factor_available, factor_definitions, regime_available, regime_definitions
+    return regime_available, regime_definitions, True
 
 
 # Clientside callback to navigate to home on Exit
@@ -5106,6 +5127,7 @@ def at_open_factor_definition_modal(menu_clicks, tab_clicks):
 @callback(
     Output("at-factor-def-db-available-store", "data", allow_duplicate=True),
     Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-factor-def-loaded-store", "data", allow_duplicate=True),
     Output("at-factor-def-long-components", "data"),
     Output("at-factor-def-short-components", "data"),
     Output("at-factor-def-db-available-note", "children"),
@@ -5120,7 +5142,7 @@ def at_load_factor_modal_data(opened):
     db_available = factor_tables_available(DB_ENGINE)
     db_definitions = load_factor_definitions(DB_ENGINE) if db_available else []
     note = "" if db_available else "Database factor tables are unavailable. Session factors are still supported."
-    return db_available, db_definitions, component_options, component_options, note, (not db_available)
+    return db_available, db_definitions, True, component_options, component_options, note, (not db_available)
 
 
 @callback(
@@ -5594,6 +5616,7 @@ def at_open_regime_definition_modal(menu_clicks, tab_clicks):
 @callback(
     Output("at-regime-def-db-available-store", "data", allow_duplicate=True),
     Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
+    Output("at-regime-def-loaded-store", "data", allow_duplicate=True),
     Output("at-regime-def-universe-series", "data"),
     Output("at-regime-def-single-series", "data"),
     Output("at-regime-def-db-available-note", "children"),
@@ -5663,6 +5686,7 @@ def at_load_regime_modal_data(
     return (
         db_available,
         db_definitions,
+        True,
         series_options,
         series_options,
         note,
@@ -7463,14 +7487,17 @@ def save_edit(
     Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("at-series-selection-grid", "rowData", allow_optional=True),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
-def update_benchmark_assignments(cell_change, row_data, raw_data):
+def update_benchmark_assignments(cell_change, row_data, raw_data, raw_meta):
     """Store benchmark assignments for all series."""
     if raw_data is None or not row_data:
         return {}
 
-    valid_series = set(json_to_df(raw_data).columns)
+    valid_series = set((raw_meta or {}).get("columns") or [])
+    if not valid_series:
+        valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
     for row in row_data:
         if not isinstance(row, dict):
@@ -7491,14 +7518,17 @@ def update_benchmark_assignments(cell_change, row_data, raw_data):
     Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("at-series-selection-grid", "rowData", allow_optional=True),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
-def update_long_short_assignments(cell_change, row_data, raw_data):
+def update_long_short_assignments(cell_change, row_data, raw_data, raw_meta):
     """Store long-short checkbox assignments for all series."""
     if raw_data is None or not row_data:
         return {}
 
-    valid_series = set(json_to_df(raw_data).columns)
+    valid_series = set((raw_meta or {}).get("columns") or [])
+    if not valid_series:
+        valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
     for row in row_data:
         if not isinstance(row, dict):
@@ -7516,14 +7546,17 @@ def update_long_short_assignments(cell_change, row_data, raw_data):
     Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
     State("at-series-selection-grid", "rowData", allow_optional=True),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
-def update_vol_scaling_assignments(cell_change, row_data, raw_data):
+def update_vol_scaling_assignments(cell_change, row_data, raw_data, raw_meta):
     """Store vol-scaling checkbox assignments for all series."""
     if raw_data is None or not row_data:
         return {}
 
-    valid_series = set(json_to_df(raw_data).columns)
+    valid_series = set((raw_meta or {}).get("columns") or [])
+    if not valid_series:
+        valid_series = set(json_to_df(raw_data).columns)
     assignments = {}
     for row in row_data:
         if not isinstance(row, dict):
@@ -7552,6 +7585,19 @@ def update_at_range_candidates(raw_data, periodicity, selected_series):
 
 
 @callback(
+    Output("at-common-daily-candidates-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-series-select", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def update_at_common_daily_candidates(raw_data, selected_series):
+    return compute_common_daily_candidates(
+        raw_data or "",
+        tuple(selected_series or ()),
+    )
+
+
+@callback(
     Output("at-start-date-picker", "value"),
     Output("at-end-date-picker", "value"),
     Output("at-date-picker-wrapper", "style"),
@@ -7561,6 +7607,7 @@ def update_at_range_candidates(raw_data, periodicity, selected_series):
     Output("at-date-range-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Input("at-range-candidates-store", "data"),
+    Input("at-common-daily-candidates-store", "data"),
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
@@ -7568,6 +7615,7 @@ def update_at_range_candidates(raw_data, periodicity, selected_series):
 )
 def initialize_date_range(
     candidates,
+    common_daily_candidates,
     stored_range,
     current_start_date,
     current_end_date,
@@ -7584,7 +7632,11 @@ def initialize_date_range(
         if not start_date or not end_date:
             return None, None, disabled_style, True, True, True, None, False
 
-        has_common_daily = bool(candidates.get("common_daily_start") and candidates.get("common_daily_end"))
+        has_common_daily = bool(
+            isinstance(common_daily_candidates, dict)
+            and common_daily_candidates.get("common_daily_start")
+            and common_daily_candidates.get("common_daily_end")
+        )
         next_range = {"start": start_date, "end": end_date}
         start_output = start_date
         end_output = end_date
@@ -7624,9 +7676,10 @@ def initialize_date_range(
     Input("at-common-daily-button", "n_clicks"),
     Input("at-maximum-range-button", "n_clicks"),
     State("at-range-candidates-store", "data"),
+    State("at-common-daily-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candidates):
+def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candidates, common_daily_candidates):
     """Update date range based on button clicks."""
     if not isinstance(candidates, dict) or not candidates.get("available_series"):
         raise PreventUpdate
@@ -7638,7 +7691,11 @@ def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, ca
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
     try:
-        start_date, end_date, force_daily = resolve_button_range(candidates, button_id)
+        start_date, end_date, force_daily = resolve_button_range(
+            candidates,
+            button_id,
+            common_daily_candidates,
+        )
         if not start_date or not end_date:
             raise PreventUpdate
 
