@@ -216,6 +216,140 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
     assert ready is True
 
 
+def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    restored = analyticstool.restore_application_state(
+        1,
+        raw_json,
+        "daily",
+        "daily_trading",
+        [],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        [],
+        [],
+        False,
+    )
+
+    assert restored[17] == []
+    assert restored[18] == []
+    assert restored[19] is False
+
+
+def test_restore_application_state_silently_adds_po_series_after_first_visit(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    restored = analyticstool.restore_application_state(
+        1,
+        raw_json,
+        "daily",
+        "daily_trading",
+        ["Asset_A"],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        ["Asset_A", "Asset_B"],
+        ["Asset_C"],
+        True,
+    )
+
+    assert restored[17] == ["Asset_A", "Asset_C"]
+    assert restored[18] == ["Asset_A", "Asset_B", "Asset_C"]
+    assert restored[19] is False
+
+
+def test_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, page_modules, raw_json, sample_returns_df):
+    analyticstool, _ = page_modules
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())
+
+    result = analyticstool.open_modal(
+        None,
+        1,
+        "/analyticstool",
+        raw_json,
+        [],
+        {},
+        {},
+        [],
+        {},
+        [],
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == list(sample_returns_df.columns)
+    assert result[7] is True
+
+
+def test_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())
+
+    result = analyticstool.open_modal(
+        None,
+        1,
+        "/analyticstool",
+        raw_json,
+        ["Asset_A"],
+        {},
+        {},
+        ["Asset_A", "Asset_B", "Asset_D"],
+        {},
+        ["Asset_C"],
+        True,
+    )
+
+    assert result[0] is no_update
+    assert result[7] is True
+
+
+def test_open_modal_auto_opens_for_generic_new_and_keeps_po_series_selected(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())
+
+    result = analyticstool.open_modal(
+        None,
+        1,
+        "/analyticstool",
+        raw_json,
+        ["Asset_A"],
+        {},
+        {},
+        ["Asset_A", "Asset_B"],
+        {},
+        ["Asset_C"],
+        True,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_C", "Asset_D"]
+    assert result[7] is True
+
+
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
     analyticstool, _ = page_modules
 
@@ -671,6 +805,7 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
     )
 
     assert result[6] is no_update
+    assert len(result) == 8
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):

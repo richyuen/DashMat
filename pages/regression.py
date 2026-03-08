@@ -2118,6 +2118,7 @@ layout = dmc.Container(
         # Results
         dcc.Store(id="reg-results-store", data={}, storage_type="session"),
         dcc.Store(id="reg-active-tab-store", data="anova", storage_type="session"),
+        dcc.Store(id="reg-page-visited-store", data=False, storage_type="session"),
         # Save/Load session + cache
         dcc.Store(id="reg-save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="reg-load-session-dummy", data=None, storage_type="memory"),
@@ -3718,6 +3719,31 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
 # Open modal
 # ---------------------------------------------------------------------------
 
+def _reg_get_modal_series_state(raw_data, current_x, current_order, dep_var, po_origin_series):
+    if not raw_data:
+        return [], [], []
+
+    try:
+        columns = list(json_to_df(raw_data).columns)
+    except Exception:
+        return [], [], []
+
+    if not columns:
+        return [], [], []
+
+    x_valid = [series for series in (current_x or []) if series in columns]
+    known_columns = set(series for series in (current_order or []) if series in columns)
+    known_columns.update(x_valid)
+    if dep_var in columns:
+        known_columns.add(dep_var)
+    po_origin_set = {series for series in (po_origin_series or []) if series in columns}
+    generic_new = [
+        series for series in columns
+        if series not in known_columns and series not in po_origin_set
+    ]
+    return columns, x_valid, generic_new
+
+
 @callback(
     Output("reg-series-selection-modal", "opened"),
     Output("reg-temp-series-select", "data", allow_duplicate=True),
@@ -3731,6 +3757,7 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     Output("reg-temp-min-beta-store", "data", allow_duplicate=True),
     Output("reg-temp-max-beta-store", "data", allow_duplicate=True),
     Output("reg-temp-enable-constraint-store", "data", allow_duplicate=True),
+    Output("reg-page-visited-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
@@ -3745,44 +3772,88 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     State("reg-min-beta-store", "data"),
     State("reg-max-beta-store", "data"),
     State("reg-enable-constraint-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    State("reg-page-visited-store", "data"),
     prevent_initial_call=True,
 )
 def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order, bench, ls, vol_scale, dep_var,
-                   lag, min_beta, max_beta, enable):
+                   lag, min_beta, max_beta, enable, po_origin_series, page_visited):
     triggered_id = callback_context.triggered_id
 
+    columns, selected_x, generic_new = _reg_get_modal_series_state(
+        raw_data,
+        sel,
+        order,
+        dep_var,
+        po_origin_series,
+    )
     should_open = False
+    temp_x = list(sel or [])
     if triggered_id == "reg-open-modal-button":
         should_open = bool(n_clicks)
     elif triggered_id == "dashmat-raw-data-store":
-        if raw_data:
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
-            known_order = list(order or [])
-            new_columns = [c for c in columns if c not in known_order]
-            should_open = bool(new_columns)
+        should_open = bool(generic_new)
+        if should_open:
+            selected_set = set(selected_x)
+            selected_set.update(generic_new)
+            temp_x = [series for series in columns if series in selected_set]
     elif triggered_id == "reg-page-load-trigger":
         if page_load_intervals is None:
             raise PreventUpdate
         page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-        if page_path == "/regression" and raw_data:
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
-            selected = set(sel or [])
-            has_selected = bool(selected.intersection(columns))
-            has_dependent = bool(dep_var and dep_var in columns)
-            should_open = bool(columns) and not (has_selected or has_dependent)
+        if page_path == "/regression" and columns:
+            if not page_visited and not selected_x:
+                should_open = True
+                temp_x = list(columns)
+            elif generic_new:
+                should_open = True
+                selected_set = set(selected_x)
+                selected_set.update(generic_new)
+                temp_x = [series for series in columns if series in selected_set]
+            else:
+                should_open = False
+        elif page_path == "/regression":
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                True,
+            )
+        else:
+            raise PreventUpdate
+
+        if not should_open:
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                True,
+            )
 
     if not should_open:
         raise PreventUpdate
 
-    return (True, sel or [], order or [], [],
+    return (True, temp_x, order or [], [], 
             bench or {}, ls or {}, vol_scale or {},
-            dep_var, lag or {}, min_beta or {}, max_beta or {}, enable or {})
+            dep_var, lag or {}, min_beta or {}, max_beta or {}, enable or {}, no_update if triggered_id != "reg-page-load-trigger" else True)
 
 
 # ---------------------------------------------------------------------------

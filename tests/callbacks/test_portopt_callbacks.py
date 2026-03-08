@@ -105,6 +105,100 @@ def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
     assert bundle.benchmark_payload == '{"Asset_A":"Asset_B"}'
 
 
+def test_po_restore_state_keeps_empty_selection_when_nothing_is_stored(page_modules, raw_json):
+    _, portopt = page_modules
+
+    restored = portopt.po_restore_state(
+        raw_json,
+        "daily",
+        "daily_trading",
+        [],
+        None,
+    )
+
+    assert restored[3] == []
+
+
+def test_po_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, page_modules, raw_json, sample_returns_df):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
+
+    result = portopt.po_open_modal(
+        None,
+        1,
+        "/portopt",
+        raw_json,
+        [],
+        {},
+        {},
+        {},
+        [],
+        {},
+        {},
+        {},
+        {},
+        [],
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == list(sample_returns_df.columns)
+    assert result[11] is True
+
+
+def test_po_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
+
+    result = portopt.po_open_modal(
+        None,
+        1,
+        "/portopt",
+        raw_json,
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        ["Asset_A", "Asset_B", "Asset_D"],
+        {},
+        {},
+        {},
+        {},
+        ["Asset_C"],
+        True,
+    )
+
+    assert result[0] is no_update
+    assert result[11] is True
+
+
+def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
+
+    result = portopt.po_open_modal(
+        None,
+        1,
+        "/portopt",
+        raw_json,
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {},
+        {},
+        ["Asset_C"],
+        True,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_D"]
+    assert result[11] is True
+
+
 def test_build_apply_weight_matrix_assigns_weights_by_windows(page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=5, freq="D")

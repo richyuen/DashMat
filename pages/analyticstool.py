@@ -3951,6 +3951,7 @@ layout = dmc.Container(
         dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="at-download-enabled-store", data=False),
         dcc.Store(id="at-first-load-store", data=False, storage_type="session"),
+        dcc.Store(id="at-page-visited-store", data=False, storage_type="session"),
         # Temporary stores for modal state
         dcc.Store(id="at-temp-series-select", data=[]),
         dcc.Store(id="at-temp-benchmark-assignments-store", data={}),
@@ -4052,6 +4053,7 @@ clientside_callback(
     Output("at-factor-transform-select", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
+    Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
@@ -4072,7 +4074,9 @@ clientside_callback(
     State("at-factor-transform-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
+    State("at-series-order-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
+    State("at-page-visited-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(
@@ -4095,14 +4099,16 @@ def restore_application_state(
     stored_factor_transform,
     stored_monthly_view,
     stored_monthly_series,
-    pending_series,
+    stored_order,
+    po_origin_series,
+    page_visited,
 ):
     if not raw_data:
         # Reset defaults (visibility handled by clientside callback)
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], False
+            "box", 5, "raw", "annual", [], [], False
         )
 
     try:
@@ -4146,20 +4152,28 @@ def restore_application_state(
         monthly_view = stored_monthly_view if stored_monthly_view is not None else "annual"
         
         # Monthly Series Options & Selection
-        current_selection = stored_series or []
-        valid_selection = [s for s in current_selection if s in df.columns]
-        if not valid_selection:
-            valid_selection = list(df.columns)
-
-        # Auto-add any pending new series from portfolio optimization
-        for s in (pending_series or []):
-            if s in df.columns and s not in valid_selection:
-                valid_selection.append(s)
+        columns, valid_selection, _generic_new, po_new = _at_get_series_page_state(
+            raw_data,
+            stored_series,
+            stored_order,
+            po_origin_series,
+        )
+        updated_order = [series for series in (stored_order or []) if series in columns]
+        for series in valid_selection:
+            if series not in updated_order:
+                updated_order.append(series)
+        if not (not page_visited and not valid_selection):
+            for series in po_new:
+                if series not in updated_order:
+                    updated_order.append(series)
+            selected_set = set(valid_selection)
+            selected_set.update(po_new)
+            valid_selection = [series for series in updated_order if series in selected_set]
         
         return (
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, False
+            factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, updated_order, False
         )
 
     except Exception:
@@ -4167,7 +4181,7 @@ def restore_application_state(
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], False
+            "box", 5, "raw", "annual", [], [], False
         )
 
 
@@ -4325,6 +4339,7 @@ clientside_callback(
                 'at-date-range-store',
                 'at-vol-scaler-value-store',
                 'at-vol-scaling-assignments-store',
+                'at-page-visited-store',
                 'po-series-select',
                 'po-series-order-store',
                 'po-benchmark-assignments-store',
@@ -4399,6 +4414,34 @@ clientside_callback(
 )
 
 
+def _at_get_series_page_state(raw_data, current_select, current_order, po_origin_series):
+    """Classify raw columns into page-known, PO-origin, and generic new series."""
+    if not raw_data:
+        return [], [], [], []
+
+    try:
+        columns = list(json_to_df(raw_data).columns)
+    except Exception:
+        return [], [], [], []
+
+    if not columns:
+        return [], [], [], []
+
+    selected_valid = [series for series in (current_select or []) if series in columns]
+    known_columns = set(series for series in (current_order or []) if series in columns)
+    known_columns.update(selected_valid)
+    po_origin_set = {series for series in (po_origin_series or []) if series in columns}
+    generic_new = [
+        series for series in columns
+        if series not in known_columns and series not in po_origin_set
+    ]
+    po_new = [
+        series for series in columns
+        if series not in known_columns and series in po_origin_set
+    ]
+    return columns, selected_valid, generic_new, po_new
+
+
 @callback(
     Output("at-series-selection-modal", "opened", allow_duplicate=True),
     Output("at-temp-series-select", "data", allow_duplicate=True),
@@ -4407,18 +4450,107 @@ clientside_callback(
     Output("at-temp-series-order-store", "data", allow_duplicate=True),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
     Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-page-visited-store", "data", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
+    Input("at-page-load-trigger", "n_intervals"),
+    State("at-url-location", "pathname"),
+    State("dashmat-raw-data-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
     State("at-series-order-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    State("at-page-visited-store", "data"),
     prevent_initial_call=True,
 )
-def open_modal(n_clicks, current_select, current_bench, current_ls, current_order, current_vol_scaling):
-    if not n_clicks:
+def open_modal(
+    n_clicks,
+    page_load_intervals,
+    pathname,
+    raw_data,
+    current_select,
+    current_bench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
+    po_origin_series,
+    page_visited,
+):
+    triggered_id = callback_context.triggered_id
+
+    if triggered_id == "at-open-series-modal-button":
+        if not n_clicks:
+            raise PreventUpdate
+        return (
+            True,
+            current_select,
+            current_bench,
+            current_ls,
+            current_order,
+            [],
+            current_vol_scaling,
+            no_update,
+        )
+
+    if triggered_id != "at-page-load-trigger" or page_load_intervals is None:
         raise PreventUpdate
-    return True, current_select, current_bench, current_ls, current_order, [], current_vol_scaling
+
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+    if page_path != "/analyticstool":
+        raise PreventUpdate
+
+    columns, selected_valid, generic_new, po_new = _at_get_series_page_state(
+        raw_data,
+        current_select,
+        current_order,
+        po_origin_series,
+    )
+    if not columns:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+        )
+
+    should_open = False
+    temp_select = no_update
+    if not page_visited and not selected_valid:
+        should_open = True
+        temp_select = list(columns)
+    elif generic_new:
+        should_open = True
+        selected_set = set(selected_valid)
+        selected_set.update(generic_new)
+        selected_set.update(po_new)
+        temp_select = [series for series in columns if series in selected_set]
+    if not should_open:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+        )
+
+    return (
+        True,
+        temp_select,
+        current_bench,
+        current_ls,
+        current_order,
+        [],
+        current_vol_scaling,
+        True,
+    )
 
 
 @callback(
@@ -4440,7 +4572,16 @@ def open_modal(n_clicks, current_select, current_bench, current_ls, current_orde
     State("at-temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_deleted, raw_data, temp_vol_scaling):
+def on_modal_ok(
+    n_clicks,
+    temp_select,
+    temp_bench,
+    temp_ls,
+    temp_order,
+    temp_deleted,
+    raw_data,
+    temp_vol_scaling,
+):
     if not n_clicks:
         raise PreventUpdate
 
@@ -4483,7 +4624,16 @@ def on_modal_ok(n_clicks, temp_select, temp_bench, temp_ls, temp_order, temp_del
             temp_select = [s for s in temp_select if s not in series_to_drop]
 
     raw_data_output = updated_raw_data if updated_raw_data != raw_data else no_update
-    return temp_select, temp_bench, temp_ls, temp_order, False, temp_select, raw_data_output, temp_vol_scaling
+    return (
+        temp_select,
+        temp_bench,
+        temp_ls,
+        temp_order,
+        False,
+        temp_select,
+        raw_data_output,
+        temp_vol_scaling,
+    )
 
 
 @callback(
@@ -7385,7 +7535,14 @@ def update_vol_scaling_assignments(cell_change, row_data, raw_data):
     State("at-end-date-picker", "value"),
     prevent_initial_call="initial_duplicate",
 )
-def initialize_date_range(raw_data, periodicity, selected_series, stored_range, current_start_date, current_end_date):
+def initialize_date_range(
+    raw_data,
+    periodicity,
+    selected_series,
+    stored_range,
+    current_start_date,
+    current_end_date,
+):
     """Initialize date range to maximum range when data is loaded."""
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}

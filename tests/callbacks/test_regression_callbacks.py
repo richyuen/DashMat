@@ -414,6 +414,88 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert value == "monthly"
 
 
+def test_reg_open_modal_page_load_selects_all_x_when_no_x_selected(monkeypatch, regression_page, raw_json, sample_returns_df):
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
+
+    result = regression_page.reg_open_modal(
+        None,
+        raw_json,
+        1,
+        "/regression",
+        [],
+        [],
+        {},
+        {},
+        {},
+        None,
+        {},
+        {},
+        {},
+        {},
+        [],
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == list(sample_returns_df.columns)
+    assert result[7] is None
+    assert result[12] is True
+
+
+def test_reg_open_modal_page_load_adds_only_generic_new_x_without_resetting_y(monkeypatch, regression_page, raw_json):
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
+
+    result = regression_page.reg_open_modal(
+        None,
+        raw_json,
+        1,
+        "/regression",
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {},
+        "Asset_B",
+        {},
+        {},
+        {},
+        {},
+        ["Asset_C"],
+        True,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_D"]
+    assert result[7] == "Asset_B"
+    assert result[12] is True
+
+
+def test_reg_open_modal_ignores_po_only_series_on_revisit(monkeypatch, regression_page, raw_json):
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
+
+    result = regression_page.reg_open_modal(
+        None,
+        raw_json,
+        1,
+        "/regression",
+        ["Asset_A"],
+        ["Asset_A", "Asset_B", "Asset_D"],
+        {},
+        {},
+        {},
+        "Asset_B",
+        {},
+        {},
+        {},
+        {},
+        ["Asset_C"],
+        True,
+    )
+
+    assert result[0] is no_update
+    assert result[12] is True
+
+
 def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):
     row_data = [
         {"Series": "A", "Y": True, "X": True},
