@@ -199,6 +199,74 @@ def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypat
     assert result[11] is True
 
 
+def test_po_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
+
+    result = portopt.po_open_modal(
+        None,
+        1,
+        "/portopt",
+        raw_json,
+        [],
+        {},
+        {},
+        {},
+        [],
+        {},
+        {},
+        {},
+        {},
+        {
+            "Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"},
+            "Asset_D": {"origin_page": "regression", "origin_result": "Asset_D", "series_type": "predicted"},
+        },
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_B"]
+    assert result[11] is True
+
+
+def test_po_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
+    raw_df = pd.DataFrame({"SavedPort": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    raw_df.index.name = "Date"
+
+    result = portopt.po_open_modal(
+        None,
+        1,
+        "/portopt",
+        df_to_json(raw_df),
+        [],
+        {},
+        {},
+        {},
+        [],
+        {},
+        {},
+        {},
+        {},
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+        False,
+    )
+
+    assert result[0] is no_update
+    assert result[11] is True
+
+
+def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
+    _, portopt = page_modules
+
+    welcome = _find_component_by_id(portopt.layout, "po-welcome-screen")
+    main = _find_component_by_id(portopt.layout, "po-main-container")
+
+    assert getattr(welcome, "style", {})["display"] == "none"
+    assert getattr(main, "style", {})["display"] == "none"
+
+
 def test_build_apply_weight_matrix_assigns_weights_by_windows(page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=5, freq="D")

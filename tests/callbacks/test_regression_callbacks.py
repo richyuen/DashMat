@@ -62,6 +62,32 @@ def _call_reg_run(regression_page, **overrides):
     return regression_page.reg_run_regression(**params)
 
 
+def _find_component_by_id(node, target_id):
+    if node is None:
+        return None
+    if getattr(node, "id", None) == target_id:
+        return node
+
+    children = getattr(node, "children", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            found = _find_component_by_id(child, target_id)
+            if found is not None:
+                return found
+    else:
+        found = _find_component_by_id(children, target_id)
+        if found is not None:
+            return found
+
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            found = _find_component_by_id(value, target_id)
+            if found is not None:
+                return found
+    return None
+
+
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
     idx = pd.date_range("2020-01-01", periods=6, freq="B")
     working_df = pd.DataFrame(
@@ -396,6 +422,14 @@ def test_reg_save_series_to_shared_data_overwrites_existing_saved_name(regressio
     assert status == "Overwrote shared series R1."
 
 
+def test_reg_layout_starts_with_welcome_and_main_hidden(regression_page):
+    welcome = _find_component_by_id(regression_page.layout, "reg-welcome-screen")
+    main = _find_component_by_id(regression_page.layout, "reg-main-container")
+
+    assert getattr(welcome, "style", {})["display"] == "none"
+    assert getattr(main, "style", {})["display"] == "none"
+
+
 def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(regression_page, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
@@ -460,11 +494,9 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
         ]
 
     monkeypatch.setattr(regression_page, "get_available_periodicities", _fake_get_available_periodicities)
-    welcome_style, main_style, options, value = regression_page.reg_toggle_welcome("raw", "daily", "monthly")
+    options, value = regression_page.reg_toggle_welcome("raw", "daily", "monthly")
 
     assert captured["arg"] == "daily"
-    assert welcome_style["display"] == "none"
-    assert main_style["display"] == "flex"
     assert options == [{"value": "daily", "label": "Daily"}, {"value": "monthly", "label": "Monthly"}]
     assert value == "monthly"
 
@@ -494,6 +526,65 @@ def test_reg_open_modal_page_load_selects_all_x_when_no_x_selected(monkeypatch, 
     assert result[0] is True
     assert result[1] == list(sample_returns_df.columns)
     assert result[7] is None
+    assert result[12] is True
+
+
+def test_reg_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypatch, regression_page, raw_json):
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
+
+    result = regression_page.reg_open_modal(
+        None,
+        raw_json,
+        1,
+        "/regression",
+        [],
+        [],
+        {},
+        {},
+        {},
+        None,
+        {},
+        {},
+        {},
+        {},
+        {
+            "Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"},
+            "Asset_D": {"origin_page": "regression", "origin_result": "Asset_D", "series_type": "predicted"},
+        },
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_B"]
+    assert result[7] is None
+    assert result[12] is True
+
+
+def test_reg_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch, regression_page):
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
+    raw_df = pd.DataFrame({"SavedPred": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    raw_df.index.name = "Date"
+
+    result = regression_page.reg_open_modal(
+        None,
+        df_to_json(raw_df),
+        1,
+        "/regression",
+        [],
+        [],
+        {},
+        {},
+        {},
+        None,
+        {},
+        {},
+        {},
+        {},
+        {"SavedPred": {"origin_page": "regression", "origin_result": "SavedPred", "series_type": "predicted"}},
+        False,
+    )
+
+    assert result[0] is no_update
     assert result[12] is True
 
 
@@ -651,10 +742,7 @@ def _collect_ag_grids(node):
 
 
 def test_reg_toggle_welcome_no_data_shows_top_aligned_welcome(regression_page):
-    welcome_style, main_style, options, value = regression_page.reg_toggle_welcome(None, None, None)
-
-    assert welcome_style == {"display": "block"}
-    assert main_style["display"] == "none"
+    options, value = regression_page.reg_toggle_welcome(None, None, None)
     assert options == [{"value": "daily", "label": "Daily"}]
     assert value == "daily"
 

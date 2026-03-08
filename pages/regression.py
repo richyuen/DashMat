@@ -2047,11 +2047,11 @@ layout = dmc.Container(
             ],
         ),
 
-        # Welcome screen
+        # Welcome screen (Hydration gates visibility)
         html.Div(
             id="reg-welcome-screen",
             children=build_reg_welcome_screen(),
-            style={"display": "block"},
+            style={"display": "none"},
         ),
 
         # Main container
@@ -2168,6 +2168,33 @@ layout = dmc.Container(
 # ===========================================================================
 # Clientside callbacks
 # ===========================================================================
+
+clientside_callback(
+    """
+    function(n_intervals, data) {
+        if (n_intervals === null || n_intervals === undefined || n_intervals < 1) {
+            return [
+                {display: "none"},
+                {display: "none", flex: "1", flexDirection: "column", overflow: "hidden"}
+            ];
+        }
+        if (data) {
+            return [
+                {display: "none"},
+                {display: "flex", flex: "1", flexDirection: "column", overflow: "hidden"}
+            ];
+        }
+        return [
+            {display: "block"},
+            {display: "none", flex: "1", flexDirection: "column", overflow: "hidden"}
+        ];
+    }
+    """,
+    Output("reg-welcome-screen", "style"),
+    Output("reg-main-container", "style"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    Input("dashmat-raw-data-store", "data"),
+)
 
 clientside_callback(
     "function(n) { return true; }",
@@ -3694,8 +3721,6 @@ def reg_handle_sheet_select_ok(n_clicks, selected_sheets, contents, filename, ex
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("reg-welcome-screen", "style"),
-    Output("reg-main-container", "style"),
     Output("reg-periodicity-select", "data"),
     Output("reg-periodicity-select", "value"),
     Input("dashmat-raw-data-store", "data"),
@@ -3704,12 +3729,8 @@ def reg_handle_sheet_select_ok(n_clicks, selected_sheets, contents, filename, ex
     prevent_initial_call=False,
 )
 def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
-    hide_welcome = {"display": "none"}
-    show_welcome = {"display": "block"}
-    show_main = {"display": "flex", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
-    hide_main = {"display": "none", "flex": "1", "flexDirection": "column", "overflow": "hidden"}
     if not raw_data:
-        return show_welcome, hide_main, [{"value": "daily", "label": "Daily"}], "daily"
+        return [{"value": "daily", "label": "Daily"}], "daily"
 
     period_data = get_available_periodicities(original_periodicity or "daily")
     valid_values = [option["value"] for option in period_data]
@@ -3723,7 +3744,7 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
         if (stored_periodicity and stored_periodicity in valid_values)
         else default_value
     )
-    return hide_welcome, show_main, period_data, period_value
+    return period_data, period_value
 
 
 # ---------------------------------------------------------------------------
@@ -3790,6 +3811,7 @@ def _reg_get_modal_series_state(raw_data, current_x, current_order, dep_var, po_
 def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order, bench, ls, vol_scale, dep_var,
                    lag, min_beta, max_beta, enable, po_origin_series, page_visited):
     triggered_id = callback_context.triggered_id
+    saved_origin_set = set(saved_series_store_names(po_origin_series))
 
     columns, selected_x, generic_new = _reg_get_modal_series_state(
         raw_data,
@@ -3814,8 +3836,8 @@ def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order
         page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
         if page_path == "/regression" and columns:
             if not page_visited and not selected_x:
-                should_open = True
-                temp_x = list(columns)
+                temp_x = [series for series in columns if series not in saved_origin_set]
+                should_open = bool(temp_x)
             elif generic_new:
                 should_open = True
                 selected_set = set(selected_x)
