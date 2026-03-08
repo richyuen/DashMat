@@ -1,111 +1,70 @@
 # AGENTS.md
 
-Instructions for coding agents working in `C:\Git\DashMat`.
+Repo instructions for coding agents working in `C:\Git\DashMat`.
 
-## Objective
+## Purpose
 
-Build and maintain DashMat, a Dash-based market returns analytics app with two main pages:
-- `pages/analyticstool.py` for data analysis workflows
-- `pages/portopt.py` for portfolio optimization workflows
+DashMat is a Dash app for market returns workflows with three primary pages:
+- `pages/analyticstool.py`
+- `pages/portopt.py`
+- `pages/regression.py`
 
-Prefer small, targeted changes that preserve existing behavior unless a behavior change is explicitly requested.
+Prefer small, targeted changes unless a behavior change is explicitly requested.
 
-## Stack
+## Environment
 
 - Python 3.11
-- Dash 2.14+
-- Dash Mantine Components
-- Dash AG Grid
-- pandas / scipy
-- riskfolio-lib
-- Flask-Caching
+- Always run commands in the `dashmat` Conda environment.
+- In non-interactive shells, use `conda run -n dashmat ...`.
 
-## Setup
+Common commands:
 
 ```bash
-conda create -n dashmat python=3.11 -y
-conda activate dashmat
-pip install -r requirements.txt
-```
-
-## Environment execution rule
-
-- Always run project commands in the `dashmat` Conda environment.
-- In non-interactive or tool-driven shells, prefer `conda run -n dashmat <command>` instead of relying on `conda activate`.
-
-## Run
-
-```bash
-python app.py
-python app.py --debug
-# Non-interactive shell alternative:
 conda run -n dashmat python app.py
-conda run -n dashmat python app.py --debug
-```
-
-## Tests and checks
-
-```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest -q tests
-python tools/benchmark_callback_latency.py
-python tools/data/generate_test_data.py
-python tools/db/init_local_cma_db.py
-# Non-interactive shell alternatives:
-conda run -n dashmat python -m pip install -r requirements-dev.txt
 conda run -n dashmat python -m pytest -q tests
-conda run -n dashmat python tools/benchmark_callback_latency.py
-conda run -n dashmat python tools/data/generate_test_data.py
 conda run -n dashmat python tools/db/init_local_cma_db.py
 ```
 
-If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` (or the full suite).
-If you change upload/parsing/statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
-Automated test guidance is maintained in `tests/README.md`.
-
-## Code map
+## Code Map
 
 - `app.py`: app entry point, shared stores, Mantine provider
-- `cache_config.py`: cache initialization and memoization helpers
-- `pages/analyticstool.py`: primary analytics UI/callbacks
-- `pages/portopt.py`: optimization UI/callbacks
+- `pages/analyticstool.py`: analytics workflows
+- `pages/portopt.py`: portfolio optimization workflows
+- `pages/regression.py`: regression workflows
 - `utils/parsing.py`: file parsing and periodicity detection
 - `utils/returns.py`: return conversions and compounding
 - `utils/statistics.py`: metrics calculations
-- `utils/optimization.py`: optimization engine and model logic
+- `utils/optimization.py`: optimization engine
 
-## Working rules
+## Working Rules
 
-- Preserve callback IDs and store schemas unless migration is intentional and updated everywhere.
-- Keep JSON/store payload compatibility across pages (`analyticstool` and `portopt` share state).
+- Preserve callback IDs and store schemas unless a migration is intentional and updated everywhere.
+- Keep shared JSON/store payloads compatible across pages.
 - Avoid broad refactors in large callback files; patch the smallest safe section.
-- Add concise comments only when logic is non-obvious.
-- Do not introduce new dependencies unless necessary.
-- Do not mutate or delete database table data from web application runtime/callback code. Any table creation, backfill, truncate, delete, or reseed operation must live in explicit setup/migration scripts (e.g., `tools/db/init_local_cma_db.py`) and never in page interaction paths.
-- Exception: AnalyticsTool factor-definition CRUD is allowed at runtime for `FactorDefinitions` and `FactorDefinitionsArchive` only. Update/delete must archive the prior row first, and use optimistic concurrency based on `UPDATE_DATE`.
-- Portfolio import source rules:
-  - `peer` mode reads `PeerTS` (`PortRet` + `MeanRet` benchmark logic).
-  - `index` mode reads `IndexTS` (`PortRet` + `Benchmark`).
-  - `other` mode currently supports `PortfolioVintage='AltTS'` only and reads `AltTS`.
-  - In `other` + `AltTS`, benchmark lookup is portfolio-based (`Portfolio=<Portfolio>`, `Item='BenchRet'`) and benchmark series names use `<Portfolio>_BM`.
+- Do not add dependencies unless necessary.
+- Add comments only when logic is not obvious.
+- Do not mutate or delete database table data from runtime callback code.
+- Database setup, backfills, truncates, deletes, reseeds, and migrations belong in explicit scripts under `tools/db`.
+- Exception: AnalyticsTool factor-definition CRUD is allowed at runtime for `FactorDefinitions` and `FactorDefinitionsArchive` only. Archive the prior row first and use optimistic concurrency via `UPDATE_DATE`.
 
-## Data and behavior expectations
+Portfolio import rules:
+- `peer` reads `PeerTS` using `PortRet` plus `MeanRet`.
+- `index` reads `IndexTS` using `PortRet` plus `Benchmark`.
+- `other` currently supports `PortfolioVintage='AltTS'` only and reads `AltTS`.
+- In `other` + `AltTS`, benchmark lookup uses `Portfolio=<Portfolio>` and `Item='BenchRet'`, and benchmark series are named `<Portfolio>_BM`.
 
-- Input files are date-indexed returns series (CSV/XLS/XLSX).
-- Values may be decimals or percent-formatted; parsing should normalize safely.
-- Daily data can be resampled to weekly/monthly; monthly data must not be upsampled.
-- Appending data should preserve existing dataset periodicity rules.
+## Data Expectations
 
-## Performance guidance
+- Inputs are date-indexed return series in CSV/XLS/XLSX.
+- Values may be decimals or percent-formatted.
+- Daily data may be resampled to weekly or monthly.
+- Monthly data must not be upsampled.
+- Appends must preserve existing dataset periodicity rules.
 
-- Prefer vectorized pandas operations.
-- Reuse caching/memoization where existing code already applies it.
-- Avoid expensive recomputation in callbacks when inputs are unchanged.
+## Validation
 
-## UI/change safety checklist
-
-Before finishing:
-1. Confirm app starts (`python app.py`).
-2. Confirm the edited workflow executes without callback errors.
-3. Run `python -m pytest -q tests` (or targeted pytest modules for touched logic).
-4. Check there are no obvious regressions in tab rendering or series selection behavior.
+- Start the app if routing or layout behavior changed.
+- Run targeted pytest modules for touched logic; run full pytest for broader workflow changes.
+- If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` or full pytest.
+- If you change upload, parsing, or statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
+- Before finishing, check for obvious regressions in tab rendering and series selection behavior.
