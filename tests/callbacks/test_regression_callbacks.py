@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from io import BytesIO
+from io import BytesIO, StringIO
 
 import numpy as np
 import pandas as pd
@@ -341,6 +341,61 @@ def test_reg_run_regression_handles_blank_linear_constraints(monkeypatch, regres
     assert "regression error" not in out[3].lower()
 
 
+def test_reg_save_series_to_shared_data_saves_predicted_and_updates_result(regression_page):
+    idx = pd.date_range("2024-01-01", periods=3, freq="B")
+    raw_df = pd.DataFrame({"Asset_A": [0.01, 0.02, 0.03]}, index=idx)
+    results = {
+        "R1": {
+            "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.001, 0.002, 0.003]}, index=idx)),
+            "periodicity": "daily",
+            "config": {"periodicity": "daily"},
+            "saved_series_name": None,
+        }
+    }
+
+    new_results, new_raw, saved_store, status = regression_page.reg_save_series_to_shared_data(
+        1,
+        "R1",
+        results,
+        df_to_json(raw_df),
+        "daily",
+        {},
+    )
+
+    raw_after = pd.read_json(StringIO(new_raw), orient="split")
+    assert "R1" in raw_after.columns
+    assert new_results["R1"]["saved_series_name"] == "R1"
+    assert saved_store["R1"]["origin_page"] == "regression"
+    assert status == "Saved as R1."
+
+
+def test_reg_save_series_to_shared_data_overwrites_existing_saved_name(regression_page):
+    idx = pd.date_range("2024-01-01", periods=3, freq="B")
+    raw_df = pd.DataFrame({"R1": [0.5, 0.5, 0.5]}, index=idx)
+    results = {
+        "R1": {
+            "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.001, 0.002, 0.003]}, index=idx)),
+            "periodicity": "daily",
+            "config": {"periodicity": "daily"},
+            "saved_series_name": "R1",
+        }
+    }
+
+    _new_results, new_raw, saved_store, status = regression_page.reg_save_series_to_shared_data(
+        1,
+        "R1",
+        results,
+        df_to_json(raw_df),
+        "daily",
+        {"R1": {"origin_page": "regression", "origin_result": "R1", "series_type": "predicted"}},
+    )
+
+    raw_after = pd.read_json(StringIO(new_raw), orient="split")
+    assert raw_after["R1"].tolist() == pytest.approx([0.001, 0.002, 0.003])
+    assert saved_store["R1"]["series_type"] == "predicted"
+    assert status == "Overwrote shared series R1."
+
+
 def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(regression_page, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)
@@ -460,7 +515,7 @@ def test_reg_open_modal_page_load_adds_only_generic_new_x_without_resetting_y(mo
         {},
         {},
         {},
-        ["Asset_C"],
+        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
         True,
     )
 
@@ -488,7 +543,7 @@ def test_reg_open_modal_ignores_po_only_series_on_revisit(monkeypatch, regressio
         {},
         {},
         {},
-        ["Asset_C"],
+        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
         True,
     )
 

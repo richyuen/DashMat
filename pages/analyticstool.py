@@ -66,6 +66,7 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
+from utils.saved_series import saved_series_store_names
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -4415,7 +4416,7 @@ clientside_callback(
 
 
 def _at_get_series_page_state(raw_data, current_select, current_order, po_origin_series):
-    """Classify raw columns into page-known, PO-origin, and generic new series."""
+    """Classify raw columns into page-known, saved-origin, and generic new series."""
     if not raw_data:
         return [], [], [], []
 
@@ -4430,7 +4431,7 @@ def _at_get_series_page_state(raw_data, current_select, current_order, po_origin
     selected_valid = [series for series in (current_select or []) if series in columns]
     known_columns = set(series for series in (current_order or []) if series in columns)
     known_columns.update(selected_valid)
-    po_origin_set = {series for series in (po_origin_series or []) if series in columns}
+    po_origin_set = {series for series in saved_series_store_names(po_origin_series) if series in columns}
     generic_new = [
         series for series in columns
         if series not in known_columns and series not in po_origin_set

@@ -164,7 +164,7 @@ def test_po_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modul
         {},
         {},
         {},
-        ["Asset_C"],
+        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
         True,
     )
 
@@ -190,7 +190,7 @@ def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypat
         {},
         {},
         {},
-        ["Asset_C"],
+        {"Asset_C": {"origin_page": "regression", "origin_result": "Asset_C", "series_type": "predicted"}},
         True,
     )
 
@@ -239,6 +239,7 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
     working_df = pd.DataFrame({"Asset_A": 0.01, "Asset_B": 0.02}, index=idx)
     working_df.index.name = "Date"
     monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: working_df)
+    raw_json = df_to_json(working_df)
 
     results = {
         "P1": {
@@ -252,7 +253,7 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
         results,
         "attribution",
         "table",
-        "raw-json",
+        raw_json,
         "daily",
         {},
         {},
@@ -475,18 +476,18 @@ def test_po_render_turnover_table_computes_turnover(page_modules):
     assert row_data[0]["Turnover"] == pytest.approx(0.1)
 
 
-def test_po_sync_results_with_raw_data_prunes_missing_portfolios(page_modules, raw_json):
+def test_po_sync_results_with_raw_data_keeps_decoupled_results(page_modules, raw_json):
     _, portopt = page_modules
     df = pd.read_json(StringIO(raw_json), orient="split")
     df["KeepMe"] = 0.0
     raw_with_portfolio = df_to_json(df)
     results = {"KeepMe": {"x": 1}, "DropMe": {"x": 2}}
 
-    pruned = portopt.po_sync_results_with_raw_data(raw_with_portfolio, 1, results)
-    assert pruned == {"KeepMe": {"x": 1}}
+    with pytest.raises(PreventUpdate):
+        portopt.po_sync_results_with_raw_data(raw_with_portfolio, 1, results)
 
 
-def test_po_delete_portfolio_removes_from_results_and_raw(page_modules, raw_json):
+def test_po_delete_portfolio_removes_result_but_keeps_saved_series(page_modules, raw_json):
     _, portopt = page_modules
     df = pd.read_json(StringIO(raw_json), orient="split")
     df["P1"] = 0.0
@@ -496,8 +497,7 @@ def test_po_delete_portfolio_removes_from_results_and_raw(page_modules, raw_json
     new_results, new_raw, new_sel = portopt.po_delete_portfolio(1, "P1", results, raw_with_portfolio)
 
     assert "P1" not in new_results
-    df_after = pd.read_json(StringIO(new_raw), orient="split")
-    assert "P1" not in df_after.columns
+    assert new_raw is no_update
     assert new_sel == "P2"
 
 
@@ -797,6 +797,8 @@ def test_po_update_frontier_risk_measure_options_restricts_ex_ante(page_modules)
 
 def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypatch, page_modules):
     _, portopt = page_modules
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+    raw_json = df_to_json(pd.DataFrame({"Asset_A": 0.01, "Asset_B": 0.02}, index=idx))
     snapshot = {
         "asset_order": ["Asset_A", "Asset_B"],
         "risk_measure": "MV",
@@ -826,7 +828,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         "table",
         "1",
         "MV",
-        "raw-json",
+        raw_json,
         "daily",
         {},
         {},
@@ -841,6 +843,41 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
     assert any(col["field"] == "Sharpe Ratio" for col in column_defs)
     assert any(row["Type"] == "Optimized Portfolio" for row in row_data)
     assert any(row["Type"] == "Frontier Point" for row in row_data)
+
+
+def test_po_render_frontier_chart_reports_missing_source_series(page_modules, raw_json):
+    _, portopt = page_modules
+    raw_df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A"]]
+    raw_df.index = pd.to_datetime(raw_df.index)
+    results = {
+        "P1": {
+            "window_weights": _sample_window_weights(),
+            "config": {"selected_series": ["Asset_A", "Asset_B"], "model": "risk_parity"},
+        }
+    }
+
+    comp = portopt.po_render_frontier_chart(
+        "P1",
+        results,
+        "frontier",
+        "chart",
+        "0",
+        "MV",
+        df_to_json(raw_df),
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        None,
+        ["Asset_A", "Asset_B"],
+        "light",
+        [],
+    )
+
+    assert "Missing source series: Asset_B" in " ".join(_collect_component_text(comp))
 
 
 def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page_modules, raw_json):
@@ -886,7 +923,7 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
         "Asset_B": {"Asset_A": 0.01, "Asset_B": 0.09},
     }
 
-    results_out, _new_raw, status, _pending = portopt.po_run_optimization(
+    results_out, new_raw, status, pending = portopt.po_run_optimization(
         1,
         raw_json,
         "daily",
@@ -930,9 +967,11 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
     assert status["status"] == "complete"
     assert "frontier_cache" in results_out["MyPort"]
     assert "MV" in results_out["MyPort"]["frontier_cache"]["0"]
+    assert new_raw is no_update
+    assert pending is no_update
 
 
-def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, page_modules):
+def test_po_save_series_aligns_month_end_and_updates_result(page_modules):
     _, portopt = page_modules
 
     raw_idx = pd.to_datetime(["1976-06-30", "1976-07-30", "1976-08-30", "1976-09-30"])
@@ -945,75 +984,25 @@ def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, pag
     )
     raw_df.index.name = "Date"
     raw_json = df_to_json(raw_df)
-
-    working_df = raw_df.copy()
-    working_df.index = pd.to_datetime(["1976-06-30", "1976-07-31", "1976-08-31", "1976-09-30"])
-    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: working_df.copy())
-
-    monkeypatch.setattr(
-        portopt,
-        "run_portfolio_optimization",
-        lambda *_args, **_kwargs: (
-            [
-                SimpleNamespace(
-                    apply_start=pd.Timestamp("1976-06-30"),
-                    apply_end=pd.Timestamp("1976-09-30"),
-                    est_start=pd.Timestamp("1976-06-30"),
-                    est_end=pd.Timestamp("1976-09-30"),
-                    weights={"Asset_A": 0.5, "Asset_B": 0.5},
-                )
-            ],
-            pd.Series(
+    results = {
+        "MyPort": {
+            "returns_json": pd.Series(
                 [0.005, 0.006, 0.007, 0.008],
                 index=pd.to_datetime(["1976-06-30", "1976-07-31", "1976-08-31", "1976-09-30"]),
-            ),
-            {},
-        ),
-    )
+            ).to_json(date_format="iso"),
+            "config": {"periodicity": "monthly"},
+            "saved_series_name": None,
+        }
+    }
 
-    results_out, new_raw, status, _pending = portopt.po_run_optimization(
+    results_out, new_raw, saved_store, status = portopt.po_save_series_to_shared_data(
         1,
+        "MyPort",
+        results,
         raw_json,
         "monthly",
-        "monthly",
-        ["Asset_A", "Asset_B"],
         {},
-        {},
-        {},
-        None,
-        0,
-        {},
-        {},
-        {},
-        {},
-        False,
-        63,
-        "none",
-        "scaled_identity",
-        "MyPort",
-        "full",
-        12,
-        1,
-        "months",
-        "risk_parity",
-        "fill_na",
-        "off",
-        {},
-        [],
-        {},
-        {},
-        [],
-        0.05,
-        "maximize_sharpe",
-        {},
-        {},
-        "ret_cov",
-        [],
-        None,
     )
-
-    assert status["status"] == "complete"
-    assert "MyPort" in results_out
 
     df_after = pd.read_json(StringIO(new_raw), orient="split")
     df_after.index = pd.to_datetime(df_after.index)
@@ -1023,6 +1012,9 @@ def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, pag
     assert df_after.index.is_month_end.all()
     assert df_after.loc[pd.Timestamp("1976-07-31"), "MyPort"] == pytest.approx(0.006)
     assert df_after.loc[pd.Timestamp("1976-08-31"), "MyPort"] == pytest.approx(0.007)
+    assert results_out["MyPort"]["saved_series_name"] == "MyPort"
+    assert saved_store["MyPort"]["origin_page"] == "portopt"
+    assert status == "Saved as MyPort."
 
 
 def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_modules, raw_json):
@@ -1050,7 +1042,7 @@ def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_
 
     monkeypatch.setattr(portopt, "run_portfolio_optimization", _fake_run_portfolio_optimization)
 
-    results_out, _new_raw, status, _pending = portopt.po_run_optimization(
+    results_out, new_raw, status, pending = portopt.po_run_optimization(
         1,
         raw_json,
         "daily",
@@ -1096,6 +1088,8 @@ def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_
     assert captured["config"]["cov_shrinkage_target"] == "scaled_identity"
     assert results_out["MyPort"]["config"]["cov_shrinkage"] == "oas"
     assert results_out["MyPort"]["config"]["cov_shrinkage_target"] == "scaled_identity"
+    assert new_raw is no_update
+    assert pending is no_update
 
 
 def test_compute_window_risk_contributions_uses_custom_cov_for_shrinkage(monkeypatch, page_modules, raw_json):

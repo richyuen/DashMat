@@ -273,7 +273,7 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
         None,
         None,
         ["Asset_A", "Asset_B"],
-        ["Asset_C"],
+        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
         True,
     )
 
@@ -319,7 +319,7 @@ def test_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules,
         {},
         ["Asset_A", "Asset_B", "Asset_D"],
         {},
-        ["Asset_C"],
+        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
         True,
     )
 
@@ -341,7 +341,7 @@ def test_open_modal_auto_opens_for_generic_new_and_keeps_po_series_selected(monk
         {},
         ["Asset_A", "Asset_B"],
         {},
-        ["Asset_C"],
+        {"Asset_C": {"origin_page": "regression", "origin_result": "Asset_C", "series_type": "predicted"}},
         True,
     )
 

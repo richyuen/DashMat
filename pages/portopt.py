@@ -67,6 +67,7 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
+from utils.saved_series import save_series_to_raw_data, saved_series_store_names
 from utils.statistics import (
     calculate_drawdown,
     calculate_statistics_cached,
@@ -320,6 +321,24 @@ def _po_build_display_series(
     display_df = display_df[ordered_cols]
     display_df.index.name = "Date"
     return display_df, ordered_cols
+
+
+def _po_missing_source_series(results, selected_portfolio, raw_data) -> list[str]:
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return []
+
+    config = ((results or {}).get(selected_portfolio) or {}).get("config", {}) or {}
+    source_series = [str(name) for name in (config.get("selected_series") or []) if str(name)]
+    if not source_series:
+        return []
+    if not raw_data:
+        return source_series
+
+    try:
+        columns = set(json_to_df(raw_data).columns)
+    except Exception:
+        return source_series
+    return [name for name in source_series if name not in columns]
 
 
 def _po_rolling_metric_label(metric: str) -> str:
@@ -1132,6 +1151,10 @@ def _build_frontier_snapshot(
     opt_series = config.get("selected_series", []) or []
     if not window_weights or not opt_series or not raw_data:
         raise ValueError("No frontier data available.")
+    missing_sources = _po_missing_source_series({selected_portfolio: portfolio_data}, selected_portfolio, raw_data)
+    if missing_sources:
+        missing_text = ", ".join(missing_sources)
+        raise ValueError(f"Missing source series for frontier: {missing_text}")
 
     frontier_bundle = _build_po_working_bundle(
         raw_data,
@@ -2222,6 +2245,15 @@ def build_po_main_layout():
                         clearable=False,
                     ),
                     dmc.Button(
+                        "Save Series",
+                        id="po-save-series-button",
+                        variant="light",
+                        color="blue",
+                        size="sm",
+                        disabled=True,
+                        leftSection=DashIconify(icon="tabler:device-floppy"),
+                    ),
+                    dmc.Button(
                         "Delete",
                         id="po-delete-portfolio-button",
                         variant="outline",
@@ -2243,6 +2275,7 @@ def build_po_main_layout():
                             ),
                         ],
                     ),
+                    dmc.Text(id="po-save-series-status-text", size="sm", c="dimmed"),
                 ],
             ),
 
@@ -7223,7 +7256,7 @@ def _po_get_modal_series_state(raw_data, current_select, current_order, po_origi
     selected_valid = [series for series in (current_select or []) if series in columns]
     known_columns = set(series for series in (current_order or []) if series in columns)
     known_columns.update(selected_valid)
-    po_origin_set = {series for series in (po_origin_series or []) if series in columns}
+    po_origin_set = {series for series in saved_series_store_names(po_origin_series) if series in columns}
     generic_new = [
         series for series in columns
         if series not in known_columns and series not in po_origin_set
@@ -8612,17 +8645,6 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             final_name = f"{base_name}_{counter}"
             counter += 1
 
-        # Add portfolio returns to raw data
-        if periodicity == "monthly":
-            existing_df = align_monthly_index_to_month_end(existing_df)
-            portfolio_series = align_monthly_series_to_month_end(portfolio_returns)
-            portfolio_frame = portfolio_series.to_frame(name=final_name)
-            existing_df = merge_returns(existing_df, portfolio_frame)
-        else:
-            portfolio_series = portfolio_returns.reindex(existing_df.index)
-            existing_df[final_name] = portfolio_series
-        new_raw_data = df_to_json(existing_df)
-
         # Store results
         window_data = []
         for wr in window_results:
@@ -8638,6 +8660,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "window_weights": window_data,
             "returns_json": portfolio_returns.to_json(date_format="iso"),
             "config": config,
+            "saved_series_name": None,
             "risk_free_meta": {
                 "source": resolved_rf_context.get("rf_source"),
                 "annual": float(resolved_rf_context.get("rf_annual", 0.0) or 0.0),
@@ -8664,8 +8687,6 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         current_results[final_name] = result_entry
 
-        # Track PO-generated series names so other pages can distinguish their provenance.
-        updated_pending = list(dict.fromkeys([*(pending_series or []), final_name]))
         warning_parts = []
         if resolved_rf_context.get("rf_warning"):
             warning_parts.append(str(resolved_rf_context.get("rf_warning")))
@@ -8675,9 +8696,9 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         return (
             current_results,
-            new_raw_data,
+            no_update,
             {"status": "complete", "name": final_name, "warning": warning_text},
-            updated_pending,
+            no_update,
         )
 
     except ValueError as e:
@@ -8798,6 +8819,94 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
 
 
 # ---------------------------------------------------------------------------
+# Save portfolio return series
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-save-series-button", "disabled"),
+    Output("po-save-series-status-text", "children"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    prevent_initial_call=False,
+)
+def po_sync_save_series_ui(selected_portfolio, results):
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return True, ""
+
+    saved_name = ((results or {}).get(selected_portfolio) or {}).get("saved_series_name")
+    if not saved_name:
+        return False, ""
+    return False, f"Saved as {saved_name}."
+
+
+@callback(
+    Output("po-results-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-pending-new-series-store", "data", allow_duplicate=True),
+    Output("po-save-series-status-text", "children", allow_duplicate=True),
+    Input("po-save-series-button", "n_clicks"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-results-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("dashmat-pending-new-series-store", "data"),
+    prevent_initial_call=True,
+)
+def po_save_series_to_shared_data(
+    n_clicks,
+    selected_portfolio,
+    results,
+    raw_data,
+    periodicity,
+    saved_series_store,
+):
+    if not n_clicks or not selected_portfolio or not results or selected_portfolio not in results:
+        raise PreventUpdate
+
+    entry = dict((results or {}).get(selected_portfolio) or {})
+    returns_json = entry.get("returns_json")
+    if not returns_json:
+        return no_update, no_update, no_update, "No portfolio return series available to save."
+
+    try:
+        portfolio_series = pd.read_json(StringIO(returns_json), typ="series")
+        portfolio_series.index = pd.to_datetime(portfolio_series.index)
+    except Exception as exc:
+        return no_update, no_update, no_update, f"Error saving series: {exc}"
+
+    try:
+        save_out = save_series_to_raw_data(
+            raw_data=raw_data,
+            periodicity=((entry.get("config") or {}).get("periodicity") or periodicity or "daily"),
+            series=portfolio_series.rename(selected_portfolio),
+            base_name=selected_portfolio,
+            saved_series_store=saved_series_store,
+            origin_page="portopt",
+            origin_result=selected_portfolio,
+            series_type="portfolio",
+            prior_saved_name=entry.get("saved_series_name"),
+        )
+    except Exception as exc:
+        return no_update, no_update, no_update, f"Error saving series: {exc}"
+
+    new_results = dict(results or {})
+    entry["saved_series_name"] = save_out["saved_name"]
+    new_results[selected_portfolio] = entry
+
+    if save_out["action"] == "overwritten":
+        status_text = f"Overwrote shared series {save_out['saved_name']}."
+    else:
+        status_text = f"Saved as {save_out['saved_name']}."
+
+    return (
+        new_results,
+        save_out["raw_data"],
+        save_out["saved_series_store"],
+        status_text,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Sync results store when raw data changes (e.g. series deleted in Analytics Tool)
 # ---------------------------------------------------------------------------
 
@@ -8809,15 +8918,7 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
     prevent_initial_call=True,
 )
 def po_sync_results_with_raw_data(raw_data, _n, results):
-    if not results:
-        raise PreventUpdate
-    if not raw_data:
-        return {}
-    df = json_to_df(raw_data)
-    pruned = {k: v for k, v in results.items() if k in df.columns}
-    if len(pruned) == len(results):
-        raise PreventUpdate
-    return pruned
+    raise PreventUpdate
 
 
 # ---------------------------------------------------------------------------
@@ -8843,19 +8944,11 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     # Remove from results
     new_results = {k: v for k, v in results.items() if k != selected_portfolio}
 
-    # Remove column from raw data
-    new_raw = raw_data
-    if raw_data:
-        df = json_to_df(raw_data)
-        if selected_portfolio in df.columns:
-            df = df.drop(columns=[selected_portfolio])
-            new_raw = df_to_json(df)
-
     # Pick next selection
     remaining = list(new_results.keys())
     new_sel = remaining[-1] if remaining else None
 
-    return new_results, new_raw, new_sel
+    return new_results, no_update, new_sel
 
 
 # ===========================================================================
@@ -9484,6 +9577,9 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
 
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No attribution data available.", c="dimmed")
+    missing_sources = _po_missing_source_series(results, selected_portfolio, raw_data)
+    if missing_sources:
+        return dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed")
 
     timing_ctx = timed_block(
         "portopt.render_attribution_chart",
@@ -9615,6 +9711,10 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not raw_data:
+        return [], []
+    if _po_missing_source_series(results, selected_portfolio, raw_data):
+        return [], []
+    if _po_missing_source_series(results, selected_portfolio, raw_data):
         return [], []
 
     try:
@@ -10374,6 +10474,9 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
 
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No risk data available.", c="dimmed")
+    missing_sources = _po_missing_source_series(results, selected_portfolio, raw_data)
+    if missing_sources:
+        return dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed")
 
     timing_ctx = timed_block(
         "portopt.render_risk_chart",
@@ -10727,6 +10830,9 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
 
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No frontier data available.", c="dimmed")
+    missing_sources = _po_missing_source_series(results, selected_portfolio, raw_data)
+    if missing_sources:
+        return dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed")
 
     timing_ctx = timed_block(
         "portopt.render_frontier_chart",
@@ -10881,6 +10987,8 @@ def po_render_frontier_table(
     config = portfolio_data.get("config", {}) or {}
     opt_series = config.get("selected_series", []) or []
     if not window_weights or not opt_series or not raw_data:
+        return [], []
+    if _po_missing_source_series(results, selected_portfolio, raw_data):
         return [], []
 
     with timed_block(
