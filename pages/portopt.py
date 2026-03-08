@@ -3563,6 +3563,7 @@ layout = dmc.Container(
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
         dcc.Store(id="po-initial-tab-render-ready-store", data=False, storage_type="memory"),
+        dcc.Store(id="po-secondary-restore-ready-store", data=False, storage_type="memory"),
         # Chart/table switch stores
         dcc.Store(id="po-weight-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-attribution-chart-switch-store", data="chart", storage_type="session"),
@@ -3592,6 +3593,7 @@ layout = dmc.Container(
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
         dcc.Interval(id="po-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
+        dcc.Interval(id="po-secondary-restore-trigger", interval=220, max_intervals=1, n_intervals=0),
 
         # UI Blocker for file dialog (Overlay)
         dcc.Store(id="po-ui-blocker-store", data=False),
@@ -6014,6 +6016,16 @@ clientside_callback(
     Input("po-initial-tab-render-trigger", "n_intervals"),
 )
 
+clientside_callback(
+    """
+    function(n_intervals) {
+        return !!(n_intervals && n_intervals >= 1);
+    }
+    """,
+    Output("po-secondary-restore-ready-store", "data"),
+    Input("po-secondary-restore-trigger", "n_intervals"),
+)
+
 # ---------------------------------------------------------------------------
 # Restore application state when raw data loads
 # ---------------------------------------------------------------------------
@@ -6064,13 +6076,62 @@ def po_restore_state(raw_meta, stored_periodicity, stored_series, stored_vol):
         raise PreventUpdate
 
 
+clientside_callback(
+    """
+    function(n, storedTab) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        return storedTab || 'weight';
+    }
+    """,
+    Output("po-vis-tabs", "value"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-active-tab-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n, activeTab, weightView, attributionView, riskView, turnoverView) {
+        const nu = window.dash_clientside.no_update;
+        if (!n) {
+            return [nu, nu, nu, nu];
+        }
+        return [
+            activeTab === 'weight' ? (weightView || 'chart') : nu,
+            activeTab === 'attribution' ? (attributionView || 'chart') : nu,
+            activeTab === 'risk' ? (riskView || 'chart') : nu,
+            activeTab === 'turnover' ? (turnoverView || 'chart') : nu,
+        ];
+    }
+    """,
+    Output("po-weight-chart-switch", "value", allow_duplicate=True),
+    Output("po-attribution-chart-switch", "value", allow_duplicate=True),
+    Output("po-risk-chart-switch", "value", allow_duplicate=True),
+    Output("po-turnover-chart-switch", "value", allow_duplicate=True),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-active-tab-store", "data"),
+    State("po-weight-chart-switch-store", "data"),
+    State("po-attribution-chart-switch-store", "data"),
+    State("po-risk-chart-switch-store", "data"),
+    State("po-turnover-chart-switch-store", "data"),
+    prevent_initial_call=True,
+)
+
+
 # ---------------------------------------------------------------------------
 # Restore optimization controls from stores on page load
 # ---------------------------------------------------------------------------
 
 clientside_callback(
     """
-    function(n, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+    function(ready, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
+        const nu = window.dash_clientside.no_update;
+        if (!ready) {
+            return [nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu];
+        }
         var safeModel = model || "risk_parity";
         var defaults = {
             "risk_parity": "RP",
@@ -6121,7 +6182,7 @@ clientside_callback(
     Output("po-cov-shrinkage-target-select", "disabled", allow_duplicate=True),
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
-    Input("po-page-load-trigger", "n_intervals"),
+    Input("po-secondary-restore-ready-store", "data"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
     State("po-opt-step-store", "data"),
@@ -6144,13 +6205,16 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(n, mode, objective) {
+    function(ready, mode, objective) {
+        if (!ready) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
         return [mode || "ret_cov", objective || "maximize_sharpe"];
     }
     """,
     Output("po-ex-ante-mode-select", "value"),
     Output("po-objective-select", "value"),
-    Input("po-page-load-trigger", "n_intervals"),
+    Input("po-secondary-restore-ready-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-objective-store", "data"),
     prevent_initial_call=True,
@@ -6167,6 +6231,7 @@ clientside_callback(
     Output("po-run-button-tooltip", "disabled"),
     Output("po-menu-save-session", "disabled"),
     Output("po-menu-download-excel", "disabled"),
+    Input("po-secondary-restore-ready-store", "data"),
     Input("po-portfolio-name-input", "value"),
     Input("po-series-select", "data"),
     Input("po-opt-model-select", "value"),
@@ -6193,6 +6258,7 @@ clientside_callback(
     Input("po-results-store", "data"),
 )
 def po_toggle_ui_elements(
+    secondary_ready,
     name,
     selected,
     opt_model,
@@ -6218,6 +6284,11 @@ def po_toggle_ui_elements(
     welcome_style,
     results_data,
 ):
+    save_disabled = not (welcome_style and welcome_style.get("display") == "none")
+    download_disabled = not bool(results_data and len(results_data) > 0)
+    if not secondary_ready:
+        return True, "Loading controls...", False, save_disabled, download_disabled
+
     validation_error = _validate_optimization_inputs(
         portfolio_name=name,
         selected_series=selected,
@@ -6244,16 +6315,6 @@ def po_toggle_ui_elements(
     )
     run_disabled = validation_error is not None
     tooltip_label = validation_error or "Run optimization."
-
-    # Save Session Button
-    save_disabled = True
-    if welcome_style and welcome_style.get("display") == "none":
-        save_disabled = False
-        
-    # Download Excel Button
-    download_disabled = True
-    if results_data and len(results_data) > 0:
-        download_disabled = False
 
     return run_disabled, tooltip_label, False, save_disabled, download_disabled
 

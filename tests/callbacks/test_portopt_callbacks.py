@@ -626,6 +626,47 @@ def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
 
     run_disabled, tooltip, tooltip_disabled, save_disabled, download_disabled = (
         portopt.po_toggle_ui_elements(
+            False,
+            "MyPortfolio",
+            ["Asset_A"],
+            "risk_parity",
+            "full",
+            252,
+            1,
+            "months",
+            False,
+            63,
+            "none",
+            "scaled_identity",
+            {},
+            {},
+            {},
+            [],
+            "ret_cov",
+            {},
+            {},
+            {},
+            {},
+            [],
+            0.05,
+            {"display": "none"},
+            {"P1": {}},
+        )
+    )
+
+    assert run_disabled is True
+    assert tooltip == "Loading controls..."
+    assert tooltip_disabled is False
+    assert save_disabled is False
+    assert download_disabled is False
+
+
+def test_po_toggle_ui_elements_waits_for_secondary_restore(page_modules):
+    _, portopt = page_modules
+
+    run_disabled, tooltip, tooltip_disabled, save_disabled, download_disabled = (
+        portopt.po_toggle_ui_elements(
+            True,
             "MyPortfolio",
             [],
             "risk_parity",
@@ -664,6 +705,7 @@ def test_po_toggle_ui_elements_ex_ante_requires_complete_expected_inputs(page_mo
     _, portopt = page_modules
 
     run_disabled, tooltip, *_rest = portopt.po_toggle_ui_elements(
+        True,
         "MyPortfolio",
         ["Asset_A", "Asset_B"],
         "ex_ante_mv",

@@ -280,6 +280,83 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
     assert restored[19] is False
 
 
+def test_restore_application_state_defers_non_active_tab_controls(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    restored = analyticstool.restore_application_state(
+        1,
+        _raw_meta(raw_json),
+        "daily_trading",
+        ["Asset_A"],
+        "excess",
+        7,
+        "statistics",
+        "3y",
+        "volatility",
+        "cumulative",
+        "table",
+        "table",
+        "table",
+        "scatter",
+        7,
+        "zscore",
+        "monthly",
+        None,
+        ["Asset_A"],
+        [],
+        True,
+    )
+
+    assert restored[2] == "excess"
+    assert restored[3] == 7
+    assert restored[4] == "statistics"
+    assert restored[5] is no_update
+    assert restored[10] is no_update
+    assert restored[11] is no_update
+    assert restored[12] is no_update
+    assert restored[13] is no_update
+    assert restored[16] is no_update
+    assert restored[17] == ["Asset_A"]
+
+
+def test_at_restore_secondary_controls_restores_deferred_values(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    restored = analyticstool.at_restore_secondary_controls(
+        True,
+        _raw_meta(raw_json),
+        "daily_trading",
+        ["Asset_A"],
+        "excess",
+        7,
+        "statistics",
+        "3y",
+        "volatility",
+        "cumulative",
+        "table",
+        "table",
+        "table",
+        "scatter",
+        7,
+        "zscore",
+        "monthly",
+        ["Asset_A"],
+        [],
+        True,
+    )
+
+    assert restored[0] == "3y"
+    assert restored[1] == "volatility"
+    assert restored[2] == "cumulative"
+    assert restored[5] == "table"
+    assert restored[6] == "table"
+    assert restored[7] == "table"
+    assert restored[8] == "scatter"
+    assert restored[9] == 7
+    assert restored[10] == "zscore"
+    assert restored[11] == "monthly"
+
+
 def test_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, page_modules, raw_json, sample_returns_df):
     analyticstool, _ = page_modules
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())

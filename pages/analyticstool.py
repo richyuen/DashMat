@@ -3954,6 +3954,7 @@ layout = dmc.Container(
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-initial-tab-render-ready-store", data=False, storage_type="memory"),
+        dcc.Store(id="at-secondary-restore-ready-store", data=False, storage_type="memory"),
         dcc.Store(id="at-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="at-download-enabled-store", data=False),
@@ -4019,6 +4020,7 @@ layout = dmc.Container(
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="at-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
         dcc.Interval(id="at-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
+        dcc.Interval(id="at-secondary-restore-trigger", interval=220, max_intervals=1, n_intervals=0),
     ],
 )
 
@@ -4053,6 +4055,120 @@ clientside_callback(
     Output("at-initial-tab-render-ready-store", "data"),
     Input("at-initial-tab-render-trigger", "n_intervals"),
 )
+
+clientside_callback(
+    """
+    function(n_intervals) {
+        return !!(n_intervals && n_intervals >= 1);
+    }
+    """,
+    Output("at-secondary-restore-ready-store", "data"),
+    Input("at-secondary-restore-trigger", "n_intervals"),
+)
+
+
+def _at_restore_defaults():
+    return {
+        "periodicity_options": [{"value": "daily_trading", "label": "Daily (Trading)"}],
+        "valid_periodicity": "daily_trading",
+        "valid_returns": "total",
+        "valid_vol": 0,
+        "active_tab": "statistics",
+        "roll_win": "1y",
+        "roll_metric": "total_return",
+        "roll_type": "annualized",
+        "roll_type_disabled": False,
+        "roll_type_style": {},
+        "roll_chart": "chart",
+        "dd_chart": "chart",
+        "gr_chart": "chart",
+        "factor_mode": "box",
+        "factor_quantiles": 5,
+        "factor_transform": "raw",
+        "monthly_view": "annual",
+        "valid_selection": [],
+        "updated_order": [],
+    }
+
+
+def _at_resolve_restore_state(
+    raw_meta,
+    stored_periodicity,
+    stored_series,
+    stored_returns,
+    stored_vol,
+    stored_tab,
+    stored_roll_win,
+    stored_roll_metric,
+    stored_roll_type,
+    stored_roll_chart,
+    stored_dd_chart,
+    stored_gr_chart,
+    stored_factor_mode,
+    stored_factor_quantiles,
+    stored_factor_transform,
+    stored_monthly_view,
+    stored_order,
+    po_origin_series,
+    page_visited,
+):
+    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
+        return _at_restore_defaults()
+
+    resolved = _at_restore_defaults()
+    periodicity_options = raw_meta.get("periodicity_options") or resolved["periodicity_options"]
+    valid_values = [p["value"] for p in periodicity_options]
+    orig_periodicity = raw_meta.get("original_periodicity") or "daily"
+    default_periodicity = "daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading")
+    if default_periodicity not in valid_values:
+        default_periodicity = valid_values[0] if valid_values else "daily_trading"
+    valid_periodicity = stored_periodicity if stored_periodicity in valid_values else default_periodicity
+
+    active_tab = stored_tab if stored_tab else "statistics"
+    roll_metric = stored_roll_metric if stored_roll_metric else "total_return"
+
+    columns, valid_selection, _generic_new, po_new = _at_get_series_page_state(
+        raw_meta,
+        stored_series,
+        stored_order,
+        po_origin_series,
+    )
+    updated_order = [series for series in (stored_order or []) if series in columns]
+    for series in valid_selection:
+        if series not in updated_order:
+            updated_order.append(series)
+    if not (not page_visited and not valid_selection):
+        for series in po_new:
+            if series not in updated_order:
+                updated_order.append(series)
+        selected_set = set(valid_selection)
+        selected_set.update(po_new)
+        valid_selection = [series for series in updated_order if series in selected_set]
+
+    resolved.update(
+        {
+            "periodicity_options": periodicity_options,
+            "valid_periodicity": valid_periodicity,
+            "valid_returns": stored_returns if stored_returns in ["total", "excess"] else "total",
+            "valid_vol": stored_vol if stored_vol is not None else 0,
+            "active_tab": active_tab,
+            "roll_win": stored_roll_win if stored_roll_win else "1y",
+            "roll_metric": roll_metric,
+            "roll_type": stored_roll_type if stored_roll_type else "annualized",
+            "roll_type_disabled": roll_metric not in ["total_return", "excess_return"],
+            "roll_type_style": {} if roll_metric in ["total_return", "excess_return"] else {"opacity": 0.5, "pointerEvents": "none"},
+            "roll_chart": stored_roll_chart if stored_roll_chart is not None else "chart",
+            "dd_chart": stored_dd_chart if stored_dd_chart is not None else "chart",
+            "gr_chart": stored_gr_chart if stored_gr_chart is not None else "chart",
+            "factor_mode": stored_factor_mode if stored_factor_mode in {"box", "scatter"} else "box",
+            "factor_quantiles": _coerce_factor_quantiles(stored_factor_quantiles, default=5),
+            "factor_transform": stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw",
+            "monthly_view": stored_monthly_view if stored_monthly_view is not None else "annual",
+            "valid_selection": valid_selection,
+            "updated_order": updated_order,
+        }
+    )
+    return resolved
 
 
 @callback(
@@ -4122,89 +4238,166 @@ def restore_application_state(
     po_origin_series,
     page_visited,
 ):
-    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
-        # Reset defaults (visibility handled by clientside callback)
-        return (
-            [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
-            "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], [], False
-        )
-
     try:
-        # Periodicity
-        periodicity_options = raw_meta.get("periodicity_options") or [{"value": "daily_trading", "label": "Daily (Trading)"}]
-        valid_values = [p["value"] for p in periodicity_options]
-        orig_periodicity = raw_meta.get("original_periodicity") or "daily"
-        default_periodicity = "daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading")
-        if default_periodicity not in valid_values:
-            default_periodicity = valid_values[0] if valid_values else "daily_trading"
-        valid_periodicity = stored_periodicity if stored_periodicity in valid_values else default_periodicity
-        
-        # Returns Type
-        valid_returns = stored_returns if stored_returns in ["total", "excess"] else "total"
-        
-        # Vol Scaler
-        valid_vol = stored_vol if stored_vol is not None else 0
-        
-        # Active Tab
-        active_tab = stored_tab if stored_tab else "statistics"
-        
-        # Rolling
-        roll_win = stored_roll_win if stored_roll_win else "1y"
-        roll_metric = stored_roll_metric if stored_roll_metric else "total_return"
-        roll_type = stored_roll_type if stored_roll_type else "annualized"
-        roll_chart = stored_roll_chart if stored_roll_chart is not None else "chart"
-        
-        # Rolling Return Type Disabled Logic
-        roll_type_disabled = False if roll_metric in ["total_return", "excess_return"] else True
-        roll_type_style = {} if not roll_type_disabled else {"opacity": 0.5, "pointerEvents": "none"}
-        
-        # Drawdown
-        dd_chart = stored_dd_chart if stored_dd_chart is not None else "chart"
-        
-        # Growth
-        gr_chart = stored_gr_chart if stored_gr_chart is not None else "chart"
-
-        # Factor Analysis
-        factor_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter"} else "box"
-        factor_quantiles = _coerce_factor_quantiles(stored_factor_quantiles, default=5)
-        factor_transform = stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw"
-        
-        # Monthly View
-        monthly_view = stored_monthly_view if stored_monthly_view is not None else "annual"
-        
-        # Monthly Series Options & Selection
-        columns, valid_selection, _generic_new, po_new = _at_get_series_page_state(
+        resolved = _at_resolve_restore_state(
             raw_meta,
+            stored_periodicity,
             stored_series,
+            stored_returns,
+            stored_vol,
+            stored_tab,
+            stored_roll_win,
+            stored_roll_metric,
+            stored_roll_type,
+            stored_roll_chart,
+            stored_dd_chart,
+            stored_gr_chart,
+            stored_factor_mode,
+            stored_factor_quantiles,
+            stored_factor_transform,
+            stored_monthly_view,
             stored_order,
             po_origin_series,
+            page_visited,
         )
-        updated_order = [series for series in (stored_order or []) if series in columns]
-        for series in valid_selection:
-            if series not in updated_order:
-                updated_order.append(series)
-        if not (not page_visited and not valid_selection):
-            for series in po_new:
-                if series not in updated_order:
-                    updated_order.append(series)
-            selected_set = set(valid_selection)
-            selected_set.update(po_new)
-            valid_selection = [series for series in updated_order if series in selected_set]
-        
+        active_tab = resolved["active_tab"]
+        roll_outputs = (
+            resolved["roll_win"],
+            resolved["roll_metric"],
+            resolved["roll_type"],
+            resolved["roll_type_disabled"],
+            resolved["roll_type_style"],
+            resolved["roll_chart"],
+        ) if active_tab == "rolling" else (no_update, no_update, no_update, no_update, no_update, no_update)
+        drawdown_output = resolved["dd_chart"] if active_tab == "drawdown" else no_update
+        growth_output = resolved["gr_chart"] if active_tab == "growth" else no_update
+        factor_outputs = (
+            resolved["factor_mode"],
+            resolved["factor_quantiles"],
+            resolved["factor_transform"],
+        ) if active_tab == "factor_analysis" else (no_update, no_update, no_update)
+        monthly_output = resolved["monthly_view"] if active_tab == "calendar" else no_update
+
         return (
-            periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
-            roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
-            factor_mode, factor_quantiles, factor_transform, monthly_view, valid_selection, updated_order, False
+            resolved["periodicity_options"],
+            resolved["valid_periodicity"],
+            resolved["valid_returns"],
+            resolved["valid_vol"],
+            active_tab,
+            *roll_outputs,
+            drawdown_output,
+            growth_output,
+            *factor_outputs,
+            monthly_output,
+            resolved["valid_selection"],
+            resolved["updated_order"],
+            False,
+        )
+    except Exception:
+        resolved = _at_restore_defaults()
+        return (
+            resolved["periodicity_options"], resolved["valid_periodicity"], resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
+            no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
+            no_update, no_update, no_update, no_update, resolved["valid_selection"], resolved["updated_order"], False
         )
 
-    except Exception:
-        # Fallback to defaults on error (visibility handled by clientside callback)
-        return (
-            [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "statistics",
-            "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "annual", [], [], False
-        )
+
+@callback(
+    Output("at-rolling-window-select", "value", allow_duplicate=True),
+    Output("at-rolling-metric-select", "value", allow_duplicate=True),
+    Output("at-rolling-return-type-select", "value", allow_duplicate=True),
+    Output("at-rolling-return-type-select", "disabled", allow_duplicate=True),
+    Output("at-rolling-return-type-select", "style", allow_duplicate=True),
+    Output("at-rolling-chart-switch", "value", allow_duplicate=True),
+    Output("at-drawdown-chart-switch", "value", allow_duplicate=True),
+    Output("at-growth-chart-switch", "value", allow_duplicate=True),
+    Output("at-factor-mode-select", "value", allow_duplicate=True),
+    Output("at-factor-quantiles-input", "value", allow_duplicate=True),
+    Output("at-factor-transform-select", "value", allow_duplicate=True),
+    Output("at-monthly-view-checkbox", "value", allow_duplicate=True),
+    Input("at-secondary-restore-ready-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
+    State("at-periodicity-value-store", "data"),
+    State("at-series-select-value-store", "data"),
+    State("at-returns-type-value-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-active-tab-store", "data"),
+    State("at-rolling-window-store", "data"),
+    State("at-rolling-metric-store", "data"),
+    State("at-rolling-return-type-store", "data"),
+    State("at-rolling-chart-switch-store", "data"),
+    State("at-drawdown-chart-switch-store", "data"),
+    State("at-growth-chart-switch-store", "data"),
+    State("at-factor-mode-store", "data"),
+    State("at-factor-quantiles-store", "data"),
+    State("at-factor-transform-store", "data"),
+    State("at-monthly-view-store", "data"),
+    State("at-series-order-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    State("at-page-visited-store", "data"),
+    prevent_initial_call=True,
+)
+def at_restore_secondary_controls(
+    secondary_ready,
+    raw_meta,
+    stored_periodicity,
+    stored_series,
+    stored_returns,
+    stored_vol,
+    stored_tab,
+    stored_roll_win,
+    stored_roll_metric,
+    stored_roll_type,
+    stored_roll_chart,
+    stored_dd_chart,
+    stored_gr_chart,
+    stored_factor_mode,
+    stored_factor_quantiles,
+    stored_factor_transform,
+    stored_monthly_view,
+    stored_order,
+    po_origin_series,
+    page_visited,
+):
+    if not secondary_ready:
+        raise PreventUpdate
+
+    resolved = _at_resolve_restore_state(
+        raw_meta,
+        stored_periodicity,
+        stored_series,
+        stored_returns,
+        stored_vol,
+        stored_tab,
+        stored_roll_win,
+        stored_roll_metric,
+        stored_roll_type,
+        stored_roll_chart,
+        stored_dd_chart,
+        stored_gr_chart,
+        stored_factor_mode,
+        stored_factor_quantiles,
+        stored_factor_transform,
+        stored_monthly_view,
+        stored_order,
+        po_origin_series,
+        page_visited,
+    )
+    active_tab = resolved["active_tab"]
+    return (
+        no_update if active_tab == "rolling" else resolved["roll_win"],
+        no_update if active_tab == "rolling" else resolved["roll_metric"],
+        no_update if active_tab == "rolling" else resolved["roll_type"],
+        no_update if active_tab == "rolling" else resolved["roll_type_disabled"],
+        no_update if active_tab == "rolling" else resolved["roll_type_style"],
+        no_update if active_tab == "rolling" else resolved["roll_chart"],
+        no_update if active_tab == "drawdown" else resolved["dd_chart"],
+        no_update if active_tab == "growth" else resolved["gr_chart"],
+        no_update if active_tab == "factor_analysis" else resolved["factor_mode"],
+        no_update if active_tab == "factor_analysis" else resolved["factor_quantiles"],
+        no_update if active_tab == "factor_analysis" else resolved["factor_transform"],
+        no_update if active_tab == "calendar" else resolved["monthly_view"],
+    )
 
 
 @callback(
