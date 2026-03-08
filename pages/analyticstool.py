@@ -50,6 +50,10 @@ from utils.statistics import (
     calculate_statistics_cached,
     generate_correlogram_cached,
 )
+from utils.covariance import (
+    format_cov_shrinkage_spec_label,
+    resolve_cov_shrinkage_spec,
+)
 from utils.exponential_weighting import normalize_decay_input
 from utils.charting import apply_chart_theme
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
@@ -204,6 +208,8 @@ def _correlogram_request_key(
     block_width,
     exp_weighted,
     decay_value,
+    shrinkage,
+    shrinkage_target,
 ):
     payload = "|".join(
         [
@@ -220,6 +226,8 @@ def _correlogram_request_key(
             str(block_width if block_width is not None else ""),
             str(bool(exp_weighted)),
             str(normalize_decay_input(decay_value, 63.0)),
+            str(shrinkage or "none"),
+            str(shrinkage_target or "scaled_identity"),
         ]
     )
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
@@ -2468,6 +2476,44 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                 size="sm",
                                                 disabled=True,
                                             ),
+                                        ),
+                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                    ),
+                                ]),
+                                html.Div([
+                                    dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
+                                    html.Div(
+                                        dmc.Select(
+                                            id="at-correlation-shrinkage-select",
+                                            data=[
+                                                {"value": "none", "label": "None"},
+                                                {"value": "ledoit_wolf", "label": "Ledoit-Wolf"},
+                                                {"value": "oas", "label": "OAS"},
+                                            ],
+                                            value="none",
+                                            searchable=False,
+                                            clearable=False,
+                                            w=130,
+                                            size="sm",
+                                        ),
+                                        style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                    ),
+                                ]),
+                                html.Div([
+                                    dmc.Text("Target", size="sm", fw=500, mb=3),
+                                    html.Div(
+                                        dmc.Select(
+                                            id="at-correlation-shrinkage-target-select",
+                                            data=[
+                                                {"value": "scaled_identity", "label": "Scaled Identity"},
+                                                {"value": "constant_correlation", "label": "Constant Correlation"},
+                                            ],
+                                            value="scaled_identity",
+                                            searchable=False,
+                                            clearable=False,
+                                            w=180,
+                                            size="sm",
+                                            disabled=True,
                                         ),
                                         style={"height": "36px", "display": "flex", "alignItems": "center"},
                                     ),
@@ -8065,9 +8111,18 @@ def update_statistics(raw_data, periodicity, selected_series, benchmark_assignme
 
 
 clientside_callback(
-    "function(checked) { return !checked; }",
+    """
+    function(checked, shrinkage) {
+        var expWeighted = !!checked;
+        var useTarget = !expWeighted && (shrinkage === "ledoit_wolf");
+        return [!expWeighted, expWeighted, !useTarget];
+    }
+    """,
     Output("at-correlation-halflife-input", "disabled"),
+    Output("at-correlation-shrinkage-select", "disabled"),
+    Output("at-correlation-shrinkage-target-select", "disabled"),
     Input("at-correlation-exp-wt-switch", "checked"),
+    Input("at-correlation-shrinkage-select", "value"),
     prevent_initial_call=False,
 )
 
@@ -8108,6 +8163,8 @@ def update_correlogram_meta(selected_series, active_tab):
     Input("at-correlation-view-switch", "value"),
     Input("at-correlation-exp-wt-switch", "checked"),
     Input("at-correlation-halflife-input", "value"),
+    Input("at-correlation-shrinkage-select", "value"),
+    Input("at-correlation-shrinkage-target-select", "value"),
     Input("at-correlogram-block-width", "value"),
     State("at-correlogram-target-key-store", "data"),
     prevent_initial_call=True,
@@ -8127,6 +8184,8 @@ def update_correlogram_target_key(
     correlation_view,
     exp_weighted,
     decay_value,
+    shrinkage,
+    shrinkage_target,
     block_width,
     current_target_key,
 ):
@@ -8154,6 +8213,14 @@ def update_correlogram_target_key(
     use_weighted_matrix = bool(
         exp_weighted and correlation_view in {"correlation", "covariance"}
     )
+    if correlation_view in {"correlation", "covariance"}:
+        effective_shrinkage, effective_target = resolve_cov_shrinkage_spec(
+            shrinkage,
+            shrinkage_target,
+            exp_weighted=use_weighted_matrix,
+        )
+    else:
+        effective_shrinkage, effective_target = "none", "scaled_identity"
     next_key = _correlogram_request_key(
         raw_data,
         periodicity,
@@ -8168,6 +8235,8 @@ def update_correlogram_target_key(
         block_width,
         use_weighted_matrix,
         decay_value if use_weighted_matrix else 63.0,
+        effective_shrinkage,
+        effective_target if effective_shrinkage == "ledoit_wolf" else "scaled_identity",
     )
     if next_key == current_target_key:
         return no_update
@@ -8242,12 +8311,14 @@ clientside_callback(
     State("at-vol-scaling-assignments-store", "data"),
     State("at-correlation-exp-wt-switch", "checked"),
     State("at-correlation-halflife-input", "value"),
+    State("at-correlation-shrinkage-select", "value"),
+    State("at-correlation-shrinkage-target-select", "value"),
     State("at-correlation-view-switch", "value"),
     State("at-correlogram-block-width", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, correlation_view, block_width, theme):
+def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, shrinkage_target, correlation_view, block_width, theme):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -8281,6 +8352,14 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
     use_weighted_matrix = bool(
         exp_weighted and correlation_view in {"correlation", "covariance"}
     )
+    if correlation_view in {"correlation", "covariance"}:
+        effective_shrinkage, effective_target = resolve_cov_shrinkage_spec(
+            shrinkage,
+            shrinkage_target,
+            exp_weighted=use_weighted_matrix,
+        )
+    else:
+        effective_shrinkage, effective_target = "none", "scaled_identity"
     try:
         result = generate_correlogram_cached(
             raw_data,
@@ -8294,6 +8373,8 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
             _mapping_payload(vol_scaling_assignments),
             use_weighted_matrix,
             normalize_decay_input(decay_value, 63.0),
+            effective_shrinkage,
+            effective_target,
         )
 
         if result is None:
@@ -8308,7 +8389,13 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
             is_covariance = correlation_view == "covariance"
             matrix_df = cov_matrix if is_covariance else corr_matrix
             matrix_label = "Covariance" if is_covariance else "Correlation"
-            weighted_suffix = " (Exp Weighted)" if use_weighted_matrix else ""
+            weighted_suffix = ""
+            if use_weighted_matrix:
+                weighted_suffix = " (Exp Weighted)"
+            elif effective_shrinkage != "none":
+                weighted_suffix = (
+                    f" ({format_cov_shrinkage_spec_label(effective_shrinkage, effective_target)})"
+                )
 
             heatmap_kwargs = {
                 "z": matrix_df.values,
@@ -8331,7 +8418,6 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
 
             heatmap_fig = go.Figure(data=go.Heatmap(**heatmap_kwargs))
 
-            height = max(500, 30 * len(available_series) + 150)
             heatmap_fig.update_layout(
                 title=f"{matrix_label} Matrix{weighted_suffix} ({returns_type.title()} Returns)",
                 xaxis=dict(tickangle=45),
@@ -9473,6 +9559,8 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-vol-scaling-assignments-store", "data"),
     State("at-correlation-exp-wt-switch", "checked"),
     State("at-correlation-halflife-input", "value"),
+    State("at-correlation-shrinkage-select", "value"),
+    State("at-correlation-shrinkage-target-select", "value"),
     State("at-factor-series-select", "value"),
     State("at-factor-quantiles-input", "value"),
     State("at-factor-transform-select", "value"),
@@ -9503,6 +9591,8 @@ def download_excel(
     vol_scaling_assignments,
     correlation_exp_wt,
     correlation_halflife,
+    correlation_shrinkage,
+    correlation_shrinkage_target,
     factor_series,
     factor_quantiles,
     factor_transform,
@@ -9574,19 +9664,29 @@ def download_excel(
         stats_df = pd.DataFrame(stats_data)
 
         # Prepare correlation/covariance data (supports optional exponential weighting)
-        matrix_result = generate_correlogram_cached(
-            bundle.raw_data,
-            bundle.periodicity,
-            bundle.selected_series,
-            returns_type,
-            bundle.benchmark_payload,
-            bundle.long_short_payload,
-            bundle.date_range_payload,
-            bundle.vol_scaler,
-            bundle.vol_scaling_payload,
-            bool(correlation_exp_wt),
-            normalize_decay_input(correlation_halflife, 63.0),
+        effective_corr_shrinkage, effective_corr_target = resolve_cov_shrinkage_spec(
+            correlation_shrinkage,
+            correlation_shrinkage_target,
+            exp_weighted=bool(correlation_exp_wt),
         )
+        try:
+            matrix_result = generate_correlogram_cached(
+                bundle.raw_data,
+                bundle.periodicity,
+                bundle.selected_series,
+                returns_type,
+                bundle.benchmark_payload,
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
+                bool(correlation_exp_wt),
+                normalize_decay_input(correlation_halflife, 63.0),
+                effective_corr_shrinkage,
+                effective_corr_target,
+            )
+        except ValueError:
+            matrix_result = None
         if matrix_result is not None:
             corr_df = matrix_result["corr_matrix"]
             cov_df = matrix_result["cov_matrix"]
