@@ -425,12 +425,49 @@ def test_update_statistics_requires_ready_state(page_modules):
         )
 
 
+def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules):
+    analyticstool, _ = page_modules
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_statistics(
+            "raw-json",
+            "daily",
+            ["Asset_A"],
+            {},
+            {},
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            True,
+            0,
+            {},
+            None,
+            "returns",
+            True,
+        )
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_statistics(
+            "raw-json",
+            "daily",
+            ["Asset_A"],
+            {},
+            {},
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            True,
+            0,
+            {},
+            None,
+            "statistics",
+            False,
+        )
+
+
 def test_control_statistics_loading_display(page_modules):
     analyticstool, _ = page_modules
     assert analyticstool.control_statistics_loading_display("statistics", False, False) == "show"
     assert analyticstool.control_statistics_loading_display("statistics", True, False) == "show"
     assert analyticstool.control_statistics_loading_display("statistics", True, True) == "auto"
     assert analyticstool.control_statistics_loading_display("returns", False, False) == "auto"
+    assert analyticstool.control_statistics_loading_display("statistics", True, True, False) == "show"
 
 
 def test_update_growth_grid_requires_growth_table_view(page_modules):

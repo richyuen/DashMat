@@ -355,6 +355,10 @@ def _po_rolling_metric_tickformat(metric: str) -> str:
     return ".2%" if metric in {"total_return", "volatility"} else ".2f"
 
 
+def _po_tab_render_ready(active_tab, expected_tab: str, initial_tab_ready) -> bool:
+    return active_tab == expected_tab and bool(initial_tab_ready)
+
+
 def _build_apply_weight_matrix(
     index: pd.DatetimeIndex,
     series_tuple: tuple[str, ...],
@@ -3500,6 +3504,7 @@ layout = dmc.Container(
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
+        dcc.Store(id="po-initial-tab-render-ready-store", data=False, storage_type="memory"),
         # Chart/table switch stores
         dcc.Store(id="po-weight-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-attribution-chart-switch-store", data="chart", storage_type="session"),
@@ -3528,6 +3533,7 @@ layout = dmc.Container(
         dcc.Location(id="po-url-location", refresh=False),
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
+        dcc.Interval(id="po-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
 
         # UI Blocker for file dialog (Overlay)
         dcc.Store(id="po-ui-blocker-store", data=False),
@@ -5937,6 +5943,16 @@ clientside_callback(
     Output("po-main-container", "style"),
     Input("po-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
+)
+
+clientside_callback(
+    """
+    function(n_intervals) {
+        return !!(n_intervals && n_intervals >= 1);
+    }
+    """,
+    Output("po-initial-tab-render-ready-store", "data"),
+    Input("po-initial-tab-render-trigger", "n_intervals"),
 )
 
 # ---------------------------------------------------------------------------
@@ -8970,10 +8986,11 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme):
-    if active_tab != "weight" or switch_value != "chart" or not selected_portfolio or not results:
+def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "weight", initial_tab_ready) or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -8984,46 +9001,51 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     if not window_weights:
         return dmc.Text("No weight data available.", c="dimmed")
 
-    # Get asset names from first window
-    asset_names = list(window_weights[0]["weights"].keys())
+    timing_ctx = timed_block("portopt.render_weight_chart", portfolio=selected_portfolio, window_count=len(window_weights))
+    timing_ctx.__enter__()
+    try:
+        # Get asset names from first window
+        asset_names = list(window_weights[0]["weights"].keys())
 
-    # Build per-period weights as a step function
-    all_dates = []
-    all_weights = {a: [] for a in asset_names}
+        # Build per-period weights as a step function
+        all_dates = []
+        all_weights = {a: [] for a in asset_names}
 
-    for ww in window_weights:
-        start = pd.Timestamp(ww["apply_start"])
-        end = pd.Timestamp(ww["apply_end"])
-        weights = ww["weights"]
-        all_dates.append(start)
-        all_dates.append(end)
+        for ww in window_weights:
+            start = pd.Timestamp(ww["apply_start"])
+            end = pd.Timestamp(ww["apply_end"])
+            weights = ww["weights"]
+            all_dates.append(start)
+            all_dates.append(end)
+            for a in asset_names:
+                all_weights[a].append(weights.get(a, 0) * 100)
+                all_weights[a].append(weights.get(a, 0) * 100)
+
+        fig = go.Figure()
         for a in asset_names:
-            all_weights[a].append(weights.get(a, 0) * 100)
-            all_weights[a].append(weights.get(a, 0) * 100)
+            fig.add_trace(go.Scatter(
+                x=all_dates,
+                y=all_weights[a],
+                name=a,
+                mode="lines",
+                stackgroup="one",
+                line={"width": 0.5},
+            ))
 
-    fig = go.Figure()
-    for a in asset_names:
-        fig.add_trace(go.Scatter(
-            x=all_dates,
-            y=all_weights[a],
-            name=a,
-            mode="lines",
-            stackgroup="one",
-            line={"width": 0.5},
-        ))
+        fig.update_layout(
+            title=f"Portfolio Weights: {selected_portfolio}",
+            yaxis_title="Weight (%)",
+            yaxis={"range": [0, 100]},
+            hovermode="x unified",
+            margin={"t": 40, "b": 40, "l": 60, "r": 20},
+            height=420,
+            legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
+        )
+        apply_chart_theme(fig, theme)
 
-    fig.update_layout(
-        title=f"Portfolio Weights: {selected_portfolio}",
-        yaxis_title="Weight (%)",
-        yaxis={"range": [0, 100]},
-        hovermode="x unified",
-        margin={"t": 40, "b": 40, "l": 60, "r": 20},
-        height=420,
-        legend={"orientation": "h", "yanchor": "bottom", "y": -0.2},
-    )
-    apply_chart_theme(fig, theme)
-
-    return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+        return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+    finally:
+        timing_ctx.__exit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -9044,6 +9066,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_growth_chart(
@@ -9059,8 +9082,9 @@ def po_render_growth_chart(
     vol_scaler,
     vol_scaling,
     theme,
+    initial_tab_ready=True,
 ):
-    if active_tab != "growth" or not selected_portfolio or not results:
+    if not _po_tab_render_ready(active_tab, "growth", initial_tab_ready) or not selected_portfolio or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -9166,6 +9190,7 @@ def po_toggle_rolling_return_type(metric):
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_rolling(
@@ -9184,8 +9209,9 @@ def po_render_rolling(
     vol_scaler,
     vol_scaling,
     theme,
+    initial_tab_ready=True,
 ):
-    if active_tab != "rolling" or not results:
+    if not _po_tab_render_ready(active_tab, "rolling", initial_tab_ready) or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -9318,6 +9344,7 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_calendar(
@@ -9333,8 +9360,9 @@ def po_render_calendar(
     date_range,
     vol_scaler,
     vol_scaling,
+    initial_tab_ready=True,
 ):
-    if active_tab != "calendar" or not results:
+    if not _po_tab_render_ready(active_tab, "calendar", initial_tab_ready) or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -9447,6 +9475,7 @@ def po_render_calendar(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_drawdown(
@@ -9462,8 +9491,9 @@ def po_render_drawdown(
     vol_scaler,
     vol_scaling,
     theme,
+    initial_tab_ready=True,
 ):
-    if active_tab != "drawdown" or not results:
+    if not _po_tab_render_ready(active_tab, "drawdown", initial_tab_ready) or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -9564,12 +9594,13 @@ def po_render_drawdown(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value,
                                  raw_data, orig_periodicity, periodicity, bench, ls,
-                                 date_range, vol_scaler, vol_scaling, theme):
-    if active_tab != "attribution" or switch_value != "chart" or not selected_portfolio or not results:
+                                 date_range, vol_scaler, vol_scaling, theme, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "attribution", initial_tab_ready) or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -9641,10 +9672,11 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_weight_table(selected_portfolio, results, active_tab, switch_value):
-    if active_tab != "weight" or switch_value != "table" or not selected_portfolio or not results:
+def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "weight", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
         return [], []
@@ -9699,12 +9731,13 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_attribution_table(selected_portfolio, results, active_tab, switch_value,
                                 raw_data, periodicity, bench, ls, date_range,
-                                vol_scaler, vol_scaling):
-    if active_tab != "attribution" or switch_value != "table" or not selected_portfolio or not results:
+                                vol_scaler, vol_scaling, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "attribution", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
         return [], []
@@ -9787,6 +9820,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_statistics(
@@ -9801,8 +9835,9 @@ def po_render_statistics(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
+    initial_tab_ready=True,
 ):
-    if active_tab != "statistics" or not results:
+    if not _po_tab_render_ready(active_tab, "statistics", initial_tab_ready) or not results:
         return [], []
 
     try:
@@ -9894,6 +9929,7 @@ def po_render_statistics(
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_returns(
@@ -9907,8 +9943,9 @@ def po_render_returns(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
+    initial_tab_ready=True,
 ):
-    if active_tab != "returns" or not results:
+    if not _po_tab_render_ready(active_tab, "returns", initial_tab_ready) or not results:
         return [], []
 
     try:
@@ -10461,12 +10498,13 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
                          raw_data, periodicity, bench, ls, date_range,
-                         vol_scaler, vol_scaling, series_select, theme):
-    if active_tab != "risk" or switch_value != "chart" or not selected_portfolio or not results:
+                         vol_scaler, vol_scaling, series_select, theme, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "risk", initial_tab_ready) or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -10551,12 +10589,13 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
                          raw_data, periodicity, bench, ls, date_range,
-                         vol_scaler, vol_scaling, series_select):
-    if active_tab != "risk" or switch_value != "table" or not selected_portfolio or not results:
+                         vol_scaler, vol_scaling, series_select, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "risk", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
         return [], []
@@ -10627,10 +10666,11 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
-    if active_tab != "turnover" or switch_value != "chart" or not selected_portfolio or not results:
+def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "turnover", initial_tab_ready) or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -10684,10 +10724,11 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value):
-    if active_tab != "turnover" or switch_value != "table" or not selected_portfolio or not results:
+def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "turnover", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
         return [], []
@@ -10815,14 +10856,15 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("po-linear-constraints-store", "data"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value,
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, series_select, theme,
-                             linear_constraints):
-    if active_tab != "frontier" or switch_value != "chart" or not selected_portfolio or not results:
+                             linear_constraints, initial_tab_ready=True):
+    if not _po_tab_render_ready(active_tab, "frontier", initial_tab_ready) or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -10962,6 +11004,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     State("po-cmabench-assignments-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-linear-constraints-store", "data"),
+    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_frontier_table(
@@ -10980,8 +11023,9 @@ def po_render_frontier_table(
     cmabench_assignments,
     saved_series_store,
     linear_constraints,
+    initial_tab_ready=True,
 ):
-    if active_tab != "frontier" or switch_value != "table" or not selected_portfolio or not results:
+    if not _po_tab_render_ready(active_tab, "frontier", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
         return [], []
     if selected_portfolio not in results:
         return [], []

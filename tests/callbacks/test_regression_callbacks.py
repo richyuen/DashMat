@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from dash import no_update
+from dash.exceptions import PreventUpdate
 
 from utils.regression import RegressionWindowResult
 from utils.returns import df_to_json
@@ -900,6 +901,19 @@ def test_reg_render_statistics_combines_run_series_and_model_output_stats(monkey
     col_fields = [c.get("field") for c in getattr(comp, "columnDefs", [])]
     assert col_fields[:6] == ["Statistic", "Predicted", "Actual (Y)", "EM_TRIndex", "EAFE_TRIndex", "Residual"]
     assert "SPX_TRIndex" not in col_fields
+
+
+def test_reg_render_statistics_requires_active_tab_and_initial_ready(regression_page):
+    entry = {
+        "periodicity": "daily",
+        "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.01]}, index=pd.to_datetime(["2024-01-01"]))),
+    }
+
+    with pytest.raises(PreventUpdate):
+        regression_page.reg_render_statistics("R1", {"R1": entry}, None, None, "returns", True)
+
+    with pytest.raises(PreventUpdate):
+        regression_page.reg_render_statistics("R1", {"R1": entry}, None, None, "statistics", False)
 
 
 def test_reg_build_display_series_clips_x_to_model_window_for_rolling(regression_page):

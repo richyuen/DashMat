@@ -3948,6 +3948,7 @@ layout = dmc.Container(
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
+        dcc.Store(id="at-initial-tab-render-ready-store", data=False, storage_type="memory"),
         dcc.Store(id="at-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="at-download-enabled-store", data=False),
@@ -4012,6 +4013,7 @@ layout = dmc.Container(
 
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="at-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
+        dcc.Interval(id="at-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
     ],
 )
 
@@ -4035,6 +4037,16 @@ clientside_callback(
     Output("at-main-app-container", "style"),
     Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
+)
+
+clientside_callback(
+    """
+    function(n_intervals) {
+        return !!(n_intervals && n_intervals >= 1);
+    }
+    """,
+    Output("at-initial-tab-render-ready-store", "data"),
+    Input("at-initial-tab-render-trigger", "n_intervals"),
 )
 
 
@@ -7675,29 +7687,32 @@ def update_date_range_store(start_date, end_date, existing_range):
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
+def update_grid(raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True):
     """Update the AG Grid based on selections (optimized with caching)."""
-    if not state_ready or not _has_complete_date_range(date_range):
+    if active_tab != "returns" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
         return [], []
 
     try:
-        # Use cached function to avoid repeated deserialization and computation
-        display_df = calculate_excess_returns(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series),  # Convert to tuple for cache key
-            _mapping_payload(benchmark_assignments),  # Convert to string for cache key
-            returns_type,
-            _mapping_payload(long_short_assignments),  # Convert to string for cache key
-            _date_range_payload(date_range),  # Convert to string for cache key
-            vol_scaler or 0,
-            _mapping_payload(vol_scaling_assignments)
-        )
+        with timed_block("analyticstool.render_returns_grid", series_count=len(selected_series)):
+            # Use cached function to avoid repeated deserialization and computation
+            display_df = calculate_excess_returns(
+                raw_data,
+                periodicity or "daily",
+                tuple(selected_series),  # Convert to tuple for cache key
+                _mapping_payload(benchmark_assignments),  # Convert to string for cache key
+                returns_type,
+                _mapping_payload(long_short_assignments),  # Convert to string for cache key
+                _date_range_payload(date_range),  # Convert to string for cache key
+                vol_scaler or 0,
+                _mapping_payload(vol_scaling_assignments)
+            )
 
         if display_df.empty:
             return [], []
@@ -7763,9 +7778,10 @@ def reset_statistics_loaded_on_hydration(state_ready):
     Input("at-main-tabs", "value"),
     Input("at-state-ready-store", "data"),
     Input("at-statistics-loaded-store", "data"),
+    Input("at-initial-tab-render-ready-store", "data"),
 )
-def control_statistics_loading_display(active_tab, state_ready, statistics_loaded):
-    if active_tab == "statistics" and (not state_ready or not statistics_loaded):
+def control_statistics_loading_display(active_tab, state_ready, statistics_loaded, initial_tab_ready=True):
+    if active_tab == "statistics" and (not initial_tab_ready or not state_ready or not statistics_loaded):
         return "show"
     return "auto"
 
@@ -8205,30 +8221,33 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, saved_series_store):
+def update_statistics(raw_data=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, saved_series_store=None, active_tab="statistics", initial_tab_ready=True):
     """Update the Statistics grid with transposed data (optimized with caching)."""
-    if not state_ready or not _has_complete_date_range(date_range):
+    if active_tab != "statistics" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
         return [], [], True
 
     try:
-        # Use cached function to avoid repeated computation
-        stats = calculate_statistics_cached(
-            raw_data,
-            periodicity or "daily",
-            tuple(selected_series),
-            _mapping_payload(benchmark_assignments),
-            _mapping_payload(long_short_assignments),
-            _date_range_payload(date_range),
-            vol_scaler or 0,
-            _mapping_payload(vol_scaling_assignments),
-            _risk_free_json_from_store(saved_series_store),
-            _spx_json_from_store(saved_series_store),
-        )
+        with timed_block("analyticstool.render_statistics_grid", series_count=len(selected_series)):
+            # Use cached function to avoid repeated computation
+            stats = calculate_statistics_cached(
+                raw_data,
+                periodicity or "daily",
+                tuple(selected_series),
+                _mapping_payload(benchmark_assignments),
+                _mapping_payload(long_short_assignments),
+                _date_range_payload(date_range),
+                vol_scaler or 0,
+                _mapping_payload(vol_scaling_assignments),
+                _risk_free_json_from_store(saved_series_store),
+                _spx_json_from_store(saved_series_store),
+            )
 
         if not stats:
             return [], [], True

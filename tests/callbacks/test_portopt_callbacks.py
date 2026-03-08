@@ -374,6 +374,28 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert row_data[0]["Date"] == "2024-01-01"
 
 
+def test_po_render_statistics_skips_initial_selected_tab_until_ready(page_modules):
+    _, portopt = page_modules
+
+    column_defs, row_data = portopt.po_render_statistics(
+        {"P1": {"returns_json": pd.Series([0.01], index=pd.to_datetime(["2024-01-01"])).to_json(date_format="iso")}},
+        "statistics",
+        "P1",
+        None,
+        "daily",
+        None,
+        {},
+        {},
+        None,
+        0,
+        {},
+        False,
+    )
+
+    assert column_defs == []
+    assert row_data == []
+
+
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
     _, portopt = page_modules
 

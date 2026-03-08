@@ -51,6 +51,7 @@ from utils.serialization import date_range_payload_for_cache, mapping_payload_fo
 from utils.excel_export import write_excel_with_autofit
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
 from utils.saved_series import save_series_to_raw_data, saved_series_store_names
+from utils.perf_timing import timed_block
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -197,6 +198,10 @@ def _fmt(v, decimals=6):
     if v is None or (isinstance(v, float) and not np.isfinite(v)):
         return "—"
     return f"{v:.{decimals}f}"
+
+
+def _reg_tab_render_ready(active_tab, expected_tab: str, initial_tab_ready) -> bool:
+    return active_tab == expected_tab and bool(initial_tab_ready)
 
 
 def _reg_json_text(value):
@@ -2130,6 +2135,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-results-store", data={}, storage_type="session"),
         dcc.Store(id="reg-active-tab-store", data="anova", storage_type="session"),
         dcc.Store(id="reg-page-visited-store", data=False, storage_type="session"),
+        dcc.Store(id="reg-initial-tab-render-ready-store", data=False, storage_type="memory"),
         # Save/Load session + cache
         dcc.Store(id="reg-save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="reg-load-session-dummy", data=None, storage_type="memory"),
@@ -2153,6 +2159,7 @@ layout = dmc.Container(
         dcc.Download(id="reg-download-sample-monthly"),
         dcc.Location(id="reg-url-location", refresh=False),
         dcc.Interval(id="reg-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
+        dcc.Interval(id="reg-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
         dcc.Store(id="reg-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
             id="reg-ui-blocker-overlay",
@@ -2194,6 +2201,16 @@ clientside_callback(
     Output("reg-main-container", "style"),
     Input("reg-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
+)
+
+clientside_callback(
+    """
+    function(n_intervals) {
+        return !!(n_intervals && n_intervals >= 1);
+    }
+    """,
+    Output("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-initial-tab-render-trigger", "n_intervals"),
 )
 
 clientside_callback(
@@ -5194,9 +5211,13 @@ def reg_delete_result(n_clicks, selected, results):
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("reg-anova-window-select", "value"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_anova(selected, results, selected_window):
+def reg_render_anova(selected, results, selected_window, active_tab="anova", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "anova", initial_tab_ready):
+        raise PreventUpdate
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
 
@@ -5339,9 +5360,13 @@ def reg_render_anova(selected, results, selected_window):
     Input("reg-rolling-summary-chart-switch", "value"),
     Input("reg-rolling-summary-detail-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
+def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_tab="rolling", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "rolling", initial_tab_ready):
+        raise PreventUpdate
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -5437,6 +5462,8 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
     Input("reg-rolling-metric-select", "value"),
     Input("reg-rolling-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
 def reg_render_rolling_returns(
@@ -5448,7 +5475,11 @@ def reg_render_rolling_returns(
     rolling_metric,
     view_mode,
     theme,
+    active_tab="rolling_returns",
+    initial_tab_ready=True,
 ):
+    if not _reg_tab_render_ready(active_tab, "rolling_returns", initial_tab_ready):
+        raise PreventUpdate
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -5489,20 +5520,21 @@ def reg_render_rolling_returns(
     else:
         title = f"Rolling {window_label} {metric_label}"
     series_df = display_df[ordered_cols]
-    rolling_df = calculate_rolling_returns(
-        df_to_json(series_df),
-        periodicity,
-        tuple(ordered_cols),
-        "total",
-        "{}",
-        "{}",
-        "null",
-        window,
-        return_type,
-        metric,
-        0,
-        "{}",
-    )
+    with timed_block("regression.render_rolling_returns", result=selected, series_count=len(ordered_cols)):
+        rolling_df = calculate_rolling_returns(
+            df_to_json(series_df),
+            periodicity,
+            tuple(ordered_cols),
+            "total",
+            "{}",
+            "{}",
+            "null",
+            window,
+            return_type,
+            metric,
+            0,
+            "{}",
+        )
     if rolling_df is None or rolling_df.empty:
         return dmc.Text("No rolling values available for selected window.", size="sm", c="dimmed")
 
@@ -5573,9 +5605,13 @@ def reg_render_rolling_returns(
     Input("reg-results-store", "data"),
     Input("reg-weights-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_weights(selected, results, view_mode, theme):
+def reg_render_weights(selected, results, view_mode, theme, active_tab="weights", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "weights", initial_tab_ready):
+        raise PreventUpdate
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     entry = results[selected]
@@ -5655,9 +5691,13 @@ def reg_render_weights(selected, results, view_mode, theme):
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_returns(selected, results, raw_data):
+def reg_render_returns(selected, results, raw_data, active_tab="returns", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "returns", initial_tab_ready):
+        raise PreventUpdate
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -5708,9 +5748,13 @@ def reg_render_returns(selected, results, raw_data):
     Input("dashmat-raw-data-store", "data"),
     Input("reg-growth-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_growth(selected, results, raw_data, view_mode, theme):
+def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab="growth", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "growth", initial_tab_ready):
+        raise PreventUpdate
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -5813,9 +5857,13 @@ def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, 
     Input("dashmat-raw-data-store", "data"),
     Input("reg-calendar-view-select", "value"),
     Input("reg-calendar-series-select", "value"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series):
+def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "calendar", initial_tab_ready):
+        raise PreventUpdate
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -5897,9 +5945,13 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
     Input("dashmat-raw-data-store", "data"),
     Input("reg-drawdown-chart-switch", "value"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
+def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_tab="drawdown", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "drawdown", initial_tab_ready):
+        raise PreventUpdate
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
@@ -5989,9 +6041,13 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None):
+def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, active_tab="statistics", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "statistics", initial_tab_ready):
+        raise PreventUpdate
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
 
@@ -6127,18 +6183,19 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
 
     try:
-        stats_payload = calculate_statistics_cached(
-            df_to_json(stats_input),
-            periodicity,
-            tuple(display_order),
-            "{}",
-            "{}",
-            "null",
-            0,
-            "{}",
-            risk_free_json_from_store(saved_series_store),
-            spx_json_from_store(saved_series_store),
-        )
+        with timed_block("regression.render_statistics", result=selected, series_count=len(display_order)):
+            stats_payload = calculate_statistics_cached(
+                df_to_json(stats_input),
+                periodicity,
+                tuple(display_order),
+                "{}",
+                "{}",
+                "null",
+                0,
+                "{}",
+                risk_free_json_from_store(saved_series_store),
+                spx_json_from_store(saved_series_store),
+            )
     except Exception as exc:
         return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")
 
@@ -6165,9 +6222,13 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
     Input("reg-scatter-x-select", "value"),
     Input("dashmat-raw-data-store", "data"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_scatter(selected, results, mode, x_var, raw_data, theme):
+def reg_render_scatter(selected, results, mode, x_var, raw_data, theme, active_tab="scatter", initial_tab_ready=True):
+    if not _reg_tab_render_ready(active_tab, "scatter", initial_tab_ready):
+        raise PreventUpdate
     _name, entry = _reg_get_selected_result_entry(selected, results)
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
