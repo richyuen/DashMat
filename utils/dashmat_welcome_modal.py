@@ -984,7 +984,7 @@ def compute_open_db_add_modal(menu_clicks, welcome_clicks, db_engine):
     if not menu_clicks and not welcome_clicks:
         raise PreventUpdate
     options = get_core_category_options_cached(db_engine)
-    return True, options, []
+    return True, options, [], False
 
 
 def compute_close_db_add_modal(n_clicks):
@@ -1060,6 +1060,7 @@ def compute_open_portfolio_add_modal(
         [],
         [],
         True,
+        False,
     )
 
 
@@ -1093,6 +1094,7 @@ def compute_open_underlying_add_modal(menu_clicks, welcome_clicks):
         [],
         [],
         True,
+        False,
     )
 
 
@@ -1157,6 +1159,7 @@ def compute_open_raw_db_add_modal(
         [],
         "Select a series to preview option-adjusted results (first 6 rows).",
         True,
+        False,
     )
 
 

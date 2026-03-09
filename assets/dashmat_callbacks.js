@@ -131,22 +131,22 @@
     return noUpdate();
   }
 
-  function uiBlockerRelease(dbOpened, dbErrorHidden, rawOpened, rawErrorHidden, portfolioOpened, portfolioErrorHidden, underlyingOpened, underlyingErrorHidden, seriesSelectionOpened) {
+  function uiBlockerRelease(dbErrorHidden, rawErrorHidden, portfolioErrorHidden, underlyingErrorHidden, seriesSelectionOpened) {
     const trigger = triggeredId() || "";
     if (trigger.indexOf("series-selection-modal") !== -1) {
-      return false;
+      return seriesSelectionOpened === false ? false : noUpdate();
     }
     if (trigger.indexOf("raw-db-add-") !== -1) {
-      return (rawOpened === false || rawErrorHidden === false) ? false : noUpdate();
+      return rawErrorHidden === false ? false : noUpdate();
     }
     if (trigger.indexOf("portfolio-add-") !== -1) {
-      return (portfolioOpened === false || portfolioErrorHidden === false) ? false : noUpdate();
+      return portfolioErrorHidden === false ? false : noUpdate();
     }
     if (trigger.indexOf("underlying-add-") !== -1) {
-      return (underlyingOpened === false || underlyingErrorHidden === false) ? false : noUpdate();
+      return underlyingErrorHidden === false ? false : noUpdate();
     }
     if (trigger.indexOf("db-add-") !== -1) {
-      return (dbOpened === false || dbErrorHidden === false) ? false : noUpdate();
+      return dbErrorHidden === false ? false : noUpdate();
     }
     return noUpdate();
   }

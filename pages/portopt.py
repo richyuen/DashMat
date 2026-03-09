@@ -3473,6 +3473,7 @@ def po_clear_server_cache(n_clicks):
     Output("po-db-add-modal", "opened", allow_duplicate=True),
     Output("po-db-add-series-select", "data", allow_duplicate=True),
     Output("po-db-add-series-select", "value", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-from-db", "n_clicks"),
     Input("po-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
@@ -3507,6 +3508,7 @@ def po_close_db_add_modal(n_clicks):
     Output("po-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("po-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("po-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-raw-factor", "n_clicks"),
     Input("po-menu-add-raw-funds", "n_clicks"),
     Input("po-menu-add-raw-performance", "n_clicks"),
@@ -3911,6 +3913,7 @@ def po_validate_db_add_selection(selected_benches, raw_data, opened):
     Output("po-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-portfolios-peer", "n_clicks"),
     Input("po-menu-add-portfolios-index", "n_clicks"),
     Input("po-menu-add-portfolios-other", "n_clicks"),
@@ -3951,6 +3954,7 @@ def po_open_portfolio_add_modal(
     Output("po-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("po-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("po-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-portfolios-underlying", "n_clicks"),
     Input("po-welcome-add-portfolios-underlying-btn", "n_clicks"),
     prevent_initial_call=True,
@@ -4163,6 +4167,29 @@ clientside_callback(
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-menu-add-from-db", "n_clicks"),
+    Input("po-welcome-add-db-btn", "n_clicks"),
+    Input("po-menu-add-raw-factor", "n_clicks"),
+    Input("po-menu-add-raw-funds", "n_clicks"),
+    Input("po-menu-add-raw-performance", "n_clicks"),
+    Input("po-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("po-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("po-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("po-menu-add-portfolios-peer", "n_clicks"),
+    Input("po-menu-add-portfolios-index", "n_clicks"),
+    Input("po-menu-add-portfolios-other", "n_clicks"),
+    Input("po-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("po-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("po-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("po-menu-add-portfolios-underlying", "n_clicks"),
+    Input("po-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("po-open-modal-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-db-add-ok-button", "n_clicks"),
     Input("po-raw-db-add-ok-button", "n_clicks"),
     Input("po-portfolio-add-ok-button", "n_clicks"),
@@ -4174,13 +4201,9 @@ clientside_callback(
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
-    Input("po-db-add-modal", "opened"),
     Input("po-db-add-error-alert", "hide"),
-    Input("po-raw-db-add-modal", "opened"),
     Input("po-raw-db-add-error-alert", "hide"),
-    Input("po-portfolio-add-modal", "opened"),
     Input("po-portfolio-add-error-alert", "hide"),
-    Input("po-underlying-add-modal", "opened"),
     Input("po-underlying-add-error-alert", "hide"),
     Input("po-series-selection-modal", "opened"),
     prevent_initial_call=True,
@@ -6496,7 +6519,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
             current_max_wt or {},
             current_force_max or {},
             *sheet_no,
-            False,  # hide blocker
+            True,  # keep blocker until series-selection grid renders
         )
     except Exception as e:
         return (
@@ -6630,7 +6653,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
             current_max_wt or {},
             current_force_max or {},
             False, None, None, None, None,  # close sheet modal, clear stash, reset upload
-            False,  # hide blocker
+            True,  # keep blocker until series-selection grid renders
         )
     except Exception as e:
         return (
@@ -6760,6 +6783,7 @@ def _po_get_modal_series_state(raw_meta, current_select, current_order, po_origi
     Output("po-temp-max-wt-store", "data", allow_duplicate=True),
     Output("po-temp-force-max-store", "data", allow_duplicate=True),
     Output("po-page-visited-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-url-location", "pathname"),
@@ -6813,6 +6837,7 @@ def po_open_modal(
             current_max_wt,
             current_force_max,
             no_update,
+            True,
         )
 
     if triggered_id != "po-page-load-trigger" or page_load_intervals is None:
@@ -6842,6 +6867,7 @@ def po_open_modal(
             no_update,
             no_update,
             True,
+            no_update,
         )
 
     if not page_visited and not selected_valid:
@@ -6870,6 +6896,7 @@ def po_open_modal(
             no_update,
             no_update,
             True,
+            no_update,
         )
 
     return (
@@ -6885,6 +6912,7 @@ def po_open_modal(
         current_max_wt,
         current_force_max,
         True,
+        True,
     )
 
 
@@ -6895,6 +6923,7 @@ def po_open_modal(
 @callback(
     Output("po-series-selection-container", "children"),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("po-temp-series-select", "data"),
     Input("po-temp-series-order-store", "data"),
@@ -6922,13 +6951,13 @@ def po_update_series_selectors(
     force_max,
 ):
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
     df = json_to_df(raw_data)
     all_series = list(df.columns)
 
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
     if not series_order:
         series_order = list(all_series)
@@ -7143,7 +7172,7 @@ def po_update_series_selectors(
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid], series_order
+    return [grid], series_order, False
 
 
 def _po_latest_series_grid_change(cell_change):

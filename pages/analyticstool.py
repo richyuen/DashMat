@@ -1143,6 +1143,7 @@ def at_toggle_save_session(welcome_style):
     Output("at-db-add-modal", "opened", allow_duplicate=True),
     Output("at-db-add-series-select", "data", allow_duplicate=True),
     Output("at-db-add-series-select", "value", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-from-db", "n_clicks"),
     Input("at-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
@@ -1177,6 +1178,7 @@ def close_db_add_modal(n_clicks):
     Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("at-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-raw-factor", "n_clicks"),
     Input("at-menu-add-raw-funds", "n_clicks"),
     Input("at-menu-add-raw-performance", "n_clicks"),
@@ -1657,6 +1659,7 @@ def validate_db_add_selection(selected_benches, raw_data, opened):
     Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-portfolios-peer", "n_clicks"),
     Input("at-menu-add-portfolios-index", "n_clicks"),
     Input("at-menu-add-portfolios-other", "n_clicks"),
@@ -1697,6 +1700,7 @@ def at_open_portfolio_add_modal(
     Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-portfolios-underlying", "n_clicks"),
     Input("at-welcome-add-portfolios-underlying-btn", "n_clicks"),
     prevent_initial_call=True,
@@ -1909,6 +1913,29 @@ clientside_callback(
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-menu-add-from-db", "n_clicks"),
+    Input("at-welcome-add-db-btn", "n_clicks"),
+    Input("at-menu-add-raw-factor", "n_clicks"),
+    Input("at-menu-add-raw-funds", "n_clicks"),
+    Input("at-menu-add-raw-performance", "n_clicks"),
+    Input("at-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("at-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("at-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("at-menu-add-portfolios-peer", "n_clicks"),
+    Input("at-menu-add-portfolios-index", "n_clicks"),
+    Input("at-menu-add-portfolios-other", "n_clicks"),
+    Input("at-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("at-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("at-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("at-menu-add-portfolios-underlying", "n_clicks"),
+    Input("at-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("at-open-series-modal-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-db-add-ok-button", "n_clicks"),
     Input("at-raw-db-add-ok-button", "n_clicks"),
     Input("at-portfolio-add-ok-button", "n_clicks"),
@@ -1920,13 +1947,9 @@ clientside_callback(
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
-    Input("at-db-add-modal", "opened"),
     Input("at-db-add-error-alert", "hide"),
-    Input("at-raw-db-add-modal", "opened"),
     Input("at-raw-db-add-error-alert", "hide"),
-    Input("at-portfolio-add-modal", "opened"),
     Input("at-portfolio-add-error-alert", "hide"),
-    Input("at-underlying-add-modal", "opened"),
     Input("at-underlying-add-error-alert", "hide"),
     Input("at-series-selection-modal", "opened"),
     prevent_initial_call=True,
@@ -3935,6 +3958,7 @@ def _at_get_series_page_state(raw_meta, current_select, current_order, po_origin
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
     Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-page-visited-store", "data", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
     Input("at-page-load-trigger", "n_intervals"),
     State("at-url-location", "pathname"),
@@ -3975,6 +3999,7 @@ def open_modal(
             [],
             current_vol_scaling,
             no_update,
+            True,
         )
 
     if triggered_id != "at-page-load-trigger" or page_load_intervals is None:
@@ -4000,6 +4025,7 @@ def open_modal(
             no_update,
             no_update,
             True,
+            no_update,
         )
 
     should_open = False
@@ -4023,6 +4049,7 @@ def open_modal(
             no_update,
             no_update,
             True,
+            no_update,
         )
 
     return (
@@ -4033,6 +4060,7 @@ def open_modal(
         current_order,
         [],
         current_vol_scaling,
+        True,
         True,
     )
 
@@ -6200,7 +6228,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             new_first_load,
             [], # Reset deleted series
             current_vol_scaling or {},
-            False, # Hide blocker
+            True, # Keep blocker until series-selection grid renders
             *sheet_no,
         )
 
@@ -6346,7 +6374,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             new_first_load,
             [],
             current_vol_scaling or {},
-            False,  # Hide blocker
+            True,  # Keep blocker until series-selection grid renders
             False, None, None, None, None,  # Close sheet modal, clear stash, reset upload
         )
 
@@ -6445,6 +6473,7 @@ clientside_callback(
 @callback(
     Output("at-series-selection-container", "children"),
     Output("at-temp-series-order-store", "data", allow_duplicate=True),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("at-temp-series-select", "data"),
     Input("at-temp-series-order-store", "data"),
@@ -6465,12 +6494,12 @@ def update_series_selectors(
 ):
     """Render Select Series as a single AG Grid with in-grid controls."""
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
     df = json_to_df(raw_data)
     all_series = list(df.columns)
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
     if not series_order:
         series_order = list(all_series)
@@ -6614,7 +6643,7 @@ def update_series_selectors(
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid], series_order
+    return [grid], series_order, False
 
 
 @callback(

@@ -712,7 +712,7 @@ def test_reg_handle_sheet_select_import_all_releases_blocker_and_clears_stash(mo
     assert result[4] is False
     assert result[5] is None
     assert result[8] is None
-    assert result[9] is False
+    assert result[9] is True
 
 
 def test_reg_handle_sheet_select_error_keeps_modal_open_and_releases_blocker(monkeypatch, regression_page):
@@ -777,6 +777,7 @@ def test_reg_open_modal_page_load_selects_all_x_when_no_x_selected(monkeypatch, 
     assert result[1] == list(sample_returns_df.columns)
     assert result[7] is None
     assert result[12] is True
+    assert result[13] is True
 
 
 def test_reg_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypatch, regression_page, raw_json):
@@ -808,6 +809,7 @@ def test_reg_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeyp
     assert result[1] == ["Asset_A", "Asset_B"]
     assert result[7] is None
     assert result[12] is True
+    assert result[13] is True
 
 
 def test_reg_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch, regression_page):
@@ -836,6 +838,7 @@ def test_reg_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch
 
     assert result[0] is no_update
     assert result[12] is True
+    assert result[13] is no_update
 
 
 def test_reg_open_modal_page_load_adds_only_generic_new_x_without_resetting_y(monkeypatch, regression_page, raw_json):
@@ -864,6 +867,7 @@ def test_reg_open_modal_page_load_adds_only_generic_new_x_without_resetting_y(mo
     assert result[1] == ["Asset_A", "Asset_D"]
     assert result[7] == "Asset_B"
     assert result[12] is True
+    assert result[13] is True
 
 
 def test_reg_open_modal_ignores_po_only_series_on_revisit(monkeypatch, regression_page, raw_json):
@@ -890,6 +894,18 @@ def test_reg_open_modal_ignores_po_only_series_on_revisit(monkeypatch, regressio
 
     assert result[0] is no_update
     assert result[12] is True
+    assert result[13] is no_update
+
+
+def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'Input("reg-menu-add-from-db", "n_clicks")' in page_text
+    assert 'Input("reg-open-modal-button", "n_clicks")' in page_text
+    assert 'Output("reg-series-selection-container", "children")' in page_text
+    assert 'Output("reg-ui-blocker-store", "data", allow_duplicate=True)' in page_text
+    assert 'if (trigger.indexOf("series-selection-modal") !== -1) {' in js_text
 
 
 def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):
@@ -910,7 +926,7 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
     idx = pd.date_range("2024-01-01", periods=3, freq="B")
     raw = df_to_json(pd.DataFrame({"A": [0.01, 0.0, -0.01], "B": [0.0, 0.01, 0.02]}, index=idx))
 
-    children, _order = regression_page.reg_update_series_grid(
+    children, _order, blocker = regression_page.reg_update_series_grid(
         raw,
         ["A"],
         ["A", "B"],
@@ -924,6 +940,7 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
         {},
         {},
     )
+    assert blocker is False
 
     grid = children[0]
     opts = getattr(grid, "dashGridOptions", {}) or {}

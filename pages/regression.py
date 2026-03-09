@@ -1820,6 +1820,29 @@ clientside_callback(
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-menu-add-from-db", "n_clicks"),
+    Input("reg-welcome-add-db-btn", "n_clicks"),
+    Input("reg-menu-add-raw-factor", "n_clicks"),
+    Input("reg-menu-add-raw-funds", "n_clicks"),
+    Input("reg-menu-add-raw-performance", "n_clicks"),
+    Input("reg-welcome-add-raw-factor-btn", "n_clicks"),
+    Input("reg-welcome-add-raw-funds-btn", "n_clicks"),
+    Input("reg-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("reg-menu-add-portfolios-peer", "n_clicks"),
+    Input("reg-menu-add-portfolios-index", "n_clicks"),
+    Input("reg-menu-add-portfolios-other", "n_clicks"),
+    Input("reg-welcome-add-portfolios-peer-btn", "n_clicks"),
+    Input("reg-welcome-add-portfolios-index-btn", "n_clicks"),
+    Input("reg-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("reg-menu-add-portfolios-underlying", "n_clicks"),
+    Input("reg-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("reg-open-modal-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-db-add-ok-button", "n_clicks"),
     Input("reg-raw-db-add-ok-button", "n_clicks"),
     Input("reg-portfolio-add-ok-button", "n_clicks"),
@@ -1831,13 +1854,9 @@ clientside_callback(
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
-    Input("reg-db-add-modal", "opened"),
     Input("reg-db-add-error-alert", "hide"),
-    Input("reg-raw-db-add-modal", "opened"),
     Input("reg-raw-db-add-error-alert", "hide"),
-    Input("reg-portfolio-add-modal", "opened"),
     Input("reg-portfolio-add-error-alert", "hide"),
-    Input("reg-underlying-add-modal", "opened"),
     Input("reg-underlying-add-error-alert", "hide"),
     Input("reg-series-selection-modal", "opened"),
     prevent_initial_call=True,
@@ -1999,6 +2018,7 @@ def reg_clear_server_cache(n_clicks):
     Output("reg-db-add-modal", "opened", allow_duplicate=True),
     Output("reg-db-add-series-select", "data", allow_duplicate=True),
     Output("reg-db-add-series-select", "value", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-from-db", "n_clicks"),
     Input("reg-welcome-add-db-btn", "n_clicks"),
     prevent_initial_call=True,
@@ -2119,6 +2139,7 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
     Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
     Output("reg-raw-db-add-ok-button", "disabled", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-raw-factor", "n_clicks"),
     Input("reg-menu-add-raw-funds", "n_clicks"),
     Input("reg-menu-add-raw-performance", "n_clicks"),
@@ -2511,6 +2532,7 @@ def reg_update_raw_db_preview(
     Output("reg-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-peer", "n_clicks"),
     Input("reg-menu-add-portfolios-index", "n_clicks"),
     Input("reg-menu-add-portfolios-other", "n_clicks"),
@@ -2551,6 +2573,7 @@ def reg_open_portfolio_add_modal(
     Output("reg-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("reg-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("reg-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-portfolios-underlying", "n_clicks"),
     Input("reg-welcome-add-portfolios-underlying-btn", "n_clicks"),
     prevent_initial_call=True,
@@ -3078,7 +3101,7 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
-            False,
+            True,
         )
     except Exception:
         return (
@@ -3159,7 +3182,7 @@ def reg_handle_sheet_select_ok(
             None,
             None,
             None,
-            False,
+            True,
         )
     except Exception:
         workbook_sheets = stashed_sheet_names or get_sheet_names(contents, filename)
@@ -3312,6 +3335,7 @@ def _reg_get_modal_series_state(raw_meta, current_x, current_order, dep_var, po_
     Output("reg-temp-max-beta-store", "data", allow_duplicate=True),
     Output("reg-temp-enable-constraint-store", "data", allow_duplicate=True),
     Output("reg-page-visited-store", "data", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-meta-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
@@ -3382,6 +3406,7 @@ def reg_open_modal(n_clicks, raw_meta, page_load_intervals, pathname, sel, order
                 no_update,
                 no_update,
                 True,
+                no_update,
             )
         else:
             raise PreventUpdate
@@ -3401,14 +3426,16 @@ def reg_open_modal(n_clicks, raw_meta, page_load_intervals, pathname, sel, order
                 no_update,
                 no_update,
                 True,
+                no_update,
             )
 
     if not should_open:
         raise PreventUpdate
 
-    return (True, temp_x, order or [], [], 
+    return (True, temp_x, order or [], [],
             bench or {}, ls or {}, vol_scale or {},
-            dep_var, lag or {}, min_beta or {}, max_beta or {}, enable or {}, no_update if triggered_id != "reg-page-load-trigger" else True)
+            dep_var, lag or {}, min_beta or {}, max_beta or {}, enable or {},
+            no_update if triggered_id != "reg-page-load-trigger" else True, True)
 
 
 # ---------------------------------------------------------------------------
@@ -3418,6 +3445,7 @@ def reg_open_modal(n_clicks, raw_meta, page_load_intervals, pathname, sel, order
 @callback(
     Output("reg-series-selection-container", "children"),
     Output("reg-temp-series-order-store", "data", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-temp-series-select", "data"),
     Input("reg-temp-series-order-store", "data"),
@@ -3436,11 +3464,11 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
                             bench_assign, ls_assign, vol_assign,
                             dep_var, lag_assign, min_b_assign, max_b_assign, enable_assign):
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
     df = json_to_df(raw_data)
     all_series = list(df.columns)
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], []
+        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
     if not series_order:
         series_order = list(all_series)
     else:
@@ -3541,7 +3569,7 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
         },
         style={"height": "400px"},
     )
-    return [grid], series_order
+    return [grid], series_order, False
 
 
 # ---------------------------------------------------------------------------

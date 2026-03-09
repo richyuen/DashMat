@@ -148,6 +148,7 @@ def test_po_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, pa
     assert result[0] is True
     assert result[1] == list(sample_returns_df.columns)
     assert result[11] is True
+    assert result[12] is True
 
 
 def test_po_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules, raw_json):
@@ -174,6 +175,7 @@ def test_po_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modul
 
     assert result[0] is no_update
     assert result[11] is True
+    assert result[12] is no_update
 
 
 def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypatch, page_modules, raw_json):
@@ -201,6 +203,7 @@ def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypat
     assert result[0] is True
     assert result[1] == ["Asset_A", "Asset_D"]
     assert result[11] is True
+    assert result[12] is True
 
 
 def test_po_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypatch, page_modules, raw_json):
@@ -231,6 +234,7 @@ def test_po_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypa
     assert result[0] is True
     assert result[1] == ["Asset_A", "Asset_B"]
     assert result[11] is True
+    assert result[12] is True
 
 
 def test_po_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch, page_modules):
@@ -259,6 +263,7 @@ def test_po_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch,
 
     assert result[0] is no_update
     assert result[11] is True
+    assert result[12] is no_update
 
 
 def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
@@ -1779,10 +1784,20 @@ def test_po_ui_blocker_release_uses_db_error_alert():
     assert 'Input("po-db-add-error-alert", "hide")' in text_blob
 
 
-def test_ui_blocker_release_clears_on_series_selection_modal_change():
+def test_ui_blocker_release_only_clears_on_series_selection_modal_close():
     text_blob = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert 'if (trigger.indexOf("series-selection-modal") !== -1) {' in text_blob
-    assert "return false;" in text_blob
+    assert "return seriesSelectionOpened === false ? false : noUpdate();" in text_blob
+    assert "function uiBlockerRelease(dbErrorHidden, rawErrorHidden, portfolioErrorHidden, underlyingErrorHidden, seriesSelectionOpened)" in text_blob
+
+
+def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+
+    assert 'Input("po-menu-add-from-db", "n_clicks")' in page_text
+    assert 'Input("po-open-modal-button", "n_clicks")' in page_text
+    assert 'Output("po-ui-blocker-store", "data", allow_duplicate=True)' in page_text
+    assert 'Output("po-series-selection-container", "children")' in page_text
 
 
 def test_po_session_actions_use_shared_workspace_helpers():
