@@ -72,7 +72,8 @@ Portfolio import rules:
 ## Performance Learnings
 
 - Warm-switch performance must be judged with a browser timing pass, not just unit tests or callback-level reasoning.
-- Current practical harness: load `/analyticstool`, upload `sample_data/benchmark_returns/benchmark_daily_returns_2020_2025.xlsx`, warm `/portopt` and `/regression`, then measure warm revisits.
+- Current practical harness: load `/analyticstool`, import AA Tool database series, confirm the series-selection modal, warm `/portopt` and `/regression`, then measure warm revisits.
+- Default warm-up series should use actual DB option keys such as `SPX_TRIndex`, `R2000_TRIndex`, `EAFE_TRIndex`, and `BCTBill13_TRIndex`, not display shorthand like `SPX`.
 - Track at least:
   - `shellMs`: main container visible
   - `readyMs`: periodicity control visible and enabled
@@ -85,8 +86,12 @@ Portfolio import rules:
 ## Windows and Tooling Learnings
 
 - On Windows, very large `apply_patch` payloads can fail with shell or path-length style errors. Split large doc rewrites or multi-file edits into smaller per-file patches.
-- `playwright-cli run-code` is fragile on Windows when given multiline JavaScript. Flatten the JS payload to a single line before invoking the CLI.
+- Prefer Python Playwright over `playwright-cli run-code` for nontrivial browser automation on Windows. The CLI JS path runs into command-line length and quoting limits quickly.
+- Prefer real script files over `conda run ... python -c` for anything more than a short one-liner. Multiline or heavily quoted `-c` payloads are brittle.
+- In PowerShell, `Start-Process` with `python -c` is easy to misquote. Use a script file when possible, or pass the full `-c "..."` payload as one argument string.
 - For browser file uploads in Playwright, prefer normalized forward-slash paths such as `C:/Git/DashMat/...` when passing paths into browser-side code.
 - Keep Playwright runtime artifacts out of commits. `.playwright-cli/` and `output/` are local runtime outputs unless a specific artifact is intentionally being checked in.
 - If you need to compare two commits side by side, run the app on separate ports instead of editing `app.py`. A reliable pattern is `conda run -n dashmat python -c "import app; app.app.run(port=8051)"`.
+- Fresh git worktrees may have missing or zero-byte SQLite files under `data/`. Validate or rebuild the local seed DBs before starting DB-backed browser runs.
+- For side-by-side A/B comparisons, be explicit about which repo root owns the app process, DB files, and output artifacts. Launch the app after that repo root's seed DBs are valid.
 - The warm-switch harness currently accepts runs that may include browser console callback errors. Treat single-run results cautiously and prefer repeated A/B runs before concluding that a small regression is real.
