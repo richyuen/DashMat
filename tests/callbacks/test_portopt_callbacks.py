@@ -1839,6 +1839,7 @@ def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules,
 
     children, _order, blocker = portopt.po_update_series_selectors(
         raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
         ["Asset_A"],
         ["Asset_A", "Asset_B"],
         [],
@@ -1853,6 +1854,82 @@ def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules,
 
     assert blocker is no_update
     assert getattr(children[0], "id", None) == "po-series-selection-grid"
+
+
+def test_po_series_selection_grid_uses_raw_meta_columns_without_parsing_json(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+
+    monkeypatch.setattr(portopt, "json_to_df", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not parse raw json")))
+
+    children, order, blocker = portopt.po_update_series_selectors(
+        raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        [],
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+    )
+
+    assert order == ["Asset_A", "Asset_B"]
+    assert blocker is no_update
+    assert getattr(children[0], "id", None) == "po-series-selection-grid"
+
+
+def test_po_series_selection_grid_only_fetches_missing_cma_defaults_for_selected_series(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    calls = []
+
+    monkeypatch.setattr(portopt, "_po_cached_cmabench_defaults", lambda key: calls.append(key) or {"Asset_A": "Bench_A"})
+
+    children, _order, _blocker = portopt.po_update_series_selectors(
+        raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        [],
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+    )
+
+    assert calls == [("Asset_A",)]
+    assert getattr(children[0], "id", None) == "po-series-selection-grid"
+
+
+def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    calls = []
+
+    monkeypatch.setattr(portopt, "_po_cached_cmabench_defaults", lambda key: calls.append(key) or {"Asset_A": "Bench_A"})
+
+    result = portopt.po_on_modal_ok(
+        1,
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        ["Asset_A", "Asset_B"],
+        [],
+        raw_json,
+        {},
+        {},
+        {},
+        {},
+        {},
+    )
+
+    assert calls == [("Asset_A",)]
+    assert result[2]["Asset_A"] == "Bench_A"
 
 
 def test_po_session_actions_use_shared_workspace_helpers():

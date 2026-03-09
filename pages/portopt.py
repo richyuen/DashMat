@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from io import BytesIO, StringIO
+from functools import lru_cache
 import json
 
 import dash_ag_grid as dag
@@ -1918,6 +1919,27 @@ def _effective_cmabench_assignments(selected_series: list[str] | None, cmabench_
     if missing:
         effective.update(get_cmabench_map_for_fofbench(DB_ENGINE, missing))
     return effective
+
+
+@lru_cache(maxsize=128)
+def _po_cached_cmabench_defaults(missing_series_key: tuple[str, ...]) -> dict[str, str]:
+    if not missing_series_key:
+        return {}
+    return get_cmabench_map_for_fofbench(DB_ENGINE, list(missing_series_key)) or {}
+
+
+def _po_resolve_cmabench_defaults(series_names, current_cmabench_assignments) -> dict[str, str]:
+    assignments = current_cmabench_assignments or {}
+    missing = sorted(
+        {
+            str(series).strip()
+            for series in (series_names or [])
+            if isinstance(series, str) and series.strip() and not str(assignments.get(series, "")).strip()
+        }
+    )
+    if not missing:
+        return {}
+    return dict(_po_cached_cmabench_defaults(tuple(missing)))
 
 
 # ---------------------------------------------------------------------------
@@ -7059,6 +7081,7 @@ def po_open_modal(
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("po-temp-series-select", "data"),
     Input("po-temp-series-order-store", "data"),
     Input("po-temp-deleted-series-store", "data"),
@@ -7073,6 +7096,7 @@ def po_open_modal(
 )
 def po_update_series_selectors(
     raw_data,
+    raw_meta,
     selected_series,
     series_order,
     deleted_series,
@@ -7087,8 +7111,10 @@ def po_update_series_selectors(
     if raw_data is None:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
-    df = json_to_df(raw_data)
-    all_series = list(df.columns)
+    all_series = list((raw_meta or {}).get("columns") or [])
+    if not all_series:
+        df = json_to_df(raw_data)
+        all_series = list(df.columns)
 
     if not all_series:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
@@ -7110,12 +7136,7 @@ def po_update_series_selectors(
     min_wt = min_wt or {}
     max_wt = max_wt or {}
     force_max = force_max or {}
-    missing_cmabench = [s for s in all_series if not str(current_cmabench_assignments.get(s, "")).strip()]
-    core_cmabench_defaults = (
-        get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)
-        if missing_cmabench
-        else {}
-    )
+    core_cmabench_defaults = _po_resolve_cmabench_defaults(selected_set, current_cmabench_assignments)
 
     benchmark_values = ["None"] + list(all_series)
     cmabench_values = get_unique_cmabench_values_cached(DB_ENGINE)
@@ -7773,14 +7794,11 @@ def po_on_modal_ok(
         temp_select = [s for s in temp_order if s in selected_set]
 
     temp_cmabench = temp_cmabench or {}
-    series_for_defaults = temp_order if temp_order else temp_select
-    missing_cmabench = [s for s in series_for_defaults if not str(temp_cmabench.get(s, "")).strip()]
-    if missing_cmabench:
-        defaults = get_cmabench_map_for_fofbench(DB_ENGINE, missing_cmabench)
-        for s in missing_cmabench:
-            mapped = defaults.get(s)
-            if mapped:
-                temp_cmabench[s] = mapped
+    defaults = _po_resolve_cmabench_defaults(temp_select, temp_cmabench)
+    for series in temp_select:
+        mapped = defaults.get(series)
+        if mapped and not str(temp_cmabench.get(series, "")).strip():
+            temp_cmabench[series] = mapped
 
     updated_raw_data = raw_data
     updated_results = no_update
