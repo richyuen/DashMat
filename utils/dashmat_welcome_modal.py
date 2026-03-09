@@ -435,7 +435,14 @@ def build_db_add_modal(prefix: str):
                 clearSearchOnChange=False,
                 placeholder="Select one or more series",
                 nothingFoundMessage="No categories found",
-                maxDropdownHeight=480,
+                maxDropdownHeight=280,
+                comboboxProps={
+                    "position": "top",
+                    "middlewares": {
+                        "flip": False,
+                        "shift": True,
+                    },
+                },
                 w="100%",
             ),
             dmc.Group(
