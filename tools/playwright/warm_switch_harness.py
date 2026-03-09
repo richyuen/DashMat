@@ -288,14 +288,73 @@ def measure(page, cfg: dict[str, str]) -> dict[str, int]:
 
 
 def set_component_value(page, component_id: str, value) -> None:
+    set_component_props(page, component_id, {"value": value})
+
+
+def set_component_props(page, component_id: str, props: dict) -> None:
     page.evaluate(
         """
-        ([componentId, nextValue]) => {
-          window.dash_clientside.set_props(componentId, { value: nextValue });
+        ([componentId, nextProps]) => {
+          window.dash_clientside.set_props(componentId, nextProps);
         }
         """,
-        [component_id, value],
+        [component_id, props],
     )
+
+
+def wait_plotly_content(page, container_selector: str, timeout: int = 30000) -> None:
+    wait_visible(page, container_selector, timeout=timeout)
+    page.wait_for_function(
+        """
+        (sel) => {
+          const root = document.querySelector(sel);
+          if (!root) return false;
+          const plot = root.matches(".js-plotly-plot") ? root : root.querySelector(".js-plotly-plot");
+          if (!plot) return false;
+          const style = window.getComputedStyle(plot);
+          const rect = plot.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        }
+        """,
+        arg=container_selector,
+        timeout=timeout,
+    )
+
+
+def resolve_portopt_series(db_series: list[str]) -> list[str]:
+    preferred = [series for series in db_series if "BCTBill13" not in series]
+    selected = preferred[:3]
+    if len(selected) >= 2:
+        return selected
+    return db_series[: min(len(db_series), 3)]
+
+
+def warm_portopt_results(page, base_url: str, db_series: list[str]) -> None:
+    page.goto(base_url + "/portopt", wait_until="domcontentloaded")
+    wait_visible(page, "#po-main-container")
+    wait_ready(page, "#po-periodicity-select")
+    opt_series = resolve_portopt_series(db_series)
+    if len(opt_series) < 2:
+        raise RuntimeError(f"Need at least 2 series for PortOpt harness solve, got: {opt_series}")
+
+    if page.locator("#po-modal-ok-button").is_visible():
+        set_component_props(page, "po-temp-series-select", {"data": opt_series})
+        page.locator("#po-modal-ok-button").click()
+        page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
+
+    set_component_props(page, "po-series-select", {"data": opt_series})
+    set_component_props(page, "po-series-select-value-store", {"data": opt_series})
+    wait_ready(page, "#po-run-button")
+    page.locator("#po-run-button").click()
+    page.wait_for_selector("#po-close-completion-button", state="visible", timeout=120000)
+    completion_text = page.locator("#po-completion-text").inner_text(timeout=5000)
+    if "created successfully" not in completion_text.lower():
+        raise RuntimeError(f"PortOpt harness solve failed: {completion_text}")
+    page.locator("#po-close-completion-button").click()
+    page.wait_for_selector("#po-close-completion-button", state="hidden", timeout=30000)
+    set_component_value(page, "po-vis-tabs", "weight")
+    set_component_value(page, "po-weight-chart-switch", "chart")
+    wait_plotly_content(page, "#po-weight-chart-content", timeout=60000)
 
 
 def select_portopt_tab_and_measure(page, tab_value: str, content_selector: str, switch_id: str | None = None) -> int:
@@ -303,7 +362,7 @@ def select_portopt_tab_and_measure(page, tab_value: str, content_selector: str, 
     set_component_value(page, "po-vis-tabs", tab_value)
     if switch_id:
         set_component_value(page, switch_id, "chart")
-    wait_visible(page, content_selector)
+    wait_plotly_content(page, content_selector)
     return round((time.perf_counter() - start) * 1000)
 
 
@@ -321,23 +380,27 @@ def measure_portopt(page, cfg: dict[str, str]) -> dict[str, int]:
     ready_ms = round((time.perf_counter() - start) * 1000)
 
     set_component_value(page, "po-vis-tabs", "weight")
-    wait_visible(page, "#po-vis-tabs-panel-weight #po-weight-chart-switch")
+    set_component_value(page, "po-weight-chart-switch", "chart")
+    wait_plotly_content(page, "#po-weight-chart-content")
     weights_ready_ms = round((time.perf_counter() - start) * 1000)
 
     frontier_open_ms = select_portopt_tab_and_measure(
         page,
         "frontier",
-        "#po-vis-tabs-panel-frontier #po-frontier-window-select",
+        "#po-frontier-chart-container",
+        "po-frontier-chart-switch",
     )
     risk_open_ms = select_portopt_tab_and_measure(
         page,
         "risk",
-        "#po-vis-tabs-panel-risk #po-risk-chart-switch",
+        "#po-risk-chart-container",
+        "po-risk-chart-switch",
     )
     attribution_open_ms = select_portopt_tab_and_measure(
         page,
         "attribution",
-        "#po-vis-tabs-panel-attribution #po-attribution-chart-switch",
+        "#po-attribution-chart-container",
+        "po-attribution-chart-switch",
     )
 
     return {
@@ -376,6 +439,7 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
         page.on("pageerror", on_page_error)
 
         renderer_mode = warm_analytics_db(page, base_url, db_series)
+        warm_portopt_results(page, base_url, db_series)
         measure(page, pages["portopt"])
         measure(page, pages["regression"])
 
@@ -420,7 +484,7 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
         "baseUrl": base_url,
         "dbSeries": db_series,
         "runs": runs,
-        "warmupFlow": "analyticstool-aa-db-import+series-selection-confirm",
+        "warmupFlow": "analyticstool-aa-db-import+series-selection-confirm+portopt-risk-parity-solve",
         "rendererMode": renderer_mode,
         "results": results,
         "consoleMessages": console_messages,
