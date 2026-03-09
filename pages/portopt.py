@@ -624,6 +624,152 @@ def _compute_window_risk_contributions(
     return rows
 
 
+@cache_config.cache.memoize(timeout=0)
+def _po_compute_monthly_attribution_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple[str, ...],
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    window_weights_payload: str,
+) -> str | None:
+    if not raw_data or not selected_series or not window_weights_payload:
+        return None
+    try:
+        window_weights = json.loads(window_weights_payload)
+    except Exception:
+        return None
+    working_df = get_working_returns(
+        raw_data,
+        periodicity or "daily",
+        tuple(selected_series),
+        benchmark_payload,
+        long_short_payload,
+        date_range_payload,
+        vol_scaler,
+        vol_scaling_payload,
+    )
+    attribution_df = _compute_monthly_attribution(working_df, selected_series, window_weights)
+    if attribution_df.empty:
+        return None
+    return df_to_json(attribution_df)
+
+
+def _po_get_monthly_attribution(
+    bundle: _PoWorkingReturnsBundle,
+    selected_series,
+    window_weights,
+) -> pd.DataFrame:
+    series_tuple = tuple(selected_series or ())
+    payload = _po_compute_monthly_attribution_cached(
+        bundle.raw_data,
+        bundle.periodicity,
+        series_tuple,
+        bundle.benchmark_payload,
+        bundle.long_short_payload,
+        bundle.date_range_payload,
+        bundle.vol_scaler,
+        bundle.vol_scaling_payload,
+        canonical_json_dumps(window_weights or []),
+    )
+    if not payload:
+        return pd.DataFrame()
+    try:
+        return json_to_df(payload)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _serialize_risk_rows(rows) -> str:
+    serialized = []
+    for row in rows or ():
+        serialized.append(
+            {
+                "apply_start": pd.Timestamp(row["apply_start"]).strftime("%Y-%m-%d"),
+                "apply_end": pd.Timestamp(row["apply_end"]).strftime("%Y-%m-%d"),
+                "risk_contributions": row.get("risk_contributions", {}) or {},
+            }
+        )
+    return canonical_json_dumps(serialized)
+
+
+def _deserialize_risk_rows(payload: str):
+    if not payload:
+        return []
+    try:
+        rows = json.loads(payload)
+    except Exception:
+        return []
+    hydrated = []
+    for row in rows or ():
+        hydrated.append(
+            {
+                "apply_start": pd.Timestamp(row.get("apply_start")),
+                "apply_end": pd.Timestamp(row.get("apply_end")),
+                "risk_contributions": row.get("risk_contributions", {}) or {},
+            }
+        )
+    return hydrated
+
+
+@cache_config.cache.memoize(timeout=0)
+def _po_compute_window_risk_contributions_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple[str, ...],
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    window_weights_payload: str,
+    config_payload: str,
+) -> str:
+    if not raw_data or not selected_series or not window_weights_payload:
+        return "[]"
+    try:
+        window_weights = json.loads(window_weights_payload)
+        config = json.loads(config_payload) if config_payload else {}
+    except Exception:
+        return "[]"
+    working_df = get_working_returns(
+        raw_data,
+        periodicity or "daily",
+        tuple(selected_series),
+        benchmark_payload,
+        long_short_payload,
+        date_range_payload,
+        vol_scaler,
+        vol_scaling_payload,
+    )
+    rows = _compute_window_risk_contributions(working_df, selected_series, window_weights, config)
+    return _serialize_risk_rows(rows)
+
+
+def _po_get_window_risk_contributions(
+    bundle: _PoWorkingReturnsBundle,
+    selected_series,
+    window_weights,
+    config=None,
+):
+    payload = _po_compute_window_risk_contributions_cached(
+        bundle.raw_data,
+        bundle.periodicity,
+        tuple(selected_series or ()),
+        bundle.benchmark_payload,
+        bundle.long_short_payload,
+        bundle.date_range_payload,
+        bundle.vol_scaler,
+        bundle.vol_scaling_payload,
+        canonical_json_dumps(window_weights or []),
+        canonical_json_dumps(config or {}),
+    )
+    return _deserialize_risk_rows(payload)
+
+
 def _periodicity_defaults(periodicity):
     """Return (window_size, opt_step_periods, opt_step_months, halflife) defaults."""
     if periodicity and periodicity.startswith("weekly"):
@@ -2526,14 +2672,12 @@ def build_po_main_layout():
                             html.Div(
                                 id="po-turnover-chart-container",
                                 style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[html.Div(id="po-turnover-chart-content")],
+                                children=[],
                             ),
                             html.Div(
                                 id="po-turnover-grid-container",
                                 style={"display": "none"},
-                                children=[
-                                    html.Div(id="po-turnover-grid-content", style={"height": "100%", "width": "100%"}),
-                                ],
+                                children=[],
                             ),
                         ],
                     ),
@@ -8297,7 +8441,6 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_growth_chart(
@@ -8313,9 +8456,8 @@ def po_render_growth_chart(
     vol_scaler,
     vol_scaling,
     theme,
-    initial_tab_ready=True,
 ):
-    if not _po_tab_render_ready(active_tab, "growth", initial_tab_ready) or not selected_portfolio or not results:
+    if active_tab != "growth" or not selected_portfolio or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -8421,7 +8563,6 @@ def po_toggle_rolling_return_type(metric):
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_rolling(
@@ -8440,9 +8581,8 @@ def po_render_rolling(
     vol_scaler,
     vol_scaling,
     theme,
-    initial_tab_ready=True,
 ):
-    if not _po_tab_render_ready(active_tab, "rolling", initial_tab_ready) or not results:
+    if active_tab != "rolling" or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -8575,7 +8715,6 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_calendar(
@@ -8591,9 +8730,8 @@ def po_render_calendar(
     date_range,
     vol_scaler,
     vol_scaling,
-    initial_tab_ready=True,
 ):
-    if not _po_tab_render_ready(active_tab, "calendar", initial_tab_ready) or not results:
+    if active_tab != "calendar" or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -8706,7 +8844,6 @@ def po_render_calendar(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_drawdown(
@@ -8722,9 +8859,8 @@ def po_render_drawdown(
     vol_scaler,
     vol_scaling,
     theme,
-    initial_tab_ready=True,
 ):
-    if not _po_tab_render_ready(active_tab, "drawdown", initial_tab_ready) or not results:
+    if active_tab != "drawdown" or not results:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
@@ -8858,8 +8994,7 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, tab_loa
         working_bundle = _build_po_working_bundle(
             raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
         )
-        working_df = _po_get_working_returns(working_bundle, opt_series)
-        attribution_monthly = _compute_monthly_attribution(working_df, opt_series, window_weights)
+        attribution_monthly = _po_get_monthly_attribution(working_bundle, opt_series, window_weights)
 
         if attribution_monthly.empty:
             return dmc.Text("No attribution data available.", c="dimmed")
@@ -8990,8 +9125,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, tab_loa
             working_bundle = _build_po_working_bundle(
                 raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
             )
-            working_df = _po_get_working_returns(working_bundle, opt_series)
-            attribution_monthly = _compute_monthly_attribution(working_df, opt_series, window_weights)
+            attribution_monthly = _po_get_monthly_attribution(working_bundle, opt_series, window_weights)
 
             if attribution_monthly.empty:
                 return html.Div()
@@ -9046,7 +9180,6 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, tab_loa
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_statistics(
@@ -9061,9 +9194,8 @@ def po_render_statistics(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
-    initial_tab_ready=True,
 ):
-    if not _po_tab_render_ready(active_tab, "statistics", initial_tab_ready) or not results:
+    if active_tab != "statistics" or not results:
         return html.Div()
 
     try:
@@ -9154,7 +9286,6 @@ def po_render_statistics(
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def po_render_returns(
@@ -9168,9 +9299,8 @@ def po_render_returns(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
-    initial_tab_ready=True,
 ):
-    if not _po_tab_render_ready(active_tab, "returns", initial_tab_ready) or not results:
+    if active_tab != "returns" or not results:
         return html.Div()
 
     try:
@@ -9542,11 +9672,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 if working_df is None:
                     working_df = _po_get_working_returns(working_bundle, series_key)
                     working_df_cache[series_key] = working_df
-                if working_df.empty:
-                    continue
-
-                attribution_monthly = _compute_monthly_attribution(
-                    working_df,
+                attribution_monthly = _po_get_monthly_attribution(
+                    working_bundle,
                     opt_series,
                     window_weights,
                 )
@@ -9582,15 +9709,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
             if not window_weights or not opt_series or not raw_data:
                 continue
 
-            series_key = tuple(opt_series)
-            working_df = working_df_cache.get(series_key)
-            if working_df is None:
-                working_df = _po_get_working_returns(working_bundle, series_key)
-                working_df_cache[series_key] = working_df
-            if working_df.empty:
-                continue
-
-            for rr in _compute_window_risk_contributions(working_df, opt_series, window_weights, config):
+            for rr in _po_get_window_risk_contributions(working_bundle, opt_series, window_weights, config):
                 row = {
                     "Portfolio": pname,
                     "Window Start": format_mdy_date(rr["apply_start"]),
@@ -9764,9 +9883,7 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, tab_loaded, sw
         working_bundle = _build_po_working_bundle(
             raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
         )
-        working_df = _po_get_working_returns(working_bundle, opt_series)
-
-        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights, config)
+        risk_rows = _po_get_window_risk_contributions(working_bundle, opt_series, window_weights, config)
         if not risk_rows:
             return dmc.Text("No risk data available.", c="dimmed")
 
@@ -9851,8 +9968,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, tab_loaded, sw
         working_bundle = _build_po_working_bundle(
             raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
         )
-        working_df = _po_get_working_returns(working_bundle, opt_series)
-        risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights, config)
+        risk_rows = _po_get_window_risk_contributions(working_bundle, opt_series, window_weights, config)
         if not risk_rows:
             return html.Div()
 
@@ -9893,17 +10009,16 @@ def po_render_risk_table(selected_portfolio, results, active_tab, tab_loaded, sw
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-turnover-chart-content", "children"),
+    Output("po-turnover-chart-container", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme, initial_tab_ready=True):
-    if not _po_tab_render_ready(active_tab, "turnover", initial_tab_ready) or switch_value != "chart" or not selected_portfolio or not results:
+def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
+    if active_tab != "turnover" or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -9951,16 +10066,15 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-turnover-grid-content", "children"),
+    Output("po-turnover-grid-container", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-turnover-chart-switch", "value"),
-    Input("po-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value, initial_tab_ready=True):
-    if not _po_tab_render_ready(active_tab, "turnover", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
+def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value):
+    if active_tab != "turnover" or switch_value != "table" or not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()

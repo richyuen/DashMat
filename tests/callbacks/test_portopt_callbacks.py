@@ -295,6 +295,11 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-risk-grid-container", "children")' in page_text
     assert 'po-risk-chart-content' not in page_text
     assert 'po-risk-grid-content' not in page_text
+    assert 'Output("po-turnover-chart-container", "children")' in page_text
+    assert 'Output("po-turnover-grid-container", "children")' in page_text
+    assert 'po-turnover-chart-content' not in page_text
+    assert 'po-turnover-grid-content' not in page_text
+    assert page_text.count('Input("po-initial-tab-render-ready-store", "data")') == 2
 
 
 def test_po_layout_uses_construction_first_tab_order(page_modules):
@@ -351,6 +356,24 @@ def test_compute_monthly_attribution_matches_expected(page_modules):
     # 5 days * (0.6*1% + 0.4*2%) + 5 days * (0.3*1% + 0.7*2%)
     expected_total = (5 * (0.006 + 0.008)) + (5 * (0.003 + 0.014))
     assert monthly.sum(axis=1).iloc[0] == pytest.approx(expected_total)
+
+
+def test_po_get_monthly_attribution_uses_cached_working_return_path(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    working_df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
+    working_df.index = pd.to_datetime(working_df.index)
+
+    bundle = portopt._build_po_working_bundle(raw_json, "daily", {}, {}, None, 0, {})
+    monkeypatch.setattr(portopt, "get_working_returns", lambda *_args, **_kwargs: working_df)
+
+    monthly = portopt._po_get_monthly_attribution(
+        bundle,
+        ["Asset_A", "Asset_B"],
+        _sample_window_weights(),
+    )
+
+    assert list(monthly.columns) == ["Asset_A", "Asset_B"]
+    assert not monthly.empty
 
 
 def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules):
@@ -427,12 +450,12 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert getattr(grid, "rowData", [])[0]["Date"] == "2024-01-01"
 
 
-def test_po_render_statistics_skips_initial_selected_tab_until_ready(page_modules):
+def test_po_render_statistics_requires_active_tab(page_modules):
     _, portopt = page_modules
 
     grid = portopt.po_render_statistics(
         {"P1": {"returns_json": pd.Series([0.01], index=pd.to_datetime(["2024-01-01"])).to_json(date_format="iso")}},
-        "statistics",
+        "weight",
         "P1",
         None,
         "daily",
@@ -442,11 +465,9 @@ def test_po_render_statistics_skips_initial_selected_tab_until_ready(page_module
         None,
         0,
         {},
-        False,
     )
 
-    assert getattr(grid, "columnDefs", []) == []
-    assert getattr(grid, "rowData", []) == []
+    assert getattr(grid, "children", None) is None
 
 
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
@@ -1302,6 +1323,36 @@ def test_compute_window_risk_contributions_uses_custom_cov_for_shrinkage(monkeyp
     assert captured["custom_cov"] is not None
     assert captured["cov_kwargs"]["shrinkage"] == "ledoit_wolf"
     assert captured["cov_kwargs"]["shrinkage_target"] == "constant_correlation"
+
+
+def test_po_get_window_risk_contributions_uses_cached_working_return_path(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    working_df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
+    working_df.index = pd.to_datetime(working_df.index)
+
+    bundle = portopt._build_po_working_bundle(raw_json, "daily", {}, {}, None, 0, {})
+    monkeypatch.setattr(portopt, "get_working_returns", lambda *_args, **_kwargs: working_df)
+    monkeypatch.setattr(
+        portopt,
+        "_compute_window_risk_contributions",
+        lambda *_args, **_kwargs: [
+            {
+                "apply_start": pd.Timestamp("2024-01-01"),
+                "apply_end": pd.Timestamp("2024-01-31"),
+                "risk_contributions": {"Asset_A": 0.6, "Asset_B": 0.4},
+            }
+        ],
+    )
+
+    rows = portopt._po_get_window_risk_contributions(
+        bundle,
+        ["Asset_A", "Asset_B"],
+        _sample_window_weights(),
+        {"cov_shrinkage": "none"},
+    )
+
+    assert rows[0]["apply_start"] == pd.Timestamp("2024-01-01")
+    assert rows[0]["risk_contributions"]["Asset_A"] == 0.6
 
 
 def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, page_modules):
