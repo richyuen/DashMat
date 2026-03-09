@@ -575,8 +575,11 @@ def test_reg_init_date_range_does_not_depend_on_common_daily_store():
 
 def test_regression_common_daily_button_uses_clientside_disabled_toggle():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled")' in page_text
     assert 'Output("reg-common-daily-button", "disabled")' in page_text
     assert 'Input("reg-common-daily-candidates-store", "data")' in page_text
+    assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
     assert 'Input("reg-periodicity-select", "data")' in page_text
 
 

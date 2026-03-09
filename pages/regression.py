@@ -3753,7 +3753,7 @@ def reg_on_modal_cancel(n_clicks):
     prevent_initial_call="initial_duplicate",
 )
 def reg_update_range_candidates(raw_data, periodicity, x_series, dep_var):
-    all_series = tuple(set((x_series or []) + ([dep_var] if dep_var else [])))
+    all_series = tuple(sorted(dict.fromkeys((x_series or []) + ([dep_var] if dep_var else []))))
     return compute_date_range_candidates(
         raw_data or "",
         periodicity or "daily",
@@ -3769,7 +3769,7 @@ def reg_update_range_candidates(raw_data, periodicity, x_series, dep_var):
     prevent_initial_call="initial_duplicate",
 )
 def reg_update_common_daily_candidates(raw_data, x_series, dep_var):
-    all_series = tuple(set((x_series or []) + ([dep_var] if dep_var else [])))
+    all_series = tuple(sorted(dict.fromkeys((x_series or []) + ([dep_var] if dep_var else []))))
     return compute_common_daily_candidates(
         raw_data or "",
         all_series,
@@ -3803,25 +3803,7 @@ def reg_init_date_range(candidates, stored_range):
 
 
 clientside_callback(
-    """
-    function(candidates, commonDailyCandidates, periodicityOptions) {
-        const hasSeries = !!(candidates && candidates.available_series && candidates.available_series.length);
-        if (!hasSeries) {
-            return true;
-        }
-        const hasCommonDaily = !!(
-            commonDailyCandidates &&
-            commonDailyCandidates.common_daily_start &&
-            commonDailyCandidates.common_daily_end
-        );
-        if (!hasCommonDaily) {
-            return true;
-        }
-        const options = Array.isArray(periodicityOptions) ? periodicityOptions : [];
-        const hasDailyTrading = options.some((opt) => opt && opt.value === "daily_trading");
-        return !hasDailyTrading;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled"),
     Output("reg-common-daily-button", "disabled"),
     Input("reg-range-candidates-store", "data"),
     Input("reg-common-daily-candidates-store", "data"),

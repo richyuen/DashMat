@@ -74,6 +74,7 @@ Portfolio import rules:
 - Warm-switch performance must be judged with a browser timing pass, not just unit tests or callback-level reasoning.
 - Current practical harness: load `/analyticstool`, import AA Tool database series, confirm the series-selection modal, warm `/portopt` and `/regression`, then measure warm revisits.
 - Default warm-up series should use actual DB option keys such as `SPX_TRIndex`, `R2000_TRIndex`, `EAFE_TRIndex`, and `BCTBill13_TRIndex`, not display shorthand like `SPX`.
+- For date-range controls, keep `Common Daily` candidate computation off the date-range initialization path. Compute candidates separately and use a small shared clientside disabled-state helper so button availability does not retrigger picker/store initialization.
 - Track at least:
   - `shellMs`: main container visible
   - `readyMs`: periodicity control visible and enabled
