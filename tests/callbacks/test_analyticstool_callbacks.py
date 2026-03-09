@@ -1686,3 +1686,13 @@ def test_help_modal_mentions_factor_analysis(page_modules):
 def test_analytics_ui_blocker_release_uses_db_error_alert():
     text_blob = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     assert 'Input("at-db-add-error-alert", "hide")' in text_blob
+
+
+def test_analytics_session_actions_use_shared_workspace_helpers():
+    text_blob = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="saveWorkspaceSession")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSessionDialog")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSession")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="clearWorkspaceSession")' in text_blob
+    assert '#load-session-upload input[type="file"]' not in text_blob
+    assert "sessionStorage.clear()" not in text_blob

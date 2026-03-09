@@ -1412,3 +1412,22 @@ def test_ui_blocker_release_clears_on_series_selection_modal_change():
     text_blob = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert 'if (trigger.indexOf("series-selection-modal") !== -1) {' in text_blob
     assert "return false;" in text_blob
+
+
+def test_po_session_actions_use_shared_workspace_helpers():
+    text_blob = Path("pages/portopt.py").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="saveWorkspaceSession")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSessionDialog")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSession")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="clearWorkspaceSession")' in text_blob
+    assert "sessionStorage.clear()" not in text_blob
+    assert "sessionStorage.length" not in text_blob
+
+
+def test_workspace_session_helper_scopes_keys_consistently():
+    text_blob = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'const workspacePrefixes = ["dashmat-", "at-", "po-", "reg-"];' in text_blob
+    assert 'const workspaceExtraKeys = ["dashmat-bctbill13-cache-store"];' in text_blob
+    assert 'const workspaceExcludedKeys = ["userinfo"];' in text_blob
+    assert "function collectWorkspaceSessionData()" in text_blob
+    assert "function clearWorkspaceSessionKeys()" in text_blob

@@ -811,6 +811,16 @@ def test_reg_render_statistics_uses_current_stats_signature_and_list_shape(monke
     assert any(row.get("Statistic") == "Cumulative Return" for row in comp.rowData)
 
 
+def test_reg_session_actions_use_shared_workspace_helpers():
+    text_blob = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="saveWorkspaceSession")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSessionDialog")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSession")' in text_blob
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="clearWorkspaceSession")' in text_blob
+    assert "sessionStorage.clear()" not in text_blob
+    assert "sessionStorage.length" not in text_blob
+
+
 def test_reg_render_statistics_uses_full_stats_config_rows(monkeypatch, regression_page):
     idx = pd.date_range("2024-01-01", periods=4, freq="B")
     predicted = pd.DataFrame({"Predicted": [0.01, -0.005, 0.003, 0.002]}, index=idx)

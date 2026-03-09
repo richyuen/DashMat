@@ -1731,73 +1731,29 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        sessionStorage.clear();
-        window.location.reload();
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="clearWorkspaceSession"),
     Output("reg-load-session-dummy", "data"),
     Input("reg-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        var data = {};
-        for (var i = 0; i < sessionStorage.length; i++) {
-            var key = sessionStorage.key(i);
-            data[key] = sessionStorage.getItem(key);
-        }
-        var blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'dashmat_session.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="saveWorkspaceSession"),
     Output("reg-save-session-dummy", "data"),
     Input("reg-menu-save-session", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        setTimeout(function() {
-            var el = document.querySelector('#reg-load-session-upload input[type=\"file\"]');
-            if (el) el.click();
-        }, 100);
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSessionDialog"),
     Output("reg-load-session-dummy", "data", allow_duplicate=True),
+    Input("reg-load-session-upload", "id"),
     Input("reg-menu-load-session", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    """
-    function(contents) {
-        if (!contents) return window.dash_clientside.no_update;
-        var raw = atob(contents.split(',')[1]);
-        var data = JSON.parse(raw);
-        sessionStorage.clear();
-        for (var key in data) {
-            sessionStorage.setItem(key, data[key]);
-        }
-        window.location.reload();
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSession"),
     Output("reg-load-session-dummy", "data", allow_duplicate=True),
     Input("reg-load-session-upload", "contents"),
     prevent_initial_call=True,

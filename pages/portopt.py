@@ -3199,78 +3199,8 @@ clientside_callback(
 )
 
 
-# Clear session storage and refresh page
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            const keysToRemove = [
-                'dashmat-raw-data-store',
-                'dashmat-raw-data-meta-store',
-                'dashmat-original-periodicity-store',
-                'dashmat-pending-new-series-store',
-                'dashmat-saved-series-cache-store',
-                'bctbill13-cache-store',
-                'at-series-select',
-                'at-benchmark-assignments-store',
-                'at-long-short-store',
-                'at-periodicity-value-store',
-                'at-returns-type-value-store',
-                'at-series-select-value-store',
-                'at-series-order-store',
-                'at-active-tab-store',
-                'at-rolling-window-store',
-                'at-rolling-return-type-store',
-                'at-rolling-chart-switch-store',
-                'at-drawdown-chart-switch-store',
-                'at-growth-chart-switch-store',
-                'at-monthly-view-store',
-                'at-monthly-series-store',
-                'at-date-range-store',
-                'at-vol-scaler-value-store',
-                'at-vol-scaling-assignments-store',
-                'at-page-visited-store',
-                'po-series-select',
-                'po-series-order-store',
-                'po-benchmark-assignments-store',
-                'po-cmabench-assignments-store',
-                'po-long-short-store',
-                'po-vol-scaling-assignments-store',
-                'po-min-wt-store',
-                'po-max-wt-store',
-                'po-force-max-store',
-                'po-periodicity-value-store',
-                'po-vol-scaler-value-store',
-                'po-date-range-store',
-                'po-series-select-value-store',
-                'po-opt-window-store',
-                'po-window-size-store',
-                'po-opt-step-store',
-                'po-opt-step-unit-store',
-                'po-opt-model-store',
-                'po-portfolio-name-store',
-                'po-exp-wt-cov-store',
-                'po-halflife-store',
-                'po-cov-shrinkage-store',
-                'po-cov-shrinkage-target-store',
-                'po-missing-data-store',
-                'po-fill-in-sample-store',
-                'po-results-store',
-                'po-active-tab-store',
-                'po-page-visited-store',
-                'po-weight-chart-switch-store',
-                'po-attribution-chart-switch-store',
-                'po-risk-chart-switch-store',
-                'po-turnover-chart-switch-store'
-            ];
-            keysToRemove.forEach(key => {
-                sessionStorage.removeItem(key);
-            });
-            window.location.reload();
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="clearWorkspaceSession"),
     Output("po-url-location", "pathname", allow_duplicate=True),
     Input("po-menu-clear-local-storage", "n_clicks"),
     prevent_initial_call=True,
@@ -5109,63 +5039,23 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Save session: download all sessionStorage as JSON
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        var data = {};
-        for (var i = 0; i < sessionStorage.length; i++) {
-            var key = sessionStorage.key(i);
-            data[key] = sessionStorage.getItem(key);
-        }
-        var blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'dashmat_session.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="saveWorkspaceSession"),
     Output("po-save-session-dummy", "data"),
     Input("po-menu-save-session", "n_clicks"),
     prevent_initial_call=True,
 )
 
-# Load session: trigger hidden upload file dialog
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        setTimeout(function() {
-            var el = document.querySelector('#po-load-session-upload input[type="file"]');
-            if (el) el.click();
-        }, 100);
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSessionDialog"),
     Output("po-load-session-dummy", "data"),
+    Input("po-load-session-upload", "id"),
     Input("po-menu-load-session", "n_clicks"),
     prevent_initial_call=True,
 )
 
-# Load session: restore sessionStorage from uploaded file and reload
 clientside_callback(
-    """
-    function(contents) {
-        if (!contents) return window.dash_clientside.no_update;
-        var raw = atob(contents.split(',')[1]);
-        var data = JSON.parse(raw);
-        sessionStorage.clear();
-        for (var key in data) {
-            sessionStorage.setItem(key, data[key]);
-        }
-        window.location.reload();
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="loadWorkspaceSession"),
     Output("po-load-session-dummy", "data", allow_duplicate=True),
     Input("po-load-session-upload", "contents"),
     prevent_initial_call=True,

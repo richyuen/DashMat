@@ -29,6 +29,50 @@
     }, 100);
   }
 
+  const workspacePrefixes = ["dashmat-", "at-", "po-", "reg-"];
+  const workspaceExtraKeys = ["dashmat-bctbill13-cache-store"];
+  const workspaceExcludedKeys = ["userinfo"];
+
+  function isWorkspaceSessionKey(key) {
+    if (!key || workspaceExcludedKeys.indexOf(key) !== -1) {
+      return false;
+    }
+    if (workspaceExtraKeys.indexOf(key) !== -1) {
+      return true;
+    }
+    for (let i = 0; i < workspacePrefixes.length; i += 1) {
+      if (key.indexOf(workspacePrefixes[i]) === 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function collectWorkspaceSessionData() {
+    const data = {};
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (!isWorkspaceSessionKey(key)) {
+        continue;
+      }
+      data[key] = sessionStorage.getItem(key);
+    }
+    return data;
+  }
+
+  function clearWorkspaceSessionKeys() {
+    const keysToRemove = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (isWorkspaceSessionKey(key)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(function (key) {
+      sessionStorage.removeItem(key);
+    });
+  }
+
   function triggerUploadWithCancel(rootId, blockerStoreId) {
     setTimeout(function () {
       const uploadDiv = document.getElementById(rootId);
@@ -105,6 +149,55 @@
     if (trigger.indexOf("db-add-") !== -1) {
       return (dbOpened === false || dbErrorHidden === false) ? false : noUpdate();
     }
+    return noUpdate();
+  }
+
+  function clearWorkspaceSession(n_clicks) {
+    if (!n_clicks) {
+      return noUpdate();
+    }
+    clearWorkspaceSessionKeys();
+    window.location.reload();
+    return noUpdate();
+  }
+
+  function saveWorkspaceSession(n_clicks) {
+    if (!n_clicks) {
+      return noUpdate();
+    }
+    const data = collectWorkspaceSessionData();
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "dashmat_session.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return noUpdate();
+  }
+
+  function loadWorkspaceSessionDialog(rootId, n_clicks) {
+    if (!n_clicks) {
+      return noUpdate();
+    }
+    clickUploadInput(rootId);
+    return noUpdate();
+  }
+
+  function loadWorkspaceSession(contents) {
+    if (!contents) {
+      return noUpdate();
+    }
+    const raw = atob(contents.split(",")[1]);
+    const data = JSON.parse(raw);
+    clearWorkspaceSessionKeys();
+    Object.keys(data || {}).forEach(function (key) {
+      if (!isWorkspaceSessionKey(key)) {
+        return;
+      }
+      sessionStorage.setItem(key, data[key]);
+    });
+    window.location.reload();
     return noUpdate();
   }
 
@@ -308,12 +401,16 @@
       analyticsControlSync: analyticsControlSync,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsViewSync: analyticsViewSync,
+      clearWorkspaceSession: clearWorkspaceSession,
+      loadWorkspaceSession: loadWorkspaceSession,
+      loadWorkspaceSessionDialog: loadWorkspaceSessionDialog,
       navigateAnalytics: navigateAnalytics,
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,
       portoptControlSync: portoptControlSync,
       portoptViewSync: portoptViewSync,
       regressionControlSync: regressionControlSync,
+      saveWorkspaceSession: saveWorkspaceSession,
       syncAnalyticsPeriodicity: syncAnalyticsPeriodicity,
       syncPortoptPeriodicity: syncPortoptPeriodicity,
       triggerAnalyticsUpload: triggerAnalyticsUpload,
