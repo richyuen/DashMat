@@ -206,6 +206,33 @@ def wait_ready(page, selector: str, timeout: int = 30000) -> None:
     )
 
 
+def wait_content_ready(page, selector: str, timeout: int = 30000) -> None:
+    page.wait_for_function(
+        """
+        (sel) => {
+          const root = document.querySelector(sel);
+          if (!root) return false;
+          const visible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+          };
+          if (root.matches(".js-plotly-plot, .ag-root-wrapper, .mantine-Text-root") && visible(root)) {
+            return true;
+          }
+          const meaningful = root.querySelector(".js-plotly-plot, .ag-root-wrapper, .mantine-Text-root");
+          if (meaningful && visible(meaningful)) {
+            return true;
+          }
+          return Array.from(root.children || []).some((child) => visible(child));
+        }
+        """,
+        arg=selector,
+        timeout=timeout,
+    )
+
+
 def detect_renderer_mode(page) -> str:
     return str(
         page.evaluate(
@@ -260,6 +287,69 @@ def measure(page, cfg: dict[str, str]) -> dict[str, int]:
     return {"shellMs": shell_ms, "readyMs": ready_ms}
 
 
+def set_component_value(page, component_id: str, value) -> None:
+    page.evaluate(
+        """
+        ([componentId, nextValue]) => {
+          window.dash_clientside.set_props(componentId, { value: nextValue });
+        }
+        """,
+        [component_id, value],
+    )
+
+
+def select_portopt_tab_and_measure(page, tab_value: str, content_selector: str, switch_id: str | None = None) -> int:
+    start = time.perf_counter()
+    set_component_value(page, "po-vis-tabs", tab_value)
+    if switch_id:
+        set_component_value(page, switch_id, "chart")
+    wait_visible(page, content_selector)
+    return round((time.perf_counter() - start) * 1000)
+
+
+def measure_portopt(page, cfg: dict[str, str]) -> dict[str, int]:
+    start = time.perf_counter()
+    page.evaluate("(path) => { window.location.pathname = path; }", cfg["path"])
+    page.wait_for_function(
+        "(path) => window.location.pathname === path",
+        arg=cfg["path"],
+        timeout=30000,
+    )
+    wait_visible(page, cfg["shell"])
+    shell_ms = round((time.perf_counter() - start) * 1000)
+    wait_ready(page, cfg["ready"])
+    ready_ms = round((time.perf_counter() - start) * 1000)
+
+    set_component_value(page, "po-vis-tabs", "weight")
+    wait_visible(page, "#po-vis-tabs-panel-weight #po-weight-chart-switch")
+    weights_ready_ms = round((time.perf_counter() - start) * 1000)
+
+    frontier_open_ms = select_portopt_tab_and_measure(
+        page,
+        "frontier",
+        "#po-vis-tabs-panel-frontier #po-frontier-window-select",
+    )
+    risk_open_ms = select_portopt_tab_and_measure(
+        page,
+        "risk",
+        "#po-vis-tabs-panel-risk #po-risk-chart-switch",
+    )
+    attribution_open_ms = select_portopt_tab_and_measure(
+        page,
+        "attribution",
+        "#po-vis-tabs-panel-attribution #po-attribution-chart-switch",
+    )
+
+    return {
+        "shellMs": shell_ms,
+        "readyMs": ready_ms,
+        "weightsReadyMs": weights_ready_ms,
+        "frontierOpenMs": frontier_open_ms,
+        "riskOpenMs": risk_open_ms,
+        "attributionOpenMs": attribution_open_ms,
+    }
+
+
 def run_harness(base_url: str, runs: int, label: str, db_series: list[str], headed: bool) -> dict:
     pages = {
         "analytics": {"path": "/analyticstool", "shell": "#at-main-app-container", "ready": "#at-periodicity-select"},
@@ -293,17 +383,34 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
             name: {"runs": 0, "shellMs": [], "readyMs": []}
             for name in pages
         }
+        results["portopt"].update(
+            {
+                "weightsReadyMs": [],
+                "frontierOpenMs": [],
+                "riskOpenMs": [],
+                "attributionOpenMs": [],
+            }
+        )
         order = ["analytics", "portopt", "regression"]
         for _ in range(runs):
             for name in order:
-                metrics = measure(page, pages[name])
+                metrics = measure_portopt(page, pages[name]) if name == "portopt" else measure(page, pages[name])
                 results[name]["runs"] += 1
                 results[name]["shellMs"].append(metrics["shellMs"])
                 results[name]["readyMs"].append(metrics["readyMs"])
+                if name == "portopt":
+                    results[name]["weightsReadyMs"].append(metrics["weightsReadyMs"])
+                    results[name]["frontierOpenMs"].append(metrics["frontierOpenMs"])
+                    results[name]["riskOpenMs"].append(metrics["riskOpenMs"])
+                    results[name]["attributionOpenMs"].append(metrics["attributionOpenMs"])
 
         for data in results.values():
             data["shellMedian"] = round(median(data["shellMs"]))
             data["readyMedian"] = round(median(data["readyMs"]))
+        results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))
+        results["portopt"]["frontierOpenMedian"] = round(median(results["portopt"]["frontierOpenMs"]))
+        results["portopt"]["riskOpenMedian"] = round(median(results["portopt"]["riskOpenMs"]))
+        results["portopt"]["attributionOpenMedian"] = round(median(results["portopt"]["attributionOpenMs"]))
 
         browser.close()
 

@@ -277,6 +277,16 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert "def po_sync_results_with_raw_data" not in page_text
     assert 'Output("po-vis-tabs", "value")' in page_text
     assert 'State("po-active-tab-store", "data")' in page_text
+    assert 'Output("po-attribution-tab-loaded-store", "data")' in page_text
+    assert 'Output("po-risk-tab-loaded-store", "data")' in page_text
+    assert 'Output("po-frontier-tab-loaded-store", "data")' in page_text
+    assert page_text.count('Input("po-attribution-tab-loaded-store", "data")') == 2
+    assert page_text.count('Input("po-risk-tab-loaded-store", "data")') == 2
+    assert page_text.count('Input("po-frontier-tab-loaded-store", "data")') == 2
+    assert 'Output("po-attribution-chart-container", "children")' in page_text
+    assert 'Output("po-attribution-grid-container", "children")' in page_text
+    assert 'po-attribution-chart-content' not in page_text
+    assert 'po-attribution-grid-content' not in page_text
 
 
 def test_po_layout_uses_construction_first_tab_order(page_modules):
@@ -354,6 +364,7 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
         "P1",
         results,
         "attribution",
+        True,
         "table",
         raw_json,
         "daily",
@@ -980,6 +991,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         "P1",
         results,
         "frontier",
+        True,
         "table",
         "1",
         "MV",
@@ -1015,6 +1027,7 @@ def test_po_render_frontier_chart_reports_missing_source_series(page_modules, ra
         "P1",
         results,
         "frontier",
+        True,
         "chart",
         "0",
         "MV",
