@@ -13,7 +13,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from dash import Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback, callback_context
+from dash import ClientsideFunction, Input, Output, State, callback, dcc, html, no_update, register_page, ALL, clientside_callback, callback_context
 from dash.exceptions import PreventUpdate
 
 import cache_config
@@ -92,9 +92,6 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
     js_portfolio_ok_disabled,
-    js_release_ui_blocker_on_modal_state,
-    js_set_ui_blocker_true,
-    js_trigger_upload_with_cancel,
     js_underlying_delete_row,
 )
 from dbengine import (
@@ -1109,15 +1106,6 @@ def _import_selected_workbook_sheets(contents, filename, selected_sheets, workbo
 def build_welcome_screen():
     return build_shared_welcome_screen(AT_WELCOME_MODAL_CONFIG)
 
-# Clientside callback to trigger upload from welcome button
-clientside_callback(
-    js_trigger_upload_with_cancel("at"),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
-    Input("at-welcome-add-series-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
 # Save session: download all sessionStorage as JSON
 clientside_callback(
     """
@@ -1958,82 +1946,27 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_set_ui_blocker_true(),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-db-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-raw-db-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-underlying-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-modal-ok-button", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-db-add-modal", "opened"),
     Input("at-alert-message", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-raw-db-add-modal", "opened"),
     Input("at-raw-db-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-modal", "opened"),
     Input("at-portfolio-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-underlying-add-modal", "opened"),
     Input("at-underlying-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(opened) {
-        if (opened === false) {
-            return false;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
@@ -3952,78 +3885,14 @@ def at_lazy_load_regime_definitions(active_tab, loaded):
     return regime_available, regime_definitions, True
 
 
-# Clientside callback to navigate to home on Exit
+# Clientside navigation callbacks
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            window.location.href = '/';
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="navigateAnalytics"),
     Output("at-url-location", "pathname"),
     Input("at-menu-exit", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-# Navigate to Portfolio Optimization page (client-side, preserves shared stores)
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            window.location.pathname = '/portopt';
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("at-url-location", "pathname", allow_duplicate=True),
     Input("at-menu-view-portfolio", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            window.location.pathname = '/regression';
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("at-url-location", "pathname", allow_duplicate=True),
     Input("at-menu-view-regression", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            window.location.pathname = '/portopt';
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("at-url-location", "pathname", allow_duplicate=True),
     Input("at-welcome-view-portfolio", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            window.location.pathname = '/regression';
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("at-url-location", "pathname", allow_duplicate=True),
     Input("at-welcome-view-regression", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -4129,11 +3998,12 @@ def clear_server_cache(n_clicks):
     return {"cleared": True, "timestamp": pd.Timestamp.utcnow().isoformat()}
 
 
-# Clientside callback to trigger upload from menu
+# Clientside callback to trigger upload from menu or welcome button
 clientside_callback(
-    js_trigger_upload_with_cancel("at"),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="triggerAnalyticsUpload"),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-series", "n_clicks"),
+    Input("at-welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -4440,100 +4310,39 @@ def reorder_series(virtual_rows, selected_rows, current_order, current_selected)
 
 
 
-# Clientside callback for periodicity selection storage
+# Clientside callback for top-level control storage
 clientside_callback(
-    "function(value) { return value; }",
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsControlSync"),
     Output("at-periodicity-value-store", "data"),
+    Output("at-returns-type-value-store", "data"),
+    Output("at-vol-scaler-value-store", "data"),
+    Output("at-series-select-value-store", "data"),
+    Output("at-active-tab-store", "data"),
+    Output("at-rolling-window-store", "data"),
+    Output("at-rolling-metric-store", "data"),
+    Output("at-rolling-return-type-store", "data"),
+    Output("at-monthly-view-store", "data"),
+    Output("at-monthly-series-store", "data"),
     Input("at-periodicity-select", "value"),
+    Input("at-returns-type-select", "value"),
+    Input("at-vol-scaler-input", "value"),
+    Input("at-series-select", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-rolling-window-select", "value"),
+    Input("at-rolling-metric-select", "value"),
+    Input("at-rolling-return-type-select", "value"),
+    Input("at-monthly-view-checkbox", "value"),
+    Input("at-monthly-series-select", "value"),
     prevent_initial_call=True,
 )
 
 
 # Sync periodicity to PortOpt only on raw-data load/update events.
 clientside_callback(
-    """
-    function(rawData, periodicityValue) {
-        const ctx = window.dash_clientside.callback_context;
-        const triggered = (ctx && ctx.triggered) ? ctx.triggered : [];
-        const rawTriggered = triggered.some(
-            t => t && t.prop_id && t.prop_id.indexOf("dashmat-raw-data-store.") === 0
-        );
-        if (!rawTriggered || !rawData || !periodicityValue) {
-            return window.dash_clientside.no_update;
-        }
-        sessionStorage.setItem("po-periodicity-value-store", JSON.stringify(periodicityValue));
-        return periodicityValue;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="syncAnalyticsPeriodicity"),
     Output("at-periodicity-load-sync-dummy", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-value-store", "data"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for returns type selection storage
-clientside_callback(
-    "function(value) { return value; }",
-    Output("at-returns-type-value-store", "data"),
-    Input("at-returns-type-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for vol scaler value storage
-clientside_callback(
-    "function(value) { return value; }",
-    Output("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaler-input", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for series selection storage
-clientside_callback(
-    "function(value) { return value || []; }",
-    Output("at-series-select-value-store", "data"),
-    Input("at-series-select", "data"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for active tab storage
-clientside_callback(
-    "function(value) { return value || 'statistics'; }",
-    Output("at-active-tab-store", "data"),
-    Input("at-main-tabs", "value"),
-    prevent_initial_call=True,
-)
-
-
-
-
-
-# Clientside callback for rolling window selection storage
-clientside_callback(
-    "function(value) { return value || '1y'; }",
-    Output("at-rolling-window-store", "data"),
-    Input("at-rolling-window-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for rolling metric selection storage
-clientside_callback(
-    "function(value) { return value || 'total_return'; }",
-    Output("at-rolling-metric-store", "data"),
-    Input("at-rolling-metric-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for rolling return type storage
-clientside_callback(
-    "function(value) { return value || 'annualized'; }",
-    Output("at-rolling-return-type-store", "data"),
-    Input("at-rolling-return-type-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -4553,183 +4362,38 @@ def update_rolling_controls_state(metric):
 
 
 
-# Clientside callback for rolling chart switch storage
 clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsViewSync"),
     Output("at-rolling-chart-switch-store", "data"),
-    Input("at-rolling-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-
-
-
-
-# Clientside callback for rolling view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        const flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
     Output("at-rolling-grid-container", "style"),
     Output("at-rolling-chart-container", "style"),
-    Input("at-rolling-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for drawdown chart switch storage
-clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("at-drawdown-chart-switch-store", "data"),
-    Input("at-drawdown-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-
-
-
-
-# Clientside callback for drawdown view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        const flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        const flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_scroll_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
     Output("at-drawdown-grid-container", "style"),
     Output("at-drawdown-chart-container", "style"),
-    Input("at-drawdown-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for growth chart switch storage
-clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("at-growth-chart-switch-store", "data"),
-    Input("at-growth-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-
-
-
-
-# Clientside callback for growth view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        const flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        const flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_scroll_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
     Output("at-growth-grid-container", "style"),
     Output("at-growth-chart-container", "style"),
+    Input("at-rolling-chart-switch", "value"),
+    Input("at-drawdown-chart-switch", "value"),
     Input("at-growth-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
-
-# Clientside callback for monthly view storage
 clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'annual'; }",
-    Output("at-monthly-view-store", "data"),
-    Input("at-monthly-view-checkbox", "value"),
-    prevent_initial_call=True,
-)
-
-
-# Clientside callback for monthly series selection storage
-clientside_callback(
-    "function(value) { return value; }",
-    Output("at-monthly-series-store", "data"),
-    Input("at-monthly-series-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    "function(value) { return value || 'box'; }",
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsFactorRegimeSync"),
     Output("at-factor-mode-store", "data"),
-    Input("at-factor-mode-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    "function(value) { if (value === null || value === undefined) { return 5; } var q = parseInt(value, 10); if (!Number.isFinite(q)) { return 5; } return Math.min(20, Math.max(2, q)); }",
     Output("at-factor-quantiles-store", "data"),
-    Input("at-factor-quantiles-input", "value"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    "function(value) { return value === 'zscore' ? 'zscore' : 'raw'; }",
     Output("at-factor-transform-store", "data"),
-    Input("at-factor-transform-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    "function(value) { return value; }",
     Output("at-factor-series-store", "data"),
-    Input("at-factor-series-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(mode) {
-        return mode === 'box' ? {display: 'block'} : {display: 'none'};
-    }
-    """,
     Output("at-factor-quantiles-wrapper", "style"),
-    Input("at-factor-mode-select", "value"),
-    prevent_initial_call=False,
-)
-
-
-clientside_callback(
-    "function(value) { return value; }",
     Output("at-regime-definition-store", "data"),
-    Input("at-regime-definition-select", "value"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(methodType) {
-        const method = String(methodType || '1');
-        if (method === '3') {
-            return [{display: 'none'}, {display: 'block'}];
-        }
-        return [{display: 'block'}, {display: 'none'}];
-    }
-    """,
     Output("at-regime-def-universe-wrapper", "style"),
     Output("at-regime-def-single-wrapper", "style"),
+    Input("at-factor-mode-select", "value"),
+    Input("at-factor-quantiles-input", "value"),
+    Input("at-factor-transform-select", "value"),
+    Input("at-factor-series-select", "value"),
+    Input("at-regime-definition-select", "value"),
     Input("at-regime-def-method-type", "value"),
     prevent_initial_call=False,
 )

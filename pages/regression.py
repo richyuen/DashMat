@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from dash import (
-    Input, Output, State, callback, dcc, html, no_update,
+    ClientsideFunction, Input, Output, State, callback, dcc, html, no_update,
     register_page, clientside_callback, callback_context,
 )
 from dash.exceptions import PreventUpdate
@@ -76,8 +76,6 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
     js_portfolio_ok_disabled,
-    js_release_ui_blocker_on_modal_state,
-    js_set_ui_blocker_true,
     js_underlying_delete_row,
 )
 from utils.help_links import REGRESSION_HELP_URL
@@ -1722,61 +1720,12 @@ clientside_callback(
 
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.href = '/'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="navigateRegression"),
     Output("reg-url-location", "pathname"),
     Input("reg-menu-exit", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/analyticstool'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
     Input("reg-menu-view-analytics", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/portopt'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
     Input("reg-menu-view-portfolio", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/analyticstool'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
     Input("reg-welcome-view-analytics", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/portopt'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-url-location", "pathname", allow_duplicate=True),
     Input("reg-welcome-view-portfolio", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -1862,48 +1811,10 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            setTimeout(function() {
-                var uploadDiv = document.getElementById('reg-upload-data');
-                if (uploadDiv) {
-                    var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) {
-                        input.click();
-                    }
-                }
-            }, 100);
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="triggerRegressionUpload"),
     Output("reg-upload-data", "contents", allow_duplicate=True),
     Input("reg-menu-add-series", "n_clicks"),
-    State("reg-upload-data", "contents"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) {
-            setTimeout(function() {
-                var uploadDiv = document.getElementById('reg-upload-data');
-                if (uploadDiv) {
-                    var input = uploadDiv.querySelector('input[type="file"]');
-                    if (input) {
-                        input.click();
-                    }
-                }
-            }, 100);
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-upload-data", "contents", allow_duplicate=True),
     Input("reg-welcome-add-series-btn", "n_clicks"),
-    State("reg-upload-data", "contents"),
     prevent_initial_call=True,
 )
 
@@ -1918,123 +1829,73 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_set_ui_blocker_true(),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-db-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-raw-db-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-portfolio-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-underlying-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-modal-ok-button", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-db-add-modal", "opened"),
     Input("reg-db-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-raw-db-add-modal", "opened"),
     Input("reg-raw-db-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-portfolio-add-modal", "opened"),
     Input("reg-portfolio-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-underlying-add-modal", "opened"),
     Input("reg-underlying-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(opened) {
-        if (opened === false) {
-            return false;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
 
 # Store syncs (controls → stores)
-clientside_callback("function(v){return v;}",
-    Output("reg-periodicity-value-store","data"), Input("reg-periodicity-select","value"), prevent_initial_call=True)
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionControlSync"),
+    Output("reg-periodicity-value-store", "data"),
+    Output("reg-vol-scaler-value-store", "data"),
+    Output("reg-model-store", "data"),
+    Output("reg-regression-name-store", "data"),
+    Output("reg-force-zero-intercept-store", "data"),
+    Output("reg-robust-se-store", "data"),
+    Output("reg-exp-wt-store", "data"),
+    Output("reg-halflife-store", "data"),
+    Output("reg-window-type-store", "data"),
+    Output("reg-window-size-store", "data"),
+    Output("reg-opt-step-store", "data"),
+    Output("reg-opt-step-unit-store", "data"),
+    Output("reg-fill-in-sample-store", "data"),
+    Output("reg-missing-data-store", "data"),
+    Output("reg-alpha-store", "data"),
+    Output("reg-l1-ratio-store", "data"),
+    Output("reg-active-tab-store", "data"),
+    Input("reg-periodicity-select", "value"),
+    Input("reg-vol-scaler-input", "value"),
+    Input("reg-model-select", "value"),
+    Input("reg-regression-name-input", "value"),
+    Input("reg-force-zero-intercept-switch", "checked"),
+    Input("reg-robust-se-switch", "checked"),
+    Input("reg-exp-wt-switch", "checked"),
+    Input("reg-halflife-input", "value"),
+    Input("reg-window-type-select", "value"),
+    Input("reg-window-size-input", "value"),
+    Input("reg-opt-step-input", "value"),
+    Input("reg-opt-step-unit-select", "value"),
+    Input("reg-fill-in-sample-select", "value"),
+    Input("reg-missing-data-select", "value"),
+    Input("reg-alpha-input", "value"),
+    Input("reg-l1-ratio-input", "value"),
+    Input("reg-tabs", "value"),
+    prevent_initial_call=True,
+)
+
 clientside_callback("function(v){return v;}",
     Output("reg-periodicity-select","value", allow_duplicate=True), Input("reg-periodicity-load-sync-dummy","data"), prevent_initial_call=True)
-clientside_callback("function(v){return v??0;}",
-    Output("reg-vol-scaler-value-store","data"), Input("reg-vol-scaler-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v || 'ols';}",
-    Output("reg-model-store","data"), Input("reg-model-select","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-regression-name-store","data"), Input("reg-regression-name-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-force-zero-intercept-store","data"), Input("reg-force-zero-intercept-switch","checked"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-robust-se-store","data"), Input("reg-robust-se-switch","checked"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-exp-wt-store","data"), Input("reg-exp-wt-switch","checked"), prevent_initial_call=True)
-clientside_callback("function(v){return v??63;}",
-    Output("reg-halflife-store","data"), Input("reg-halflife-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-window-type-store","data"), Input("reg-window-type-select","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v??36;}",
-    Output("reg-window-size-store","data"), Input("reg-window-size-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v??1;}",
-    Output("reg-opt-step-store","data"), Input("reg-opt-step-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-opt-step-unit-store","data"), Input("reg-opt-step-unit-select","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-fill-in-sample-store","data"), Input("reg-fill-in-sample-select","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-missing-data-store","data"), Input("reg-missing-data-select","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v??1.0;}",
-    Output("reg-alpha-store","data"), Input("reg-alpha-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v??0.5;}",
-    Output("reg-l1-ratio-store","data"), Input("reg-l1-ratio-input","value"), prevent_initial_call=True)
-clientside_callback("function(v){return v;}",
-    Output("reg-active-tab-store","data"), Input("reg-tabs","value"), prevent_initial_call=True)
 
 
 # ===========================================================================

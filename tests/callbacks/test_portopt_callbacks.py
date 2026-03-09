@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -319,7 +320,7 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
         }
     }
 
-    column_defs, row_data = portopt.po_render_attribution_table(
+    grid = portopt.po_render_attribution_table(
         "P1",
         results,
         "attribution",
@@ -333,9 +334,9 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
         {},
     )
 
-    assert column_defs[0]["field"] == "Date"
-    assert any(c["field"] == "Total" for c in column_defs)
-    assert len(row_data) > 0
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert any(c["field"] == "Total" for c in getattr(grid, "columnDefs", []))
+    assert len(getattr(grid, "rowData", [])) > 0
 
 
 def test_po_render_statistics_transposes_stats(monkeypatch, page_modules):
@@ -356,11 +357,11 @@ def test_po_render_statistics_transposes_stats(monkeypatch, page_modules):
         "P2": {"returns_json": s2.to_json(date_format="iso")},
     }
 
-    column_defs, row_data = portopt.po_render_statistics(results, "statistics", ["P1", "P2"], None, "daily")
+    grid = portopt.po_render_statistics(results, "statistics", ["P1", "P2"], None, "daily")
 
-    assert column_defs[0]["field"] == "Statistic"
-    assert {c["field"] for c in column_defs[1:]} == {"P1", "P2"}
-    row = next(r for r in row_data if r["Statistic"] == "Cumulative Return")
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Statistic"
+    assert {c["field"] for c in getattr(grid, "columnDefs", [])[1:]} == {"P1", "P2"}
+    row = next(r for r in getattr(grid, "rowData", []) if r["Statistic"] == "Cumulative Return")
     assert row["P1"] == pytest.approx(0.1)
     assert row["P2"] == pytest.approx(0.2)
 
@@ -371,16 +372,16 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     s1 = pd.Series([0.01, 0.02], index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
     results = {"P1": {"returns_json": s1.to_json(date_format="iso")}}
 
-    column_defs, row_data = portopt.po_render_returns(results, "returns", ["P1"])
-    assert column_defs[0]["field"] == "Date"
-    assert column_defs[1]["field"] == "P1"
-    assert row_data[0]["Date"] == "2024-01-01"
+    grid = portopt.po_render_returns(results, "returns", ["P1"])
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert getattr(grid, "columnDefs", [])[1]["field"] == "P1"
+    assert getattr(grid, "rowData", [])[0]["Date"] == "2024-01-01"
 
 
 def test_po_render_statistics_skips_initial_selected_tab_until_ready(page_modules):
     _, portopt = page_modules
 
-    column_defs, row_data = portopt.po_render_statistics(
+    grid = portopt.po_render_statistics(
         {"P1": {"returns_json": pd.Series([0.01], index=pd.to_datetime(["2024-01-01"])).to_json(date_format="iso")}},
         "statistics",
         "P1",
@@ -395,8 +396,8 @@ def test_po_render_statistics_skips_initial_selected_tab_until_ready(page_module
         False,
     )
 
-    assert column_defs == []
-    assert row_data == []
+    assert getattr(grid, "columnDefs", []) == []
+    assert getattr(grid, "rowData", []) == []
 
 
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
@@ -564,9 +565,9 @@ def test_po_render_turnover_table_computes_turnover(page_modules):
         }
     }
 
-    column_defs, row_data = portopt.po_render_turnover_table("P1", results, "turnover", "table")
-    assert column_defs[0]["field"] == "Rebalance Date"
-    assert row_data[0]["Turnover"] == pytest.approx(0.1)
+    grid = portopt.po_render_turnover_table("P1", results, "turnover", "table")
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Rebalance Date"
+    assert getattr(grid, "rowData", [])[0]["Turnover"] == pytest.approx(0.1)
 
 
 def test_po_sync_results_with_raw_data_keeps_decoupled_results(page_modules, raw_json):
@@ -956,7 +957,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         }
     }
 
-    column_defs, row_data = portopt.po_render_frontier_table(
+    grid = portopt.po_render_frontier_table(
         "P1",
         results,
         "frontier",
@@ -974,10 +975,10 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         [],
     )
 
-    assert any(col["field"] == "Wt_Asset_A" for col in column_defs)
-    assert any(col["field"] == "Sharpe Ratio" for col in column_defs)
-    assert any(row["Type"] == "Optimized Portfolio" for row in row_data)
-    assert any(row["Type"] == "Frontier Point" for row in row_data)
+    assert any(col["field"] == "Wt_Asset_A" for col in getattr(grid, "columnDefs", []))
+    assert any(col["field"] == "Sharpe Ratio" for col in getattr(grid, "columnDefs", []))
+    assert any(row["Type"] == "Optimized Portfolio" for row in getattr(grid, "rowData", []))
+    assert any(row["Type"] == "Frontier Point" for row in getattr(grid, "rowData", []))
 
 
 def test_po_render_frontier_chart_reports_missing_source_series(page_modules, raw_json):
@@ -1372,25 +1373,25 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
 
 def test_po_help_modal_has_three_guide_sections(page_modules):
     _, portopt = page_modules
-    modal = _find_component_by_id(portopt.layout, "po-help-modal")
-    assert modal is not None
+    help_control = _find_component_by_id(portopt.layout, "po-menu-help-guide")
+    assert help_control is not None
 
-    text_blob = " ".join(_collect_component_text(modal)).lower()
-    assert "basic guide" in text_blob
-    assert "advanced guide" in text_blob
-    assert "model deep dive" in text_blob
+    text_blob = Path("docs/help/portopt.md").read_text(encoding="utf-8").lower()
+    assert "portfolio optimization" in text_blob
+    assert "typical workflow" in text_blob
+    assert "model guide" in text_blob
 
 
 def test_po_help_modal_model_deep_dive_covers_all_models(page_modules):
     _, portopt = page_modules
-    modal = _find_component_by_id(portopt.layout, "po-help-modal")
-    assert modal is not None
+    help_control = _find_component_by_id(portopt.layout, "po-menu-help-guide")
+    assert help_control is not None
 
-    text_blob = " ".join(_collect_component_text(modal)).lower()
+    text_blob = Path("docs/help/portopt.md").read_text(encoding="utf-8").lower()
     required_models = [
         "risk parity",
         "factor risk parity",
-        "hierarchical rp",
+        "hierarchical risk parity",
         "maximize sharpe ratio",
         "minimize variance",
         "minimize cvar",

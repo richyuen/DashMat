@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from sqlalchemy import text
 from dash import (
-    Input, Output, State, callback, dcc, html, no_update,
+    ClientsideFunction, Input, Output, State, callback, dcc, html, no_update,
     register_page, ALL, clientside_callback, callback_context,
 )
 from dash.exceptions import PreventUpdate
@@ -108,9 +108,6 @@ from utils.dashmat_welcome_modal import (
     js_portfolio_clear_rows,
     js_portfolio_delete_row,
     js_portfolio_ok_disabled,
-    js_release_ui_blocker_on_modal_state,
-    js_set_ui_blocker_true,
-    js_trigger_upload_with_cancel,
     js_underlying_delete_row,
 )
 from utils.portfolio_series import load_portfolio_series
@@ -3189,67 +3186,14 @@ layout = dmc.Container(
 # ===========================================================================
 
 
-# Navigate to home on Exit
+# Shared clientside navigation
 clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.href = '/'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="navigatePortopt"),
     Output("po-url-location", "pathname"),
     Input("po-menu-exit", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-# Navigate to Analytics Tool page (client-side, preserves shared stores)
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/analyticstool'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
     Input("po-menu-view-analytics", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/regression'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
     Input("po-menu-view-regression", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/analyticstool'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
     Input("po-welcome-view-analytics", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (n_clicks) { window.location.pathname = '/regression'; }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("po-url-location", "pathname", allow_duplicate=True),
     Input("po-welcome-view-regression", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -4039,98 +3983,36 @@ clientside_callback(
 )
 
 clientside_callback(
-    js_set_ui_blocker_true(),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-db-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-raw-db-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-portfolio-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-underlying-add-ok-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_set_ui_blocker_true(),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-modal-ok-button", "n_clicks"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-db-add-modal", "opened"),
     Input("po-alert-message", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-raw-db-add-modal", "opened"),
     Input("po-raw-db-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-portfolio-add-modal", "opened"),
     Input("po-portfolio-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_release_ui_blocker_on_modal_state(),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-underlying-add-modal", "opened"),
     Input("po-underlying-add-error-alert", "hide"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(opened) {
-        if (opened === false) {
-            return false;
-        }
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
 
-# Trigger upload from menu
+# Trigger upload from menu or welcome button
 clientside_callback(
-    js_trigger_upload_with_cancel("po"),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="triggerPortoptUpload"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-menu-add-series", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-# Trigger upload from welcome button
-clientside_callback(
-    js_trigger_upload_with_cancel("po"),
-    Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -4146,57 +4028,56 @@ clientside_callback(
     Input("po-ui-blocker-store", "data"),
 )
 
-# Store sync: periodicity
+# Store sync: top-level controls
 clientside_callback(
-    "function(value) { return value; }",
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptControlSync"),
     Output("po-periodicity-value-store", "data"),
+    Output("po-vol-scaler-value-store", "data"),
+    Output("po-active-tab-store", "data"),
+    Output("po-series-select-value-store", "data"),
+    Output("po-fill-in-sample-store", "data"),
+    Output("po-opt-step-unit-store", "data"),
+    Output("po-opt-window-store", "data"),
+    Output("po-window-size-store", "data"),
+    Output("po-opt-step-store", "data"),
+    Output("po-opt-model-store", "data"),
+    Output("po-portfolio-name-store", "data"),
+    Output("po-exp-wt-cov-store", "data"),
+    Output("po-halflife-store", "data"),
+    Output("po-cov-shrinkage-store", "data"),
+    Output("po-cov-shrinkage-target-store", "data"),
+    Output("po-missing-data-store", "data"),
+    Output("po-objective-store", "data"),
+    Output("po-bl-tau-store", "data"),
+    Output("po-ex-ante-mode-store", "data"),
     Input("po-periodicity-select", "value"),
+    Input("po-vol-scaler-input", "value"),
+    Input("po-vis-tabs", "value"),
+    Input("po-series-select", "data"),
+    Input("po-fill-in-sample-select", "value"),
+    Input("po-opt-step-unit-select", "value"),
+    Input("po-opt-window-select", "value"),
+    Input("po-window-size-input", "value"),
+    Input("po-opt-step-input", "value"),
+    Input("po-opt-model-select", "value"),
+    Input("po-portfolio-name-input", "value"),
+    Input("po-exp-wt-cov-switch", "checked"),
+    Input("po-halflife-input", "value"),
+    Input("po-cov-shrinkage-select", "value"),
+    Input("po-cov-shrinkage-target-select", "value"),
+    Input("po-missing-data-select", "value"),
+    Input("po-objective-select", "value"),
+    Input("po-bl-tau-input", "value"),
+    Input("po-ex-ante-mode-select", "value"),
     prevent_initial_call=True,
 )
 
 # Sync periodicity to Analytics only on raw-data load/update events.
 clientside_callback(
-    """
-    function(rawData, periodicityValue) {
-        const ctx = window.dash_clientside.callback_context;
-        const triggered = (ctx && ctx.triggered) ? ctx.triggered : [];
-        const rawTriggered = triggered.some(
-            t => t && t.prop_id && t.prop_id.indexOf("dashmat-raw-data-store.") === 0
-        );
-        if (!rawTriggered || !rawData || !periodicityValue) {
-            return window.dash_clientside.no_update;
-        }
-        sessionStorage.setItem("at-periodicity-value-store", JSON.stringify(periodicityValue));
-        return periodicityValue;
-    }
-    """,
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="syncPortoptPeriodicity"),
     Output("po-periodicity-load-sync-dummy", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("po-periodicity-value-store", "data"),
-    prevent_initial_call=True,
-)
-
-# Store sync: vol scaler
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-vol-scaler-value-store", "data"),
-    Input("po-vol-scaler-input", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: active tab
-clientside_callback(
-    "function(value) { return value || 'weight'; }",
-    Output("po-active-tab-store", "data"),
-    Input("po-vis-tabs", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: series selection
-clientside_callback(
-    "function(value) { return value || []; }",
-    Output("po-series-select-value-store", "data"),
-    Input("po-series-select", "data"),
     prevent_initial_call=True,
 )
 
@@ -4217,54 +4098,6 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Store sync: fill in-sample
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-fill-in-sample-store", "data"),
-    Input("po-fill-in-sample-select", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: opt step unit
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-opt-step-unit-store", "data"),
-    Input("po-opt-step-unit-select", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: opt window
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-opt-window-store", "data"),
-    Input("po-opt-window-select", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: window size
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-window-size-store", "data"),
-    Input("po-window-size-input", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: opt step
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-opt-step-store", "data"),
-    Input("po-opt-step-input", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: opt model
-clientside_callback(
-    "function(value) { return value || 'risk_parity'; }",
-    Output("po-opt-model-store", "data"),
-    Input("po-opt-model-select", "value"),
-    prevent_initial_call=True,
-)
-
 
 @callback(
     Output("po-portfolio-name-input", "value", allow_duplicate=True),
@@ -4274,54 +4107,6 @@ clientside_callback(
 def po_sync_name_with_model(model):
     return _po_default_name_for_model(model)
 
-
-# Store sync: portfolio name
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-portfolio-name-store", "data"),
-    Input("po-portfolio-name-input", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: exp wt cov
-clientside_callback(
-    "function(checked) { return checked; }",
-    Output("po-exp-wt-cov-store", "data"),
-    Input("po-exp-wt-cov-switch", "checked"),
-    prevent_initial_call=True,
-)
-
-# Store sync: halflife
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-halflife-store", "data"),
-    Input("po-halflife-input", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: covariance shrinkage
-clientside_callback(
-    "function(value) { return value || 'none'; }",
-    Output("po-cov-shrinkage-store", "data"),
-    Input("po-cov-shrinkage-select", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: covariance shrinkage target
-clientside_callback(
-    "function(value) { return value || 'scaled_identity'; }",
-    Output("po-cov-shrinkage-target-store", "data"),
-    Input("po-cov-shrinkage-target-select", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: missing data
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-missing-data-store", "data"),
-    Input("po-missing-data-select", "value"),
-    prevent_initial_call=True,
-)
 
 # Toggle window params based on model AND window type
 clientside_callback(
@@ -4372,23 +4157,6 @@ clientside_callback(
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
 )
-
-# Store sync: objective
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-objective-store", "data"),
-    Input("po-objective-select", "value"),
-    prevent_initial_call=True,
-)
-
-# Store sync: BL tau
-clientside_callback(
-    "function(value) { return value; }",
-    Output("po-bl-tau-store", "data"),
-    Input("po-bl-tau-input", "value"),
-    prevent_initial_call=True,
-)
-
 
 # Populate expected returns grid when selected series changes (ex ante models)
 @callback(
@@ -4528,15 +4296,6 @@ def po_clear_returns(n_clicks, selected_series):
         raise PreventUpdate
     rows = [{"Asset": s, "Return": 0.0, "Volatility": 0.0} for s in (selected_series or [])]
     return rows, {}, {}
-
-
-# Update ex ante mode store
-@callback(
-    Output("po-ex-ante-mode-store", "data"),
-    Input("po-ex-ante-mode-select", "value"),
-)
-def po_update_ex_ante_mode_store(value):
-    return value or "ret_cov"
 
 
 @callback(
@@ -5310,33 +5069,6 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Clientside callback for weight chart switch storage
-clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
-    Output("po-weight-chart-switch-store", "data"),
-    Input("po-weight-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for weight view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_scroll_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
-    Output("po-weight-grid-container", "style"),
-    Output("po-weight-chart-container", "style"),
-    Input("po-weight-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
 # Open progress modal instantly when Run is clicked
 clientside_callback(
     """
@@ -5352,110 +5084,27 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Clientside callback for attribution chart switch storage
 clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptViewSync"),
+    Output("po-weight-chart-switch-store", "data"),
+    Output("po-weight-grid-container", "style"),
+    Output("po-weight-chart-container", "style"),
     Output("po-attribution-chart-switch-store", "data"),
-    Input("po-attribution-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for attribution view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_scroll_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
     Output("po-attribution-grid-container", "style"),
     Output("po-attribution-chart-container", "style"),
-    Input("po-attribution-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for risk chart switch storage
-clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("po-risk-chart-switch-store", "data"),
-    Input("po-risk-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for risk view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_scroll_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
     Output("po-risk-grid-container", "style"),
     Output("po-risk-chart-container", "style"),
-    Input("po-risk-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for turnover chart switch storage
-clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("po-turnover-chart-switch-store", "data"),
-    Input("po-turnover-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for turnover view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_scroll_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
     Output("po-turnover-grid-container", "style"),
     Output("po-turnover-chart-container", "style"),
-    Input("po-turnover-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for frontier chart switch storage
-clientside_callback(
-    "function(value) { return value !== null && value !== undefined ? value : 'chart'; }",
     Output("po-frontier-chart-switch-store", "data"),
-    Input("po-frontier-chart-switch", "value"),
-    prevent_initial_call=True,
-)
-
-# Clientside callback for frontier view toggle
-clientside_callback(
-    """
-    function(view_type) {
-        var flex_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"};
-        var flex_scroll_style = {display: "flex", flexDirection: "column", flex: "1", overflow: "auto"};
-        if (view_type === "chart") {
-            return [{display: "none"}, flex_scroll_style];
-        } else {
-            return [flex_style, {display: "none"}];
-        }
-    }
-    """,
     Output("po-frontier-grid-container", "style"),
     Output("po-frontier-chart-container", "style"),
+    Input("po-weight-chart-switch", "value"),
+    Input("po-attribution-chart-switch", "value"),
+    Input("po-risk-chart-switch", "value"),
+    Input("po-turnover-chart-switch", "value"),
     Input("po-frontier-chart-switch", "value"),
     prevent_initial_call=True,
 )
