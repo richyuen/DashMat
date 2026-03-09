@@ -291,6 +291,10 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-frontier-grid-container", "children")' in page_text
     assert 'po-frontier-chart-content' not in page_text
     assert 'po-frontier-grid-content' not in page_text
+    assert 'Output("po-risk-chart-container", "children")' in page_text
+    assert 'Output("po-risk-grid-container", "children")' in page_text
+    assert 'po-risk-chart-content' not in page_text
+    assert 'po-risk-grid-content' not in page_text
 
 
 def test_po_layout_uses_construction_first_tab_order(page_modules):

@@ -2498,14 +2498,12 @@ def build_po_main_layout():
                             html.Div(
                                 id="po-risk-chart-container",
                                 style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[html.Div(id="po-risk-chart-content")],
+                                children=[],
                             ),
                             html.Div(
                                 id="po-risk-grid-container",
                                 style={"display": "none"},
-                                children=[
-                                    html.Div(id="po-risk-grid-content", style={"height": "100%", "width": "100%"}),
-                                ],
+                                children=[],
                             ),
                         ],
                     ),
@@ -9720,7 +9718,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-risk-chart-content", "children"),
+    Output("po-risk-chart-container", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -9811,7 +9809,7 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, tab_loaded, sw
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-risk-grid-content", "children"),
+    Output("po-risk-grid-container", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
