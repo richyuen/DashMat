@@ -68,3 +68,16 @@ Portfolio import rules:
 - If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` or full pytest.
 - If you change upload, parsing, or statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
 - Before finishing, check for obvious regressions in tab rendering and series selection behavior.
+
+## Performance Learnings
+
+- Warm-switch performance must be judged with a browser timing pass, not just unit tests or callback-level reasoning.
+- Current practical harness: load `/analyticstool`, upload `sample_data/benchmark_returns/benchmark_daily_returns_2020_2025.xlsx`, warm `/portopt` and `/regression`, then measure warm revisits.
+- Track at least:
+  - `shellMs`: main container visible
+  - `readyMs`: periodicity control visible and enabled
+- Regression is the warm-switch reference. PortOpt is the main bottleneck; AnalyticsTool is secondary.
+- Recent failed experiments:
+  - optimistic clientside restore/reconciliation for AT/PO did not improve warm-switch timing enough to justify the extra complexity
+  - lazy-mounting the whole PO ex-ante grid subtree regressed timing materially
+- Preferred next direction: narrower PO-only experiments, one hidden subtree at a time, with remeasurement against committed baseline before keeping the change.
