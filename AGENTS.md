@@ -81,3 +81,12 @@ Portfolio import rules:
   - optimistic clientside restore/reconciliation for AT/PO did not improve warm-switch timing enough to justify the extra complexity
   - lazy-mounting the whole PO ex-ante grid subtree regressed timing materially
 - Preferred next direction: narrower PO-only experiments, one hidden subtree at a time, with remeasurement against committed baseline before keeping the change.
+
+## Windows and Tooling Learnings
+
+- On Windows, very large `apply_patch` payloads can fail with shell or path-length style errors. Split large doc rewrites or multi-file edits into smaller per-file patches.
+- `playwright-cli run-code` is fragile on Windows when given multiline JavaScript. Flatten the JS payload to a single line before invoking the CLI.
+- For browser file uploads in Playwright, prefer normalized forward-slash paths such as `C:/Git/DashMat/...` when passing paths into browser-side code.
+- Keep Playwright runtime artifacts out of commits. `.playwright-cli/` and `output/` are local runtime outputs unless a specific artifact is intentionally being checked in.
+- If you need to compare two commits side by side, run the app on separate ports instead of editing `app.py`. A reliable pattern is `conda run -n dashmat python -c "import app; app.app.run(port=8051)"`.
+- The warm-switch harness currently accepts runs that may include browser console callback errors. Treat single-run results cautiously and prefer repeated A/B runs before concluding that a small regression is real.

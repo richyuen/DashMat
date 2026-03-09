@@ -172,6 +172,8 @@ async () => {
   return { ok: true, baseUrl, sampleFile, runs, results, consoleMessages };
 }
 "@
+# Windows + playwright-cli are unreliable with multiline run-code payloads.
+# Flatten the script before invocation so the CLI receives one argument cleanly.
 $code = $code -replace "(`r`n|`n|`r)", ' '
 
 $raw = Pw @('run-code', $code)
