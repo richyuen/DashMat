@@ -11,7 +11,7 @@ def test_update_app_nav_links_for_test_role():
     assert home_href == "/"
     assert analytics_href == "/restricted?target=Analytics%20Tool"
     assert portopt_href == "/restricted?target=Portfolio%20Optimization"
-    assert regression_href == "/restricted?target=Regression"
+    assert regression_href == "/restricted?target=Regression%20Analysis"
 
 
 def test_update_app_nav_links_for_non_test_role():
@@ -34,7 +34,7 @@ def test_restricted_href_for_path_resolves_for_test_role():
         "/restricted?target=Portfolio%20Optimization"
     )
     assert app_module._restricted_href_for_path("/regression", {"role": "Test"}) == (
-        "/restricted?target=Regression"
+        "/restricted?target=Regression%20Analysis"
     )
 
 
@@ -53,7 +53,7 @@ def test_guard_protected_pages_redirects_or_prevent_update():
         "/restricted?target=Analytics%20Tool"
     )
     assert app_module.guard_protected_pages("/regression", {"role": "Test"}) == (
-        "/restricted?target=Regression"
+        "/restricted?target=Regression%20Analysis"
     )
     with pytest.raises(PreventUpdate):
         app_module.guard_protected_pages("/", {"role": "Test"})

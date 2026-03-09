@@ -461,6 +461,46 @@ def _build_native_initial_guess(inputs: _NativeSolverInputs) -> np.ndarray | Non
     return guess
 
 
+def _is_feasible_native_weights(inputs: _NativeSolverInputs, weights: np.ndarray, tol: float = 1e-6) -> bool:
+    if weights is None:
+        return False
+    arr = np.asarray(weights, dtype=float)
+    if arr.shape != inputs.lower_bounds.shape:
+        return False
+    if np.any(arr < inputs.lower_bounds - tol) or np.any(arr > inputs.upper_bounds + tol):
+        return False
+    if abs(float(arr.sum()) - 1.0) > tol:
+        return False
+    if inputs.linear_a is not None and inputs.linear_b is not None:
+        if np.any(inputs.linear_a @ arr - inputs.linear_b > tol):
+            return False
+    return True
+
+
+def _build_native_risk_parity_starts(inputs: _NativeSolverInputs) -> list[np.ndarray]:
+    starts = []
+    baseline = _build_native_initial_guess(inputs)
+    if baseline is not None:
+        starts.append(np.asarray(baseline, dtype=float))
+
+    n_assets = len(inputs.asset_names)
+    equal = np.repeat(1.0 / n_assets, n_assets)
+    if _is_feasible_native_weights(inputs, equal):
+        starts.append(equal)
+
+    diag = np.clip(np.diag(inputs.covariance), 1e-12, None)
+    inv_vol = 1.0 / np.sqrt(diag)
+    inv_vol = inv_vol / inv_vol.sum()
+    if _is_feasible_native_weights(inputs, inv_vol):
+        starts.append(inv_vol)
+
+    deduped = []
+    for candidate in starts:
+        if not any(np.allclose(candidate, existing, atol=1e-9, rtol=0.0) for existing in deduped):
+            deduped.append(candidate)
+    return deduped
+
+
 def _native_constraints(inputs: _NativeSolverInputs):
     constraints = [{"type": "eq", "fun": lambda w: float(np.sum(w) - 1.0)}]
     if inputs.linear_a is not None and inputs.linear_b is not None:
@@ -494,6 +534,130 @@ def _solve_native_min_variance(inputs: _NativeSolverInputs):
     if not result.success or result.x is None:
         return None
     return _native_result_to_weights(inputs.asset_names, np.asarray(result.x, dtype=float))
+
+
+def _solve_native_risk_parity(inputs: _NativeSolverInputs):
+    starts = _build_native_risk_parity_starts(inputs)
+    if not starts:
+        return None
+
+    eligible = inputs.upper_bounds > 1e-12
+    eligible_count = int(np.count_nonzero(eligible))
+    if eligible_count == 0:
+        return None
+    target = 1.0 / eligible_count
+
+    def objective(w):
+        covariance = inputs.covariance
+        total_var = float(w @ covariance @ w)
+        if total_var <= 1e-18:
+            return 1e6
+        rc = w * (covariance @ w)
+        pct_rc = rc / total_var
+        diff = pct_rc[eligible] - target
+        return float(diff @ diff)
+
+    best_x = None
+    best_obj = None
+    for x0 in starts:
+        result = minimize(
+            objective,
+            x0,
+            method="SLSQP",
+            bounds=list(zip(inputs.lower_bounds, inputs.upper_bounds)),
+            constraints=_native_constraints(inputs),
+            options={"ftol": 1e-12, "maxiter": 500},
+        )
+        if not result.success or result.x is None:
+            continue
+        obj_value = objective(result.x)
+        if best_obj is None or obj_value < best_obj:
+            best_obj = obj_value
+            best_x = np.asarray(result.x, dtype=float)
+
+    if best_x is None:
+        return None
+    return _native_result_to_weights(inputs.asset_names, best_x)
+
+
+def _optimize_risk_parity_riskfolio_reference(
+    window_data,
+    asset_names,
+    lower_bounds,
+    upper_bounds,
+    forced_weights,
+    exp_wt_cov=False,
+    halflife=63,
+    cov_shrinkage="none",
+    cov_shrinkage_target="scaled_identity",
+    linear_constraints=None,
+):
+    """Reference Riskfolio implementation for classical risk parity."""
+    port_data = window_data[asset_names].copy()
+    port = rp.Portfolio(returns=port_data)
+    port.assets_stats(method_mu="hist", method_cov="hist")
+
+    if exp_wt_cov or cov_shrinkage != "none":
+        port.cov = estimate_covariance_matrix(
+            port_data,
+            asset_order=asset_names,
+            exp_weighted=exp_wt_cov,
+            decay_value=halflife,
+            shrinkage=cov_shrinkage,
+            shrinkage_target=cov_shrinkage_target,
+        )
+
+    n_assets = len(asset_names)
+    lower_arr = np.zeros(n_assets)
+    upper_arr = np.ones(n_assets)
+    for i, name in enumerate(asset_names):
+        if name in forced_weights:
+            lower_arr[i] = forced_weights[name]
+            upper_arr[i] = forced_weights[name]
+        else:
+            lower_arr[i] = lower_bounds.get(name, 0)
+            upper_arr[i] = upper_bounds.get(name, 1)
+    port.lowerlng = lower_arr.reshape(-1, 1)
+    port.upperlng = upper_arr.reshape(-1, 1)
+
+    has_nontrivial_bounds = any(lower_arr[i] > 0 or upper_arr[i] < 1 for i in range(n_assets))
+    if has_nontrivial_bounds:
+        A_rows = []
+        b_rows = []
+        for i in range(n_assets):
+            if lower_arr[i] > 0:
+                row = np.zeros(n_assets)
+                row[i] = -1.0
+                A_rows.append(row)
+                b_rows.append(-lower_arr[i])
+            if upper_arr[i] < 1:
+                row = np.zeros(n_assets)
+                row[i] = 1.0
+                A_rows.append(row)
+                b_rows.append(upper_arr[i])
+        if A_rows:
+            port.ainequality = pd.DataFrame(np.array(A_rows), columns=asset_names)
+            port.binequality = pd.DataFrame(np.array(b_rows), columns=["b"])
+
+    if linear_constraints:
+        A_ui, B_ui = _parse_linear_constraints(linear_constraints, asset_names)
+        if A_ui is not None:
+            A_ui_df = pd.DataFrame(A_ui, columns=asset_names)
+            B_ui_df = pd.DataFrame(B_ui, columns=["b"])
+            if hasattr(port, "ainequality") and port.ainequality is not None:
+                port.ainequality = pd.concat([port.ainequality, A_ui_df], ignore_index=True)
+                port.binequality = pd.concat([port.binequality, B_ui_df], ignore_index=True)
+            else:
+                port.ainequality = A_ui_df
+                port.binequality = B_ui_df
+
+    w = port.rp_optimization(model="Classic", rm="MV", hist=True)
+    if w is None or w.empty:
+        return None
+    return {
+        name: float(w.loc[name, "weights"]) if name in w.index else float(forced_weights.get(name, 0.0))
+        for name in asset_names
+    }
 
 
 def _extract_pca_factors(returns_df, n_factors=None):
@@ -993,6 +1157,40 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             linear_constraints=linear_constraints,
         )
         native_result = _solve_native_min_variance(native_inputs)
+        if native_result is not None:
+            return native_result
+        return _equal_weight_fallback(asset_names, forced_weights, free_series)
+
+    if model == "risk_parity":
+        if linear_constraints:
+            reference_result = _optimize_risk_parity_riskfolio_reference(
+                window_data=window_data,
+                asset_names=asset_names,
+                lower_bounds=lower_bounds,
+                upper_bounds=upper_bounds,
+                forced_weights=forced_weights,
+                exp_wt_cov=exp_wt_cov,
+                halflife=halflife,
+                cov_shrinkage=cov_shrinkage,
+                cov_shrinkage_target=cov_shrinkage_target,
+                linear_constraints=linear_constraints,
+            )
+            if reference_result is not None:
+                return reference_result
+            return _equal_weight_fallback(asset_names, forced_weights, free_series)
+        native_inputs = _build_native_solver_inputs(
+            window_data=window_data,
+            asset_names=asset_names,
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+            forced_weights=forced_weights,
+            exp_wt_cov=exp_wt_cov,
+            halflife=halflife,
+            cov_shrinkage=cov_shrinkage,
+            cov_shrinkage_target=cov_shrinkage_target,
+            linear_constraints=linear_constraints,
+        )
+        native_result = _solve_native_risk_parity(native_inputs)
         if native_result is not None:
             return native_result
         return _equal_weight_fallback(asset_names, forced_weights, free_series)
