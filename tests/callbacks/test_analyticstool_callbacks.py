@@ -1681,3 +1681,8 @@ def test_help_modal_mentions_factor_analysis(page_modules):
     assert "analytics tool" in text_blob
     assert "factor analysis" in text_blob
     assert "regime analysis" in text_blob
+
+
+def test_analytics_ui_blocker_release_uses_db_error_alert():
+    text_blob = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'Input("at-db-add-error-alert", "hide")' in text_blob

@@ -1401,3 +1401,14 @@ def test_po_help_modal_model_deep_dive_covers_all_models(page_modules):
     ]
     for model in required_models:
         assert model in text_blob
+
+
+def test_po_ui_blocker_release_uses_db_error_alert():
+    text_blob = Path("pages/portopt.py").read_text(encoding="utf-8")
+    assert 'Input("po-db-add-error-alert", "hide")' in text_blob
+
+
+def test_ui_blocker_release_clears_on_series_selection_modal_change():
+    text_blob = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'if (trigger.indexOf("series-selection-modal") !== -1) {' in text_blob
+    assert "return false;" in text_blob

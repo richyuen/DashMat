@@ -91,7 +91,7 @@
   function uiBlockerRelease(dbOpened, dbErrorHidden, rawOpened, rawErrorHidden, portfolioOpened, portfolioErrorHidden, underlyingOpened, underlyingErrorHidden, seriesSelectionOpened) {
     const trigger = triggeredId() || "";
     if (trigger.indexOf("series-selection-modal") !== -1) {
-      return seriesSelectionOpened === false ? false : noUpdate();
+      return false;
     }
     if (trigger.indexOf("raw-db-add-") !== -1) {
       return (rawOpened === false || rawErrorHidden === false) ? false : noUpdate();

@@ -3997,7 +3997,7 @@ clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-db-add-modal", "opened"),
-    Input("po-alert-message", "hide"),
+    Input("po-db-add-error-alert", "hide"),
     Input("po-raw-db-add-modal", "opened"),
     Input("po-raw-db-add-error-alert", "hide"),
     Input("po-portfolio-add-modal", "opened"),

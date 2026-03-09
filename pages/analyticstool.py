@@ -1960,7 +1960,7 @@ clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerRelease"),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-db-add-modal", "opened"),
-    Input("at-alert-message", "hide"),
+    Input("at-db-add-error-alert", "hide"),
     Input("at-raw-db-add-modal", "opened"),
     Input("at-raw-db-add-error-alert", "hide"),
     Input("at-portfolio-add-modal", "opened"),
