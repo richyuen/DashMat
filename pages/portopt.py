@@ -1585,6 +1585,107 @@ def _build_frontier_snapshot(
     return snapshot
 
 
+def _normalize_frontier_risk_measure(model: str | None, rm: str | None) -> str:
+    risk_measure = rm or "MV"
+    if (model or "") in {"ex_ante_mv", "black_litterman"} and risk_measure == "CVaR":
+        return "MV"
+    return risk_measure
+
+
+@cache_config.cache.memoize(timeout=0)
+def _po_compute_frontier_snapshot_cached(
+    selected_portfolio: str,
+    raw_data: str,
+    periodicity: str,
+    benchmark_payload: str,
+    long_short_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    window_weights_payload: str,
+    config_payload: str,
+    window_idx: int,
+    risk_measure: str,
+    linear_constraints_payload: str,
+    saved_series_payload: str,
+    cmabench_payload: str,
+) -> str:
+    if not raw_data or not window_weights_payload or not config_payload:
+        raise ValueError("No frontier data available.")
+
+    portfolio_data = {
+        "window_weights": json.loads(window_weights_payload),
+        "config": json.loads(config_payload),
+    }
+    snapshot = _build_frontier_snapshot(
+        selected_portfolio=selected_portfolio,
+        portfolio_data=portfolio_data,
+        raw_data=raw_data,
+        periodicity=periodicity or "daily",
+        bench=json.loads(benchmark_payload) if benchmark_payload else {},
+        ls=json.loads(long_short_payload) if long_short_payload else {},
+        vol_scaler=float(vol_scaler or 0.0),
+        vol_scaling=json.loads(vol_scaling_payload) if vol_scaling_payload else {},
+        window_idx=window_idx,
+        rm=risk_measure,
+        linear_constraints=json.loads(linear_constraints_payload) if linear_constraints_payload else [],
+        saved_series_store=json.loads(saved_series_payload) if saved_series_payload else None,
+        cmabench_assignments=json.loads(cmabench_payload) if cmabench_payload else None,
+    )
+    return canonical_json_dumps(snapshot)
+
+
+def _po_resolve_frontier_snapshot(
+    *,
+    selected_portfolio,
+    portfolio_data,
+    raw_data,
+    periodicity,
+    bench,
+    ls,
+    vol_scaler,
+    vol_scaling,
+    window_idx,
+    rm,
+    linear_constraints,
+    saved_series_store=None,
+    cmabench_assignments=None,
+    persist_cache=False,
+):
+    window_weights = (portfolio_data or {}).get("window_weights", []) or []
+    config = (portfolio_data or {}).get("config", {}) or {}
+    if not window_weights or not config:
+        raise ValueError("No frontier data available.")
+
+    resolved_idx, _ = _resolve_frontier_window(window_weights, window_idx)
+    risk_measure = _normalize_frontier_risk_measure(config.get("model", ""), rm)
+    cached = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
+    if cached is not None:
+        return cached
+
+    payload = _po_compute_frontier_snapshot_cached(
+        str(selected_portfolio),
+        raw_data,
+        periodicity or "daily",
+        _mapping_payload(bench),
+        _mapping_payload(ls),
+        float(vol_scaler or 0.0),
+        _mapping_payload(vol_scaling),
+        canonical_json_dumps(window_weights),
+        canonical_json_dumps(config),
+        int(resolved_idx),
+        risk_measure,
+        canonical_json_dumps(linear_constraints or []),
+        canonical_json_dumps(saved_series_store or {}),
+        _mapping_payload(cmabench_assignments),
+    )
+    snapshot = json.loads(payload) if payload else None
+    if snapshot is None:
+        raise ValueError("No frontier data available.")
+    if persist_cache:
+        _cache_frontier_snapshot(portfolio_data, snapshot)
+    return snapshot
+
+
 def _build_frontier_table_rows(snapshot):
     """Build row records for frontier table/export."""
     if not snapshot:
@@ -8077,8 +8178,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 "warning": resolved_rf_context.get("rf_warning"),
             },
         }
-        if model_value in {"ex_ante_mv", "black_litterman"}:
-            frontier_snapshot = _build_frontier_snapshot(
+        try:
+            frontier_snapshot = _po_resolve_frontier_snapshot(
                 selected_portfolio=final_name,
                 portfolio_data=result_entry,
                 raw_data=raw_data,
@@ -8087,13 +8188,15 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 ls=long_short_assignments,
                 vol_scaler=vol_scaler,
                 vol_scaling=vol_scaling_assignments,
-                window_idx=0,
+                window_idx=len(window_data) - 1,
                 rm="MV",
                 linear_constraints=linear_constraints,
                 saved_series_store=saved_series_store,
                 cmabench_assignments=cmabench_assignments,
+                persist_cache=True,
             )
-            _cache_frontier_snapshot(result_entry, frontier_snapshot)
+        except Exception:
+            frontier_snapshot = None
 
         current_results[final_name] = result_entry
 
@@ -9740,28 +9843,21 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                     continue
 
                 try:
-                    latest_idx, _ = _resolve_frontier_window(window_weights, None)
-                    model = config.get("model", "")
-                    risk_measure = "MV"
-                    snapshot = None
-                    if model in {"ex_ante_mv", "black_litterman"}:
-                        snapshot = _get_cached_frontier_snapshot(pdata, latest_idx, risk_measure)
-                    if snapshot is None:
-                        snapshot = _build_frontier_snapshot(
-                            selected_portfolio=pname,
-                            portfolio_data=pdata,
-                            raw_data=raw_data,
-                            periodicity=periodicity,
-                            bench=bench,
-                            ls=ls,
-                            vol_scaler=vol_scaler,
-                            vol_scaling=vol_scaling,
-                            window_idx=latest_idx,
-                            rm=risk_measure,
-                            linear_constraints=config.get("linear_constraints", []),
-                            saved_series_store=saved_series_store,
-                            cmabench_assignments=cmabench,
-                        )
+                    snapshot = _po_resolve_frontier_snapshot(
+                        selected_portfolio=pname,
+                        portfolio_data=pdata,
+                        raw_data=raw_data,
+                        periodicity=periodicity,
+                        bench=bench,
+                        ls=ls,
+                        vol_scaler=vol_scaler,
+                        vol_scaling=vol_scaling,
+                        window_idx=None,
+                        rm="MV",
+                        linear_constraints=config.get("linear_constraints", []),
+                        saved_series_store=saved_series_store,
+                        cmabench_assignments=cmabench,
+                    )
 
                     window_start = format_mdy_date(snapshot.get("window_est_start"))
                     window_end = format_mdy_date(snapshot.get("window_est_end"))
@@ -10235,36 +10331,26 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded
     timing_ctx.__enter__()
     try:
         model = config.get("model", "")
-        resolved_idx, _ = _resolve_frontier_window(window_weights, window_idx)
-        risk_measure = rm or "MV"
-        if model in {"ex_ante_mv", "black_litterman"} and risk_measure == "CVaR":
-            risk_measure = "MV"
-
-        snapshot = None
-        if model in {"ex_ante_mv", "black_litterman"}:
-            snapshot = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
-
-        if snapshot is None:
-            snapshot = _build_frontier_snapshot(
-                selected_portfolio=selected_portfolio,
-                portfolio_data=portfolio_data,
-                raw_data=raw_data,
-                periodicity=periodicity,
-                bench=bench,
-                ls=ls,
-                vol_scaler=vol_scaler,
-                vol_scaling=vol_scaling,
-                window_idx=resolved_idx,
-                rm=risk_measure,
-                linear_constraints=linear_constraints,
-                saved_series_store=saved_series_store,
-                cmabench_assignments=cmabench_assignments,
-            )
+        snapshot = _po_resolve_frontier_snapshot(
+            selected_portfolio=selected_portfolio,
+            portfolio_data=portfolio_data,
+            raw_data=raw_data,
+            periodicity=periodicity,
+            bench=bench,
+            ls=ls,
+            vol_scaler=vol_scaler,
+            vol_scaling=vol_scaling,
+            window_idx=window_idx,
+            rm=rm,
+            linear_constraints=linear_constraints,
+            saved_series_store=saved_series_store,
+            cmabench_assignments=cmabench_assignments,
+        )
 
         frontier_pts = snapshot.get("frontier_points", []) or []
         asset_pts = snapshot.get("assets", []) or []
         portfolio_marker = snapshot.get("portfolio", {}) or {}
-        risk_measure = snapshot.get("risk_measure", risk_measure)
+        risk_measure = snapshot.get("risk_measure", _normalize_frontier_risk_measure(model, rm))
 
         if not frontier_pts:
             return dmc.Text("No frontier points available for the selected window.", c="dimmed")
@@ -10393,35 +10479,24 @@ def po_render_frontier_table(
         series_count=len(opt_series),
         risk_measure=rm,
     ):
-        model = config.get("model", "")
-        resolved_idx, _ = _resolve_frontier_window(window_weights, window_idx)
-        risk_measure = rm or "MV"
-        if model in {"ex_ante_mv", "black_litterman"} and risk_measure == "CVaR":
-            risk_measure = "MV"
-
-        snapshot = None
-        if model in {"ex_ante_mv", "black_litterman"}:
-            snapshot = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
-
-        if snapshot is None:
-            try:
-                snapshot = _build_frontier_snapshot(
-                    selected_portfolio=selected_portfolio,
-                    portfolio_data=portfolio_data,
-                    raw_data=raw_data,
-                    periodicity=periodicity,
-                    bench=bench,
-                    ls=ls,
-                    vol_scaler=vol_scaler,
-                    vol_scaling=vol_scaling,
-                    window_idx=resolved_idx,
-                    rm=risk_measure,
-                    linear_constraints=linear_constraints,
-                    saved_series_store=saved_series_store,
-                    cmabench_assignments=cmabench_assignments,
-                )
-            except Exception:
-                return html.Div()
+        try:
+            snapshot = _po_resolve_frontier_snapshot(
+                selected_portfolio=selected_portfolio,
+                portfolio_data=portfolio_data,
+                raw_data=raw_data,
+                periodicity=periodicity,
+                bench=bench,
+                ls=ls,
+                vol_scaler=vol_scaler,
+                vol_scaling=vol_scaling,
+                window_idx=window_idx,
+                rm=rm,
+                linear_constraints=linear_constraints,
+                saved_series_store=saved_series_store,
+                cmabench_assignments=cmabench_assignments,
+            )
+        except Exception:
+            return html.Div()
 
         return _po_build_result_grid(
             "po-frontier-grid",

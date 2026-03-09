@@ -990,6 +990,49 @@ def test_po_update_frontier_risk_measure_options_restricts_ex_ante(page_modules)
     assert value == "MV"
 
 
+def test_po_resolve_frontier_snapshot_uses_existing_cache_for_standard_model(monkeypatch, page_modules):
+    _, portopt = page_modules
+    snapshot = {
+        "window_index": 1,
+        "risk_measure": "MV",
+        "asset_order": ["Asset_A", "Asset_B"],
+        "portfolio": {"name": "P1", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.6, "Asset_B": 0.4}},
+        "assets": [],
+        "frontier_points": [{"return": 0.1, "risk": 0.2}],
+        "frontier_portfolios": [],
+        "window_est_start": "2024-01-01",
+        "window_est_end": "2024-01-31",
+    }
+    portfolio_data = {
+        "config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]},
+        "window_weights": _sample_window_weights(),
+        "frontier_cache": {"1": {"MV": snapshot}},
+    }
+    monkeypatch.setattr(
+        portopt,
+        "_po_compute_frontier_snapshot_cached",
+        lambda *_args, **_kwargs: pytest.fail("memoized frontier builder should not run on cache hit"),
+    )
+
+    resolved = portopt._po_resolve_frontier_snapshot(
+        selected_portfolio="P1",
+        portfolio_data=portfolio_data,
+        raw_data="{}",
+        periodicity="daily",
+        bench={},
+        ls={},
+        vol_scaler=0,
+        vol_scaling={},
+        window_idx="1",
+        rm="MV",
+        linear_constraints=[],
+        saved_series_store=None,
+        cmabench_assignments=None,
+    )
+
+    assert resolved == snapshot
+
+
 def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypatch, page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=5, freq="D")
@@ -1006,8 +1049,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
             {"point_index": 0, "return": 0.09, "risk": 0.19, "weights": {"Asset_A": 0.5, "Asset_B": 0.5}},
         ],
     }
-    monkeypatch.setattr(portopt, "_build_frontier_snapshot", lambda **_kwargs: snapshot)
-    monkeypatch.setattr(portopt, "_get_cached_frontier_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(portopt, "_po_resolve_frontier_snapshot", lambda **_kwargs: snapshot)
 
     results = {
         "P1": {
@@ -1039,6 +1081,52 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
     assert any(col["field"] == "Sharpe Ratio" for col in getattr(grid, "columnDefs", []))
     assert any(row["Type"] == "Optimized Portfolio" for row in getattr(grid, "rowData", []))
     assert any(row["Type"] == "Frontier Point" for row in getattr(grid, "rowData", []))
+
+
+def test_po_render_frontier_chart_uses_shared_snapshot_resolver(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+    raw_json = df_to_json(pd.DataFrame({"Asset_A": 0.01, "Asset_B": 0.02}, index=idx))
+    calls = {"count": 0}
+    snapshot = {
+        "asset_order": ["Asset_A", "Asset_B"],
+        "risk_measure": "MV",
+        "portfolio": {"name": "P1", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.6, "Asset_B": 0.4}},
+        "assets": [{"name": "Asset_A", "return": 0.12, "risk": 0.25}],
+        "frontier_points": [{"return": 0.09, "risk": 0.19}],
+        "frontier_portfolios": [],
+    }
+
+    def _fake_resolve(**_kwargs):
+        calls["count"] += 1
+        return snapshot
+
+    monkeypatch.setattr(portopt, "_po_resolve_frontier_snapshot", _fake_resolve)
+
+    comp = portopt.po_render_frontier_chart(
+        "P1",
+        {"P1": {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()}},
+        "frontier",
+        True,
+        "chart",
+        "1",
+        "MV",
+        raw_json,
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        None,
+        ["Asset_A", "Asset_B"],
+        "light",
+        [],
+    )
+
+    assert calls["count"] == 1
+    assert type(comp).__name__ == "Loading"
 
 
 def test_po_render_frontier_chart_reports_missing_source_series(page_modules, raw_json):
@@ -1077,6 +1165,122 @@ def test_po_render_frontier_chart_reports_missing_source_series(page_modules, ra
     assert "Missing source series: Asset_B" in " ".join(_collect_component_text(comp))
 
 
+def test_po_run_optimization_stores_default_frontier_cache_for_standard_model(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
+    df.index = pd.to_datetime(df.index)
+
+    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: df.copy())
+    monkeypatch.setattr(
+        portopt,
+        "run_portfolio_optimization",
+        lambda *_args, **_kwargs: (
+            [
+                SimpleNamespace(
+                    apply_start=df.index[0],
+                    apply_end=df.index[-1],
+                    est_start=df.index[0],
+                    est_end=df.index[-1],
+                    weights={"Asset_A": 0.5, "Asset_B": 0.5},
+                )
+            ],
+            pd.Series(0.001, index=df.index),
+        ),
+    )
+    def _fake_resolve_frontier_snapshot(**kwargs):
+        snapshot = {
+            "window_index": 0,
+            "risk_measure": "MV",
+            "asset_order": ["Asset_A", "Asset_B"],
+            "portfolio": {"name": "MyPort", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.5, "Asset_B": 0.5}},
+            "assets": [],
+            "frontier_points": [],
+            "frontier_portfolios": [],
+            "window_est_start": "2024-01-01",
+            "window_est_end": "2024-01-31",
+        }
+        if kwargs.get("persist_cache"):
+            kwargs["portfolio_data"]["frontier_cache"] = {"0": {"MV": snapshot}}
+        return snapshot
+
+    monkeypatch.setattr(portopt, "_po_resolve_frontier_snapshot", _fake_resolve_frontier_snapshot)
+
+    results_out, new_raw, status, pending = portopt.po_run_optimization(
+        1,
+        raw_json,
+        "daily",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        {},
+        {},
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        "MyPort",
+        "full",
+        252,
+        1,
+        "months",
+        "risk_parity",
+        "fill_na",
+        "off",
+        {},
+        [],
+        {},
+        {},
+        [],
+        0.05,
+        "maximize_sharpe",
+        {},
+        {},
+        "ret_cov",
+        [],
+        None,
+    )
+
+    assert status["status"] == "complete"
+    assert "frontier_cache" in results_out["MyPort"]
+    assert "MV" in results_out["MyPort"]["frontier_cache"]["0"]
+    assert new_raw is no_update
+    assert pending is no_update
+
+
+def test_po_render_frontier_rf_warning_non_ex_ante_skips_snapshot_lookup(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(
+        portopt,
+        "_get_cached_frontier_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("non-ex-ante RF warning should not read frontier snapshots"),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "_resolve_risk_free_context",
+        lambda **_kwargs: {"rf_warning": "Warning text"},
+    )
+
+    warning, style = portopt.po_render_frontier_rf_warning(
+        "P1",
+        {"P1": {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()}},
+        "frontier",
+        "1",
+        "MV",
+        "daily",
+        None,
+        None,
+    )
+
+    assert "Warning text" in " ".join(_collect_component_text(warning))
+    assert style["display"] == "block"
+
+
 def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page_modules, raw_json):
     _, portopt = page_modules
     df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
@@ -1101,18 +1305,28 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
     )
     monkeypatch.setattr(
         portopt,
-        "_build_frontier_snapshot",
-        lambda **_kwargs: {
-            "window_index": 0,
-            "risk_measure": "MV",
-            "asset_order": ["Asset_A", "Asset_B"],
-            "portfolio": {"name": "MyPort", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.5, "Asset_B": 0.5}},
-            "assets": [],
-            "frontier_points": [],
-            "frontier_portfolios": [],
-            "window_est_start": "2024-01-01",
-            "window_est_end": "2024-01-31",
-        },
+        "_po_resolve_frontier_snapshot",
+        lambda **kwargs: (
+            kwargs["portfolio_data"].setdefault(
+                "frontier_cache",
+                {
+                    "0": {
+                        "MV": {
+                            "window_index": 0,
+                            "risk_measure": "MV",
+                            "asset_order": ["Asset_A", "Asset_B"],
+                            "portfolio": {"name": "MyPort", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.5, "Asset_B": 0.5}},
+                            "assets": [],
+                            "frontier_points": [],
+                            "frontier_portfolios": [],
+                            "window_est_start": "2024-01-01",
+                            "window_est_end": "2024-01-31",
+                        }
+                    }
+                },
+            )
+            or kwargs["portfolio_data"]["frontier_cache"]["0"]["MV"]
+        ),
     )
 
     ex_cov = {
@@ -1394,10 +1608,9 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
             }
         ],
     )
-    monkeypatch.setattr(portopt, "_get_cached_frontier_snapshot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         portopt,
-        "_build_frontier_snapshot",
+        "_po_resolve_frontier_snapshot",
         lambda **_kwargs: {
             "window_index": 0,
             "risk_measure": "MV",
