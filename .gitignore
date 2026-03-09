@@ -58,3 +58,5 @@ pytest_tmp/
 .pytest_tmp/
 pytest-cache-files-*/
 tests/.tmp/
+.playwright-cli/
+output/playwright/
