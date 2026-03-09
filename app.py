@@ -39,7 +39,7 @@ def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> st
     if pathname in ("/portopt", "/portopt/"):
         return "/restricted?target=Portfolio%20Optimization"
     if pathname in ("/regression", "/regression/"):
-        return "/restricted?target=Regression"
+        return "/restricted?target=Regression%20Analysis"
     return None
 
 HOME_PATH = _registry_path("pages.home", "/")
@@ -102,22 +102,22 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
                                             children=[
                                                 dmc.MenuItem(
                                                     "Home",
-                                                    id="app-nav-home",
+                                                    id="global-navbar-pretrade-home",
                                                     href=HOME_PATH,
                                                 ),
                                                 dmc.MenuItem(
                                                     "Analytics Tool",
-                                                    id="app-nav-analytics",
+                                                    id="global-navbar-pretrade-analyticstool",
                                                     href=ANALYTICS_PATH,
                                                 ),
                                                 dmc.MenuItem(
                                                     "Portfolio Optimization",
-                                                    id="app-nav-portopt",
+                                                    id="global-navbar-pretrade-portopt",
                                                     href=PORTOPT_PATH,
                                                 ),
                                                 dmc.MenuItem(
                                                     "Regression",
-                                                    id="app-nav-regression",
+                                                    id="global-navbar-pretrade-regression",
                                                     href=REGRESSION_PATH,
                                                 ),
                                             ],
@@ -141,10 +141,10 @@ app.layout = dmc.MantineProvider(**_provider_kwargs)
 
 
 @app.callback(
-    Output("app-nav-home", "href"),
-    Output("app-nav-analytics", "href"),
-    Output("app-nav-portopt", "href"),
-    Output("app-nav-regression", "href"),
+    Output("global-navbar-pretrade-home", "href"),
+    Output("global-navbar-pretrade-analyticstool", "href"),
+    Output("global-navbar-pretrade-portopt", "href"),
+    Output("global-navbar-pretrade-regression", "href"),
     Input("userinfo", "data"),
     prevent_initial_call=True,
 )
@@ -159,7 +159,7 @@ def update_app_nav_links(userinfo):
             home_path,
             "/restricted?target=Analytics%20Tool",
             "/restricted?target=Portfolio%20Optimization",
-            "/restricted?target=Regression",
+            "/restricted?target=Regression%20Analysis",
         )
 
     return home_path, analytics_path, portopt_path, regression_path
