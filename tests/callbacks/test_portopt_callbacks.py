@@ -280,6 +280,7 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     assert page_text.count('dcc.Interval(id="po-page-load-trigger"') == 1
     assert "def po_sync_results_with_raw_data" not in page_text
+    assert 'dcc.Store(id="po-restore-complete-store", data=False, storage_type="memory")' in page_text
     assert 'Output("po-vis-tabs", "value")' in page_text
     assert 'State("po-active-tab-store", "data")' in page_text
     assert 'Output("po-attribution-tab-loaded-store", "data")' in page_text
@@ -305,6 +306,33 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'po-turnover-chart-content' not in page_text
     assert 'po-turnover-grid-content' not in page_text
     assert page_text.count('Input("po-initial-tab-render-ready-store", "data")') == 2
+
+
+def test_po_shell_visibility_no_longer_depends_on_page_load_trigger():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    visibility_block = page_text.split('Output("po-secondary-restore-ready-store", "data")', 1)[0]
+    assert 'Output("po-welcome-screen", "style")' in visibility_block
+    assert 'Output("po-main-container", "style")' in visibility_block
+    assert 'Input("dashmat-raw-data-store", "data")' in visibility_block
+    assert 'Input("po-page-load-trigger", "n_intervals")' not in visibility_block
+
+
+def test_po_toggle_ui_elements_uses_restore_complete_store():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    toggle_block = page_text.split("def po_toggle_ui_elements", 1)[0]
+    toggle_callback = toggle_block.rsplit("@callback(", 1)[-1]
+    assert 'Input("po-restore-complete-store", "data")' in toggle_callback
+    assert 'Input("po-secondary-restore-ready-store", "data")' not in toggle_callback
+
+
+def test_po_restore_complete_store_waits_for_secondary_restore_and_valid_controls():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    assert 'Output("po-restore-complete-store", "data")' in page_text
+    restore_block = page_text.split('Output("po-restore-complete-store", "data")', 1)[1]
+    restore_callback = restore_block.split("# ---------------------------------------------------------------------------\n# Restore optimization controls from stores on page load", 1)[0]
+    assert 'Input("po-secondary-restore-ready-store", "data")' in restore_callback
+    assert 'Input("po-periodicity-select", "value")' in restore_callback
+    assert 'Input("po-series-select", "data")' in restore_callback
 
 
 def test_po_init_date_range_no_longer_depends_on_common_daily_store():
@@ -765,7 +793,7 @@ def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
     assert download_disabled is False
 
 
-def test_po_toggle_ui_elements_waits_for_secondary_restore(page_modules):
+def test_po_toggle_ui_elements_waits_for_restore_completion(page_modules):
     _, portopt = page_modules
 
     run_disabled, tooltip, tooltip_disabled, save_disabled, download_disabled = (

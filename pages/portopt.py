@@ -3386,6 +3386,7 @@ layout = dmc.Container(
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
         dcc.Store(id="po-initial-tab-render-ready-store", data=False, storage_type="memory"),
         dcc.Store(id="po-secondary-restore-ready-store", data=False, storage_type="memory"),
+        dcc.Store(id="po-restore-complete-store", data=False, storage_type="memory"),
         dcc.Store(id="po-attribution-tab-loaded-store", data=False, storage_type="memory"),
         dcc.Store(id="po-risk-tab-loaded-store", data=False, storage_type="memory"),
         dcc.Store(id="po-frontier-tab-loaded-store", data=False, storage_type="memory"),
@@ -5363,10 +5364,7 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(n_intervals, data) {
-        if (n_intervals === null || n_intervals === undefined || n_intervals < 1) {
-            return [{display: "none"}, {display: "none"}];
-        }
+    function(data) {
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
@@ -5375,7 +5373,6 @@ clientside_callback(
     """,
     Output("po-welcome-screen", "style"),
     Output("po-main-container", "style"),
-    Input("po-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
 )
 
@@ -5506,6 +5503,125 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+clientside_callback(
+    """
+    function(
+        rawMeta,
+        secondaryReady,
+        periodicityValue,
+        volScalerValue,
+        selectedSeries,
+        activeTab,
+        optWindow,
+        windowSize,
+        optStep,
+        optStepUnit,
+        model,
+        name,
+        expWt,
+        halflife,
+        covShrinkage,
+        covShrinkageTarget,
+        missingData,
+        fillInSample
+    ) {
+        if (!secondaryReady || !rawMeta || !rawMeta.has_data) {
+            return false;
+        }
+
+        const columns = Array.isArray(rawMeta.columns) ? rawMeta.columns : [];
+        if (!columns.length) {
+            return false;
+        }
+
+        const periodicityOptions = Array.isArray(rawMeta.periodicity_options)
+            ? rawMeta.periodicity_options
+            : [{value: "daily_trading", label: "Daily (Trading)"}];
+        const validPeriodicities = periodicityOptions.map((option) => option.value);
+        const allowedTabs = ["weight", "attribution", "risk", "turnover", "frontier", "statistics", "returns", "rolling", "calendar", "growth", "drawdown"];
+        const validWindowTypes = ["rolling", "expanding", "full"];
+        const validStepUnits = ["months", "periods"];
+        const validModels = [
+            "risk_parity",
+            "factor_risk_parity",
+            "hierarchical_risk_parity",
+            "hrp",
+            "maximize_sharpe",
+            "minimize_variance",
+            "minimize_cvar",
+            "equal_weight",
+            "ex_ante_mv",
+            "black_litterman",
+        ];
+        const validShrinkage = ["none", "ledoit_wolf", "oas"];
+        const validShrinkageTargets = ["scaled_identity", "constant_correlation"];
+        const validMissingData = ["fill_na", "fill_0"];
+        const validFillInSample = ["off", "on"];
+        const selected = Array.isArray(selectedSeries) ? selectedSeries : [];
+        const allSeriesAvailable = selected.every((series) => columns.includes(series));
+        const resolvedActiveTab = activeTab || "weight";
+        const resolvedWindowType = optWindow || "rolling";
+        const resolvedWindowSize = windowSize !== null && windowSize !== undefined ? windowSize : 252;
+        const resolvedOptStep = optStep !== null && optStep !== undefined ? optStep : 1;
+        const resolvedStepUnit = optStepUnit || "months";
+        const resolvedModel = model || "risk_parity";
+        const resolvedName = (name && String(name).trim()) ? String(name).trim() : "RP";
+        const resolvedExpWt = !!expWt;
+        const resolvedHalflife = halflife !== null && halflife !== undefined ? halflife : 63;
+        const resolvedCovShrinkage = covShrinkage || "none";
+        const resolvedCovShrinkageTarget = covShrinkageTarget || "scaled_identity";
+        const resolvedMissingData = missingData || "fill_na";
+        const resolvedFillInSample = fillInSample || "off";
+        const resolvedVolScaler = volScalerValue !== null && volScalerValue !== undefined ? volScalerValue : 0;
+        const numericWindowSize = Number(resolvedWindowSize);
+        const numericOptStep = Number(resolvedOptStep);
+        const numericHalflife = Number(resolvedHalflife);
+
+        return (
+            validPeriodicities.includes(periodicityValue) &&
+            Number.isFinite(Number(resolvedVolScaler)) &&
+            allSeriesAvailable &&
+            allowedTabs.includes(resolvedActiveTab) &&
+            validWindowTypes.includes(resolvedWindowType) &&
+            Number.isFinite(numericWindowSize) &&
+            numericWindowSize >= 2 &&
+            Number.isFinite(numericOptStep) &&
+            numericOptStep >= 1 &&
+            validStepUnits.includes(resolvedStepUnit) &&
+            validModels.includes(resolvedModel) &&
+            resolvedName.length > 0 &&
+            typeof resolvedExpWt === "boolean" &&
+            Number.isFinite(numericHalflife) &&
+            numericHalflife > 0 &&
+            validShrinkage.includes(resolvedCovShrinkage) &&
+            validShrinkageTargets.includes(resolvedCovShrinkageTarget) &&
+            validMissingData.includes(resolvedMissingData) &&
+            validFillInSample.includes(resolvedFillInSample)
+        );
+    }
+    """,
+    Output("po-restore-complete-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-secondary-restore-ready-store", "data"),
+    Input("po-periodicity-select", "value"),
+    Input("po-vol-scaler-input", "value"),
+    Input("po-series-select", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-opt-window-select", "value"),
+    Input("po-window-size-input", "value"),
+    Input("po-opt-step-input", "value"),
+    Input("po-opt-step-unit-select", "value"),
+    Input("po-opt-model-select", "value"),
+    Input("po-portfolio-name-input", "value"),
+    Input("po-exp-wt-cov-switch", "checked"),
+    Input("po-halflife-input", "value"),
+    Input("po-cov-shrinkage-select", "value"),
+    Input("po-cov-shrinkage-target-select", "value"),
+    Input("po-missing-data-select", "value"),
+    Input("po-fill-in-sample-select", "value"),
+    prevent_initial_call=False,
+)
+
 
 # ---------------------------------------------------------------------------
 # Restore optimization controls from stores on page load
@@ -5617,7 +5733,7 @@ clientside_callback(
     Output("po-run-button-tooltip", "disabled"),
     Output("po-menu-save-session", "disabled"),
     Output("po-menu-download-excel", "disabled"),
-    Input("po-secondary-restore-ready-store", "data"),
+    Input("po-restore-complete-store", "data"),
     Input("po-portfolio-name-input", "value"),
     Input("po-series-select", "data"),
     Input("po-opt-model-select", "value"),
@@ -5644,7 +5760,7 @@ clientside_callback(
     Input("po-results-store", "data"),
 )
 def po_toggle_ui_elements(
-    secondary_ready,
+    restore_complete,
     name,
     selected,
     opt_model,
@@ -5672,7 +5788,7 @@ def po_toggle_ui_elements(
 ):
     save_disabled = not (welcome_style and welcome_style.get("display") == "none")
     download_disabled = not bool(results_data and len(results_data) > 0)
-    if not secondary_ready:
+    if not restore_complete:
         return True, "Loading controls...", False, save_disabled, download_disabled
 
     validation_error = _validate_optimization_inputs(

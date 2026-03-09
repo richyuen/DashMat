@@ -337,9 +337,14 @@ def warm_portopt_results(page, base_url: str, db_series: list[str]) -> None:
     if len(opt_series) < 2:
         raise RuntimeError(f"Need at least 2 series for PortOpt harness solve, got: {opt_series}")
 
-    if page.locator("#po-modal-ok-button").is_visible():
+    modal_ok = page.locator("#po-modal-ok-button")
+    deadline = time.perf_counter() + 5
+    while time.perf_counter() < deadline and not modal_ok.is_visible():
+        page.wait_for_timeout(200)
+
+    if modal_ok.is_visible():
         set_component_props(page, "po-temp-series-select", {"data": opt_series})
-        page.locator("#po-modal-ok-button").click()
+        modal_ok.click()
         page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
 
     set_component_props(page, "po-series-select", {"data": opt_series})
