@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import riskfolio as rp
+from scipy.optimize import linprog, minimize
 from utils.covariance import (
     estimate_covariance_matrix,
     resolve_cov_shrinkage_spec,
@@ -23,6 +24,16 @@ class WindowResult:
     weights: dict  # {series_name: weight}
     est_start: pd.Timestamp = None  # Estimation window start
     est_end: pd.Timestamp = None    # Estimation window end    
+
+
+@dataclass(frozen=True)
+class _NativeSolverInputs:
+    asset_names: tuple[str, ...]
+    covariance: np.ndarray
+    lower_bounds: np.ndarray
+    upper_bounds: np.ndarray
+    linear_a: np.ndarray | None
+    linear_b: np.ndarray | None
 
 
 def _annualized_return(returns: pd.Series, periods_per_year: float) -> float:
@@ -352,6 +363,137 @@ def _parse_linear_constraints(linear_constraints, asset_names):
         return None, None
         
     return np.array(A_list), np.array(B_list).reshape(-1, 1)
+
+
+def _equal_weight_fallback(asset_names, forced_weights, free_series):
+    """Return the existing equal-weight fallback allocation."""
+    result = dict(forced_weights)
+    remaining = 1.0 - sum(forced_weights.values())
+    equal_wt = remaining / len(free_series) if free_series else 0.0
+    for name in free_series:
+        result[name] = equal_wt
+    for name in asset_names:
+        result.setdefault(name, 0.0)
+    return result
+
+
+def _build_native_solver_inputs(
+    window_data,
+    asset_names,
+    lower_bounds,
+    upper_bounds,
+    forced_weights,
+    exp_wt_cov=False,
+    halflife=63,
+    cov_shrinkage="none",
+    cov_shrinkage_target="scaled_identity",
+    linear_constraints=None,
+):
+    """Build reusable native solver inputs for classical models."""
+    port_data = window_data[asset_names].copy()
+    if exp_wt_cov or cov_shrinkage != "none":
+        cov_df = estimate_covariance_matrix(
+            port_data,
+            asset_order=asset_names,
+            exp_weighted=exp_wt_cov,
+            decay_value=halflife,
+            shrinkage=cov_shrinkage,
+            shrinkage_target=cov_shrinkage_target,
+        )
+    else:
+        cov_df = port_data.cov()
+
+    lower_arr = np.zeros(len(asset_names), dtype=float)
+    upper_arr = np.ones(len(asset_names), dtype=float)
+    for i, name in enumerate(asset_names):
+        if name in forced_weights:
+            lower_arr[i] = float(forced_weights[name])
+            upper_arr[i] = float(forced_weights[name])
+        else:
+            lower_arr[i] = float(lower_bounds.get(name, 0.0))
+            upper_arr[i] = float(upper_bounds.get(name, 1.0))
+
+    linear_a, linear_b = _parse_linear_constraints(linear_constraints, asset_names)
+    covariance = np.asarray(cov_df.reindex(index=asset_names, columns=asset_names), dtype=float)
+    covariance = (covariance + covariance.T) / 2.0
+
+    return _NativeSolverInputs(
+        asset_names=tuple(asset_names),
+        covariance=covariance,
+        lower_bounds=lower_arr,
+        upper_bounds=upper_arr,
+        linear_a=linear_a,
+        linear_b=None if linear_b is None else np.asarray(linear_b, dtype=float).reshape(-1),
+    )
+
+
+def _build_native_initial_guess(inputs: _NativeSolverInputs) -> np.ndarray | None:
+    """Find a feasible starting point for SLSQP."""
+    bounds = list(zip(inputs.lower_bounds, inputs.upper_bounds))
+    linprog_result = linprog(
+        c=np.zeros(len(inputs.asset_names), dtype=float),
+        A_ub=inputs.linear_a,
+        b_ub=inputs.linear_b,
+        A_eq=np.ones((1, len(inputs.asset_names)), dtype=float),
+        b_eq=np.array([1.0], dtype=float),
+        bounds=bounds,
+        method="highs",
+    )
+    if linprog_result.success and linprog_result.x is not None:
+        return np.asarray(linprog_result.x, dtype=float)
+
+    guess = inputs.lower_bounds.astype(float, copy=True)
+    remaining = 1.0 - float(guess.sum())
+    if remaining < -1e-9:
+        return None
+    slack = np.maximum(inputs.upper_bounds - guess, 0.0)
+    slack_sum = float(slack.sum())
+    if remaining > 1e-9:
+        if slack_sum < remaining - 1e-9:
+            return None
+        if slack_sum > 0:
+            guess = guess + (slack / slack_sum) * remaining
+
+    if abs(float(guess.sum()) - 1.0) > 1e-6:
+        return None
+    if inputs.linear_a is not None and np.any(inputs.linear_a @ guess - inputs.linear_b > 1e-6):
+        return None
+    return guess
+
+
+def _native_constraints(inputs: _NativeSolverInputs):
+    constraints = [{"type": "eq", "fun": lambda w: float(np.sum(w) - 1.0)}]
+    if inputs.linear_a is not None and inputs.linear_b is not None:
+        for row, bound in zip(inputs.linear_a, inputs.linear_b):
+            constraints.append(
+                {
+                    "type": "ineq",
+                    "fun": lambda w, row=row, bound=float(bound): float(bound - row @ w),
+                }
+            )
+    return constraints
+
+
+def _native_result_to_weights(asset_names, weights):
+    return {name: float(weights[i]) for i, name in enumerate(asset_names)}
+
+
+def _solve_native_min_variance(inputs: _NativeSolverInputs):
+    x0 = _build_native_initial_guess(inputs)
+    if x0 is None:
+        return None
+
+    result = minimize(
+        lambda w: float(w @ inputs.covariance @ w),
+        x0,
+        method="SLSQP",
+        bounds=list(zip(inputs.lower_bounds, inputs.upper_bounds)),
+        constraints=_native_constraints(inputs),
+        options={"ftol": 1e-9, "maxiter": 300},
+    )
+    if not result.success or result.x is None:
+        return None
+    return _native_result_to_weights(inputs.asset_names, np.asarray(result.x, dtype=float))
 
 
 def _extract_pca_factors(returns_df, n_factors=None):
@@ -837,6 +979,24 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             rf=rf,
         )
 
+    if model == "minimize_variance":
+        native_inputs = _build_native_solver_inputs(
+            window_data=window_data,
+            asset_names=asset_names,
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+            forced_weights=forced_weights,
+            exp_wt_cov=exp_wt_cov,
+            halflife=halflife,
+            cov_shrinkage=cov_shrinkage,
+            cov_shrinkage_target=cov_shrinkage_target,
+            linear_constraints=linear_constraints,
+        )
+        native_result = _solve_native_min_variance(native_inputs)
+        if native_result is not None:
+            return native_result
+        return _equal_weight_fallback(asset_names, forced_weights, free_series)
+
     # Build riskfolio Portfolio
     # Use only the columns that are in asset_names
     port_data = window_data[asset_names].copy()
@@ -954,27 +1114,15 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
             w = port.optimization(model="Classic", rm="MV", obj="Sharpe", hist=use_hist, rf=rf)
         elif model == "minimize_cvar":
             w = port.optimization(model="Classic", rm="CVaR", obj="MinRisk", hist=True)
-        elif model == "minimize_variance":
-            w = port.optimization(model="Classic", rm="MV", obj="MinRisk", hist=True)
         else:
             raise ValueError(f"Unknown model: {model}")
     except Exception:
         # Fallback to equal weight on optimization failure
-        result = dict(forced_weights)
-        remaining = 1.0 - sum(forced_weights.values())
-        equal_wt = remaining / len(free_series)
-        for s in free_series:
-            result[s] = equal_wt
-        return result
+        return _equal_weight_fallback(asset_names, forced_weights, free_series)
 
     if w is None or w.empty:
         # Fallback to equal weight
-        result = dict(forced_weights)
-        remaining = 1.0 - sum(forced_weights.values())
-        equal_wt = remaining / len(free_series)
-        for s in free_series:
-            result[s] = equal_wt
-        return result
+        return _equal_weight_fallback(asset_names, forced_weights, free_series)
 
     # Convert result to dict
     result = {}
