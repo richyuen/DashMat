@@ -74,26 +74,28 @@
   }
 
   function triggerUploadWithCancel(rootId, blockerStoreId) {
-    setTimeout(function () {
-      const uploadDiv = document.getElementById(rootId);
-      if (!uploadDiv) {
-        return;
-      }
-      const input = uploadDiv.querySelector('input[type="file"]');
-      if (!input) {
-        return;
-      }
-      const onFocus = function () {
-        window.removeEventListener("focus", onFocus);
-        setTimeout(function () {
-          if (!input.files || input.files.length === 0) {
-            window.dash_clientside.set_props(blockerStoreId, { data: false });
-          }
-        }, 500);
-      };
-      window.addEventListener("focus", onFocus);
+    const uploadDiv = document.getElementById(rootId);
+    if (!uploadDiv) {
+      return noUpdate();
+    }
+    const input = uploadDiv.querySelector('input[type="file"]');
+    if (!input) {
+      return noUpdate();
+    }
+    const onFocus = function () {
+      window.removeEventListener("focus", onFocus);
+      setTimeout(function () {
+        if (!input.files || input.files.length === 0) {
+          window.dash_clientside.set_props(blockerStoreId, { data: false });
+        }
+      }, 500);
+    };
+    window.addEventListener("focus", onFocus);
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+    } else {
       input.click();
-    }, 100);
+    }
     return true;
   }
 

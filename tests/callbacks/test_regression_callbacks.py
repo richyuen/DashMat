@@ -646,6 +646,9 @@ def test_regression_upload_clientside_trigger_targets_blocker_store():
 def test_regression_upload_trigger_uses_cancel_aware_shared_helper():
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert 'return triggerUploadWithCancel("reg-upload-data", "reg-ui-blocker-store");' in js_text
+    assert 'if (typeof input.showPicker === "function") {' in js_text
+    assert "input.showPicker();" in js_text
+    assert "input.click();" in js_text
 
 
 def test_reg_handle_upload_multi_sheet_opens_modal_and_releases_blocker(monkeypatch, regression_page):
