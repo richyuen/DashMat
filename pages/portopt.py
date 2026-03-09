@@ -76,7 +76,7 @@ from utils.statistics import (
     annualized_return_calendar_days,
 )
 from utils.charting import apply_chart_theme
-from utils.sample_data import get_sample_file_path
+from utils.help_links import PORTOPT_HELP_URL
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
@@ -169,6 +169,62 @@ _PO_MODEL_DEFAULT_NAME = {
 
 def _po_default_name_for_model(model: str) -> str:
     return _PO_MODEL_DEFAULT_NAME.get(model, "Port")
+
+
+def _po_build_result_grid(
+    component_id: str,
+    column_defs: list[dict] | None,
+    row_data: list[dict] | None,
+    *,
+    pagination: bool = False,
+) -> dag.AgGrid:
+    return dag.AgGrid(
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
+        id=component_id,
+        className="ag-theme-alpine",
+        columnDefs=column_defs or [],
+        rowData=row_data or [],
+        defaultColDef={
+            "sortable": True,
+            "resizable": True,
+            "suppressHeaderMenuButton": True,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "dashmat-center-header",
+        },
+        style={"height": "100%", "width": "100%"},
+        dashGridOptions={
+            "animateRows": True,
+            "pagination": pagination,
+            "suppressExcelExport": True,
+            "enableRangeSelection": True,
+            "suppressCsvExport": True,
+        },
+    )
+
+
+def _po_build_help_control() -> dmc.Anchor | dmc.Button:
+    help_button = dmc.Button(
+        "Help",
+        id="po-menu-help-guide",
+        variant="gradient",
+        gradient={"from": "teal", "to": "cyan", "deg": 90},
+        size="sm",
+        radius="xl",
+        className="dashmat-menu-trigger",
+        leftSection=DashIconify(icon="tabler:help-circle", width=14),
+        disabled=not PORTOPT_HELP_URL.strip(),
+    )
+    if not PORTOPT_HELP_URL.strip():
+        return help_button
+    return dmc.Anchor(
+        help_button,
+        href=PORTOPT_HELP_URL.strip(),
+        target="_blank",
+        rel="noopener noreferrer",
+        style={"textDecoration": "none"},
+    )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -2382,17 +2438,7 @@ def build_po_main_layout():
                                 id="po-weight-grid-container",
                                 style={"display": "none"},
                                 children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-weight-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
+                                    html.Div(id="po-weight-grid-content", style={"height": "100%", "width": "100%"}),
                                 ],
                             ),
                         ],
@@ -2422,17 +2468,7 @@ def build_po_main_layout():
                                 id="po-attribution-grid-container",
                                 style={"display": "none"},
                                 children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-attribution-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
+                                    html.Div(id="po-attribution-grid-content", style={"height": "100%", "width": "100%"}),
                                 ],
                             ),
                         ],
@@ -2462,17 +2498,7 @@ def build_po_main_layout():
                                 id="po-risk-grid-container",
                                 style={"display": "none"},
                                 children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-risk-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
+                                    html.Div(id="po-risk-grid-content", style={"height": "100%", "width": "100%"}),
                                 ],
                             ),
                         ],
@@ -2502,17 +2528,7 @@ def build_po_main_layout():
                                 id="po-turnover-grid-container",
                                 style={"display": "none"},
                                 children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-turnover-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
+                                    html.Div(id="po-turnover-grid-content", style={"height": "100%", "width": "100%"}),
                                 ],
                             ),
                         ],
@@ -2573,17 +2589,7 @@ def build_po_main_layout():
                                 id="po-frontier-grid-container",
                                 style={"display": "none"},
                                 children=[
-                                    dag.AgGrid(
-                                        enableEnterpriseModules=True,
-                                        licenseKey=AG_GRID_LICENSE_KEY,
-                                        id="po-frontier-grid",
-                                        className='ag-theme-alpine',
-                                        columnDefs=[],
-                                        rowData=[],
-                                        defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                        style={"height": "100%", "width": "100%"},
-                                        dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                                    ),
+                                    html.Div(id="po-frontier-grid-content", style={"height": "100%", "width": "100%"}),
                                 ],
                             ),
                         ],
@@ -2593,17 +2599,7 @@ def build_po_main_layout():
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
-                            dag.AgGrid(
-                                enableEnterpriseModules=True,
-                                licenseKey=AG_GRID_LICENSE_KEY,
-                                id="po-statistics-grid",
-                                className='ag-theme-alpine',
-                                columnDefs=[],
-                                rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                style={"height": "100%", "width": "100%"},
-                                dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                            ),
+                            html.Div(id="po-statistics-grid-content", style={"height": "100%", "width": "100%"}),
                         ],
                     ),
                     dmc.TabsPanel(
@@ -2611,17 +2607,7 @@ def build_po_main_layout():
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
-                            dag.AgGrid(
-                                enableEnterpriseModules=True,
-                                licenseKey=AG_GRID_LICENSE_KEY,
-                                id="po-returns-grid",
-                                className='ag-theme-alpine',
-                                columnDefs=[],
-                                rowData=[],
-                                defaultColDef={"sortable": True, "resizable": True, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
-                                style={"height": "100%", "width": "100%"},
-                                dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
-                            ),
+                            html.Div(id="po-returns-grid-content", style={"height": "100%", "width": "100%"}),
                         ],
                     ),
                     dmc.TabsPanel(
@@ -2954,17 +2940,7 @@ layout = dmc.Container(
                             leftSection=DashIconify(icon="tabler:chart-dots-3", width=16),
                         ),
                         dmc.Box(style={"flexGrow": 1}),
-                        # Help button (opens User Guide)
-                        dmc.Button(
-                            "Help",
-                            id="po-menu-help-guide",
-                            variant="gradient",
-                            gradient={"from": "teal", "to": "cyan", "deg": 90},
-                            size="sm",
-                            radius="xl",
-                            className="dashmat-menu-trigger",
-                            leftSection=DashIconify(icon="tabler:help-circle", width=14),
-                        ),
+                        _po_build_help_control(),
                     ],
                 ),
             ],
@@ -3084,402 +3060,6 @@ layout = dmc.Container(
             ],
         ),
 
-        # Help Modal
-        dmc.Modal(
-            id="po-help-modal",
-            title=dmc.Group(
-                gap="xs",
-                children=[
-                    dmc.ThemeIcon(DashIconify(icon="tabler:book"), color="grape", variant="light", size="sm"),
-                    dmc.Text("User Guide", fw=600, size="sm"),
-                ],
-            ),
-            size="lg",
-            centered=False,
-            radius="lg",
-            className="dashmat-modal",
-            overlayProps={"blur": 2, "opacity": 0.45},
-            transitionProps={"transition": "fade", "duration": 180},
-            styles={"inner": {"alignItems": "flex-start", "paddingTop": "4vh"}},
-            children=[
-                dmc.Stack(
-                    gap="md",
-                    children=[
-                        dmc.Paper(
-                            withBorder=True,
-                            radius="md",
-                            p="sm",
-                            bg="var(--mantine-color-body)",
-                            children=dmc.Group(
-                                justify="flex-start",
-                                align="center",
-                                children=[
-                                    dmc.Group(
-                                        gap="xs",
-                                        children=[
-                                            dmc.ThemeIcon(DashIconify(icon="tabler:book"), variant="light", color="blue", size="md"),
-                                            dmc.Stack(
-                                                gap=0,
-                                                children=[
-                                                    dmc.Text("Portfolio Optimization Guide", fw=600, size="sm"),
-                                                    dmc.Text(
-                                                        "Use Basic for setup, Advanced for constraints/inputs, and Model Deep Dive for model-level guidance.",
-                                                        size="xs",
-                                                        c="dimmed",
-                                                    ),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                        ),
-                        dmc.Tabs(
-                            value="basic",
-                            variant="outline",
-                            color="blue",
-                            children=[
-                                dmc.TabsList(
-                                    children=[
-                                        dmc.TabsTab([DashIconify(icon="tabler:compass", width=14), "Basic Guide"], value="basic"),
-                                        dmc.TabsTab([DashIconify(icon="tabler:settings-cog", width=14), "Advanced Guide"], value="advanced"),
-                                        dmc.TabsTab([DashIconify(icon="tabler:book-2", width=14), "Model Deep Dive"], value="models"),
-                                    ],
-                                ),
-                                dmc.TabsPanel(
-                                    value="basic",
-                                    pt="sm",
-                                    children=dmc.Accordion(
-                                        variant="separated",
-                                        children=[
-                                            dmc.AccordionItem(
-                                                value="basic-quick-start",
-                                                children=[
-                                                    dmc.AccordionControl("Quick Start"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("1) Edit > Add series from file, then choose the series used as portfolio assets.", size="sm"),
-                                                        dmc.Text("2) Open Select Series and configure include/exclude, order, benchmark, long-short, vol scaling, min/max weight, and force max.", size="sm"),
-                                                        dmc.Text("3) Set Periodicity, Vol Scaler, and Date Range so estimation and backtest use the intended sample.", size="sm"),
-                                                        dmc.Text("4) Choose Model and controls (window, step, missing-data handling, and optional exponential weighting).", size="sm"),
-                                                        dmc.Text("5) Click Run to create a named portfolio. Run additional scenarios using different names.", size="sm"),
-                                                        dmc.Text("6) Review Weights, Turnover, Statistics, Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, and Frontier tabs.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="basic-data",
-                                                children=[
-                                                    dmc.AccordionControl("Data Requirements"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Input files should be date-indexed return series with one column per asset.", size="sm"),
-                                                        dmc.Text("Supported uploads: CSV, XLS, XLSX. If a workbook has multiple sheets, select one or more sheets or import all.", size="sm"),
-                                                        dmc.Text("Values may be decimals or percent-style values; parsing normalizes input.", size="sm"),
-                                                        dmc.Text("Periodicity is auto-detected. Daily data can be resampled to weekly/monthly; monthly is not upsampled.", size="sm"),
-                                                        dmc.Text("Date overlap across selected series affects the usable sample and output availability.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="basic-series-selection",
-                                                children=[
-                                                    dmc.AccordionControl("Series Selection Modal"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Include checkbox controls whether a series participates in optimization.", size="sm"),
-                                                        dmc.Text("Drag and drop rows to set display order in series lists and output tables.", size="sm"),
-                                                        dmc.Text("Benchmark sets comparison series used by excess-return and long-short behavior.", size="sm"),
-                                                        dmc.Text("L/S (Long-Short) transforms selected series to (series - benchmark).", size="sm"),
-                                                        dmc.Text("Scale Vol toggles per-series use of the global Vol Scaler target.", size="sm"),
-                                                        dmc.Text("Min Wt / Max Wt are per-asset hard bounds used by the optimizer.", size="sm"),
-                                                        dmc.Text("Force Max pins an asset to Max Wt and can make optimization infeasible.", size="sm"),
-                                                        dmc.Text("Delete removes a series from the working dataset and can invalidate prior results.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="basic-controls",
-                                                children=[
-                                                    dmc.AccordionControl("Controls and Preprocessing"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Periodicity converts returns to analysis frequency used in optimization and tabs.", size="sm"),
-                                                        dmc.Text("Vol Scaler applies target annualized volatility scaling. Set 0 to disable.", size="sm"),
-                                                        dmc.Text("Date Range limits sample prior to optimization window logic.", size="sm"),
-                                                        dmc.Text("Common Range uses only dates where all selected series overlap.", size="sm"),
-                                                        dmc.Text("Common Daily jumps to overlap where all selected series are in daily phase and sets periodicity to Daily (Trading).", size="sm"),
-                                                        dmc.Text("Max Range uses earliest start to latest end across selected series.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="basic-optimization",
-                                                children=[
-                                                    dmc.AccordionControl("Optimization Controls"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Portfolio Name is the key used to store and select results.", size="sm"),
-                                                        dmc.Text("Model chooses risk-based, mean-variance, ex-ante, or Black-Litterman optimization.", size="sm"),
-                                                        dmc.Text("Exp Wt enables exponential weighting for historical parameter estimates.", size="sm"),
-                                                        dmc.Text("Decay input behavior: values >= 1 are half-life periods; values < 1 are lambda (for example 0.94).", size="sm"),
-                                                        dmc.Text("Smaller half-life or lambda further from 1.0 puts more emphasis on recent data.", size="sm"),
-                                                        dmc.Text("Window options: Expanding, Rolling, or Full.", size="sm"),
-                                                        dmc.Text("Window Size sets lookback periods used for each optimization step.", size="sm"),
-                                                        dmc.Text("Opt Step + Unit sets rebalance frequency; Months aligns to month-end, Periods uses row counts.", size="sm"),
-                                                        dmc.Text("Missing Data: Fill NA forward-fills; Fill 0 treats missing returns as zero.", size="sm"),
-                                                        dmc.Text("Run executes optimization and stores results without deleting prior portfolios.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="basic-tabs",
-                                                children=[
-                                                    dmc.AccordionControl("Reading the Tabs"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Weights: allocation by asset over time, chart or table.", size="sm"),
-                                                        dmc.Text("Turnover: absolute allocation changes per rebalance window.", size="sm"),
-                                                        dmc.Text("Statistics: portfolio-level performance and risk metrics.", size="sm"),
-                                                        dmc.Text("Returns: return time series grid.", size="sm"),
-                                                        dmc.Text("Growth of $1: compounded path from initial value 1.", size="sm"),
-                                                        dmc.Text("Rolling: trailing Total Return, Volatility, Sharpe, or Sortino across selected windows.", size="sm"),
-                                                        dmc.Text("Calendar Year: one-row-per-year compounded annual return table.", size="sm"),
-                                                        dmc.Text("Drawdown: peak-to-trough drawdown paths as chart or table.", size="sm"),
-                                                        dmc.Text("Attribution: asset-level return contribution.", size="sm"),
-                                                        dmc.Text("Risk: asset-level risk contribution across windows.", size="sm"),
-                                                        dmc.Text("Frontier: efficient frontier with active-portfolio marker.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ),
-                                dmc.TabsPanel(
-                                    value="advanced",
-                                    pt="sm",
-                                    children=dmc.Accordion(
-                                        variant="separated",
-                                        children=[
-                                            dmc.AccordionItem(
-                                                value="adv-models",
-                                                children=[
-                                                    dmc.AccordionControl("Model Details"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text([dmc.Text("Risk Parity", fw=700, span=True), " - balances total risk contribution across assets."], size="sm"),
-                                                        dmc.Text([dmc.Text("Factor Risk Parity", fw=700, span=True), " - balances risk through factor structure rather than only pairwise covariance."], size="sm"),
-                                                        dmc.Text([dmc.Text("Hierarchical Risk Parity", fw=700, span=True), " - clusters assets and allocates top-down for stability under noisy covariance estimates."], size="sm"),
-                                                        dmc.Text([dmc.Text("Maximize Sharpe Ratio", fw=700, span=True), " - seeks highest expected return per unit volatility."], size="sm"),
-                                                        dmc.Text([dmc.Text("Minimize Variance", fw=700, span=True), " - seeks lowest portfolio volatility under constraints."], size="sm"),
-                                                        dmc.Text([dmc.Text("Minimize CVaR", fw=700, span=True), " - emphasizes downside tail-risk control."], size="sm"),
-                                                        dmc.Text([dmc.Text("Equal Weight", fw=700, span=True), " - 1/N baseline with no estimation-driven optimizer."], size="sm"),
-                                                        dmc.Text([dmc.Text("Ex Ante Mean-Variance", fw=700, span=True), " - optimizes from user-provided forward-looking assumptions."], size="sm"),
-                                                        dmc.Text([dmc.Text("Black-Litterman", fw=700, span=True), " - blends prior assumptions with user views and confidence."], size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="adv-linear-constraints",
-                                                children=[
-                                                    dmc.AccordionControl("Linear Constraints"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Add Constraint creates a row with Min/Max bounds and one coefficient column per selected asset.", size="sm"),
-                                                        dmc.Text("Each row enforces Min <= sum(coef_i * weight_i) <= Max.", size="sm"),
-                                                        dmc.Text("Example: Equity=1, Credit=1, others=0, Min=0.40, Max=0.70 constrains combined exposure.", size="sm"),
-                                                        dmc.Text("Constraint name is informational; coefficients and Min/Max drive behavior.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="adv-ex-ante",
-                                                children=[
-                                                    dmc.AccordionControl("Ex Ante Inputs"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Available for Ex Ante Mean-Variance and Black-Litterman.", size="sm"),
-                                                        dmc.Text("Objective applies to Ex Ante Mean-Variance (maximize Sharpe, minimize variance, maximize return).", size="sm"),
-                                                        dmc.Text("Input Mode toggles ex-ante inputs between return/covariance and return/volatility/correlation.", size="sm"),
-                                                        dmc.Text("Expected Returns grid accepts per-asset assumptions; volatility is editable in ret_vol_corr mode.", size="sm"),
-                                                        dmc.Text("Matrix grid captures covariance (ret_cov) or correlation (ret_vol_corr).", size="sm"),
-                                                        dmc.Text("Use upload and estimate helpers to seed assumptions; verify magnitudes and symmetry before run.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="adv-black-litterman",
-                                                children=[
-                                                    dmc.AccordionControl("Black-Litterman Views"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Use absolute views (asset expected return) or relative views (asset expected to outperform another).", size="sm"),
-                                                        dmc.Text("Absolute example: Asset=SPY, Return=3 means expected return is 3%.", size="sm"),
-                                                        dmc.Text("Relative example: Asset=QQQ, Asset_To=SPY, Return=2 means QQQ expected to beat SPY by 2%.", size="sm"),
-                                                        dmc.Text("Confidence controls view strength. Tau controls prior uncertainty weighting.", size="sm"),
-                                                        dmc.Text("Add View and Clear Views manage rows quickly before running optimization.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="adv-feasibility",
-                                                children=[
-                                                    dmc.AccordionControl("Constraints and Feasibility"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Per-asset Min/Max bounds are hard optimizer limits.", size="sm"),
-                                                        dmc.Text("Force Max pins assets and reduces feasible region.", size="sm"),
-                                                        dmc.Text("Linear constraints further restrict feasible portfolios.", size="sm"),
-                                                        dmc.Text("Infeasibility is common when mins are too high, maxes too low, or too many constraints are combined.", size="sm"),
-                                                        dmc.Text("To recover feasibility: relax mins/maxes, remove forced weights, and simplify linear constraints.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="adv-frontier",
-                                                children=[
-                                                    dmc.AccordionControl("Frontier Details"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Frontier window selector lets you inspect different estimation windows.", size="sm"),
-                                                        dmc.Text("Risk measure selector controls frontier x-axis risk metric.", size="sm"),
-                                                        dmc.Text("For Ex Ante and Black-Litterman models, frontier uses configured assumptions where available.", size="sm"),
-                                                        dmc.Text("If data or assumptions are insufficient for a selected window, the tab will show a fallback message.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="adv-results",
-                                                children=[
-                                                    dmc.AccordionControl("Results, Session, and Troubleshooting"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("Portfolio dropdown selects the active stored result; compare control overlays portfolios where supported.", size="sm"),
-                                                        dmc.Text("Delete icon removes selected result. Use unique names to keep scenario history.", size="sm"),
-                                                        dmc.Text("File > Save session exports JSON state; Load session restores it.", size="sm"),
-                                                        dmc.Text(
-                                                            "File > Download Excel exports Settings, Weights, Turnover, Statistics, Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, and Frontier.",
-                                                            size="sm",
-                                                        ),
-                                                        dmc.Text("Run disabled: load data and select at least one series.", size="sm"),
-                                                        dmc.Text("Optimization fails: review bounds, force-max flags, and linear constraints first.", size="sm"),
-                                                        dmc.Text("Turnover missing: Full window mode does not generate multiple rebalance events.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ),
-                                dmc.TabsPanel(
-                                    value="models",
-                                    pt="sm",
-                                    children=dmc.Accordion(
-                                        variant="separated",
-                                        children=[
-                                            dmc.AccordionItem(
-                                                value="model-risk-parity",
-                                                children=[
-                                                    dmc.AccordionControl("Risk Parity"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: balances total risk contribution across assets.", size="sm"),
-                                                        dmc.Text("When to use: diversify risk when expected return forecasts are weak.", size="sm"),
-                                                        dmc.Text("Key controls: Min/Max/Force Max bounds, window settings, and missing-data handling.", size="sm"),
-                                                        dmc.Text("Pitfalls: can still concentrate in highly correlated assets if constraints are loose.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-factor-risk-parity",
-                                                children=[
-                                                    dmc.AccordionControl("Factor Risk Parity"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: balances risk through latent factor structure rather than only pairwise covariance.", size="sm"),
-                                                        dmc.Text("When to use: assets share common factor drivers and covariance is noisy.", size="sm"),
-                                                        dmc.Text("Key controls: same bounds and window controls as other historical models.", size="sm"),
-                                                        dmc.Text("Pitfalls: factor estimation can be unstable with short samples.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-hrp",
-                                                children=[
-                                                    dmc.AccordionControl("Hierarchical RP"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: clusters assets and allocates top-down for robust diversification.", size="sm"),
-                                                        dmc.Text("When to use: correlation matrix is unstable and clustering adds structure.", size="sm"),
-                                                        dmc.Text("Key controls: selected series, bounds, and sample window choices.", size="sm"),
-                                                        dmc.Text("Pitfalls: cluster splits can shift across windows, changing allocations abruptly.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-max-sharpe",
-                                                children=[
-                                                    dmc.AccordionControl("Maximize Sharpe Ratio"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: highest expected return per unit volatility.", size="sm"),
-                                                        dmc.Text("When to use: you want risk-adjusted return efficiency from historical estimates.", size="sm"),
-                                                        dmc.Text("Key controls: Exp Wt decay, windowing, and all weight constraints.", size="sm"),
-                                                        dmc.Text("Pitfalls: sensitive to mean-return estimation error and outliers.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-min-variance",
-                                                children=[
-                                                    dmc.AccordionControl("Minimize Variance"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: lowest volatility portfolio under current constraints.", size="sm"),
-                                                        dmc.Text("When to use: capital preservation and stability are higher priority than return targeting.", size="sm"),
-                                                        dmc.Text("Key controls: covariance estimate settings, bounds, and linear constraints.", size="sm"),
-                                                        dmc.Text("Pitfalls: may underweight growth assets and reduce upside participation.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-min-cvar",
-                                                children=[
-                                                    dmc.AccordionControl("Minimize CVaR"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: downside tail risk instead of only variance.", size="sm"),
-                                                        dmc.Text("When to use: drawdown and tail-event protection are primary objectives.", size="sm"),
-                                                        dmc.Text("Key controls: sample window quality, bounds, and missing-data handling.", size="sm"),
-                                                        dmc.Text("Pitfalls: requires enough data for stable tail estimation.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-equal-weight",
-                                                children=[
-                                                    dmc.AccordionControl("Equal Weight"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: 1/N allocation baseline without parameter-driven optimization.", size="sm"),
-                                                        dmc.Text("When to use: neutral benchmark or when model uncertainty is high.", size="sm"),
-                                                        dmc.Text("Key controls: included assets and hard constraints still determine feasible holdings.", size="sm"),
-                                                        dmc.Text("Pitfalls: ignores differences in risk, liquidity, and covariance.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-ex-ante",
-                                                children=[
-                                                    dmc.AccordionControl("Ex Ante Mean-Variance"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: forward-looking mean-variance using your expected return and risk assumptions.", size="sm"),
-                                                        dmc.Text("When to use: you have investment views not captured by historical sample estimates.", size="sm"),
-                                                        dmc.Text("Key controls: Objective selector, Risk Input Mode, expected returns, and covariance or vol/corr grids.", size="sm"),
-                                                        dmc.Text("Pitfalls: inconsistent assumptions (non-symmetric matrices, unrealistic vol/corr) can invalidate outputs.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                            dmc.AccordionItem(
-                                                value="model-black-litterman",
-                                                children=[
-                                                    dmc.AccordionControl("Black-Litterman"),
-                                                    dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
-                                                        dmc.Text("What it optimizes: blends prior estimates with user views and confidence into posterior return/covariance inputs.", size="sm"),
-                                                        dmc.Text("When to use: combine strategic priors with tactical absolute or relative views.", size="sm"),
-                                                        dmc.Text("Key controls: view rows, confidence, tau, and base ex-ante assumptions.", size="sm"),
-                                                        dmc.Text("Pitfalls: weak view specification or extreme confidence values can dominate priors unexpectedly.", size="sm"),
-                                                    ])),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        ),
 
         # Welcome screen (Hydration gates visibility)
         html.Div(
@@ -3586,14 +3166,10 @@ layout = dmc.Container(
         ),
         # Excel download
         dcc.Download(id="po-download-excel"),
-        dcc.Download(id="po-download-sample-daily"),
-        dcc.Download(id="po-download-sample-monthly"),
         # Navigation
         dcc.Location(id="po-url-location", refresh=False),
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
-        dcc.Interval(id="po-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
-        dcc.Interval(id="po-secondary-restore-trigger", interval=220, max_intervals=1, n_intervals=0),
 
         # UI Blocker for file dialog (Overlay)
         dcc.Store(id="po-ui-blocker-store", data=False),
@@ -3612,37 +3188,6 @@ layout = dmc.Container(
 # Clientside callbacks
 # ===========================================================================
 
-# Open Help modal
-clientside_callback(
-    "function(n) { return true; }",
-    Output("po-help-modal", "opened"),
-    Input("po-menu-help-guide", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-@callback(
-    Output("po-download-sample-daily", "data"),
-    Input("po-download-sample-daily-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def po_download_sample_daily(n_clicks):
-    """Download stored sample daily returns file."""
-    if n_clicks is None:
-        raise PreventUpdate
-    return dcc.send_file(str(get_sample_file_path("daily")))
-
-
-@callback(
-    Output("po-download-sample-monthly", "data"),
-    Input("po-download-sample-monthly-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def po_download_sample_monthly(n_clicks):
-    """Download stored sample monthly returns file."""
-    if n_clicks is None:
-        raise PreventUpdate
-    return dcc.send_file(str(get_sample_file_path("monthly")))
 
 # Navigate to home on Exit
 clientside_callback(
@@ -6009,21 +5554,13 @@ clientside_callback(
 clientside_callback(
     """
     function(n_intervals) {
-        return !!(n_intervals && n_intervals >= 1);
+        const ready = !!(n_intervals && n_intervals >= 1);
+        return [ready, ready];
     }
     """,
     Output("po-initial-tab-render-ready-store", "data"),
-    Input("po-initial-tab-render-trigger", "n_intervals"),
-)
-
-clientside_callback(
-    """
-    function(n_intervals) {
-        return !!(n_intervals && n_intervals >= 1);
-    }
-    """,
     Output("po-secondary-restore-ready-store", "data"),
-    Input("po-secondary-restore-trigger", "n_intervals"),
+    Input("po-page-load-trigger", "n_intervals"),
 )
 
 # ---------------------------------------------------------------------------
@@ -9812,8 +9349,7 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-weight-grid", "columnDefs"),
-    Output("po-weight-grid", "rowData"),
+    Output("po-weight-grid-content", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -9823,15 +9359,15 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
 )
 def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, initial_tab_ready=True):
     if not _po_tab_render_ready(active_tab, "weight", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
-        return [], []
+        return html.Div()
     if selected_portfolio not in results:
-        return [], []
+        return html.Div()
 
     portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights:
-        return [], []
+        return html.Div()
 
     asset_names = list(window_weights[0]["weights"].keys())
 
@@ -9856,7 +9392,7 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
             row[a] = ww["weights"].get(a, 0)
         row_data.append(row)
 
-    return column_defs, row_data
+    return _po_build_result_grid("po-weight-grid", column_defs, row_data)
 
 
 # ---------------------------------------------------------------------------
@@ -9864,8 +9400,7 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-attribution-grid", "columnDefs"),
-    Output("po-attribution-grid", "rowData"),
+    Output("po-attribution-grid-content", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -9884,9 +9419,9 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
                                 raw_data, periodicity, bench, ls, date_range,
                                 vol_scaler, vol_scaling, initial_tab_ready=True):
     if not _po_tab_render_ready(active_tab, "attribution", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
-        return [], []
+        return html.Div()
     if selected_portfolio not in results:
-        return [], []
+        return html.Div()
 
     portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
@@ -9894,11 +9429,9 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not raw_data:
-        return [], []
+        return html.Div()
     if _po_missing_source_series(results, selected_portfolio, raw_data):
-        return [], []
-    if _po_missing_source_series(results, selected_portfolio, raw_data):
-        return [], []
+        return html.Div()
 
     try:
         with timed_block(
@@ -9913,7 +9446,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
             attribution_monthly = _compute_monthly_attribution(working_df, opt_series, window_weights)
 
             if attribution_monthly.empty:
-                return [], []
+                return html.Div()
 
             column_defs = [
                 {
@@ -9942,10 +9475,10 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
             df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
             row_data = df_reset.to_dict("records")
 
-            return column_defs, row_data
+            return _po_build_result_grid("po-attribution-grid", column_defs, row_data)
 
     except Exception:
-        return [], []
+        return html.Div()
 
 
 # ---------------------------------------------------------------------------
@@ -9953,8 +9486,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-statistics-grid", "columnDefs"),
-    Output("po-statistics-grid", "rowData"),
+    Output("po-statistics-grid-content", "children"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
@@ -9984,7 +9516,7 @@ def po_render_statistics(
     initial_tab_ready=True,
 ):
     if not _po_tab_render_ready(active_tab, "statistics", initial_tab_ready) or not results:
-        return [], []
+        return html.Div()
 
     try:
         with timed_block("portopt.render_statistics", portfolio_count=1):
@@ -10005,7 +9537,7 @@ def po_render_statistics(
                     vol_scaling,
                 )
             if display_df.empty or not ordered_cols:
-                return [], []
+                return html.Div()
 
             raw_json = df_to_json(display_df[ordered_cols])
             series_names = list(ordered_cols)
@@ -10024,7 +9556,7 @@ def po_render_statistics(
             )
 
             if not stats:
-                return [], []
+                return html.Div()
 
             column_defs = [
                 {"field": "Statistic", "pinned": "left", "width": 200},
@@ -10052,10 +9584,10 @@ def po_render_statistics(
                         row[series_name] = value
                 row_data.append(row)
 
-            return column_defs, row_data
+            return _po_build_result_grid("po-statistics-grid", column_defs, row_data)
 
     except Exception:
-        return [], []
+        return html.Div()
 
 
 # ---------------------------------------------------------------------------
@@ -10063,8 +9595,7 @@ def po_render_statistics(
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-returns-grid", "columnDefs"),
-    Output("po-returns-grid", "rowData"),
+    Output("po-returns-grid-content", "children"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
@@ -10092,7 +9623,7 @@ def po_render_returns(
     initial_tab_ready=True,
 ):
     if not _po_tab_render_ready(active_tab, "returns", initial_tab_ready) or not results:
-        return [], []
+        return html.Div()
 
     try:
         legacy_compare = isinstance(selected_portfolio, (list, tuple, set))
@@ -10112,7 +9643,7 @@ def po_render_returns(
                 vol_scaling,
             )
         if display_df.empty or not ordered_cols:
-            return [], []
+            return html.Div()
 
         column_defs = [
             {
@@ -10132,10 +9663,10 @@ def po_render_returns(
         df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
         row_data = df_reset.to_dict("records")
 
-        return column_defs, row_data
+        return _po_build_result_grid("po-returns-grid", column_defs, row_data)
 
     except Exception:
-        return [], []
+        return html.Div()
 
 
 # ---------------------------------------------------------------------------
@@ -10721,8 +10252,7 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value,
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-risk-grid", "columnDefs"),
-    Output("po-risk-grid", "rowData"),
+    Output("po-risk-grid-content", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -10742,9 +10272,9 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
                          raw_data, periodicity, bench, ls, date_range,
                          vol_scaler, vol_scaling, series_select, initial_tab_ready=True):
     if not _po_tab_render_ready(active_tab, "risk", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
-        return [], []
+        return html.Div()
     if selected_portfolio not in results:
-        return [], []
+        return html.Div()
 
     portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
@@ -10752,7 +10282,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not raw_data:
-        return [], []
+        return html.Div()
 
     timing_ctx = timed_block(
         "portopt.render_risk_table",
@@ -10767,7 +10297,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
         working_df = _po_get_working_returns(working_bundle, opt_series)
         risk_rows = _compute_window_risk_contributions(working_df, opt_series, window_weights, config)
         if not risk_rows:
-            return [], []
+            return html.Div()
 
         column_defs = [
             {"field": "Window Start", "pinned": "left", "width": 120},
@@ -10793,10 +10323,10 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value,
                 row[a] = rc.get(a, 0)
             row_data.append(row)
 
-        return column_defs, row_data
+        return _po_build_result_grid("po-risk-grid", column_defs, row_data)
 
     except Exception:
-        return [], []
+        return html.Div()
     finally:
         timing_ctx.__exit__(None, None, None)
 
@@ -10864,8 +10394,7 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-turnover-grid", "columnDefs"),
-    Output("po-turnover-grid", "rowData"),
+    Output("po-turnover-grid-content", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -10875,15 +10404,15 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
 )
 def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value, initial_tab_ready=True):
     if not _po_tab_render_ready(active_tab, "turnover", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
-        return [], []
+        return html.Div()
     if selected_portfolio not in results:
-        return [], []
+        return html.Div()
 
     portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights or len(window_weights) < 2:
-        return [], []
+        return html.Div()
 
     # Get all asset names
     all_assets = list(window_weights[0]["weights"].keys())
@@ -10916,7 +10445,7 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
             row[a] = curr_w.get(a, 0) - prev_w.get(a, 0)
         row_data.append(row)
 
-    return column_defs, row_data
+    return _po_build_result_grid("po-turnover-grid", column_defs, row_data)
 
 
 # ---------------------------------------------------------------------------
@@ -11133,8 +10662,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
 
 
 @callback(
-    Output("po-frontier-grid", "columnDefs"),
-    Output("po-frontier-grid", "rowData"),
+    Output("po-frontier-grid-content", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -11172,18 +10700,18 @@ def po_render_frontier_table(
     initial_tab_ready=True,
 ):
     if not _po_tab_render_ready(active_tab, "frontier", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
-        return [], []
+        return html.Div()
     if selected_portfolio not in results:
-        return [], []
+        return html.Div()
 
     portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", []) or []
     config = portfolio_data.get("config", {}) or {}
     opt_series = config.get("selected_series", []) or []
     if not window_weights or not opt_series or not raw_data:
-        return [], []
+        return html.Div()
     if _po_missing_source_series(results, selected_portfolio, raw_data):
-        return [], []
+        return html.Div()
 
     with timed_block(
         "portopt.render_frontier_table",
@@ -11219,9 +10747,13 @@ def po_render_frontier_table(
                     cmabench_assignments=cmabench_assignments,
                 )
             except Exception:
-                return [], []
+                return html.Div()
 
-        return _build_frontier_column_defs(snapshot), _build_frontier_table_rows(snapshot)
+        return _po_build_result_grid(
+            "po-frontier-grid",
+            _build_frontier_column_defs(snapshot),
+            _build_frontier_table_rows(snapshot),
+        )
 
 
 @callback(
