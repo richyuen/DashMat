@@ -3922,6 +3922,16 @@ clientside_callback(
 )
 
 clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitialSeriesBlocker"),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-url-location", "pathname"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("at-page-visited-store", "data"),
+    Input("at-series-select", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady"),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-series-selection-grid", "virtualRowData", allow_optional=True),
@@ -4033,7 +4043,7 @@ def open_modal(
             no_update,
             no_update,
             True,
-            no_update,
+            False,
         )
 
     should_open = False
@@ -4057,7 +4067,7 @@ def open_modal(
             no_update,
             no_update,
             True,
-            no_update,
+            False,
         )
 
     return (

@@ -838,7 +838,7 @@ def test_reg_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch
 
     assert result[0] is no_update
     assert result[12] is True
-    assert result[13] is no_update
+    assert result[13] is False
 
 
 def test_reg_open_modal_page_load_adds_only_generic_new_x_without_resetting_y(monkeypatch, regression_page, raw_json):
@@ -894,7 +894,7 @@ def test_reg_open_modal_ignores_po_only_series_on_revisit(monkeypatch, regressio
 
     assert result[0] is no_update
     assert result[12] is True
-    assert result[13] is no_update
+    assert result[13] is False
 
 
 def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
@@ -909,6 +909,9 @@ def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
     assert 'Input("reg-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionInitialSeriesBlocker")' in page_text
+    assert 'Input("reg-url-location", "pathname")' in page_text
+    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect)" in js_text
 
 
 def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):

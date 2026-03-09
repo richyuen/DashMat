@@ -1818,6 +1818,16 @@ clientside_callback(
 )
 
 clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionInitialSeriesBlocker"),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-url-location", "pathname"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("reg-page-visited-store", "data"),
+    Input("reg-series-select", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady"),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-series-selection-grid", "virtualRowData", allow_optional=True),
@@ -3414,7 +3424,7 @@ def reg_open_modal(n_clicks, raw_meta, page_load_intervals, pathname, sel, order
                 no_update,
                 no_update,
                 True,
-                no_update,
+                False,
             )
         else:
             raise PreventUpdate
@@ -3434,7 +3444,7 @@ def reg_open_modal(n_clicks, raw_meta, page_load_intervals, pathname, sel, order
                 no_update,
                 no_update,
                 True,
-                no_update,
+                False,
             )
 
     if not should_open:

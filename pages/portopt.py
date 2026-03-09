@@ -4230,6 +4230,16 @@ clientside_callback(
 )
 
 clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitialSeriesBlocker"),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-url-location", "pathname"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-page-visited-store", "data"),
+    Input("po-series-select", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady"),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-series-selection-grid", "virtualRowData", allow_optional=True),
@@ -6875,7 +6885,7 @@ def po_open_modal(
             no_update,
             no_update,
             True,
-            no_update,
+            False,
         )
 
     if not page_visited and not selected_valid:
@@ -6904,7 +6914,7 @@ def po_open_modal(
             no_update,
             no_update,
             True,
-            no_update,
+            False,
         )
 
     return (

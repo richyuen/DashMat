@@ -184,6 +184,49 @@
     return !hasDailyTrading;
   }
 
+  function hasValidSelectedSeries(rawMeta, currentSelect) {
+    const columns = Array.isArray(rawMeta)
+      ? rawMeta
+      : (rawMeta && Array.isArray(rawMeta.columns) ? rawMeta.columns : []);
+    if (!columns.length) {
+      return false;
+    }
+    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const columnSet = new Set(columns);
+    return selected.some(function (series) {
+      return columnSet.has(series);
+    });
+  }
+
+  function startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, targetPath) {
+    const pagePath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+    if (pagePath !== targetPath) {
+      return noUpdate();
+    }
+    if (pageVisited) {
+      return noUpdate();
+    }
+    const columns = Array.isArray(rawMeta)
+      ? rawMeta
+      : (rawMeta && Array.isArray(rawMeta.columns) ? rawMeta.columns : []);
+    if (!columns.length) {
+      return noUpdate();
+    }
+    return hasValidSelectedSeries(rawMeta, currentSelect) ? noUpdate() : true;
+  }
+
+  function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
+    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/analyticstool");
+  }
+
+  function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
+    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/portopt");
+  }
+
+  function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
+    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/regression");
+  }
+
   function clearWorkspaceSession(n_clicks) {
     if (!n_clicks) {
       return noUpdate();
@@ -431,6 +474,7 @@
   window.dash_clientside = Object.assign({}, window.dash_clientside, {
     dashmat_callbacks: {
       analyticsControlSync: analyticsControlSync,
+      analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsViewSync: analyticsViewSync,
       clearWorkspaceSession: clearWorkspaceSession,
@@ -441,7 +485,9 @@
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,
       portoptControlSync: portoptControlSync,
+      portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
       portoptViewSync: portoptViewSync,
+      regressionInitialSeriesBlocker: regressionInitialSeriesBlocker,
       regressionControlSync: regressionControlSync,
       saveWorkspaceSession: saveWorkspaceSession,
       syncAnalyticsPeriodicity: syncAnalyticsPeriodicity,

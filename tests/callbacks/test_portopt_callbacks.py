@@ -175,7 +175,7 @@ def test_po_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modul
 
     assert result[0] is no_update
     assert result[11] is True
-    assert result[12] is no_update
+    assert result[12] is False
 
 
 def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypatch, page_modules, raw_json):
@@ -263,7 +263,7 @@ def test_po_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch,
 
     assert result[0] is no_update
     assert result[11] is True
-    assert result[12] is no_update
+    assert result[12] is False
 
 
 def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
@@ -1793,6 +1793,7 @@ def test_ui_blocker_release_only_clears_on_series_selection_modal_close():
 
 def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
 
     assert 'Input("po-menu-add-from-db", "n_clicks")' in page_text
     assert 'Input("po-open-modal-button", "n_clicks")' in page_text
@@ -1800,6 +1801,9 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Output("po-series-selection-container", "children")' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
     assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitialSeriesBlocker")' in page_text
+    assert 'Input("po-url-location", "pathname")' in page_text
+    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect)" in js_text
 
 
 def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):

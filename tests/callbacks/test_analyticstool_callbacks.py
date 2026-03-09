@@ -439,7 +439,7 @@ def test_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules,
 
     assert result[0] is no_update
     assert result[7] is True
-    assert result[8] is no_update
+    assert result[8] is False
 
 
 def test_open_modal_auto_opens_for_generic_new_and_keeps_po_series_selected(monkeypatch, page_modules, raw_json):
@@ -468,12 +468,16 @@ def test_open_modal_auto_opens_for_generic_new_and_keeps_po_series_selected(monk
 
 def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
 
     assert 'Input("at-menu-add-from-db", "n_clicks")' in page_text
     assert 'Input("at-open-series-modal-button", "n_clicks")' in page_text
     assert 'Output("at-ui-blocker-store", "data", allow_duplicate=True)' in page_text
     assert 'Output("at-series-selection-container", "children")' in page_text
     assert 'Output("at-ui-blocker-store", "data", allow_duplicate=True),' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitialSeriesBlocker")' in page_text
+    assert 'Input("at-url-location", "pathname")' in page_text
+    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect)" in js_text
 
 
 def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
