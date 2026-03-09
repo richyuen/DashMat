@@ -2584,19 +2584,12 @@ def build_po_main_layout():
                             html.Div(
                                 id="po-frontier-chart-container",
                                 style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[
-                                    dcc.Loading(
-                                        type="default",
-                                        children=[html.Div(id="po-frontier-chart-content")],
-                                    ),
-                                ],
+                                children=[],
                             ),
                             html.Div(
                                 id="po-frontier-grid-container",
                                 style={"display": "none"},
-                                children=[
-                                    html.Div(id="po-frontier-grid-content", style={"height": "100%", "width": "100%"}),
-                                ],
+                                children=[],
                             ),
                         ],
                     ),
@@ -10078,7 +10071,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-frontier-chart-content", "children"),
+    Output("po-frontier-chart-container", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
@@ -10219,7 +10212,10 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded
         )
         apply_chart_theme(fig, theme)
 
-        return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+        return dcc.Loading(
+            type="default",
+            children=[dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})],
+        )
 
     except Exception as e:
         return dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed")
@@ -10228,7 +10224,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded
 
 
 @callback(
-    Output("po-frontier-grid-content", "children"),
+    Output("po-frontier-grid-container", "children"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
