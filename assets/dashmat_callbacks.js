@@ -151,6 +151,26 @@
     return noUpdate();
   }
 
+  function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions) {
+    const hasSeries = !!(candidates && candidates.available_series && candidates.available_series.length);
+    if (!hasSeries) {
+      return true;
+    }
+    const hasCommonDaily = !!(
+      commonDailyCandidates &&
+      commonDailyCandidates.common_daily_start &&
+      commonDailyCandidates.common_daily_end
+    );
+    if (!hasCommonDaily) {
+      return true;
+    }
+    const options = Array.isArray(periodicityOptions) ? periodicityOptions : [];
+    const hasDailyTrading = options.some(function (opt) {
+      return opt && opt.value === "daily_trading";
+    });
+    return !hasDailyTrading;
+  }
+
   function clearWorkspaceSession(n_clicks) {
     if (!n_clicks) {
       return noUpdate();
@@ -401,6 +421,7 @@
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsViewSync: analyticsViewSync,
       clearWorkspaceSession: clearWorkspaceSession,
+      commonDailyButtonDisabled: commonDailyButtonDisabled,
       loadWorkspaceSession: loadWorkspaceSession,
       loadWorkspaceSessionDialog: loadWorkspaceSessionDialog,
       navigateAnalytics: navigateAnalytics,

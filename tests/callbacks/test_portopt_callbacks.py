@@ -302,6 +302,45 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert page_text.count('Input("po-initial-tab-render-ready-store", "data")') == 2
 
 
+def test_po_init_date_range_no_longer_depends_on_common_daily_store():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    init_block = page_text.split("def po_init_date_range", 1)[0]
+    init_callback = init_block.rsplit("@callback(", 1)[-1]
+    assert 'Input("po-range-candidates-store", "data")' in init_callback
+    assert 'Input("po-common-daily-candidates-store", "data")' not in init_callback
+
+
+def test_po_common_daily_button_uses_shared_clientside_helper():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled")' in page_text
+    assert 'Output("po-common-daily-button", "disabled")' in page_text
+    assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
+
+
+def test_po_init_date_range_is_idempotent_when_range_is_current(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    monkeypatch.setattr(
+        portopt,
+        "resolve_initial_range",
+        lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
+    )
+
+    start, end, _style, _common_disabled, _max_disabled, range_store = portopt.po_init_date_range(
+        {
+            "available_series": ["Asset_A"],
+        },
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        "2024-01-01",
+        "2024-12-31",
+    )
+
+    assert start is no_update
+    assert end is no_update
+    assert range_store is no_update
+
+
 def test_po_layout_uses_construction_first_tab_order(page_modules):
     _, portopt = page_modules
 

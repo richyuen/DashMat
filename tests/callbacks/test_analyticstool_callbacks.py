@@ -196,14 +196,10 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
         lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
     )
 
-    start, end, _style, _common_disabled, _daily_disabled, _max_disabled, range_store, ready = (
+    start, end, _style, _common_disabled, _max_disabled, range_store, ready = (
         analyticstool.initialize_date_range(
             {
                 "available_series": ["Asset_A"],
-            },
-            {
-                "common_daily_start": "2024-01-01",
-                "common_daily_end": "2024-12-31",
             },
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
@@ -215,6 +211,22 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
     assert end == "2024-12-31"
     assert range_store is no_update
     assert ready is True
+
+
+def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    init_block = page_text.split("def initialize_date_range", 1)[0]
+    init_callback = init_block.rsplit("@callback(", 1)[-1]
+    assert 'Input("at-range-candidates-store", "data")' in init_callback
+    assert 'Input("at-common-daily-candidates-store", "data")' not in init_callback
+
+
+def test_at_common_daily_button_uses_shared_clientside_helper():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled")' in page_text
+    assert 'Output("at-common-daily-button", "disabled")' in page_text
+    assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
 
 
 def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(page_modules, raw_json):

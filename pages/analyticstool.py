@@ -6841,12 +6841,10 @@ def update_at_common_daily_candidates(raw_data, selected_series):
     Output("at-end-date-picker", "value"),
     Output("at-date-picker-wrapper", "style"),
     Output("at-common-range-button", "disabled"),
-    Output("at-common-daily-button", "disabled"),
     Output("at-maximum-range-button", "disabled"),
     Output("at-date-range-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
     Input("at-range-candidates-store", "data"),
-    Input("at-common-daily-candidates-store", "data"),
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
@@ -6854,7 +6852,6 @@ def update_at_common_daily_candidates(raw_data, selected_series):
 )
 def initialize_date_range(
     candidates,
-    common_daily_candidates,
     stored_range,
     current_start_date,
     current_end_date,
@@ -6864,18 +6861,12 @@ def initialize_date_range(
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
     if not isinstance(candidates, dict) or not candidates.get("available_series"):
-        return None, None, disabled_style, True, True, True, None, False
+        return None, None, disabled_style, True, True, None, False
 
     try:
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
-            return None, None, disabled_style, True, True, True, None, False
-
-        has_common_daily = bool(
-            isinstance(common_daily_candidates, dict)
-            and common_daily_candidates.get("common_daily_start")
-            and common_daily_candidates.get("common_daily_end")
-        )
+            return None, None, disabled_style, True, True, None, False
         next_range = {"start": start_date, "end": end_date}
         start_output = start_date
         end_output = end_date
@@ -6895,14 +6886,23 @@ def initialize_date_range(
             end_output,
             enabled_style,
             False,
-            not has_common_daily,
             False,
             range_output,
             True,
         )
 
     except Exception:
-        return None, None, disabled_style, True, True, True, None, False
+        return None, None, disabled_style, True, True, None, False
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled"),
+    Output("at-common-daily-button", "disabled"),
+    Input("at-range-candidates-store", "data"),
+    Input("at-common-daily-candidates-store", "data"),
+    Input("at-periodicity-select", "data"),
+    prevent_initial_call=False,
+)
 
 
 @callback(

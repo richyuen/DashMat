@@ -7719,42 +7719,55 @@ def po_update_common_daily_candidates(raw_data, selected_series):
     Output("po-end-date-picker", "value"),
     Output("po-date-picker-wrapper", "style"),
     Output("po-common-range-button", "disabled"),
-    Output("po-common-daily-button", "disabled"),
     Output("po-maximum-range-button", "disabled"),
     Output("po-date-range-store", "data", allow_duplicate=True),
     Input("po-range-candidates-store", "data"),
-    Input("po-common-daily-candidates-store", "data"),
     State("po-date-range-store", "data"),
+    State("po-start-date-picker", "value"),
+    State("po-end-date-picker", "value"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_date_range(candidates, common_daily_candidates, stored_range):
+def po_init_date_range(candidates, stored_range, current_start_date, current_end_date):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
     if not isinstance(candidates, dict) or not candidates.get("available_series"):
-        return None, None, disabled_style, True, True, True, None
+        return None, None, disabled_style, True, True, None
 
     try:
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
-            return None, None, disabled_style, True, True, True, None
-
-        has_common_daily = bool(
-            isinstance(common_daily_candidates, dict)
-            and common_daily_candidates.get("common_daily_start")
-            and common_daily_candidates.get("common_daily_end")
+            return None, None, disabled_style, True, True, None
+        next_range = {"start": start_date, "end": end_date}
+        start_output = no_update if current_start_date == start_date else start_date
+        end_output = no_update if current_end_date == end_date else end_date
+        range_output = (
+            no_update
+            if isinstance(stored_range, dict)
+            and stored_range.get("start") == start_date
+            and stored_range.get("end") == end_date
+            else next_range
         )
         return (
-            start_date,
-            end_date,
+            start_output,
+            end_output,
             enabled_style,
             False,
-            not has_common_daily,
             False,
-            {"start": start_date, "end": end_date},
+            range_output,
         )
     except Exception:
-        return None, None, disabled_style, True, True, True, None
+        return None, None, disabled_style, True, True, None
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled"),
+    Output("po-common-daily-button", "disabled"),
+    Input("po-range-candidates-store", "data"),
+    Input("po-common-daily-candidates-store", "data"),
+    Input("po-periodicity-select", "data"),
+    prevent_initial_call=False,
+)
 
 
 # ---------------------------------------------------------------------------
