@@ -8149,21 +8149,6 @@ def po_save_series_to_shared_data(
 
 
 # ---------------------------------------------------------------------------
-# Sync results store when raw data changes (e.g. series deleted in Analytics Tool)
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-results-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def po_sync_results_with_raw_data(raw_data, _n, results):
-    raise PreventUpdate
-
-
-# ---------------------------------------------------------------------------
 # Delete portfolio
 # ---------------------------------------------------------------------------
 

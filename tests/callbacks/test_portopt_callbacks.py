@@ -271,6 +271,12 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     assert getattr(main, "style", {})["display"] == "none"
 
 
+def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    assert page_text.count('dcc.Interval(id="po-page-load-trigger"') == 1
+    assert "def po_sync_results_with_raw_data" not in page_text
+
+
 def test_build_apply_weight_matrix_assigns_weights_by_windows(page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=5, freq="D")
@@ -568,17 +574,6 @@ def test_po_render_turnover_table_computes_turnover(page_modules):
     grid = portopt.po_render_turnover_table("P1", results, "turnover", "table")
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Rebalance Date"
     assert getattr(grid, "rowData", [])[0]["Turnover"] == pytest.approx(0.1)
-
-
-def test_po_sync_results_with_raw_data_keeps_decoupled_results(page_modules, raw_json):
-    _, portopt = page_modules
-    df = pd.read_json(StringIO(raw_json), orient="split")
-    df["KeepMe"] = 0.0
-    raw_with_portfolio = df_to_json(df)
-    results = {"KeepMe": {"x": 1}, "DropMe": {"x": 2}}
-
-    with pytest.raises(PreventUpdate):
-        portopt.po_sync_results_with_raw_data(raw_with_portfolio, 1, results)
 
 
 def test_po_delete_portfolio_removes_result_but_keeps_saved_series(page_modules, raw_json):

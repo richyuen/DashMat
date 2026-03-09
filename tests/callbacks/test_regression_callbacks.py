@@ -437,6 +437,14 @@ def test_reg_layout_starts_with_welcome_and_main_hidden(regression_page):
     assert getattr(main, "style", {})["display"] == "none"
 
 
+def test_reg_bootstrap_uses_only_page_load_interval_for_tab_ready():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'dcc.Interval(id="reg-page-load-trigger"' in page_text
+    assert 'reg-initial-tab-render-trigger' not in page_text
+    assert 'Output("reg-initial-tab-render-ready-store", "data")' in page_text
+    assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
+
+
 def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     expected = (True, [{"value": "IDX_A", "label": "Index A"}], [])
     monkeypatch.setattr(regression_page, "compute_open_db_add_modal", lambda *_args, **_kwargs: expected)

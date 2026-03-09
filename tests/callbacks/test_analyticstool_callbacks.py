@@ -436,6 +436,17 @@ def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
     assert getattr(main, "style", {})["display"] == "none"
 
 
+def test_at_bootstrap_uses_only_page_load_interval_and_real_secondary_ready_signal():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'dcc.Interval(id="at-page-load-trigger"' in page_text
+    assert 'at-initial-tab-render-trigger' not in page_text
+    assert 'at-secondary-restore-trigger' not in page_text
+    assert 'Output("at-initial-tab-render-ready-store", "data")' in page_text
+    assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
+    assert 'Output("at-secondary-restore-ready-store", "data")' in page_text
+    assert 'Input("at-state-ready-store", "data")' in page_text
+
+
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
     analyticstool, _ = page_modules
 

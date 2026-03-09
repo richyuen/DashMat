@@ -3415,8 +3415,6 @@ layout = dmc.Container(
 
         # One-shot interval to trigger visibility check after session-storage hydration
         dcc.Interval(id="at-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
-        dcc.Interval(id="at-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
-        dcc.Interval(id="at-secondary-restore-trigger", interval=220, max_intervals=1, n_intervals=0),
     ],
 )
 
@@ -3449,17 +3447,17 @@ clientside_callback(
     }
     """,
     Output("at-initial-tab-render-ready-store", "data"),
-    Input("at-initial-tab-render-trigger", "n_intervals"),
+    Input("at-page-load-trigger", "n_intervals"),
 )
 
 clientside_callback(
     """
-    function(n_intervals) {
-        return !!(n_intervals && n_intervals >= 1);
+    function(stateReady) {
+        return !!stateReady;
     }
     """,
     Output("at-secondary-restore-ready-store", "data"),
-    Input("at-secondary-restore-trigger", "n_intervals"),
+    Input("at-state-ready-store", "data"),
 )
 
 

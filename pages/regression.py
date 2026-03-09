@@ -1665,7 +1665,6 @@ layout = dmc.Container(
         dcc.Download(id="reg-download-excel"),
         dcc.Location(id="reg-url-location", refresh=False),
         dcc.Interval(id="reg-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
-        dcc.Interval(id="reg-initial-tab-render-trigger", interval=100, max_intervals=1, n_intervals=0),
         dcc.Store(id="reg-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
             id="reg-ui-blocker-overlay",
@@ -1716,7 +1715,7 @@ clientside_callback(
     }
     """,
     Output("reg-initial-tab-render-ready-store", "data"),
-    Input("reg-initial-tab-render-trigger", "n_intervals"),
+    Input("reg-page-load-trigger", "n_intervals"),
 )
 
 
