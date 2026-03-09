@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO, StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -505,6 +506,120 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert captured["arg"] == "daily"
     assert options == [{"value": "daily", "label": "Daily"}, {"value": "monthly", "label": "Monthly"}]
     assert value == "monthly"
+
+
+def test_regression_upload_clientside_trigger_targets_blocker_store():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="triggerRegressionUpload")' in page_text
+    assert 'Output("reg-ui-blocker-store", "data", allow_duplicate=True)' in page_text
+
+
+def test_regression_upload_trigger_uses_cancel_aware_shared_helper():
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'return triggerUploadWithCancel("reg-upload-data", "reg-ui-blocker-store");' in js_text
+
+
+def test_reg_handle_upload_multi_sheet_opens_modal_and_releases_blocker(monkeypatch, regression_page):
+    monkeypatch.setattr(regression_page, "get_sheet_names", lambda *_args, **_kwargs: ["Sheet A", "Sheet B"])
+
+    result = regression_page.reg_handle_upload("contents", "multi.xlsx", None, None)
+
+    assert result[0] is True
+    assert result[1] == [{"value": "Sheet A", "label": "Sheet A"}, {"value": "Sheet B", "label": "Sheet B"}]
+    assert result[2] == ["Sheet A"]
+    assert result[3] == "contents"
+    assert result[4] == "multi.xlsx"
+    assert result[5] == ["Sheet A", "Sheet B"]
+    assert result[6] is no_update
+    assert result[10] is False
+
+
+def test_reg_handle_upload_error_releases_blocker(monkeypatch, regression_page):
+    monkeypatch.setattr(regression_page, "get_sheet_names", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        regression_page,
+        "_shared_import_single_upload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("boom")),
+    )
+
+    result = regression_page.reg_handle_upload("contents", "bad.xlsx", None, None)
+
+    assert all(value is no_update for value in result[:-1])
+    assert result[-1] is False
+
+
+def test_reg_handle_sheet_select_import_all_releases_blocker_and_clears_stash(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=2, freq="B")
+    merged_df = pd.DataFrame({"Asset_A": [0.01, 0.02]}, index=idx)
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        type("Ctx", (), {"triggered_id": "reg-sheet-select-import-all-button"})(),
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "_shared_import_selected_workbook_sheets",
+        lambda *_args, **_kwargs: (merged_df, ["Sheet A", "Sheet B"]),
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "_shared_merge_uploaded_with_existing",
+        lambda *_args, **_kwargs: SimpleNamespace(merged_df=merged_df, combined_periodicity="daily"),
+    )
+
+    result = regression_page.reg_handle_sheet_select_ok(
+        None,
+        1,
+        [],
+        "contents",
+        "multi.xlsx",
+        ["Sheet A", "Sheet B"],
+        None,
+        None,
+    )
+
+    assert isinstance(result[0], str)
+    assert result[1] == "daily"
+    assert result[4] is False
+    assert result[5] is None
+    assert result[8] is None
+    assert result[9] is False
+
+
+def test_reg_handle_sheet_select_error_keeps_modal_open_and_releases_blocker(monkeypatch, regression_page):
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        type("Ctx", (), {"triggered_id": "reg-sheet-select-ok-button"})(),
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "_shared_import_selected_workbook_sheets",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("boom")),
+    )
+
+    result = regression_page.reg_handle_sheet_select_ok(
+        1,
+        None,
+        ["Sheet A"],
+        "contents",
+        "multi.xlsx",
+        ["Sheet A", "Sheet B"],
+        None,
+        None,
+    )
+
+    assert result[0] is no_update
+    assert result[4] is True
+    assert result[5] == "contents"
+    assert result[6] == "multi.xlsx"
+    assert result[7] == ["Sheet A", "Sheet B"]
+    assert result[8] is no_update
+    assert result[9] is False
+
+
+def test_reg_sheet_select_cancel_clears_stash_and_releases_blocker(regression_page):
+    assert regression_page.reg_on_sheet_select_cancel(1) == (False, None, None, None, None, False)
 
 
 def test_reg_open_modal_page_load_selects_all_x_when_no_x_selected(monkeypatch, regression_page, raw_json, sample_returns_df):

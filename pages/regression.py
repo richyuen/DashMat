@@ -25,6 +25,7 @@ from utils.date_range_flow import (
     resolve_button_range,
     resolve_initial_range,
 )
+from utils.add_series_flow import import_selected_disabled
 from utils.upload_flow import (
     import_selected_workbook_sheets as _shared_import_selected_workbook_sheets,
     import_single_upload as _shared_import_single_upload,
@@ -1768,7 +1769,7 @@ clientside_callback(
 
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="triggerRegressionUpload"),
-    Output("reg-upload-data", "contents", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-series", "n_clicks"),
     Input("reg-welcome-add-series-btn", "n_clicks"),
     prevent_initial_call=True,
@@ -2993,14 +2994,17 @@ def reg_add_portfolios_from_database(
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("reg-sheet-select-sheetnames-store", "data"),
-    Output("reg-sheet-select-contents-store", "data"),
-    Output("reg-sheet-select-filename-store", "data"),
     Output("reg-sheet-select-modal", "opened"),
+    Output("reg-sheet-select-dropdown", "data", allow_duplicate=True),
+    Output("reg-sheet-select-dropdown", "value", allow_duplicate=True),
+    Output("reg-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("reg-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("reg-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("dashmat-original-periodicity-store", "data", allow_duplicate=True),
     Output("reg-periodicity-value-store", "data", allow_duplicate=True),
     Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-upload-data", "contents"),
     State("reg-upload-data", "filename"),
     State("dashmat-raw-data-store", "data"),
@@ -3010,18 +3014,49 @@ def reg_add_portfolios_from_database(
 def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
     if not contents:
         raise PreventUpdate
-    sheet_names = get_sheet_names(contents, filename)
-    if sheet_names and len(sheet_names) > 1:
-        return sheet_names, contents, filename, True, no_update, no_update, no_update, no_update
+
+    n_no = no_update
+    sheet_no = (n_no, n_no, n_no, n_no, n_no, n_no)
+
     try:
+        sheet_names = get_sheet_names(contents, filename)
+        if sheet_names and len(sheet_names) > 1:
+            dropdown_data = [{"value": sheet, "label": sheet} for sheet in sheet_names]
+            return (
+                True,
+                dropdown_data,
+                [sheet_names[0]],
+                contents,
+                filename,
+                sheet_names,
+                n_no,
+                n_no,
+                n_no,
+                n_no,
+                False,
+            )
+
         new_df = _shared_import_single_upload(contents, filename)
+        merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        merged_periodicity = merge_result.combined_periodicity
+        return (
+            *sheet_no,
+            df_to_json(merged_df),
+            merged_periodicity,
+            merged_periodicity,
+            merged_periodicity,
+            False,
+        )
     except Exception:
-        raise PreventUpdate
-    merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
-    merged_df = merge_result.merged_df
-    merged_periodicity = merge_result.combined_periodicity
-    return (no_update, no_update, no_update, False,
-            df_to_json(merged_df), merged_periodicity, merged_periodicity, merged_periodicity)
+        return (
+            *sheet_no,
+            n_no,
+            n_no,
+            n_no,
+            n_no,
+            False,
+        )
 
 
 @callback(
@@ -3030,25 +3065,146 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
     Output("reg-periodicity-value-store", "data", allow_duplicate=True),
     Output("reg-periodicity-load-sync-dummy", "data", allow_duplicate=True),
     Output("reg-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("reg-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("reg-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("reg-sheet-select-sheetnames-store", "data", allow_duplicate=True),
+    Output("reg-upload-data", "contents", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-sheet-select-ok-button", "n_clicks"),
+    Input("reg-sheet-select-import-all-button", "n_clicks"),
     State("reg-sheet-select-dropdown", "value"),
     State("reg-sheet-select-contents-store", "data"),
     State("reg-sheet-select-filename-store", "data"),
+    State("reg-sheet-select-sheetnames-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     prevent_initial_call=True,
 )
-def reg_handle_sheet_select_ok(n_clicks, selected_sheets, contents, filename, existing_raw, existing_periodicity):
-    if not n_clicks or not selected_sheets or not contents:
+def reg_handle_sheet_select_ok(
+    n_clicks_selected,
+    n_clicks_all,
+    selected_sheets,
+    contents,
+    filename,
+    stashed_sheet_names,
+    existing_raw,
+    existing_periodicity,
+):
+    if not contents:
         raise PreventUpdate
+
+    n_no = no_update
+    triggered_id = callback_context.triggered_id
+    if triggered_id not in {"reg-sheet-select-ok-button", "reg-sheet-select-import-all-button"}:
+        raise PreventUpdate
+
     try:
-        new_df, _imported_sheets = _shared_import_selected_workbook_sheets(contents, filename, selected_sheets)
+        workbook_sheets = stashed_sheet_names or get_sheet_names(contents, filename)
+        if triggered_id == "reg-sheet-select-import-all-button":
+            target_sheets = workbook_sheets
+        else:
+            target_sheets = selected_sheets or []
+
+        if not target_sheets:
+            return n_no, n_no, n_no, n_no, True, contents, filename, workbook_sheets, n_no, False
+
+        new_df, _imported_sheets = _shared_import_selected_workbook_sheets(
+            contents,
+            filename,
+            target_sheets,
+            workbook_sheets=workbook_sheets,
+        )
+        merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
+        merged_df = merge_result.merged_df
+        merged_periodicity = merge_result.combined_periodicity
+        return (
+            df_to_json(merged_df),
+            merged_periodicity,
+            merged_periodicity,
+            merged_periodicity,
+            False,
+            None,
+            None,
+            None,
+            None,
+            False,
+        )
     except Exception:
+        workbook_sheets = stashed_sheet_names or get_sheet_names(contents, filename)
+        return n_no, n_no, n_no, n_no, True, contents, filename, workbook_sheets, n_no, False
+
+
+@callback(
+    Output("reg-sheet-select-ok-button", "disabled"),
+    Input("reg-sheet-select-dropdown", "value"),
+)
+def reg_toggle_sheet_select_import_selected_disabled(selected_sheets):
+    return import_selected_disabled(selected_sheets)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        return true;
+    }
+    """,
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-sheet-select-ok-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
+        return true;
+    }
+    """,
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-sheet-select-import-all-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("reg-sheet-select-modal", "opened", allow_duplicate=True),
+    Output("reg-sheet-select-contents-store", "data", allow_duplicate=True),
+    Output("reg-sheet-select-filename-store", "data", allow_duplicate=True),
+    Output("reg-sheet-select-sheetnames-store", "data", allow_duplicate=True),
+    Output("reg-upload-data", "contents", allow_duplicate=True),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-sheet-select-cancel-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reg_on_sheet_select_cancel(n_clicks):
+    if not n_clicks:
         raise PreventUpdate
-    merge_result = _shared_merge_uploaded_with_existing(existing_raw, existing_periodicity, new_df)
-    merged_df = merge_result.merged_df
-    merged_periodicity = merge_result.combined_periodicity
-    return df_to_json(merged_df), merged_periodicity, merged_periodicity, merged_periodicity, False
+    return False, None, None, None, None, False
+
+
+clientside_callback(
+    """
+    function(opened) {
+        if (!opened) {
+            var el = document.getElementById('reg-upload-data');
+            if (el) {
+                var inp = el.querySelector('input[type="file"]');
+                if (inp) inp.value = '';
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reg-sheet-select-modal", "title", allow_duplicate=True),
+    Input("reg-sheet-select-modal", "opened"),
+    prevent_initial_call=True,
+)
 
 
 # ---------------------------------------------------------------------------

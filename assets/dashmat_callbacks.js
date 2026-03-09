@@ -126,8 +126,7 @@
 
   function triggerRegressionUpload(menuAddClicks, welcomeAddClicks) {
     if (menuAddClicks || welcomeAddClicks) {
-      clickUploadInput("reg-upload-data");
-      return noUpdate();
+      return triggerUploadWithCancel("reg-upload-data", "reg-ui-blocker-store");
     }
     return noUpdate();
   }
