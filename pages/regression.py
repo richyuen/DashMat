@@ -134,6 +134,19 @@ _MODEL_DEFAULT_NAME = {
     "elastic_net": "Elastic Net",
 }
 
+REG_TAB_SPECS = (
+    {"value": "anova", "label": "ANOVA"},
+    {"value": "rolling", "label": "Rolling Summary"},
+    {"value": "scatter", "label": "Scatter"},
+    {"value": "weights", "label": "Weights"},
+    {"value": "statistics", "label": "Statistics"},
+    {"value": "returns", "label": "Returns"},
+    {"value": "rolling_returns", "label": "Rolling"},
+    {"value": "calendar", "label": "Calendar Year"},
+    {"value": "growth", "label": "Growth of $1"},
+    {"value": "drawdown", "label": "Drawdown"},
+)
+
 _MISSING_DATA_OPTIONS = [
     {"value": "fill_na", "label": "Fill NA"},
     {"value": "fill_0", "label": "Fill 0"},
@@ -1153,16 +1166,8 @@ def build_reg_main_layout():
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
                             dmc.TabsList([
-                                dmc.TabsTab("ANOVA", value="anova"),
-                                dmc.TabsTab("Rolling Summary", value="rolling"),
-                                dmc.TabsTab("Weights", value="weights"),
-                                dmc.TabsTab("Statistics", value="statistics"),
-                                dmc.TabsTab("Returns", value="returns"),
-                                dmc.TabsTab("Rolling", value="rolling_returns"),
-                                dmc.TabsTab("Calendar Year", value="calendar"),
-                                dmc.TabsTab("Growth of $1", value="growth"),
-                                dmc.TabsTab("Drawdown", value="drawdown"),
-                                dmc.TabsTab("Scatter", value="scatter"),
+                                dmc.TabsTab(spec["label"], value=spec["value"])
+                                for spec in REG_TAB_SPECS
                             ]),
                             dmc.TabsPanel(
                                 value="anova",
@@ -1716,6 +1721,22 @@ clientside_callback(
     """,
     Output("reg-initial-tab-render-ready-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
+)
+
+clientside_callback(
+    """
+    function(n, storedTab) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        const allowed = ["anova", "rolling", "scatter", "weights", "statistics", "returns", "rolling_returns", "calendar", "growth", "drawdown"];
+        return allowed.includes(storedTab) ? storedTab : "anova";
+    }
+    """,
+    Output("reg-tabs", "value"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("reg-active-tab-store", "data"),
+    prevent_initial_call=True,
 )
 
 
@@ -4132,6 +4153,16 @@ def reg_download_excel(
         returns_df["Date"] = pd.to_datetime(returns_df["Date"]).dt.strftime("%Y-%m-%d")
 
     # ------------------------------------------------------------------
+    # Scatter tab
+    # ------------------------------------------------------------------
+    scatter_df = _info_df("No scatter data available.")
+    if not display_df.empty and ordered_cols:
+        scatter_df = display_df[ordered_cols].copy()
+        scatter_df.index.name = "Date"
+        scatter_df = scatter_df.reset_index()
+        scatter_df["Date"] = pd.to_datetime(scatter_df["Date"]).dt.strftime("%Y-%m-%d")
+
+    # ------------------------------------------------------------------
     # Rolling tab
     # ------------------------------------------------------------------
     rolling_df = _info_df("No rolling values available for selected settings.")
@@ -4244,22 +4275,25 @@ def reg_download_excel(
     # ------------------------------------------------------------------
     # Write workbook (tab order + Settings first)
     # ------------------------------------------------------------------
-    sheets = [
-        ("Settings", settings_df),
-        ("ANOVA", anova_df),
-        ("Rolling Summary", rolling_summary_df),
-        ("Weights", weights_df),
-        ("Statistics", stats_df),
-        ("Returns", returns_df),
-        ("Rolling", rolling_df),
-        ("Calendar Year", calendar_df),
-        ("Growth of $1", growth_df),
-        ("Drawdown", drawdown_df),
-    ]
+    sheet_frames = {
+        "anova": anova_df,
+        "rolling": rolling_summary_df,
+        "scatter": scatter_df,
+        "weights": weights_df,
+        "statistics": stats_df,
+        "returns": returns_df,
+        "rolling_returns": rolling_df,
+        "calendar": calendar_df,
+        "growth": growth_df,
+        "drawdown": drawdown_df,
+    }
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        for sheet_name, frame in sheets:
+        write_excel_with_autofit(writer, settings_df, "Settings", index=False)
+        for spec in REG_TAB_SPECS:
+            sheet_name = spec["label"]
+            frame = sheet_frames.get(spec["value"])
             out_df = frame if frame is not None and not frame.empty else _info_df("No data available.")
             write_excel_with_autofit(writer, out_df, sheet_name, index=False)
 

@@ -163,6 +163,20 @@ _PO_MODEL_DEFAULT_NAME = {
     "black_litterman": "BL",
 }
 
+PO_TAB_SPECS = (
+    {"value": "weight", "label": "Weights", "export_index": False},
+    {"value": "attribution", "label": "Attribution", "export_index": False},
+    {"value": "risk", "label": "Risk", "export_index": False},
+    {"value": "turnover", "label": "Turnover", "export_index": False},
+    {"value": "frontier", "label": "Frontier", "export_index": False},
+    {"value": "statistics", "label": "Statistics", "export_index": False},
+    {"value": "returns", "label": "Returns", "export_index": False},
+    {"value": "rolling", "label": "Rolling", "export_index": True},
+    {"value": "calendar", "label": "Calendar Year", "export_index": True},
+    {"value": "growth", "label": "Growth of $1", "export_index": False},
+    {"value": "drawdown", "label": "Drawdown", "export_index": True},
+)
+
 
 def _po_default_name_for_model(model: str) -> str:
     return _PO_MODEL_DEFAULT_NAME.get(model, "Port")
@@ -2397,19 +2411,12 @@ def build_po_main_layout():
                 value="weight",
                 style={"height": "600px", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                 children=[
-                    dmc.TabsList(children=[
-                        dmc.TabsTab("Weights", value="weight"),
-                        dmc.TabsTab("Turnover", value="turnover"),
-                        dmc.TabsTab("Statistics", value="statistics"),
-                        dmc.TabsTab("Returns", value="returns"),
-                        dmc.TabsTab("Rolling", value="rolling"),
-                        dmc.TabsTab("Calendar Year", value="calendar"),
-                        dmc.TabsTab("Growth of $1", value="growth"),
-                        dmc.TabsTab("Drawdown", value="drawdown"),
-                        dmc.TabsTab("Attribution", value="attribution"),
-                        dmc.TabsTab("Risk", value="risk"),
-                        dmc.TabsTab("Frontier", value="frontier"),
-                    ]),
+                    dmc.TabsList(
+                        children=[
+                            dmc.TabsTab(spec["label"], value=spec["value"])
+                            for spec in PO_TAB_SPECS
+                        ]
+                    ),
                     dmc.TabsPanel(
                         value="weight",
                         pt="md",
@@ -5158,7 +5165,8 @@ clientside_callback(
         if (!n) {
             return window.dash_clientside.no_update;
         }
-        return storedTab || 'weight';
+        const allowed = ["weight", "attribution", "risk", "turnover", "frontier", "statistics", "returns", "rolling", "calendar", "growth", "drawdown"];
+        return allowed.includes(storedTab) ? storedTab : 'weight';
     }
     """,
     Output("po-vis-tabs", "value"),
@@ -9652,24 +9660,33 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         risk_df = format_excel_dates(risk_df)
         frontier_df = format_excel_dates(frontier_df)
 
+        sheet_frames = {
+            "weight": weights_df,
+            "attribution": attribution_df,
+            "risk": risk_df,
+            "turnover": turnover_df,
+            "frontier": frontier_df,
+            "statistics": stats_df,
+            "returns": returns_df,
+            "rolling": rolling_df,
+            "calendar": calendar_df,
+            "growth": growth_df,
+            "drawdown": drawdown_df,
+        }
         with pd.ExcelWriter(output, engine="xlsxwriter", date_format="m/d/yyyy", datetime_format="m/d/yyyy") as writer:
-            # Keep exact tab order: Settings, Weights, Turnover, Statistics,
-            # Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, Frontier.
             write_excel_with_autofit(writer, settings_df, "Settings", index=False)
-            write_excel_with_autofit(writer, weights_df, "Weights", index=False)
-            write_excel_with_autofit(writer, turnover_df, "Turnover", index=False)
-            write_excel_with_autofit(writer, stats_df, "Statistics", index=False)
-            write_excel_with_autofit(writer, returns_df, "Returns", index=False)
-            write_excel_with_autofit(writer, growth_df, "Growth of $1", index=False)
-            if not rolling_df.empty:
-                write_excel_with_autofit(writer, rolling_df, "Rolling", index=True)
-            if not calendar_df.empty:
-                write_excel_with_autofit(writer, calendar_df, "Calendar Year", index=True)
-            if not drawdown_df.empty:
-                write_excel_with_autofit(writer, drawdown_df, "Drawdown", index=True)
-            write_excel_with_autofit(writer, attribution_df, "Attribution", index=False)
-            write_excel_with_autofit(writer, risk_df, "Risk", index=False)
-            write_excel_with_autofit(writer, frontier_df, "Frontier", index=False)
+            for spec in PO_TAB_SPECS:
+                frame = sheet_frames.get(spec["value"])
+                if frame is None:
+                    continue
+                if spec["export_index"] and frame.empty:
+                    continue
+                write_excel_with_autofit(
+                    writer,
+                    frame,
+                    spec["label"],
+                    index=spec["export_index"],
+                )
 
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), "portfolio_optimization.xlsx")

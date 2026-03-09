@@ -275,6 +275,30 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     assert page_text.count('dcc.Interval(id="po-page-load-trigger"') == 1
     assert "def po_sync_results_with_raw_data" not in page_text
+    assert 'Output("po-vis-tabs", "value")' in page_text
+    assert 'State("po-active-tab-store", "data")' in page_text
+
+
+def test_po_layout_uses_construction_first_tab_order(page_modules):
+    _, portopt = page_modules
+
+    tabs = _find_component_by_id(portopt.layout, "po-vis-tabs")
+    tabs_list = getattr(tabs, "children", [])[0]
+    labels = [getattr(tab, "children", None) for tab in getattr(tabs_list, "children", [])]
+
+    assert labels == [
+        "Weights",
+        "Attribution",
+        "Risk",
+        "Turnover",
+        "Frontier",
+        "Statistics",
+        "Returns",
+        "Rolling",
+        "Calendar Year",
+        "Growth of $1",
+        "Drawdown",
+    ]
 
 
 def test_build_apply_weight_matrix_assigns_weights_by_windows(page_modules):
@@ -1314,6 +1338,30 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
             "window_est_end": "2024-01-31",
         },
     )
+    monkeypatch.setattr(
+        portopt,
+        "calculate_rolling_returns",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {"P1": [0.12]},
+            index=[pd.Timestamp("2024-01-31")],
+        ),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "calculate_calendar_year_returns",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {"P1": [0.10]},
+            index=[2024],
+        ),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "calculate_drawdown",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {"P1": [0.0, -0.02]},
+            index=[pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-31")],
+        ),
+    )
     monkeypatch.setattr(portopt.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
 
     payload = portopt.po_download_excel(
@@ -1332,16 +1380,20 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
 
     workbook = BytesIO(payload["content"])
     xl = pd.ExcelFile(workbook)
-    assert xl.sheet_names[:6] == [
+    assert xl.sheet_names == [
         "Settings",
         "Weights",
+        "Attribution",
+        "Risk",
         "Turnover",
+        "Frontier",
         "Statistics",
         "Returns",
+        "Rolling",
+        "Calendar Year",
         "Growth of $1",
+        "Drawdown",
     ]
-    assert "Drawdown" in xl.sheet_names
-    assert xl.sheet_names[-3:] == ["Attribution", "Risk", "Frontier"]
 
     settings_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Settings")
     settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))

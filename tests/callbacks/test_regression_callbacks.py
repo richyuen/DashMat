@@ -443,6 +443,27 @@ def test_reg_bootstrap_uses_only_page_load_interval_for_tab_ready():
     assert 'reg-initial-tab-render-trigger' not in page_text
     assert 'Output("reg-initial-tab-render-ready-store", "data")' in page_text
     assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
+    assert 'Output("reg-tabs", "value")' in page_text
+    assert 'State("reg-active-tab-store", "data")' in page_text
+
+
+def test_reg_layout_uses_diagnostics_first_tab_order(regression_page):
+    tabs = _find_component_by_id(regression_page.layout, "reg-tabs")
+    tabs_list = getattr(tabs, "children", [])[0]
+    labels = [getattr(tab, "children", None) for tab in getattr(tabs_list, "children", [])]
+
+    assert labels == [
+        "ANOVA",
+        "Rolling Summary",
+        "Scatter",
+        "Weights",
+        "Statistics",
+        "Returns",
+        "Rolling",
+        "Calendar Year",
+        "Growth of $1",
+        "Drawdown",
+    ]
 
 
 def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
@@ -1261,6 +1282,7 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
         "Settings",
         "ANOVA",
         "Rolling Summary",
+        "Scatter",
         "Weights",
         "Statistics",
         "Returns",
@@ -1288,6 +1310,12 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     anova_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="ANOVA")
     assert "Block" in anova_df.columns
     assert "Parameters" in set(anova_df["Block"].dropna())
+
+    scatter_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Scatter")
+    assert "Date" in scatter_df.columns
+    assert "Predicted" in scatter_df.columns
+    assert "Actual (Y)" in scatter_df.columns
+    assert "Residual" in scatter_df.columns
     assert "Overall Fit" in set(anova_df["Block"].dropna())
     assert "ARIMA.const" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
     assert "GARCH.mu" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
