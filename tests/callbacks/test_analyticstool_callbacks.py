@@ -204,6 +204,7 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
+            False,
         )
     )
 
@@ -211,6 +212,31 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
     assert end == "2024-12-31"
     assert range_store is no_update
     assert ready is True
+
+
+def test_initialize_date_range_skips_ready_write_when_already_ready_and_range_unchanged(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+
+    monkeypatch.setattr(
+        analyticstool,
+        "resolve_initial_range",
+        lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
+    )
+
+    start, end, _style, _common_disabled, _max_disabled, range_store, ready = (
+        analyticstool.initialize_date_range(
+            {"available_series": ["Asset_A"]},
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            "2024-01-01",
+            "2024-12-31",
+            True,
+        )
+    )
+
+    assert start is no_update
+    assert end is no_update
+    assert range_store is no_update
+    assert ready is no_update
 
 
 def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():

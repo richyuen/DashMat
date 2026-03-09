@@ -6895,6 +6895,7 @@ def update_at_common_daily_candidates(raw_data, selected_series):
     State("at-date-range-store", "data"),
     State("at-start-date-picker", "value"),
     State("at-end-date-picker", "value"),
+    State("at-state-ready-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def initialize_date_range(
@@ -6902,18 +6903,21 @@ def initialize_date_range(
     stored_range,
     current_start_date,
     current_end_date,
+    current_state_ready,
 ):
     """Initialize date range to maximum range when data is loaded."""
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
     if not isinstance(candidates, dict) or not candidates.get("available_series"):
-        return None, None, disabled_style, True, True, None, False
+        ready_output = no_update if current_state_ready is False else False
+        return None, None, disabled_style, True, True, None, ready_output
 
     try:
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
-            return None, None, disabled_style, True, True, None, False
+            ready_output = no_update if current_state_ready is False else False
+            return None, None, disabled_style, True, True, None, ready_output
         next_range = {"start": start_date, "end": end_date}
         start_output = start_date
         end_output = end_date
@@ -6928,6 +6932,7 @@ def initialize_date_range(
             and stored_range.get("end") == end_date
             else next_range
         )
+        ready_output = no_update if current_state_ready is True else True
         return (
             start_output,
             end_output,
@@ -6935,11 +6940,12 @@ def initialize_date_range(
             False,
             False,
             range_output,
-            True,
+            ready_output,
         )
 
     except Exception:
-        return None, None, disabled_style, True, True, None, False
+        ready_output = no_update if current_state_ready is False else False
+        return None, None, disabled_style, True, True, None, ready_output
 
 
 clientside_callback(
