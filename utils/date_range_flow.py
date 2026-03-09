@@ -1,4 +1,4 @@
-"""Shared date-range helper flows for analytics and portopt pages."""
+"""Shared date-range helper flows for analytics, portopt, and regression pages."""
 
 from __future__ import annotations
 

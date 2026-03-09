@@ -537,6 +537,103 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert value == "monthly"
 
 
+def test_regression_layout_includes_common_daily_controls():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'id="reg-common-daily-button"' in page_text
+    assert 'dcc.Store(id="reg-common-daily-candidates-store", data=None, storage_type="memory")' in page_text
+
+
+def test_regression_common_daily_candidates_combine_x_and_dependent_var(monkeypatch, regression_page):
+    captured = {}
+
+    def _fake_compute_common_daily_candidates(raw_data, selected_series):
+        captured["raw_data"] = raw_data
+        captured["selected_series"] = tuple(selected_series)
+        return {"common_daily_start": "2020-01-01", "common_daily_end": "2020-12-31"}
+
+    monkeypatch.setattr(regression_page, "compute_common_daily_candidates", _fake_compute_common_daily_candidates)
+
+    result = regression_page.reg_update_common_daily_candidates(
+        "raw-json",
+        ["X2", "X1"],
+        "Y",
+    )
+
+    assert result == {"common_daily_start": "2020-01-01", "common_daily_end": "2020-12-31"}
+    assert captured["raw_data"] == "raw-json"
+    assert captured["selected_series"] == ("X1", "X2", "Y")
+
+
+def test_reg_init_date_range_does_not_depend_on_common_daily_store():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'Input("reg-range-candidates-store", "data")' in page_text
+    assert 'Input("reg-common-daily-candidates-store", "data")' in page_text
+    init_block = page_text.split("def reg_init_date_range", 1)[0]
+    init_callback = init_block.rsplit("@callback(", 1)[-1]
+    assert 'Input("reg-common-daily-candidates-store", "data")' not in init_callback
+
+
+def test_regression_common_daily_button_uses_clientside_disabled_toggle():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'Output("reg-common-daily-button", "disabled")' in page_text
+    assert 'Input("reg-common-daily-candidates-store", "data")' in page_text
+    assert 'Input("reg-periodicity-select", "data")' in page_text
+
+
+def test_reg_date_range_common_daily_sets_daily_trading(monkeypatch, regression_page):
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        type("Ctx", (), {"triggered": [{"prop_id": "reg-common-daily-button.n_clicks"}]})(),
+    )
+
+    result = regression_page.reg_date_range_button(
+        None,
+        1,
+        None,
+        {"available_series": ("X1", "Y"), "max_start": "2020-01-01", "max_end": "2020-12-31"},
+        {"common_daily_start": "2020-02-01", "common_daily_end": "2020-11-30"},
+    )
+
+    assert result == (
+        "2020-02-01",
+        "2020-11-30",
+        {"start": "2020-02-01", "end": "2020-11-30"},
+        "daily_trading",
+        "daily_trading",
+    )
+
+
+def test_reg_date_range_common_range_preserves_periodicity(monkeypatch, regression_page):
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        type("Ctx", (), {"triggered": [{"prop_id": "reg-common-range-button.n_clicks"}]})(),
+    )
+
+    result = regression_page.reg_date_range_button(
+        1,
+        None,
+        None,
+        {
+            "available_series": ("X1", "Y"),
+            "common_start": "2020-03-01",
+            "common_end": "2020-10-31",
+            "max_start": "2020-01-01",
+            "max_end": "2020-12-31",
+        },
+        {"common_daily_start": "2020-02-01", "common_daily_end": "2020-11-30"},
+    )
+
+    assert result[:3] == (
+        "2020-03-01",
+        "2020-10-31",
+        {"start": "2020-03-01", "end": "2020-10-31"},
+    )
+    assert result[3] is no_update
+    assert result[4] is no_update
+
+
 def test_regression_upload_clientside_trigger_targets_blocker_store():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="triggerRegressionUpload")' in page_text

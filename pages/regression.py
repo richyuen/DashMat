@@ -21,6 +21,7 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import get_sheet_names
 from utils.date_range_flow import (
+    compute_common_daily_candidates,
     compute_date_range_candidates,
     resolve_button_range,
     resolve_initial_range,
@@ -810,6 +811,16 @@ def build_reg_main_layout():
                                             dmc.Button(
                                                 "Common Range",
                                                 id="reg-common-range-button",
+                                                size="xs",
+                                                variant="outline",
+                                                disabled=True,
+                                                w=120,
+                                            ),
+                                        ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
+                                        html.Div([
+                                            dmc.Button(
+                                                "Common Daily",
+                                                id="reg-common-daily-button",
                                                 size="xs",
                                                 variant="outline",
                                                 disabled=True,
@@ -1627,6 +1638,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="reg-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="reg-range-candidates-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-common-daily-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-series-select-value-store", data=[], storage_type="session"),
         # Regression settings
         dcc.Store(id="reg-model-store", data="ols", storage_type="session"),
@@ -3750,6 +3762,21 @@ def reg_update_range_candidates(raw_data, periodicity, x_series, dep_var):
 
 
 @callback(
+    Output("reg-common-daily-candidates-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-series-select", "data"),
+    Input("reg-dependent-var-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def reg_update_common_daily_candidates(raw_data, x_series, dep_var):
+    all_series = tuple(set((x_series or []) + ([dep_var] if dep_var else [])))
+    return compute_common_daily_candidates(
+        raw_data or "",
+        all_series,
+    )
+
+
+@callback(
     Output("reg-start-date-picker", "value"),
     Output("reg-end-date-picker", "value"),
     Output("reg-date-picker-wrapper", "style"),
@@ -3775,16 +3802,48 @@ def reg_init_date_range(candidates, stored_range):
         return None, None, disabled_style, True, True, None
 
 
+clientside_callback(
+    """
+    function(candidates, commonDailyCandidates, periodicityOptions) {
+        const hasSeries = !!(candidates && candidates.available_series && candidates.available_series.length);
+        if (!hasSeries) {
+            return true;
+        }
+        const hasCommonDaily = !!(
+            commonDailyCandidates &&
+            commonDailyCandidates.common_daily_start &&
+            commonDailyCandidates.common_daily_end
+        );
+        if (!hasCommonDaily) {
+            return true;
+        }
+        const options = Array.isArray(periodicityOptions) ? periodicityOptions : [];
+        const hasDailyTrading = options.some((opt) => opt && opt.value === "daily_trading");
+        return !hasDailyTrading;
+    }
+    """,
+    Output("reg-common-daily-button", "disabled"),
+    Input("reg-range-candidates-store", "data"),
+    Input("reg-common-daily-candidates-store", "data"),
+    Input("reg-periodicity-select", "data"),
+    prevent_initial_call=False,
+)
+
+
 @callback(
     Output("reg-start-date-picker", "value", allow_duplicate=True),
     Output("reg-end-date-picker", "value", allow_duplicate=True),
     Output("reg-date-range-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-select", "value", allow_duplicate=True),
+    Output("reg-periodicity-value-store", "data", allow_duplicate=True),
     Input("reg-common-range-button", "n_clicks"),
+    Input("reg-common-daily-button", "n_clicks"),
     Input("reg-maximum-range-button", "n_clicks"),
     State("reg-range-candidates-store", "data"),
+    State("reg-common-daily-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def reg_date_range_button(n_common, n_max, candidates):
+def reg_date_range_button(n_common, n_common_daily, n_max, candidates, common_daily_candidates):
     if not isinstance(candidates, dict) or not candidates.get("available_series"):
         raise PreventUpdate
     ctx = callback_context
@@ -3792,10 +3851,17 @@ def reg_date_range_button(n_common, n_max, candidates):
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        start, end, _ = resolve_button_range(candidates, button_id)
+        start, end, force_daily = resolve_button_range(candidates, button_id, common_daily_candidates)
         if not start or not end:
             raise PreventUpdate
-        return str(start)[:10], str(end)[:10], {"start": str(start)[:10], "end": str(end)[:10]}
+        periodicity_value = "daily_trading" if force_daily else no_update
+        return (
+            str(start)[:10],
+            str(end)[:10],
+            {"start": str(start)[:10], "end": str(end)[:10]},
+            periodicity_value,
+            periodicity_value,
+        )
     except Exception:
         raise PreventUpdate
 
