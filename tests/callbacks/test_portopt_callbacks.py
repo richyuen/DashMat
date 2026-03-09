@@ -1798,6 +1798,29 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Input("po-open-modal-button", "n_clicks")' in page_text
     assert 'Output("po-ui-blocker-store", "data", allow_duplicate=True)' in page_text
     assert 'Output("po-series-selection-container", "children")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
+    assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
+
+
+def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
+    _, portopt = page_modules
+
+    children, _order, blocker = portopt.po_update_series_selectors(
+        raw_json,
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        [],
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+    )
+
+    assert blocker is no_update
+    assert getattr(children[0], "id", None) == "po-series-selection-grid"
 
 
 def test_po_session_actions_use_shared_workspace_helpers():

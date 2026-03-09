@@ -906,6 +906,9 @@ def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Output("reg-series-selection-container", "children")' in page_text
     assert 'Output("reg-ui-blocker-store", "data", allow_duplicate=True)' in page_text
     assert 'if (trigger.indexOf("series-selection-modal") !== -1) {' in js_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
+    assert 'Input("reg-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
+    assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
 
 
 def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):
@@ -940,7 +943,7 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
         {},
         {},
     )
-    assert blocker is False
+    assert blocker is no_update
 
     grid = children[0]
     opts = getattr(grid, "dashGridOptions", {}) or {}

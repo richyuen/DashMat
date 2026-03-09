@@ -151,6 +151,19 @@
     return noUpdate();
   }
 
+  function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened) {
+    if (modalOpened === false) {
+      return false;
+    }
+    if (modalOpened !== true) {
+      return noUpdate();
+    }
+    if (Array.isArray(virtualRows)) {
+      return false;
+    }
+    return noUpdate();
+  }
+
   function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions) {
     const hasSeries = !!(candidates && candidates.available_series && candidates.available_series.length);
     if (!hasSeries) {
@@ -437,7 +450,8 @@
       triggerPortoptUpload: triggerPortoptUpload,
       triggerRegressionUpload: triggerRegressionUpload,
       uiBlockerEnable: uiBlockerEnable,
-      uiBlockerRelease: uiBlockerRelease
+      uiBlockerRelease: uiBlockerRelease,
+      releaseBlockerOnSeriesGridReady: releaseBlockerOnSeriesGridReady
     }
   });
 })();

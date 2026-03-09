@@ -1818,6 +1818,14 @@ clientside_callback(
 )
 
 clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady"),
+    Output("reg-ui-blocker-store", "data", allow_duplicate=True),
+    Input("reg-series-selection-grid", "virtualRowData", allow_optional=True),
+    State("reg-series-selection-modal", "opened"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="uiBlockerEnable"),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-menu-add-from-db", "n_clicks"),
@@ -3569,7 +3577,7 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
         },
         style={"height": "400px"},
     )
-    return [grid], series_order, False
+    return [grid], series_order, no_update
 
 
 # ---------------------------------------------------------------------------

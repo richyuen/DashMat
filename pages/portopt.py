@@ -4229,6 +4229,14 @@ clientside_callback(
     Input("po-ui-blocker-store", "data"),
 )
 
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady"),
+    Output("po-ui-blocker-store", "data", allow_duplicate=True),
+    Input("po-series-selection-grid", "virtualRowData", allow_optional=True),
+    State("po-series-selection-modal", "opened"),
+    prevent_initial_call=True,
+)
+
 # Store sync: top-level controls
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptControlSync"),
@@ -7172,7 +7180,7 @@ def po_update_series_selectors(
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid], series_order, False
+    return [grid], series_order, no_update
 
 
 def _po_latest_series_grid_change(cell_change):

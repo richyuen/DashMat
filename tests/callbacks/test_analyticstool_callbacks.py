@@ -229,6 +229,31 @@ def test_at_common_daily_button_uses_shared_clientside_helper():
     assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
 
 
+def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    children, _order, blocker = analyticstool.update_series_selectors(
+        raw_json,
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        [],
+        {},
+        {},
+        {},
+    )
+
+    assert blocker is no_update
+    assert getattr(children[0], "id", None) == "at-series-selection-grid"
+
+
+def test_at_series_selection_blocker_release_uses_virtual_rows():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
+    assert 'Input("at-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
+    assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
+
+
 def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(page_modules, raw_json):
     analyticstool, _ = page_modules
 

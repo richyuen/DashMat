@@ -3921,6 +3921,14 @@ clientside_callback(
     Input("at-ui-blocker-store", "data"),
 )
 
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady"),
+    Output("at-ui-blocker-store", "data", allow_duplicate=True),
+    Input("at-series-selection-grid", "virtualRowData", allow_optional=True),
+    State("at-series-selection-modal", "opened"),
+    prevent_initial_call=True,
+)
+
 
 def _at_get_series_page_state(raw_meta, current_select, current_order, po_origin_series):
     """Classify raw columns into page-known, saved-origin, and generic new series."""
@@ -6643,7 +6651,7 @@ def update_series_selectors(
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
-    return [grid], series_order, False
+    return [grid], series_order, no_update
 
 
 @callback(
