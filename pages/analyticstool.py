@@ -3447,10 +3447,7 @@ layout = dmc.Container(
 # cross-page navigation, plus dashmat-raw-data-store Input for same-page uploads.
 clientside_callback(
     """
-    function(n_intervals, data) {
-        if (n_intervals === null || n_intervals === undefined || n_intervals < 1) {
-            return [{display: "none"}, {display: "none"}];
-        }
+    function(data, n_intervals) {
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
@@ -3459,8 +3456,8 @@ clientside_callback(
     """,
     Output("at-welcome-screen-container", "style"),
     Output("at-main-app-container", "style"),
-    Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
+    Input("at-page-load-trigger", "n_intervals"),
 )
 
 clientside_callback(
@@ -3967,7 +3964,8 @@ def _at_get_series_page_state(raw_meta, current_select, current_order, po_origin
     return columns, selected_valid, generic_new, po_new
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="openAnalyticsSeriesModal"),
     Output("at-series-selection-modal", "opened", allow_duplicate=True),
     Output("at-temp-series-select", "data", allow_duplicate=True),
     Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
@@ -3990,97 +3988,6 @@ def _at_get_series_page_state(raw_meta, current_select, current_order, po_origin
     State("at-page-visited-store", "data"),
     prevent_initial_call=True,
 )
-def open_modal(
-    n_clicks,
-    page_load_intervals,
-    pathname,
-    raw_meta,
-    current_select,
-    current_bench,
-    current_ls,
-    current_order,
-    current_vol_scaling,
-    po_origin_series,
-    page_visited,
-):
-    triggered_id = callback_context.triggered_id
-
-    if triggered_id == "at-open-series-modal-button":
-        if not n_clicks:
-            raise PreventUpdate
-        return (
-            True,
-            current_select,
-            current_bench,
-            current_ls,
-            current_order,
-            [],
-            current_vol_scaling,
-            no_update,
-            True,
-        )
-
-    if triggered_id != "at-page-load-trigger" or page_load_intervals is None:
-        raise PreventUpdate
-
-    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-    if page_path != "/analyticstool":
-        raise PreventUpdate
-
-    columns, selected_valid, generic_new, po_new = _at_get_series_page_state(
-        raw_meta,
-        current_select,
-        current_order,
-        po_origin_series,
-    )
-    if not columns:
-        return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            True,
-            False,
-        )
-
-    should_open = False
-    temp_select = no_update
-    if not page_visited and not selected_valid:
-        should_open = True
-        temp_select = list(columns)
-    elif generic_new:
-        should_open = True
-        selected_set = set(selected_valid)
-        selected_set.update(generic_new)
-        selected_set.update(po_new)
-        temp_select = [series for series in columns if series in selected_set]
-    if not should_open:
-        return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            True,
-            False,
-        )
-
-    return (
-        True,
-        temp_select,
-        current_bench,
-        current_ls,
-        current_order,
-        [],
-        current_vol_scaling,
-        True,
-        True,
-    )
 
 
 @callback(
@@ -4100,6 +4007,11 @@ def open_modal(
     State("at-temp-deleted-series-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("at-temp-vol-scaling-assignments-store", "data"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 def on_modal_ok(
@@ -4111,6 +4023,11 @@ def on_modal_ok(
     temp_deleted,
     raw_data,
     temp_vol_scaling,
+    current_select,
+    current_bench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -4120,8 +4037,18 @@ def on_modal_ok(
         selected_set = set(temp_select)
         temp_select = [series for series in temp_order if series in selected_set]
 
-    # Apply deletions to raw data
-    updated_raw_data = raw_data
+    temp_bench = dict(temp_bench or {})
+    temp_ls = dict(temp_ls or {})
+    temp_order = list(temp_order or [])
+    temp_vol_scaling = dict(temp_vol_scaling or {})
+
+    current_select = list(current_select or [])
+    current_bench = dict(current_bench or {})
+    current_ls = dict(current_ls or {})
+    current_order = list(current_order or [])
+    current_vol_scaling = dict(current_vol_scaling or {})
+
+    updated_raw_data = no_update
     if temp_deleted and raw_data:
         df = json_to_df(raw_data)
         # Filter out series that are actually in the columns
@@ -4153,16 +4080,22 @@ def on_modal_ok(
             # Also remove from temp_select if present
             temp_select = [s for s in temp_select if s not in series_to_drop]
 
-    raw_data_output = updated_raw_data if updated_raw_data != raw_data else no_update
+    next_series_select = no_update if temp_select == current_select else temp_select
+    next_bench = no_update if temp_bench == current_bench else temp_bench
+    next_ls = no_update if temp_ls == current_ls else temp_ls
+    next_order = no_update if temp_order == current_order else temp_order
+    next_series_value = no_update if temp_select == current_select else temp_select
+    next_vol_scaling = no_update if temp_vol_scaling == current_vol_scaling else temp_vol_scaling
+
     return (
-        temp_select,
-        temp_bench,
-        temp_ls,
-        temp_order,
+        next_series_select,
+        next_bench,
+        next_ls,
+        next_order,
         False,
-        temp_select,
-        raw_data_output,
-        temp_vol_scaling,
+        next_series_value,
+        updated_raw_data,
+        next_vol_scaling,
     )
 
 
@@ -6594,14 +6527,8 @@ def update_series_selectors(
             {
                 "field": "Benchmark",
                 "editable": True,
-                "cellEditor": "agRichSelectCellEditor",
-                "cellEditorPopup": True,
-                "cellEditorParams": {
-                    "values": benchmark_values,
-                    "allowTyping": True,
-                    "filterList": True,
-                    "highlightMatch": True,
-                },
+                "cellEditor": "agSelectCellEditor",
+                "cellEditorParams": {"values": benchmark_values},
                 "minWidth": 150,
                 "cellStyle": {"textAlign": "left"},
                 "headerClass": "dashmat-left-header",
@@ -6652,7 +6579,7 @@ def update_series_selectors(
             "suppressRowDeselection": True,
             "suppressMovableColumns": True,
             "rowDragManaged": True,
-            "animateRows": True,
+            "animateRows": False,
             "singleClickEdit": True,
             "stopEditingWhenCellsLoseFocus": True,
             "suppressExcelExport": True,

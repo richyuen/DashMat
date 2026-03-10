@@ -5387,7 +5387,7 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(data) {
+    function(data, n_intervals) {
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
@@ -5397,6 +5397,7 @@ clientside_callback(
     Output("po-welcome-screen", "style"),
     Output("po-main-container", "style"),
     Input("dashmat-raw-data-store", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
 )
 
 clientside_callback(

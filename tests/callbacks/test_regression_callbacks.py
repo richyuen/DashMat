@@ -445,6 +445,9 @@ def test_reg_bootstrap_uses_only_page_load_interval_for_tab_ready():
     assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
     assert 'Output("reg-tabs", "value")' in page_text
     assert 'State("reg-active-tab-store", "data")' in page_text
+    assert 'Output("reg-welcome-screen", "style")' in page_text
+    assert 'Input("dashmat-raw-data-store", "data")' in page_text
+    assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
 
 
 def test_reg_layout_uses_diagnostics_first_tab_order(regression_page):
@@ -754,150 +757,13 @@ def test_reg_sheet_select_cancel_clears_stash_and_releases_blocker(regression_pa
     assert regression_page.reg_on_sheet_select_cancel(1) == (False, None, None, None, None, False)
 
 
-def test_reg_open_modal_page_load_selects_all_x_when_no_x_selected(monkeypatch, regression_page, raw_json, sample_returns_df):
-    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
+def test_reg_series_modal_open_is_clientside():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
 
-    result = regression_page.reg_open_modal(
-        None,
-        _raw_meta(raw_json),
-        1,
-        "/regression",
-        [],
-        [],
-        {},
-        {},
-        {},
-        None,
-        {},
-        {},
-        {},
-        {},
-        [],
-        False,
-    )
-
-    assert result[0] is True
-    assert result[1] == list(sample_returns_df.columns)
-    assert result[7] is None
-    assert result[12] is True
-    assert result[13] is True
-
-
-def test_reg_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypatch, regression_page, raw_json):
-    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
-
-    result = regression_page.reg_open_modal(
-        None,
-        _raw_meta(raw_json),
-        1,
-        "/regression",
-        [],
-        [],
-        {},
-        {},
-        {},
-        None,
-        {},
-        {},
-        {},
-        {},
-        {
-            "Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"},
-            "Asset_D": {"origin_page": "regression", "origin_result": "Asset_D", "series_type": "predicted"},
-        },
-        False,
-    )
-
-    assert result[0] is True
-    assert result[1] == ["Asset_A", "Asset_B"]
-    assert result[7] is None
-    assert result[12] is True
-    assert result[13] is True
-
-
-def test_reg_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch, regression_page):
-    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
-    raw_df = pd.DataFrame({"SavedPred": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
-    raw_df.index.name = "Date"
-
-    result = regression_page.reg_open_modal(
-        None,
-        _raw_meta(df_to_json(raw_df)),
-        1,
-        "/regression",
-        [],
-        [],
-        {},
-        {},
-        {},
-        None,
-        {},
-        {},
-        {},
-        {},
-        {"SavedPred": {"origin_page": "regression", "origin_result": "SavedPred", "series_type": "predicted"}},
-        False,
-    )
-
-    assert result[0] is no_update
-    assert result[12] is True
-    assert result[13] is False
-
-
-def test_reg_open_modal_page_load_adds_only_generic_new_x_without_resetting_y(monkeypatch, regression_page, raw_json):
-    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
-
-    result = regression_page.reg_open_modal(
-        None,
-        _raw_meta(raw_json),
-        1,
-        "/regression",
-        ["Asset_A"],
-        ["Asset_A", "Asset_B"],
-        {},
-        {},
-        {},
-        "Asset_B",
-        {},
-        {},
-        {},
-        {},
-        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
-        True,
-    )
-
-    assert result[0] is True
-    assert result[1] == ["Asset_A", "Asset_D"]
-    assert result[7] == "Asset_B"
-    assert result[12] is True
-    assert result[13] is True
-
-
-def test_reg_open_modal_ignores_po_only_series_on_revisit(monkeypatch, regression_page, raw_json):
-    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
-
-    result = regression_page.reg_open_modal(
-        None,
-        _raw_meta(raw_json),
-        1,
-        "/regression",
-        ["Asset_A"],
-        ["Asset_A", "Asset_B", "Asset_D"],
-        {},
-        {},
-        {},
-        "Asset_B",
-        {},
-        {},
-        {},
-        {},
-        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
-        True,
-    )
-
-    assert result[0] is no_update
-    assert result[12] is True
-    assert result[13] is False
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="openRegressionSeriesModal")' in page_text
+    assert "function openRegressionSeriesModal(" in js_text
+    assert "def reg_open_modal(" not in page_text
 
 
 def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
@@ -915,6 +781,47 @@ def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionInitialSeriesBlocker")' in page_text
     assert 'Input("reg-url-location", "pathname")' in page_text
     assert "function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect)" in js_text
+
+
+def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page, raw_json):
+    result = regression_page.reg_on_modal_ok(
+        1,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        [],
+        raw_json,
+        {"Asset_A": True},
+        "Asset_A",
+        {"Asset_A": 0},
+        {"Asset_A": -999.0},
+        {"Asset_A": 999.0},
+        {"Asset_A": False},
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        {"Asset_A": True},
+        "Asset_A",
+        {"Asset_A": 0},
+        {"Asset_A": -999.0},
+        {"Asset_A": 999.0},
+        {"Asset_A": False},
+    )
+
+    assert result[0] is no_update
+    assert result[1] is no_update
+    assert result[2] is no_update
+    assert result[3] is no_update
+    assert result[5] is no_update
+    assert result[6] is no_update
+    assert result[7] is no_update
+    assert result[8] is no_update
+    assert result[9] is no_update
+    assert result[10] is no_update
+    assert result[11] is no_update
+    assert result[12] is no_update
 
 
 def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):

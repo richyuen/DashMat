@@ -198,13 +198,13 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert page_text.count('Input("po-initial-tab-render-ready-store", "data")') == 2
 
 
-def test_po_shell_visibility_no_longer_depends_on_page_load_trigger():
+def test_po_shell_visibility_uses_raw_data_presence_and_page_load_tick():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     visibility_block = page_text.split('Output("po-secondary-restore-ready-store", "data")', 1)[0]
     assert 'Output("po-welcome-screen", "style")' in visibility_block
     assert 'Output("po-main-container", "style")' in visibility_block
     assert 'Input("dashmat-raw-data-store", "data")' in visibility_block
-    assert 'Input("po-page-load-trigger", "n_intervals")' not in visibility_block
+    assert 'Input("po-page-load-trigger", "n_intervals")' in visibility_block
 
 
 def test_po_toggle_ui_elements_uses_restore_complete_store():

@@ -421,75 +421,13 @@ def test_at_restore_secondary_controls_restores_deferred_values(page_modules, ra
     assert restored[11] == "monthly"
 
 
-def test_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, page_modules, raw_json, sample_returns_df):
-    analyticstool, _ = page_modules
-    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())
+def test_at_series_modal_open_is_clientside():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
 
-    result = analyticstool.open_modal(
-        None,
-        1,
-        "/analyticstool",
-        _raw_meta(raw_json),
-        [],
-        {},
-        {},
-        [],
-        {},
-        [],
-        False,
-    )
-
-    assert result[0] is True
-    assert result[1] == list(sample_returns_df.columns)
-    assert result[7] is True
-    assert result[8] is True
-
-
-def test_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules, raw_json):
-    analyticstool, _ = page_modules
-    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())
-
-    result = analyticstool.open_modal(
-        None,
-        1,
-        "/analyticstool",
-        _raw_meta(raw_json),
-        ["Asset_A"],
-        {},
-        {},
-        ["Asset_A", "Asset_B", "Asset_D"],
-        {},
-        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
-        True,
-    )
-
-    assert result[0] is no_update
-    assert result[7] is True
-    assert result[8] is False
-
-
-def test_open_modal_auto_opens_for_generic_new_and_keeps_po_series_selected(monkeypatch, page_modules, raw_json):
-    analyticstool, _ = page_modules
-    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())
-
-    result = analyticstool.open_modal(
-        None,
-        1,
-        "/analyticstool",
-        _raw_meta(raw_json),
-        ["Asset_A"],
-        {},
-        {},
-        ["Asset_A", "Asset_B"],
-        {},
-        {"Asset_C": {"origin_page": "regression", "origin_result": "Asset_C", "series_type": "predicted"}},
-        True,
-    )
-
-    assert result[0] is True
-    assert result[1] == ["Asset_A", "Asset_C", "Asset_D"]
-    assert result[7] is True
-    assert result[8] is True
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="openAnalyticsSeriesModal")' in page_text
+    assert "function openAnalyticsSeriesModal(" in js_text
+    assert "def open_modal(" not in page_text
 
 
 def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
@@ -525,6 +463,9 @@ def test_at_bootstrap_uses_only_page_load_interval_and_real_secondary_ready_sign
     assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
     assert 'Output("at-secondary-restore-ready-store", "data")' in page_text
     assert 'Input("at-state-ready-store", "data")' in page_text
+    assert 'Output("at-welcome-screen-container", "style")' in page_text
+    assert 'Input("dashmat-raw-data-store", "data")' in page_text
+    assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
 
 
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
@@ -1023,10 +964,43 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
         [],
         raw_json,
         {},
+        ["Asset_A"],
+        {},
+        {},
+        ["Asset_A"],
+        {},
     )
 
     assert result[6] is no_update
     assert len(result) == 8
+
+
+def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.on_modal_ok(
+        1,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        [],
+        raw_json,
+        {"Asset_A": True},
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        {"Asset_A": True},
+    )
+
+    assert result[0] is no_update
+    assert result[1] is no_update
+    assert result[2] is no_update
+    assert result[3] is no_update
+    assert result[5] is no_update
+    assert result[6] is no_update
+    assert result[7] is no_update
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):

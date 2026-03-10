@@ -395,6 +395,292 @@
     ];
   }
 
+  function openAnalyticsSeriesModal(
+    nClicks,
+    pageLoadIntervals,
+    pathname,
+    rawMeta,
+    currentSelect,
+    currentBench,
+    currentLs,
+    currentOrder,
+    currentVolScaling,
+    poOriginSeries,
+    pageVisited
+  ) {
+    const trigger = triggeredId();
+    if (trigger !== "at-open-series-modal-button" && trigger !== "at-page-load-trigger") {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    if (trigger === "at-open-series-modal-button") {
+      if (!nClicks) {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
+      return [
+        true,
+        currentSelect,
+        currentBench,
+        currentLs,
+        currentOrder,
+        [],
+        currentVolScaling,
+        noUpdate(),
+        true
+      ];
+    }
+
+    if (pageLoadIntervals === null || pageLoadIntervals === undefined) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    const pagePath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+    if (pagePath !== "/analyticstool") {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    const columns = rawMetaColumns(rawMeta);
+    if (!columns.length) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), true, false
+      ];
+    }
+
+    const columnSet = new Set(columns);
+    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selectedValid = selected.filter(function (series) {
+      return columnSet.has(series);
+    });
+    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    selectedValid.forEach(function (series) {
+      knownColumns.add(series);
+    });
+    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    const genericNew = columns.filter(function (series) {
+      return !knownColumns.has(series) && !poOriginSet.has(series);
+    });
+    const poNew = columns.filter(function (series) {
+      return !knownColumns.has(series) && poOriginSet.has(series);
+    });
+
+    let shouldOpen = false;
+    let tempSelect = noUpdate();
+    if (!pageVisited && !selectedValid.length) {
+      shouldOpen = true;
+      tempSelect = columns.slice();
+    } else if (genericNew.length) {
+      shouldOpen = true;
+      const selectedSet = new Set(selectedValid);
+      genericNew.forEach(function (series) {
+        selectedSet.add(series);
+      });
+      poNew.forEach(function (series) {
+        selectedSet.add(series);
+      });
+      tempSelect = columns.filter(function (series) {
+        return selectedSet.has(series);
+      });
+    }
+
+    if (!shouldOpen) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), true, false
+      ];
+    }
+
+    return [
+      true,
+      tempSelect,
+      currentBench,
+      currentLs,
+      currentOrder,
+      [],
+      currentVolScaling,
+      true,
+      true
+    ];
+  }
+
+  function openRegressionSeriesModal(
+    nClicks,
+    rawMeta,
+    pageLoadIntervals,
+    pathname,
+    currentSelect,
+    currentOrder,
+    currentBench,
+    currentLs,
+    currentVolScaling,
+    currentDepVar,
+    currentLag,
+    currentMinBeta,
+    currentMaxBeta,
+    currentEnable,
+    poOriginSeries,
+    pageVisited
+  ) {
+    const trigger = triggeredId();
+    if (
+      trigger !== "reg-open-modal-button" &&
+      trigger !== "dashmat-raw-data-meta-store" &&
+      trigger !== "reg-page-load-trigger"
+    ) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    if (trigger === "reg-open-modal-button") {
+      if (!nClicks) {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
+      return [
+        true,
+        currentSelect,
+        currentOrder,
+        [],
+        currentBench,
+        currentLs,
+        currentVolScaling,
+        currentDepVar,
+        currentLag,
+        currentMinBeta,
+        currentMaxBeta,
+        currentEnable,
+        noUpdate(),
+        true
+      ];
+    }
+
+    if (trigger === "reg-page-load-trigger" && (pageLoadIntervals === null || pageLoadIntervals === undefined)) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    const pagePath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+    if (pagePath !== "/regression") {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    const columns = rawMetaColumns(rawMeta);
+    if (!columns.length) {
+      if (trigger === "reg-page-load-trigger") {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), true, false
+        ];
+      }
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    const columnSet = new Set(columns);
+    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selectedValid = selected.filter(function (series) {
+      return columnSet.has(series);
+    });
+    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    selectedValid.forEach(function (series) {
+      knownColumns.add(series);
+    });
+    if (typeof currentDepVar === "string" && columnSet.has(currentDepVar)) {
+      knownColumns.add(currentDepVar);
+    }
+    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    const genericNew = columns.filter(function (series) {
+      return !knownColumns.has(series) && !poOriginSet.has(series);
+    });
+
+    let shouldOpen = false;
+    let tempSelect = Array.isArray(currentSelect) ? currentSelect.slice() : [];
+    if (trigger === "dashmat-raw-data-meta-store") {
+      shouldOpen = genericNew.length > 0;
+      if (shouldOpen) {
+        const selectedSet = new Set(selectedValid);
+        genericNew.forEach(function (series) {
+          selectedSet.add(series);
+        });
+        tempSelect = columns.filter(function (series) {
+          return selectedSet.has(series);
+        });
+      }
+    } else {
+      if (!pageVisited && !selectedValid.length) {
+        tempSelect = columns.filter(function (series) {
+          return !poOriginSet.has(series);
+        });
+        shouldOpen = tempSelect.length > 0;
+      } else if (genericNew.length) {
+        shouldOpen = true;
+        const selectedSet = new Set(selectedValid);
+        genericNew.forEach(function (series) {
+          selectedSet.add(series);
+        });
+        tempSelect = columns.filter(function (series) {
+          return selectedSet.has(series);
+        });
+      }
+
+      if (!shouldOpen) {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), true, false
+        ];
+      }
+    }
+
+    if (!shouldOpen) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    return [
+      true,
+      tempSelect,
+      currentOrder || [],
+      [],
+      currentBench || {},
+      currentLs || {},
+      currentVolScaling || {},
+      currentDepVar,
+      currentLag || {},
+      currentMinBeta || {},
+      currentMaxBeta || {},
+      currentEnable || {},
+      trigger === "reg-page-load-trigger" ? true : noUpdate(),
+      true
+    ];
+  }
+
   function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
     return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/regression");
   }
@@ -646,6 +932,7 @@
   window.dash_clientside = Object.assign({}, window.dash_clientside, {
     dashmat_callbacks: {
       analyticsControlSync: analyticsControlSync,
+      openAnalyticsSeriesModal: openAnalyticsSeriesModal,
       analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsViewSync: analyticsViewSync,
@@ -657,6 +944,7 @@
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,
       openPortoptSeriesModal: openPortoptSeriesModal,
+      openRegressionSeriesModal: openRegressionSeriesModal,
       portoptControlSync: portoptControlSync,
       portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
       portoptViewSync: portoptViewSync,

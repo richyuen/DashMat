@@ -1700,13 +1700,7 @@ layout = dmc.Container(
 
 clientside_callback(
     """
-    function(n_intervals, data) {
-        if (n_intervals === null || n_intervals === undefined || n_intervals < 1) {
-            return [
-                {display: "none"},
-                {display: "none", flex: "1", flexDirection: "column", overflow: "hidden"}
-            ];
-        }
+    function(data, n_intervals) {
         if (data) {
             return [
                 {display: "none"},
@@ -1721,8 +1715,8 @@ clientside_callback(
     """,
     Output("reg-welcome-screen", "style"),
     Output("reg-main-container", "style"),
-    Input("reg-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
+    Input("reg-page-load-trigger", "n_intervals"),
 )
 
 clientside_callback(
@@ -3339,8 +3333,9 @@ def _reg_get_modal_series_state(raw_meta, current_x, current_order, dep_var, po_
     return columns, x_valid, generic_new
 
 
-@callback(
-    Output("reg-series-selection-modal", "opened"),
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="openRegressionSeriesModal"),
+    Output("reg-series-selection-modal", "opened", allow_duplicate=True),
     Output("reg-temp-series-select", "data", allow_duplicate=True),
     Output("reg-temp-series-order-store", "data", allow_duplicate=True),
     Output("reg-temp-deleted-series-store", "data", allow_duplicate=True),
@@ -3372,88 +3367,6 @@ def _reg_get_modal_series_state(raw_meta, current_x, current_order, dep_var, po_
     State("reg-page-visited-store", "data"),
     prevent_initial_call=True,
 )
-def reg_open_modal(n_clicks, raw_meta, page_load_intervals, pathname, sel, order, bench, ls, vol_scale, dep_var,
-                   lag, min_beta, max_beta, enable, po_origin_series, page_visited):
-    triggered_id = callback_context.triggered_id
-    saved_origin_set = set(saved_series_store_names(po_origin_series))
-
-    columns, selected_x, generic_new = _reg_get_modal_series_state(
-        raw_meta,
-        sel,
-        order,
-        dep_var,
-        po_origin_series,
-    )
-    should_open = False
-    temp_x = list(sel or [])
-    if triggered_id == "reg-open-modal-button":
-        should_open = bool(n_clicks)
-    elif triggered_id == "dashmat-raw-data-meta-store":
-        should_open = bool(generic_new)
-        if should_open:
-            selected_set = set(selected_x)
-            selected_set.update(generic_new)
-            temp_x = [series for series in columns if series in selected_set]
-    elif triggered_id == "reg-page-load-trigger":
-        if page_load_intervals is None:
-            raise PreventUpdate
-        page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-        if page_path == "/regression" and columns:
-            if not page_visited and not selected_x:
-                temp_x = [series for series in columns if series not in saved_origin_set]
-                should_open = bool(temp_x)
-            elif generic_new:
-                should_open = True
-                selected_set = set(selected_x)
-                selected_set.update(generic_new)
-                temp_x = [series for series in columns if series in selected_set]
-            else:
-                should_open = False
-        elif page_path == "/regression":
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                True,
-                False,
-            )
-        else:
-            raise PreventUpdate
-
-        if not should_open:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                True,
-                False,
-            )
-
-    if not should_open:
-        raise PreventUpdate
-
-    return (True, temp_x, order or [], [],
-            bench or {}, ls or {}, vol_scale or {},
-            dep_var, lag or {}, min_beta or {}, max_beta or {}, enable or {},
-            no_update if triggered_id != "reg-page-load-trigger" else True, True)
 
 
 # ---------------------------------------------------------------------------
@@ -3743,17 +3656,48 @@ def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
     State("reg-temp-min-beta-store", "data"),
     State("reg-temp-max-beta-store", "data"),
     State("reg-temp-enable-constraint-store", "data"),
+    State("reg-series-select", "data"),
+    State("reg-benchmark-assignments-store", "data"),
+    State("reg-long-short-store", "data"),
+    State("reg-series-order-store", "data"),
+    State("reg-vol-scaling-assignments-store", "data"),
+    State("reg-dependent-var-store", "data"),
+    State("reg-lag-store", "data"),
+    State("reg-min-beta-store", "data"),
+    State("reg-max-beta-store", "data"),
+    State("reg-enable-constraint-store", "data"),
     prevent_initial_call=True,
 )
 def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_deleted,
-                    raw_data, temp_vol, temp_dep, temp_lag, temp_min, temp_max, temp_enable):
+                    raw_data, temp_vol, temp_dep, temp_lag, temp_min, temp_max, temp_enable,
+                    current_x, current_bench, current_ls, current_order, current_vol, current_dep,
+                    current_lag, current_min, current_max, current_enable):
     if not n_clicks:
         raise PreventUpdate
     temp_x = list(temp_x or [])
     if temp_order:
         x_set = set(temp_x)
         temp_x = [s for s in temp_order if s in x_set]
-    updated_raw = raw_data
+    temp_bench = dict(temp_bench or {})
+    temp_ls = dict(temp_ls or {})
+    temp_order = list(temp_order or [])
+    temp_vol = dict(temp_vol or {})
+    temp_lag = dict(temp_lag or {})
+    temp_min = dict(temp_min or {})
+    temp_max = dict(temp_max or {})
+    temp_enable = dict(temp_enable or {})
+
+    current_x = list(current_x or [])
+    current_bench = dict(current_bench or {})
+    current_ls = dict(current_ls or {})
+    current_order = list(current_order or [])
+    current_vol = dict(current_vol or {})
+    current_lag = dict(current_lag or {})
+    current_min = dict(current_min or {})
+    current_max = dict(current_max or {})
+    current_enable = dict(current_enable or {})
+
+    updated_raw = no_update
     if temp_deleted and raw_data:
         df = json_to_df(raw_data)
         to_drop = [s for s in temp_deleted if s in df.columns]
@@ -3770,9 +3714,34 @@ def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_dele
                 if store:
                     for s in to_drop:
                         store.pop(s, None)
-    return (temp_x, temp_bench or {}, temp_ls or {}, temp_order or [],
-            False, temp_x, updated_raw, temp_vol or {},
-            temp_dep, temp_lag or {}, temp_min or {}, temp_max or {}, temp_enable or {})
+
+    next_x = no_update if temp_x == current_x else temp_x
+    next_bench = no_update if temp_bench == current_bench else temp_bench
+    next_ls = no_update if temp_ls == current_ls else temp_ls
+    next_order = no_update if temp_order == current_order else temp_order
+    next_x_value = no_update if temp_x == current_x else temp_x
+    next_vol = no_update if temp_vol == current_vol else temp_vol
+    next_dep = no_update if temp_dep == current_dep else temp_dep
+    next_lag = no_update if temp_lag == current_lag else temp_lag
+    next_min = no_update if temp_min == current_min else temp_min
+    next_max = no_update if temp_max == current_max else temp_max
+    next_enable = no_update if temp_enable == current_enable else temp_enable
+
+    return (
+        next_x,
+        next_bench,
+        next_ls,
+        next_order,
+        False,
+        next_x_value,
+        updated_raw,
+        next_vol,
+        next_dep,
+        next_lag,
+        next_min,
+        next_max,
+        next_enable,
+    )
 
 
 @callback(
