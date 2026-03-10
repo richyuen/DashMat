@@ -225,6 +225,176 @@
     return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/portopt");
   }
 
+  function rawMetaColumns(rawMeta) {
+    if (Array.isArray(rawMeta)) {
+      return rawMeta.slice();
+    }
+    if (rawMeta && Array.isArray(rawMeta.columns)) {
+      return rawMeta.columns.slice();
+    }
+    return [];
+  }
+
+  function storeNames(store) {
+    if (!store) {
+      return [];
+    }
+    if (Array.isArray(store)) {
+      return store.slice();
+    }
+    if (typeof store === "object") {
+      return Object.keys(store);
+    }
+    return [];
+  }
+
+  function openPortoptSeriesModal(
+    nClicks,
+    pathname,
+    pageLoadIntervals,
+    rawMeta,
+    currentSelect,
+    currentBench,
+    currentCmabench,
+    currentLs,
+    currentOrder,
+    currentVolScaling,
+    currentMinWt,
+    currentMaxWt,
+    currentForceMax,
+    poOriginSeries,
+    pageVisited
+  ) {
+    const trigger = triggeredId();
+    if (trigger !== "po-open-modal-button" && trigger !== "po-url-location") {
+      if (trigger !== "dashmat-raw-data-meta-store" && trigger !== "po-page-load-trigger") {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
+    }
+
+    if (trigger === "po-page-load-trigger" && (pageLoadIntervals === null || pageLoadIntervals === undefined)) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    if (trigger === "dashmat-raw-data-meta-store" && pageVisited) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    if (trigger === "po-open-modal-button") {
+      if (!nClicks) {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
+      return [
+        true,
+        currentSelect,
+        currentBench,
+        currentCmabench,
+        currentLs,
+        currentOrder,
+        [],
+        currentVolScaling,
+        currentMinWt,
+        currentMaxWt,
+        currentForceMax,
+        noUpdate(),
+        true
+      ];
+    }
+
+    const pagePath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+    if (pagePath !== "/portopt") {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+      ];
+    }
+
+    const columns = rawMetaColumns(rawMeta);
+    if (!columns.length) {
+      if (trigger === "po-url-location") {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), true, false
+      ];
+    }
+
+    const columnSet = new Set(columns);
+    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selectedValid = selected.filter(function (series) {
+      return columnSet.has(series);
+    });
+    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    selectedValid.forEach(function (series) {
+      knownColumns.add(series);
+    });
+    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    const genericNew = columns.filter(function (series) {
+      return !knownColumns.has(series) && !poOriginSet.has(series);
+    });
+
+    let shouldOpen = false;
+    let tempSelect = noUpdate();
+    if (!pageVisited && !selectedValid.length) {
+      tempSelect = columns.filter(function (series) {
+        return !poOriginSet.has(series);
+      });
+      shouldOpen = tempSelect.length > 0;
+    } else if (trigger !== "dashmat-raw-data-meta-store" && genericNew.length) {
+      shouldOpen = true;
+      const selectedSet = new Set(selectedValid);
+      genericNew.forEach(function (series) {
+        selectedSet.add(series);
+      });
+      tempSelect = columns.filter(function (series) {
+        return selectedSet.has(series);
+      });
+    }
+
+    if (!shouldOpen) {
+      return [
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), true, false
+      ];
+    }
+
+    return [
+      true,
+      tempSelect,
+      currentBench,
+      currentCmabench,
+      currentLs,
+      currentOrder,
+      [],
+      currentVolScaling,
+      currentMinWt,
+      currentMaxWt,
+      currentForceMax,
+      true,
+      true
+    ];
+  }
+
   function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
     return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/regression");
   }
@@ -486,6 +656,7 @@
       navigateAnalytics: navigateAnalytics,
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,
+      openPortoptSeriesModal: openPortoptSeriesModal,
       portoptControlSync: portoptControlSync,
       portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
       portoptViewSync: portoptViewSync,

@@ -123,147 +123,37 @@ def test_po_restore_state_keeps_empty_selection_when_nothing_is_stored(page_modu
     assert restored[3] == []
 
 
-def test_po_open_modal_auto_opens_on_page_load_with_no_selection(monkeypatch, page_modules, raw_json, sample_returns_df):
-    _, portopt = page_modules
-    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
-
-    result = portopt.po_open_modal(
-        None,
-        1,
-        "/portopt",
-        _raw_meta(raw_json),
-        [],
-        {},
-        {},
-        {},
-        [],
-        {},
-        {},
-        {},
-        {},
-        [],
-        False,
-    )
-
-    assert result[0] is True
-    assert result[1] == list(sample_returns_df.columns)
-    assert result[11] is True
-    assert result[12] is True
+def test_po_open_modal_uses_clientside_open_seed_callback():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal")' in page_text
+    assert 'Input("po-open-modal-button", "n_clicks")' in page_text
+    assert 'Input("po-url-location", "pathname")' in page_text
+    assert 'Input("po-page-load-trigger", "n_intervals")' in page_text
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
+    open_block = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal")', 1)[1]
+    open_callback = open_block.split("# ---------------------------------------------------------------------------\n# Series selection modal: render rows", 1)[0]
+    assert open_callback.count('Input("po-page-load-trigger", "n_intervals")') == 1
 
 
-def test_po_open_modal_ignores_po_only_series_on_revisit(monkeypatch, page_modules, raw_json):
-    _, portopt = page_modules
-    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
-
-    result = portopt.po_open_modal(
-        None,
-        1,
-        "/portopt",
-        _raw_meta(raw_json),
-        ["Asset_A"],
-        {},
-        {},
-        {},
-        ["Asset_A", "Asset_B", "Asset_D"],
-        {},
-        {},
-        {},
-        {},
-        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
-        True,
-    )
-
-    assert result[0] is no_update
-    assert result[11] is True
-    assert result[12] is False
+def test_po_open_modal_js_preserves_first_visit_and_generic_new_behavior():
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert "function openPortoptSeriesModal(" in js_text
+    assert 'if (!pageVisited && !selectedValid.length) {' in js_text
+    assert "genericNew.length" in js_text
+    assert 'const poOriginSet = new Set(storeNames(poOriginSeries)' in js_text
+    assert 'return !knownColumns.has(series) && !poOriginSet.has(series);' in js_text
+    assert 'if (trigger === "dashmat-raw-data-meta-store" && pageVisited) {' in js_text
+    assert 'if (trigger === "po-url-location") {' in js_text
+    assert 'if (trigger === "po-page-load-trigger"' in js_text
 
 
-def test_po_open_modal_auto_adds_only_generic_new_columns_on_page_load(monkeypatch, page_modules, raw_json):
-    _, portopt = page_modules
-    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
-
-    result = portopt.po_open_modal(
-        None,
-        1,
-        "/portopt",
-        _raw_meta(raw_json),
-        ["Asset_A"],
-        {},
-        {},
-        {},
-        ["Asset_A", "Asset_B"],
-        {},
-        {},
-        {},
-        {},
-        {"Asset_C": {"origin_page": "regression", "origin_result": "Asset_C", "series_type": "predicted"}},
-        True,
-    )
-
-    assert result[0] is True
-    assert result[1] == ["Asset_A", "Asset_D"]
-    assert result[11] is True
-    assert result[12] is True
-
-
-def test_po_open_modal_does_not_auto_select_saved_series_on_first_visit(monkeypatch, page_modules, raw_json):
-    _, portopt = page_modules
-    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
-
-    result = portopt.po_open_modal(
-        None,
-        1,
-        "/portopt",
-        _raw_meta(raw_json),
-        [],
-        {},
-        {},
-        {},
-        [],
-        {},
-        {},
-        {},
-        {},
-        {
-            "Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"},
-            "Asset_D": {"origin_page": "regression", "origin_result": "Asset_D", "series_type": "predicted"},
-        },
-        False,
-    )
-
-    assert result[0] is True
-    assert result[1] == ["Asset_A", "Asset_B"]
-    assert result[11] is True
-    assert result[12] is True
-
-
-def test_po_open_modal_skips_auto_open_when_only_saved_series_exist(monkeypatch, page_modules):
-    _, portopt = page_modules
-    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
-    raw_df = pd.DataFrame({"SavedPort": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
-    raw_df.index.name = "Date"
-
-    result = portopt.po_open_modal(
-        None,
-        1,
-        "/portopt",
-        _raw_meta(df_to_json(raw_df)),
-        [],
-        {},
-        {},
-        {},
-        [],
-        {},
-        {},
-        {},
-        {},
-        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
-        False,
-    )
-
-    assert result[0] is no_update
-    assert result[11] is True
-    assert result[12] is False
+def test_po_open_modal_js_keeps_manual_open_and_blocker_seed():
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'if (trigger === "po-open-modal-button") {' in js_text
+    assert "currentBench" in js_text
+    assert "currentCmabench" in js_text
+    assert "currentForceMax" in js_text
+    assert "true" in js_text
 
 
 def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):

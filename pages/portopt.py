@@ -69,7 +69,7 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
-from utils.saved_series import save_series_to_raw_data, saved_series_store_names
+from utils.saved_series import save_series_to_raw_data
 from utils.statistics import (
     calculate_drawdown,
     calculate_statistics_cached,
@@ -6900,33 +6900,8 @@ clientside_callback(
 )
 
 
-# ---------------------------------------------------------------------------
-# Series selection modal: open
-# ---------------------------------------------------------------------------
-
-def _po_get_modal_series_state(raw_meta, current_select, current_order, po_origin_series):
-    columns = []
-    if isinstance(raw_meta, dict):
-        maybe_columns = raw_meta.get("columns")
-        if isinstance(maybe_columns, list):
-            columns = maybe_columns
-    elif isinstance(raw_meta, (list, tuple)):
-        columns = list(raw_meta)
-    if not columns:
-        return [], [], []
-
-    selected_valid = [series for series in (current_select or []) if series in columns]
-    known_columns = set(series for series in (current_order or []) if series in columns)
-    known_columns.update(selected_valid)
-    po_origin_set = {series for series in saved_series_store_names(po_origin_series) if series in columns}
-    generic_new = [
-        series for series in columns
-        if series not in known_columns and series not in po_origin_set
-    ]
-    return columns, selected_valid, generic_new
-
-
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal"),
     Output("po-series-selection-modal", "opened", allow_duplicate=True),
     Output("po-temp-series-select", "data", allow_duplicate=True),
     Output("po-temp-benchmark-assignments-store", "data", allow_duplicate=True),
@@ -6941,9 +6916,9 @@ def _po_get_modal_series_state(raw_meta, current_select, current_order, po_origi
     Output("po-page-visited-store", "data", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
+    Input("po-url-location", "pathname"),
     Input("po-page-load-trigger", "n_intervals"),
-    State("po-url-location", "pathname"),
-    State("dashmat-raw-data-meta-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -6957,121 +6932,6 @@ def _po_get_modal_series_state(raw_meta, current_select, current_order, po_origi
     State("po-page-visited-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_modal(
-    n_clicks,
-    page_load_intervals,
-    pathname,
-    raw_meta,
-    current_select,
-    current_bench,
-    current_cmabench,
-    current_ls,
-    current_order,
-    current_vol_scaling,
-    current_min_wt,
-    current_max_wt,
-    current_force_max,
-    po_origin_series,
-    page_visited,
-):
-    triggered_id = callback_context.triggered_id
-    saved_origin_set = set(saved_series_store_names(po_origin_series))
-
-    if triggered_id == "po-open-modal-button":
-        if not n_clicks:
-            raise PreventUpdate
-        return (
-            True,
-            current_select,
-            current_bench,
-            current_cmabench,
-            current_ls,
-            current_order,
-            [],
-            current_vol_scaling,
-            current_min_wt,
-            current_max_wt,
-            current_force_max,
-            no_update,
-            True,
-        )
-
-    if triggered_id != "po-page-load-trigger" or page_load_intervals is None:
-        raise PreventUpdate
-
-    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-    if page_path != "/portopt":
-        raise PreventUpdate
-
-    columns, selected_valid, generic_new = _po_get_modal_series_state(
-        raw_meta,
-        current_select,
-        current_order,
-        po_origin_series,
-    )
-    if not columns:
-        return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            True,
-            False,
-        )
-
-    if not page_visited and not selected_valid:
-        temp_select = [series for series in columns if series not in saved_origin_set]
-        should_open = bool(temp_select)
-    elif generic_new:
-        should_open = True
-        selected_set = set(selected_valid)
-        selected_set.update(generic_new)
-        temp_select = [series for series in columns if series in selected_set]
-    else:
-        should_open = False
-        temp_select = no_update
-
-    if not should_open:
-        return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            True,
-            False,
-        )
-
-    return (
-        True,
-        temp_select,
-        current_bench,
-        current_cmabench,
-        current_ls,
-        current_order,
-        [],
-        current_vol_scaling,
-        current_min_wt,
-        current_max_wt,
-        current_force_max,
-        True,
-        True,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Series selection modal: render rows
 # ---------------------------------------------------------------------------
