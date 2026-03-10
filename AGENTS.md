@@ -82,12 +82,15 @@ Portfolio import rules:
   - modal `OK` to hidden
   - run button enabled
 - For targeted PortOpt startup benchmarking, prefer direct session seeding or direct store seeding over replaying the AnalyticsTool DB-import flow. It is more deterministic and isolates the PortOpt path you are measuring.
+- For AnalyticsTool startup benchmarking, direct seeded routes can be flaky. Prefer a real-flow browser benchmark if the seeded route does not reproduce the same bootstrap path reliably.
 - Treat browser A/B startup runs as contaminated if `shellMs` and `readyMs` both jump broadly along with later modal timings. That usually indicates environment/bootstrap noise, not a real regression in the specific PortOpt change under test.
+- For callback-specific performance experiments, a narrow render micro-benchmark can help judge whether the server-side path got lighter, but it does not replace browser A/B when deciding whether to keep a user-visible startup change.
 - For date-range controls, keep `Common Daily` candidate computation off the date-range initialization path. Compute candidates separately and use a small shared clientside disabled-state helper so button availability does not retrigger picker/store initialization.
 - Track at least:
   - `shellMs`: main container visible
   - `readyMs`: periodicity control visible and enabled
 - Regression is the warm-switch reference. PortOpt is the main bottleneck; AnalyticsTool is secondary.
+- For cold-load shell visibility, keep the page-load interval as a trigger even if welcome/main visibility is determined only from raw-data presence. Removing the trigger entirely can leave both containers at their initial `display:none` state on first load.
 - PortOpt warm-switch and PortOpt first-visit startup are different problems. Warm-switch mostly targets restore/validation latency. First-visit startup is dominated by the series-selection modal render/apply path.
 - Keep measured PortOpt startup wins:
   - showing `po-main-container` / `po-welcome-screen` directly from `dashmat-raw-data-store` instead of delaying shell paint on `po-page-load-trigger`
@@ -100,6 +103,17 @@ Portfolio import rules:
 - Keep measured optimization-engine wins:
   - native `minimize_variance` is materially faster and worth keeping
   - hybrid `risk_parity` is worth keeping only for unconstrained / box-bounded classical RP; keep Riskfolio for RP cases with UI linear constraints
+- Keep measured AT/REG startup wins:
+  - moving AT and REG series-selection modal open/seed to one clientside callback
+  - making AT and REG modal `OK` paths diff-aware so unchanged persisted outputs return `no_update`
+  - changing AT `Benchmark` to `agSelectCellEditor` and disabling modal-grid row animation
+- AT/REG follow-up guidance:
+  - AnalyticsTool benefited across shell/open/grid/OK/content timings from the startup pass
+  - Regression benefited mainly on shell/open/grid timing; `OK` close was effectively flat, so future REG work should prioritize open-path latency before more `OK`-path tuning
+- Grid/editor guidance:
+  - for list-constrained fields, lighter editors are worth trying before deeper grid refactors
+  - `agSelectCellEditor` was a keep for PortOpt `Benchmark` / `CMABench` and AnalyticsTool `Benchmark`
+  - do not assume editor simplification will help if the measured bottleneck is still before grid hydration
 - Measured non-wins / regressions to avoid repeating:
   - native `maximize_sharpe` was slower than the Riskfolio path and should stay on Riskfolio
   - broad PortOpt post-solve artifact-family reuse for statistics/growth/rolling/calendar/drawdown did not produce a real win and slightly regressed targeted benchmarks
