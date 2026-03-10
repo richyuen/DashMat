@@ -7628,6 +7628,15 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     State("po-temp-max-wt-store", "data"),
     State("po-temp-force-max-store", "data"),
     State("po-results-store", "data"),
+    State("po-series-select", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-series-order-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-min-wt-store", "data"),
+    State("po-max-wt-store", "data"),
+    State("po-force-max-store", "data"),
     prevent_initial_call=True,
 )
 def po_on_modal_ok(
@@ -7644,6 +7653,15 @@ def po_on_modal_ok(
     temp_max_wt,
     temp_force_max,
     current_results,
+    current_select,
+    current_bench,
+    current_cmabench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
+    current_min_wt,
+    current_max_wt,
+    current_force_max,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -7653,14 +7671,37 @@ def po_on_modal_ok(
         selected_set = set(temp_select)
         temp_select = [s for s in temp_order if s in selected_set]
 
-    temp_cmabench = temp_cmabench or {}
-    defaults = _po_resolve_cmabench_defaults(temp_select, temp_cmabench)
-    for series in temp_select:
-        mapped = defaults.get(series)
-        if mapped and not str(temp_cmabench.get(series, "")).strip():
-            temp_cmabench[series] = mapped
+    temp_bench = dict(temp_bench or {})
+    temp_cmabench = dict(temp_cmabench or {})
+    temp_ls = dict(temp_ls or {})
+    temp_order = list(temp_order or [])
+    temp_vol_scaling = dict(temp_vol_scaling or {})
+    temp_min_wt = dict(temp_min_wt or {})
+    temp_max_wt = dict(temp_max_wt or {})
+    temp_force_max = dict(temp_force_max or {})
 
-    updated_raw_data = raw_data
+    current_select = list(current_select or [])
+    current_bench = dict(current_bench or {})
+    current_cmabench = dict(current_cmabench or {})
+    current_ls = dict(current_ls or {})
+    current_order = list(current_order or [])
+    current_vol_scaling = dict(current_vol_scaling or {})
+    current_min_wt = dict(current_min_wt or {})
+    current_max_wt = dict(current_max_wt or {})
+    current_force_max = dict(current_force_max or {})
+
+    missing_cmabench = [
+        series for series in temp_select
+        if not str(temp_cmabench.get(series, "")).strip()
+    ]
+    if missing_cmabench:
+        defaults = _po_resolve_cmabench_defaults(temp_select, temp_cmabench)
+        for series in missing_cmabench:
+            mapped = defaults.get(series)
+            if mapped:
+                temp_cmabench[series] = mapped
+
+    updated_raw_data = no_update
     updated_results = no_update
     if temp_deleted and raw_data:
         df = json_to_df(raw_data)
@@ -7702,9 +7743,32 @@ def po_on_modal_ok(
                     updated_results = {k: v for k, v in current_results.items()
                                        if k not in deleted_portfolios}
 
-    return (temp_select, temp_bench, temp_cmabench, temp_ls, temp_order, False, temp_select,
-            updated_raw_data, temp_vol_scaling, temp_min_wt, temp_max_wt, temp_force_max,
-            updated_results)
+    next_series_select = no_update if temp_select == current_select else temp_select
+    next_bench = no_update if temp_bench == current_bench else temp_bench
+    next_cmabench = no_update if temp_cmabench == current_cmabench else temp_cmabench
+    next_ls = no_update if temp_ls == current_ls else temp_ls
+    next_order = no_update if temp_order == current_order else temp_order
+    next_series_value = no_update if temp_select == current_select else temp_select
+    next_vol_scaling = no_update if temp_vol_scaling == current_vol_scaling else temp_vol_scaling
+    next_min_wt = no_update if temp_min_wt == current_min_wt else temp_min_wt
+    next_max_wt = no_update if temp_max_wt == current_max_wt else temp_max_wt
+    next_force_max = no_update if temp_force_max == current_force_max else temp_force_max
+
+    return (
+        next_series_select,
+        next_bench,
+        next_cmabench,
+        next_ls,
+        next_order,
+        False,
+        next_series_value,
+        updated_raw_data,
+        next_vol_scaling,
+        next_min_wt,
+        next_max_wt,
+        next_force_max,
+        updated_results,
+    )
 
 
 # ---------------------------------------------------------------------------

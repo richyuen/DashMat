@@ -1816,10 +1816,97 @@ def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monke
         {},
         {},
         {},
+        [],
+        {},
+        {},
+        {},
+        [],
+        {},
+        {},
+        {},
+        {},
     )
 
     assert calls == [("Asset_A",)]
     assert result[2]["Asset_A"] == "Bench_A"
+
+
+def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, raw_json):
+    _, portopt = page_modules
+
+    result = portopt.po_on_modal_ok(
+        1,
+        ["Asset_A"],
+        {},
+        {"Asset_A": "Bench_A"},
+        {},
+        ["Asset_A"],
+        [],
+        raw_json,
+        {},
+        {},
+        {},
+        {},
+        {},
+        ["Asset_A"],
+        {},
+        {"Asset_A": "Bench_A"},
+        {},
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        {},
+    )
+
+    assert result[0] is no_update
+    assert result[1] is no_update
+    assert result[2] is no_update
+    assert result[3] is no_update
+    assert result[4] is no_update
+    assert result[5] is False
+    assert result[6] is no_update
+    assert result[7] is no_update
+    assert result[8] is no_update
+    assert result[9] is no_update
+    assert result[10] is no_update
+    assert result[11] is no_update
+    assert result[12] is no_update
+
+
+def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
+    _, portopt = page_modules
+    raw_df = pd.DataFrame({"Asset_A": [0.01, 0.02], "Port_1": [0.03, 0.04]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    raw_df.index.name = "Date"
+
+    result = portopt.po_on_modal_ok(
+        1,
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        ["Asset_A"],
+        ["Port_1"],
+        df_to_json(raw_df),
+        {},
+        {},
+        {},
+        {},
+        {"Port_1": {"weights": []}},
+        ["Asset_A", "Port_1"],
+        {},
+        {},
+        {},
+        ["Asset_A", "Port_1"],
+        {},
+        {},
+        {},
+        {},
+    )
+
+    updated_df = pd.read_json(StringIO(result[7]), orient="split")
+    assert list(updated_df.columns) == ["Asset_A"]
+    assert result[12] == {}
 
 
 def test_po_session_actions_use_shared_workspace_helpers():
