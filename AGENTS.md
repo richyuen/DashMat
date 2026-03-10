@@ -81,6 +81,8 @@ Portfolio import rules:
   - series-selection grid hydrated
   - modal `OK` to hidden
   - run button enabled
+- For targeted PortOpt startup benchmarking, prefer direct session seeding or direct store seeding over replaying the AnalyticsTool DB-import flow. It is more deterministic and isolates the PortOpt path you are measuring.
+- Treat browser A/B startup runs as contaminated if `shellMs` and `readyMs` both jump broadly along with later modal timings. That usually indicates environment/bootstrap noise, not a real regression in the specific PortOpt change under test.
 - For date-range controls, keep `Common Daily` candidate computation off the date-range initialization path. Compute candidates separately and use a small shared clientside disabled-state helper so button availability does not retrigger picker/store initialization.
 - Track at least:
   - `shellMs`: main container visible
@@ -114,6 +116,7 @@ Portfolio import rules:
 - Prefer Python Playwright over `playwright-cli run-code` for nontrivial browser automation on Windows. The CLI JS path runs into command-line length and quoting limits quickly.
 - Prefer real script files over `conda run ... python -c` for anything more than a short one-liner. Multiline or heavily quoted `-c` payloads are brittle.
 - In PowerShell, `Start-Process` with `python -c` is easy to misquote. Use a script file when possible, or pass the full `-c "..."` payload as one argument string.
+- If you must launch long-lived Dash apps from PowerShell for A/B testing, wrapping the Conda-env Python invocation in a short `pwsh -Command` string is more reliable than passing `python -c` directly through `Start-Process`.
 - For browser file uploads in Playwright, prefer normalized forward-slash paths such as `C:/Git/DashMat/...` when passing paths into browser-side code.
 - Keep Playwright runtime artifacts out of commits. `.playwright-cli/` and `output/` are local runtime outputs unless a specific artifact is intentionally being checked in.
 - If you need to compare two commits side by side, run the app on separate ports instead of editing `app.py`. A reliable pattern is `conda run -n dashmat python -c "import app; app.app.run(port=8051)"`.
