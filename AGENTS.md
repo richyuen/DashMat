@@ -74,11 +74,35 @@ Portfolio import rules:
 - Warm-switch performance must be judged with a browser timing pass, not just unit tests or callback-level reasoning.
 - Current practical harness: load `/analyticstool`, import AA Tool database series, confirm the series-selection modal, warm `/portopt` and `/regression`, then measure warm revisits.
 - Default warm-up series should use actual DB option keys such as `SPX_TRIndex`, `R2000_TRIndex`, `EAFE_TRIndex`, and `BCTBill13_TRIndex`, not display shorthand like `SPX`.
+- For PortOpt startup work, add a direct startup benchmark instead of relying only on the broad warm-switch harness. Useful checkpoints are:
+  - shell visible
+  - periodicity enabled
+  - series-selection modal visible
+  - series-selection grid hydrated
+  - modal `OK` to hidden
+  - run button enabled
 - For date-range controls, keep `Common Daily` candidate computation off the date-range initialization path. Compute candidates separately and use a small shared clientside disabled-state helper so button availability does not retrigger picker/store initialization.
 - Track at least:
   - `shellMs`: main container visible
   - `readyMs`: periodicity control visible and enabled
 - Regression is the warm-switch reference. PortOpt is the main bottleneck; AnalyticsTool is secondary.
+- PortOpt warm-switch and PortOpt first-visit startup are different problems. Warm-switch mostly targets restore/validation latency. First-visit startup is dominated by the series-selection modal render/apply path.
+- Keep measured PortOpt startup wins:
+  - showing `po-main-container` / `po-welcome-screen` directly from `dashmat-raw-data-store` instead of delaying shell paint on `po-page-load-trigger`
+  - using an explicit `po-restore-complete-store` to gate validation instead of treating `po-secondary-restore-ready-store` as true restore completion
+  - narrowing PortOpt first-visit series-selection work by using `dashmat-raw-data-meta-store.columns` before parsing full raw JSON
+  - caching CMA default lookup by stable missing-series tuple and only resolving CMA defaults for selected missing series
+- Keep measured PortOpt tab/render wins:
+  - lazy-mounting the heavy result subtrees for `Attribution`, `Frontier`, and `Risk`
+  - caching the default Frontier snapshot at solve time and reusing one shared Frontier snapshot resolver across chart/table/export
+- Keep measured optimization-engine wins:
+  - native `minimize_variance` is materially faster and worth keeping
+  - hybrid `risk_parity` is worth keeping only for unconstrained / box-bounded classical RP; keep Riskfolio for RP cases with UI linear constraints
+- Measured non-wins / regressions to avoid repeating:
+  - native `maximize_sharpe` was slower than the Riskfolio path and should stay on Riskfolio
+  - broad PortOpt post-solve artifact-family reuse for statistics/growth/rolling/calendar/drawdown did not produce a real win and slightly regressed targeted benchmarks
+  - clientside PortOpt restore plus clientside/common/specialized run-button gating regressed warm-switch `runReady`
+  - converting intra-app module switch to true Dash in-app routing improved some UX aspects but regressed warm-switch timing enough on AnalyticsTool / Regression that it was not kept
 - Recent failed experiments:
   - optimistic clientside restore/reconciliation for AT/PO did not improve warm-switch timing enough to justify the extra complexity
   - lazy-mounting the whole PO ex-ante grid subtree regressed timing materially
