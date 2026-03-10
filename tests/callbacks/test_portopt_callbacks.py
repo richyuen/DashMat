@@ -1740,6 +1740,7 @@ def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules,
         {},
         {},
         {},
+        None,
     )
 
     assert blocker is no_update
@@ -1764,6 +1765,7 @@ def test_po_series_selection_grid_uses_raw_meta_columns_without_parsing_json(mon
         {},
         {},
         {},
+        None,
     )
 
     assert order == ["Asset_A", "Asset_B"]
@@ -1790,10 +1792,65 @@ def test_po_series_selection_grid_only_fetches_missing_cma_defaults_for_selected
         {},
         {},
         {},
+        None,
     )
 
     assert calls == [("Asset_A",)]
     assert getattr(children[0], "id", None) == "po-series-selection-grid"
+
+
+def test_po_series_selection_grid_uses_preloaded_cmabench_options(page_modules, raw_json):
+    _, portopt = page_modules
+
+    children, _order, _blocker = portopt.po_update_series_selectors(
+        raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        [],
+        {},
+        {"Asset_A": "Explicit_Bench"},
+        {},
+        {},
+        {},
+        {},
+        {},
+        ["Bench_1", "Bench_2"],
+    )
+
+    grid = children[0]
+    benchmark_col = next(col for col in getattr(grid, "columnDefs", []) if col.get("field") == "Benchmark")
+    cmabench_col = next(col for col in getattr(grid, "columnDefs", []) if col.get("field") == "CMABench")
+    assert benchmark_col["cellEditor"] == "agSelectCellEditor"
+    assert cmabench_col["cellEditor"] == "agSelectCellEditor"
+    assert benchmark_col["cellEditorParams"]["values"] == ["None", "Asset_A", "Asset_B"]
+    assert "" in cmabench_col["cellEditorParams"]["values"]
+    assert "Bench_1" in cmabench_col["cellEditorParams"]["values"]
+    assert "Explicit_Bench" in cmabench_col["cellEditorParams"]["values"]
+    assert getattr(grid, "dashGridOptions", {})["animateRows"] is False
+
+
+def test_po_load_cmabench_option_values_is_lazy(monkeypatch, page_modules):
+    _, portopt = page_modules
+    calls = []
+    monkeypatch.setattr(portopt, "get_unique_cmabench_values_cached", lambda *_args: calls.append(True) or ["Bench_1"])
+
+    with pytest.raises(PreventUpdate):
+        portopt.po_load_cmabench_option_values(True, ["Bench_1"])
+    assert calls == []
+
+    loaded = portopt.po_load_cmabench_option_values(True, None)
+    assert loaded == ["Bench_1"]
+    assert calls == [True]
+
+
+def test_po_series_selection_grid_no_longer_fetches_cmabench_values_inline():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    callback_block = page_text.split("@callback(", 1)[1].split("def po_update_series_selectors", 1)[0]
+    render_block = page_text.split("def po_update_series_selectors", 1)[1].split("def _po_latest_series_grid_change", 1)[0]
+    assert 'Input("po-cmabench-option-values-store", "data")' in callback_block
+    assert "get_unique_cmabench_values_cached(DB_ENGINE)" not in render_block
+    assert '"cellEditor": "agSelectCellEditor"' in render_block
 
 
 def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monkeypatch, page_modules, raw_json):

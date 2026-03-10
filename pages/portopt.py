@@ -3361,6 +3361,7 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-min-wt-store", data={}),
         dcc.Store(id="po-temp-max-wt-store", data={}),
         dcc.Store(id="po-temp-force-max-store", data={}),
+        dcc.Store(id="po-cmabench-option-values-store", data=None, storage_type="memory"),
         dcc.Store(id="po-portfolio-add-mode-store", data=None),
         dcc.Store(id="po-portfolio-add-rows-store", data=[]),
         dcc.Store(id="po-underlying-add-rows-store", data=[]),
@@ -6937,6 +6938,19 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 
 @callback(
+    Output("po-cmabench-option-values-store", "data"),
+    Input("po-series-selection-modal", "opened"),
+    State("po-cmabench-option-values-store", "data"),
+    prevent_initial_call=True,
+)
+def po_load_cmabench_option_values(modal_opened, current_values):
+    if not modal_opened:
+        raise PreventUpdate
+    if isinstance(current_values, list) and current_values:
+        raise PreventUpdate
+    return get_unique_cmabench_values_cached(DB_ENGINE)
+
+@callback(
     Output("po-series-selection-container", "children"),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
@@ -6952,6 +6966,7 @@ clientside_callback(
     Input("po-temp-min-wt-store", "data"),
     Input("po-temp-max-wt-store", "data"),
     Input("po-temp-force-max-store", "data"),
+    Input("po-cmabench-option-values-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def po_update_series_selectors(
@@ -6967,6 +6982,7 @@ def po_update_series_selectors(
     min_wt,
     max_wt,
     force_max,
+    cmabench_option_values,
 ):
     if raw_data is None:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
@@ -6999,7 +7015,16 @@ def po_update_series_selectors(
     core_cmabench_defaults = _po_resolve_cmabench_defaults(selected_set, current_cmabench_assignments)
 
     benchmark_values = ["None"] + list(all_series)
-    cmabench_values = get_unique_cmabench_values_cached(DB_ENGINE)
+    cmabench_values = list(cmabench_option_values or [])
+    cmabench_editor_values = [""] + sorted(
+        set(cmabench_values).union(
+            {
+                str(v).strip()
+                for v in current_cmabench_assignments.values()
+                if isinstance(v, str) and v.strip()
+            }
+        )
+    )
     row_data = []
     for series in series_order:
         bench_val = current_assignments.get(series, "None")
@@ -7070,14 +7095,8 @@ def po_update_series_selectors(
             {
                 "field": "Benchmark",
                 "editable": True,
-                "cellEditor": "agRichSelectCellEditor",
-                "cellEditorPopup": True,
-                "cellEditorParams": {
-                    "values": benchmark_values,
-                    "allowTyping": True,
-                    "filterList": True,
-                    "highlightMatch": True,
-                },
+                "cellEditor": "agSelectCellEditor",
+                "cellEditorParams": {"values": benchmark_values},
                 "minWidth": 150,
                 "cellStyle": {"textAlign": "left"},
                 "headerClass": "dashmat-left-header",
@@ -7085,22 +7104,8 @@ def po_update_series_selectors(
             {
                 "field": "CMABench",
                 "editable": True,
-                "cellEditor": "agRichSelectCellEditor",
-                "cellEditorPopup": True,
-                "cellEditorParams": {
-                    "values": [""] + sorted(
-                        set(cmabench_values).union(
-                            {
-                                str(v).strip()
-                                for v in current_cmabench_assignments.values()
-                                if isinstance(v, str) and v.strip()
-                            }
-                        )
-                    ),
-                    "allowTyping": True,
-                    "filterList": True,
-                    "highlightMatch": True,
-                },
+                "cellEditor": "agSelectCellEditor",
+                "cellEditorParams": {"values": cmabench_editor_values},
                 "minWidth": 130,
                 "cellStyle": {"textAlign": "left"},
                 "headerClass": "dashmat-left-header",
@@ -7178,7 +7183,7 @@ def po_update_series_selectors(
             "suppressRowDeselection": True,
             "suppressMovableColumns": True,
             "rowDragManaged": True,
-            "animateRows": True,
+            "animateRows": False,
             "singleClickEdit": True,
             "stopEditingWhenCellsLoseFocus": True,
             "suppressExcelExport": True,
