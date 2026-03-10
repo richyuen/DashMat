@@ -186,43 +186,98 @@
     return !hasDailyTrading;
   }
 
-  function hasValidSelectedSeries(rawMeta, currentSelect) {
-    const columns = Array.isArray(rawMeta)
-      ? rawMeta
-      : (rawMeta && Array.isArray(rawMeta.columns) ? rawMeta.columns : []);
-    if (!columns.length) {
-      return false;
-    }
-    const selected = Array.isArray(currentSelect) ? currentSelect : [];
-    const columnSet = new Set(columns);
-    return selected.some(function (series) {
-      return columnSet.has(series);
-    });
-  }
-
-  function startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, targetPath) {
+  function startInitialSeriesModalBlocker(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath) {
     const pagePath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
     if (pagePath !== targetPath) {
       return noUpdate();
     }
-    if (pageVisited) {
+    if (Array.isArray(virtualRows)) {
       return false;
     }
-    const columns = Array.isArray(rawMeta)
-      ? rawMeta
-      : (rawMeta && Array.isArray(rawMeta.columns) ? rawMeta.columns : []);
-    if (!columns.length) {
-      return pageLoadReady ? false : noUpdate();
+    if (modalOpened === true) {
+      return true;
     }
-    return hasValidSelectedSeries(rawMeta, currentSelect) ? false : true;
+    if (modalStillNeeded) {
+      return true;
+    }
+    return pageLoadReady ? false : noUpdate();
   }
 
-  function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady) {
-    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, "/analyticstool");
+  function analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited) {
+    const columns = rawMetaColumns(rawMeta);
+    if (!columns.length) {
+      return false;
+    }
+    const columnSet = new Set(columns);
+    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selectedValid = selected.filter(function (series) {
+      return columnSet.has(series);
+    });
+    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    selectedValid.forEach(function (series) {
+      knownColumns.add(series);
+    });
+    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    const genericNew = columns.filter(function (series) {
+      return !knownColumns.has(series) && !poOriginSet.has(series);
+    });
+    return (!pageVisited && !selectedValid.length) || genericNew.length > 0;
   }
 
-  function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady) {
-    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, "/portopt");
+  function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries) {
+    return startInitialSeriesModalBlocker(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited),
+      virtualRows,
+      "/analyticstool"
+    );
+  }
+
+  function portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited) {
+    const columns = rawMetaColumns(rawMeta);
+    if (!columns.length) {
+      return false;
+    }
+    const columnSet = new Set(columns);
+    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selectedValid = selected.filter(function (series) {
+      return columnSet.has(series);
+    });
+    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    selectedValid.forEach(function (series) {
+      knownColumns.add(series);
+    });
+    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    const genericNew = columns.filter(function (series) {
+      return !knownColumns.has(series) && !poOriginSet.has(series);
+    });
+    if (!pageVisited && !selectedValid.length) {
+      return columns.some(function (series) {
+        return !poOriginSet.has(series);
+      });
+    }
+    return genericNew.length > 0;
+  }
+
+  function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries) {
+    return startInitialSeriesModalBlocker(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited),
+      virtualRows,
+      "/portopt"
+    );
   }
 
   function rawMetaColumns(rawMeta) {
@@ -681,8 +736,48 @@
     ];
   }
 
-  function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady) {
-    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, "/regression");
+  function regressionInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, currentDepVar, poOriginSeries, pageVisited) {
+    const columns = rawMetaColumns(rawMeta);
+    if (!columns.length) {
+      return false;
+    }
+    const columnSet = new Set(columns);
+    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selectedValid = selected.filter(function (series) {
+      return columnSet.has(series);
+    });
+    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    selectedValid.forEach(function (series) {
+      knownColumns.add(series);
+    });
+    if (typeof currentDepVar === "string" && columnSet.has(currentDepVar)) {
+      knownColumns.add(currentDepVar);
+    }
+    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+      return columnSet.has(series);
+    }));
+    const genericNew = columns.filter(function (series) {
+      return !knownColumns.has(series) && !poOriginSet.has(series);
+    });
+    if (!pageVisited && !selectedValid.length) {
+      return columns.some(function (series) {
+        return !poOriginSet.has(series);
+      });
+    }
+    return genericNew.length > 0;
+  }
+
+  function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, currentDepVar, poOriginSeries) {
+    return startInitialSeriesModalBlocker(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      regressionInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, currentDepVar, poOriginSeries, pageVisited),
+      virtualRows,
+      "/regression"
+    );
   }
 
   function clearWorkspaceSession(n_clicks) {

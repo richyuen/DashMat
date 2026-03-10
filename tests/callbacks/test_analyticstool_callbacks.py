@@ -441,8 +441,22 @@ def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Output("at-ui-blocker-store", "data", allow_duplicate=True),' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitialSeriesBlocker")' in page_text
     assert 'Input("at-url-location", "pathname")' in page_text
+    assert 'Input("at-series-selection-modal", "opened")' in page_text
+    assert 'Input("at-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
-    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady)" in js_text
+    assert 'State("at-page-visited-store", "data")' in page_text
+    assert 'State("at-series-order-store", "data")' in page_text
+    assert 'State("dashmat-pending-new-series-store", "data")' in page_text
+    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries)" in js_text
+    assert "function analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
+
+
+def test_initial_series_blocker_holds_while_modal_is_open():
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert "function startInitialSeriesModalBlocker(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath)" in js_text
+    assert 'if (Array.isArray(virtualRows)) {' in js_text
+    assert 'if (modalOpened === true) {' in js_text
+    assert 'if (modalStillNeeded) {' in js_text
 
 
 def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):

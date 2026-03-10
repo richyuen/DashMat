@@ -785,8 +785,15 @@ def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionInitialSeriesBlocker")' in page_text
     assert 'Input("reg-url-location", "pathname")' in page_text
+    assert 'Input("reg-series-selection-modal", "opened")' in page_text
+    assert 'Input("reg-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
-    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady)" in js_text
+    assert 'State("reg-page-visited-store", "data")' in page_text
+    assert 'State("reg-series-order-store", "data")' in page_text
+    assert 'State("reg-dependent-var-store", "data")' in page_text
+    assert 'State("dashmat-pending-new-series-store", "data")' in page_text
+    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, currentDepVar, poOriginSeries)" in js_text
+    assert "function regressionInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, currentDepVar, poOriginSeries, pageVisited)" in js_text
 
 
 def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page, raw_json):

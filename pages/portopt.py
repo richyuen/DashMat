@@ -4258,9 +4258,13 @@ clientside_callback(
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("po-url-location", "pathname"),
     Input("dashmat-raw-data-meta-store", "data"),
-    Input("po-page-visited-store", "data"),
     Input("po-series-select", "data"),
     Input("po-page-load-trigger", "n_intervals"),
+    Input("po-series-selection-modal", "opened"),
+    Input("po-series-selection-grid", "virtualRowData", allow_optional=True),
+    State("po-page-visited-store", "data"),
+    State("po-series-order-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call=True,
 )
 

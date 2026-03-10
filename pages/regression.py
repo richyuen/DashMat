@@ -1816,9 +1816,14 @@ clientside_callback(
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-url-location", "pathname"),
     Input("dashmat-raw-data-meta-store", "data"),
-    Input("reg-page-visited-store", "data"),
     Input("reg-series-select", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
+    Input("reg-series-selection-modal", "opened"),
+    Input("reg-series-selection-grid", "virtualRowData", allow_optional=True),
+    State("reg-page-visited-store", "data"),
+    State("reg-series-order-store", "data"),
+    State("reg-dependent-var-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call=True,
 )
 

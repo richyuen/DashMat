@@ -1726,8 +1726,14 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitialSeriesBlocker")' in page_text
     assert 'Input("po-url-location", "pathname")' in page_text
+    assert 'Input("po-series-selection-modal", "opened")' in page_text
+    assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("po-page-load-trigger", "n_intervals")' in page_text
-    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady)" in js_text
+    assert 'State("po-page-visited-store", "data")' in page_text
+    assert 'State("po-series-order-store", "data")' in page_text
+    assert 'State("dashmat-pending-new-series-store", "data")' in page_text
+    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries)" in js_text
+    assert "function portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
 
 
 def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):

@@ -3923,9 +3923,13 @@ clientside_callback(
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-url-location", "pathname"),
     Input("dashmat-raw-data-meta-store", "data"),
-    Input("at-page-visited-store", "data"),
     Input("at-series-select", "data"),
     Input("at-page-load-trigger", "n_intervals"),
+    Input("at-series-selection-modal", "opened"),
+    Input("at-series-selection-grid", "virtualRowData", allow_optional=True),
+    State("at-page-visited-store", "data"),
+    State("at-series-order-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call=True,
 )
 
