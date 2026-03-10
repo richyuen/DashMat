@@ -3441,11 +3441,11 @@ layout = dmc.Container(
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
 
         # UI Blocker for file dialog (Overlay)
-        dcc.Store(id="po-ui-blocker-store", data=False),
+        dcc.Store(id="po-ui-blocker-store", data=True),
         dmc.LoadingOverlay(
             id="po-ui-blocker-overlay",
-            visible=False,
-            zIndex=2000,
+            visible=True,
+            zIndex=2500,
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
         ),
@@ -4260,6 +4260,7 @@ clientside_callback(
     Input("dashmat-raw-data-meta-store", "data"),
     Input("po-page-visited-store", "data"),
     Input("po-series-select", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
     prevent_initial_call=True,
 )
 

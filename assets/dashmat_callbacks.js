@@ -200,29 +200,29 @@
     });
   }
 
-  function startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, targetPath) {
+  function startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, targetPath) {
     const pagePath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
     if (pagePath !== targetPath) {
       return noUpdate();
     }
     if (pageVisited) {
-      return noUpdate();
+      return false;
     }
     const columns = Array.isArray(rawMeta)
       ? rawMeta
       : (rawMeta && Array.isArray(rawMeta.columns) ? rawMeta.columns : []);
     if (!columns.length) {
-      return noUpdate();
+      return pageLoadReady ? false : noUpdate();
     }
-    return hasValidSelectedSeries(rawMeta, currentSelect) ? noUpdate() : true;
+    return hasValidSelectedSeries(rawMeta, currentSelect) ? false : true;
   }
 
-  function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
-    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/analyticstool");
+  function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady) {
+    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, "/analyticstool");
   }
 
-  function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
-    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/portopt");
+  function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady) {
+    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, "/portopt");
   }
 
   function rawMetaColumns(rawMeta) {
@@ -681,8 +681,8 @@
     ];
   }
 
-  function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect) {
-    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, "/regression");
+  function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady) {
+    return startInitialSeriesModalBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady, "/regression");
   }
 
   function clearWorkspaceSession(n_clicks) {

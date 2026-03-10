@@ -161,9 +161,14 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
 
     welcome = _find_component_by_id(portopt.layout, "po-welcome-screen")
     main = _find_component_by_id(portopt.layout, "po-main-container")
+    blocker_store = _find_component_by_id(portopt.layout, "po-ui-blocker-store")
+    blocker_overlay = _find_component_by_id(portopt.layout, "po-ui-blocker-overlay")
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
+    assert getattr(blocker_store, "data", None) is True
+    assert getattr(blocker_overlay, "visible", None) is True
+    assert getattr(blocker_overlay, "zIndex", None) == 2500
 
 
 def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync():
@@ -1721,7 +1726,8 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitialSeriesBlocker")' in page_text
     assert 'Input("po-url-location", "pathname")' in page_text
-    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect)" in js_text
+    assert 'Input("po-page-load-trigger", "n_intervals")' in page_text
+    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady)" in js_text
 
 
 def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):

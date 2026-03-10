@@ -3427,11 +3427,11 @@ layout = dmc.Container(
         dcc.Store(id="at-correlogram-rendered-key-store", data=None),
 
         # UI Blocker for file dialog (Overlay)
-        dcc.Store(id="at-ui-blocker-store", data=False),
+        dcc.Store(id="at-ui-blocker-store", data=True),
         dmc.LoadingOverlay(
             id="at-ui-blocker-overlay",
-            visible=False,
-            zIndex=2000,
+            visible=True,
+            zIndex=2500,
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
         ),
@@ -3925,6 +3925,7 @@ clientside_callback(
     Input("dashmat-raw-data-meta-store", "data"),
     Input("at-page-visited-store", "data"),
     Input("at-series-select", "data"),
+    Input("at-page-load-trigger", "n_intervals"),
     prevent_initial_call=True,
 )
 

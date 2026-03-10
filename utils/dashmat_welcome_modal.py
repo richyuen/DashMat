@@ -370,6 +370,7 @@ def build_series_selection_modal(cfg: PagePrefixConfig):
         styles={"content": {"maxWidth": cfg.series_modal_max_width}},
         centered=True,
         closeOnEscape=False,
+        zIndex=1900,
         radius="lg",
         className="series-modal-dark dashmat-modal",
         overlayProps={"blur": 2, "opacity": 0.45},

@@ -432,9 +432,14 @@ def test_reg_save_series_to_shared_data_overwrites_existing_saved_name(regressio
 def test_reg_layout_starts_with_welcome_and_main_hidden(regression_page):
     welcome = _find_component_by_id(regression_page.layout, "reg-welcome-screen")
     main = _find_component_by_id(regression_page.layout, "reg-main-container")
+    blocker_store = _find_component_by_id(regression_page.layout, "reg-ui-blocker-store")
+    blocker_overlay = _find_component_by_id(regression_page.layout, "reg-ui-blocker-overlay")
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
+    assert getattr(blocker_store, "data", None) is True
+    assert getattr(blocker_overlay, "visible", None) is True
+    assert getattr(blocker_overlay, "zIndex", None) == 2500
 
 
 def test_reg_bootstrap_uses_only_page_load_interval_for_tab_ready():
@@ -780,7 +785,8 @@ def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionInitialSeriesBlocker")' in page_text
     assert 'Input("reg-url-location", "pathname")' in page_text
-    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect)" in js_text
+    assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
+    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady)" in js_text
 
 
 def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page, raw_json):

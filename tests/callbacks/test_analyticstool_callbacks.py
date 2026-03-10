@@ -441,7 +441,8 @@ def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Output("at-ui-blocker-store", "data", allow_duplicate=True),' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitialSeriesBlocker")' in page_text
     assert 'Input("at-url-location", "pathname")' in page_text
-    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect)" in js_text
+    assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
+    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, pageVisited, currentSelect, pageLoadReady)" in js_text
 
 
 def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
@@ -449,9 +450,19 @@ def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
 
     welcome = _find_component_by_id(analyticstool.layout, "at-welcome-screen-container")
     main = _find_component_by_id(analyticstool.layout, "at-main-app-container")
+    blocker_store = _find_component_by_id(analyticstool.layout, "at-ui-blocker-store")
+    blocker_overlay = _find_component_by_id(analyticstool.layout, "at-ui-blocker-overlay")
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
+    assert getattr(blocker_store, "data", None) is True
+    assert getattr(blocker_overlay, "visible", None) is True
+    assert getattr(blocker_overlay, "zIndex", None) == 2500
+
+
+def test_at_series_modal_has_explicit_zindex():
+    modal_text = Path("utils/dashmat_welcome_modal.py").read_text(encoding="utf-8")
+    assert "zIndex=1900" in modal_text
 
 
 def test_at_bootstrap_uses_only_page_load_interval_and_real_secondary_ready_signal():
