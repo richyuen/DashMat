@@ -31,15 +31,20 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - `pages/analyticstool.py`: analytics workflows
 - `pages/portopt.py`: portfolio optimization workflows
 - `pages/regression.py`: regression workflows
+- `utils/artifact_store.py`: local artifact-backed DataFrame/session storage
 - `utils/parsing.py`: file parsing and periodicity detection
 - `utils/returns.py`: return conversions and compounding
+- `utils/saved_series_cache.py`: saved-series cache descriptor/artifact helpers
 - `utils/statistics.py`: metrics calculations
 - `utils/optimization.py`: optimization engine
+- `utils/workspace_session.py`: portable Save Session bundle export/import
 
 ## Core Rules
 
 - Preserve callback IDs and store schemas unless a migration is intentional and updated everywhere.
 - Keep shared JSON/store payloads compatible across pages.
+- Treat `dashmat-raw-data-store`, `dashmat-saved-series-cache-store`, and artifact-backed result stores as descriptor stores, not inline table payloads.
+- If you touch raw-data or session persistence flows, preserve the local-artifact runtime contract and the portable `Save session` bundle contract together.
 - Avoid broad refactors in large callback files; patch the smallest safe section.
 - Do not add dependencies unless necessary.
 - Add comments only when logic is not obvious.
@@ -66,6 +71,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 
 - Start the app if routing or layout behavior changed.
 - Run targeted pytest modules for touched logic; run full pytest for broader workflow changes.
+- If you change raw-data, artifact-store, or session-bundle behavior, run full pytest and the save/load browser harness, not just callback tests.
 - If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` or full pytest.
 - If you change upload, parsing, or statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
 - Before finishing, check for obvious regressions in tab rendering and series selection behavior.
@@ -77,6 +83,10 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Judge warm-switch performance with a browser timing pass, not just unit tests or callback-level reasoning.
 - Current practical harness: load `/analyticstool`, import AA Tool database series, confirm the series-selection modal, warm `/portopt` and `/regression`, then measure warm revisits.
 - Default warm-up series should use actual DB option keys such as `SPX_TRIndex`, `R2000_TRIndex`, `EAFE_TRIndex`, and `BCTBill13_TRIndex`, not display shorthand like `SPX`.
+- Treat the artifact-backed runtime as the current baseline:
+  - `dashmat-raw-data-store` is descriptor-only
+  - `dashmat-saved-series-cache-store` is descriptor-only
+  - PortOpt/Regression result stores carry artifact keys instead of large inline return-series payloads
 - Track at least:
   - `shellMs`: main container visible
   - `readyMs`: periodicity control visible and enabled
@@ -125,9 +135,16 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 
 - AnalyticsTool benefited across shell, open, grid, `OK`, and content timings from the startup pass.
 - Regression benefited mainly on shell, open, and grid timing; `OK` close was effectively flat, so future REG work should prioritize open-path latency before more `OK`-path tuning.
+- Artifact-backed storage produced the large intended browser-payload wins and should stay:
+  - `dashmat-raw-data-store` shrank from a large inline JSON payload to a small descriptor
+  - `dashmat-saved-series-cache-store` shrank to a small descriptor
+  - PortOpt and Regression result stores shrank materially by storing artifact keys instead of inline frames
+- Portable `Save session` is no longer a pure browser-storage dump. It is a versioned server-backed workspace bundle that must include required raw/result artifacts and recreate them on load.
+- The saved-series cache is rebuildable runtime cache, not portable canonical state. Do not expand the session bundle to carry it unless rebuild-on-load is proven insufficient.
 - For list-constrained fields, lighter editors are worth trying before deeper grid refactors.
 - `agSelectCellEditor` was a keep for PortOpt `Benchmark` / `CMABench` and AnalyticsTool `Benchmark`.
 - Do not assume editor simplification will help if the measured bottleneck is still before grid hydration.
+- Current result-flow A/B for Regression is noisy enough that same-code runs can still move `returnsOpen` / `statisticsOpen` noticeably. Require repeated A/B runs against a committed baseline before keeping a small Regression-only perf change.
 
 ### Avoid These Non-Wins
 
@@ -141,6 +158,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 ### Preferred Direction
 
 - Prefer narrower PO-only experiments, one hidden subtree at a time, with remeasurement against the committed baseline before keeping a change.
+- After the raw-data artifact migration, prefer product features or tightly scoped measured follow-ups over another broad artifact/infrastructure phase.
 - Recent blocker tuning: page-local startup blockers can help perceived first-switch timing, but release conditions must stay aligned with modal/grid hydration. If the blocker misbehaves, check the modal-open path and `virtualRowData` release signal before adding more blocker layers.
 
 ## Windows and Tooling Learnings
@@ -156,3 +174,4 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Fresh git worktrees may have missing or zero-byte SQLite files under `data/`. Validate or rebuild the local seed DBs before starting DB-backed browser runs.
 - For side-by-side A/B comparisons, be explicit about which repo root owns the app process, DB files, and output artifacts. Launch the app after that repo root's seed DBs are valid.
 - The warm-switch harness currently accepts runs that may include browser console callback errors. Treat single-run results cautiously and prefer repeated A/B runs before concluding that a small regression is real.
+- Save/load browser harnesses that reset the artifact root must run sequentially or use distinct artifact roots. Parallel runs can delete each other's artifacts and produce false failures or empty bundles.
