@@ -196,7 +196,6 @@ def _build_help_control() -> dmc.Anchor | dmc.Button:
         help_button,
         href=ANALYTICSTOOL_HELP_URL.strip(),
         target="_blank",
-        rel="noopener noreferrer",
         style={"textDecoration": "none"},
     )
 
