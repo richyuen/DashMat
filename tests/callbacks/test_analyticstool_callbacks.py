@@ -731,6 +731,48 @@ def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules)
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "correlogram") == {"num_series": 2}
 
 
+def test_sync_at_returns_type_from_mirrors_updates_canonical(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    monkeypatch.setattr(
+        analyticstool,
+        "callback_context",
+        type("Ctx", (), {"triggered_id": "at-returns-type-select-factor"})(),
+    )
+
+    result = analyticstool.sync_at_returns_type_from_mirrors(
+        "total",
+        "total",
+        "total",
+        "total",
+        "excess",
+        "total",
+        "total",
+    )
+
+    assert result == "excess"
+
+
+def test_sync_at_returns_type_mirrors_only_updates_mismatched(page_modules):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.sync_at_returns_type_mirrors(
+        "excess",
+        "excess",
+        "total",
+        "excess",
+        "total",
+        "total",
+        "excess",
+    )
+
+    assert result[0] is no_update
+    assert result[1] == "excess"
+    assert result[2] is no_update
+    assert result[3] == "excess"
+    assert result[4] == "excess"
+    assert result[5] is no_update
+
+
 def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules):
     analyticstool, _ = page_modules
     date_range = {"start": "2024-01-01", "end": "2024-12-31"}

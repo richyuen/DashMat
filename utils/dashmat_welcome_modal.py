@@ -635,7 +635,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                         children=[
                             dmc.Select(
                                 id=_sid(prefix, "underlying-add-base-select"),
-                                label="Base",
+                                label="Category Type",
                                 data=list(UNDERLYING_CATEGORY_BASE_OPTIONS),
                                 value=None,
                                 clearable=False,
@@ -646,7 +646,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                             ),
                             dmc.MultiSelect(
                                 id=_sid(prefix, "underlying-add-type-multiselect"),
-                                label="Type",
+                                label="Universe",
                                 data=list(UNDERLYING_CATEGORY_TYPE_OPTIONS),
                                 value=[],
                                 searchable=False,
@@ -659,7 +659,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                     ),
                     dmc.MultiSelect(
                         id=_sid(prefix, "underlying-add-desc-multiselect"),
-                        label="Desc",
+                        label="Category Name",
                         data=[],
                         value=[],
                         searchable=True,
@@ -705,8 +705,8 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                         licenseKey=ag_grid_license_key,
                         columnDefs=[
                             {"field": "Series", "headerName": "Series", "minWidth": 280, "flex": 2, "headerClass": "dashmat-center-header"},
-                            {"field": "Portfolio", "headerName": "Portfolio", "width": 180, "headerClass": "dashmat-center-header"},
-                            {"field": "Desc", "headerName": "Desc", "minWidth": 220, "flex": 1, "headerClass": "dashmat-center-header"},
+                            {"field": "Portfolio", "headerName": "Type", "width": 180, "headerClass": "dashmat-center-header"},
+                            {"field": "Desc", "headerName": "Category Name", "minWidth": 220, "flex": 1, "headerClass": "dashmat-center-header"},
                         ],
                         rowData=[],
                         defaultColDef={

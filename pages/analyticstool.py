@@ -2037,6 +2037,24 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+def _build_at_returns_type_control(control_id, value, show_label=True):
+    children = []
+    if show_label:
+        children.append(dmc.Text("Returns Type", size="sm", mb=3, fw=500))
+    children.append(
+        dmc.SegmentedControl(
+            id=control_id,
+            data=[
+                {"value": "total", "label": "Total"},
+                {"value": "excess", "label": "Excess"},
+            ],
+            value=value,
+            size="sm",
+        )
+    )
+    return html.Div(children)
+
+
 def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_scaler,
                       active_tab, rolling_window, rolling_metric, rolling_return_type, rolling_chart_switch,
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
@@ -2099,18 +2117,20 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             w=200,
                                             disabled=False,
                                         ),
-                                        html.Div([
-                                            dmc.Text("Returns Type", size="sm", mb=3, fw=500),
-                                            dmc.SegmentedControl(
-                                                id="at-returns-type-select",
-                                                data=[
-                                                    {"value": "total", "label": "Total"},
-                                                    {"value": "excess", "label": "Excess"},
-                                                ],
-                                                value=returns_type,
-                                                w=250,
-                                            ),
-                                        ]),
+                                        html.Div(
+                                            style={"display": "none"},
+                                            children=[
+                                                dmc.SegmentedControl(
+                                                    id="at-returns-type-select",
+                                                    data=[
+                                                        {"value": "total", "label": "Total"},
+                                                        {"value": "excess", "label": "Excess"},
+                                                    ],
+                                                    value=returns_type,
+                                                    w=250,
+                                                ),
+                                            ],
+                                        ),
                                         html.Div([
                                             dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
                                             dmc.Tooltip(
@@ -2231,6 +2251,10 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[_build_at_returns_type_control("at-returns-type-select-returns", returns_type, show_label=False)],
+                        ),
                         dcc.Loading(
                             id="at-loading-returns",
                             type="default",
@@ -2410,6 +2434,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.Group(
                             mb="md",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-calendar", returns_type, show_label=False),
                                 dmc.SegmentedControl(
                                     id="at-monthly-view-checkbox",
                                     data=[
@@ -2464,6 +2489,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             gap="md",
                             align="flex-end",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-correlogram", returns_type),
                                 html.Div([
                                     dmc.Text("View", size="sm", fw=500, mb=3),
                                     html.Div(
@@ -2592,6 +2618,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             gap="md",
                             align="flex-end",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-factor", returns_type),
                                 html.Div([
                                     dmc.Text("Mode", size="sm", fw=500, mb=3),
                                     dmc.SegmentedControl(
@@ -2700,6 +2727,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             gap="md",
                             align="flex-end",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-regime", returns_type),
                                 dmc.Select(
                                     id="at-regime-definition-select",
                                     label="Regime definition",
@@ -2796,6 +2824,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.Group(
                             mb="md",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-drawdown", returns_type, show_label=False),
                                 dmc.SegmentedControl(
                                     id="at-drawdown-chart-switch",
                                     data=[
@@ -3854,6 +3883,83 @@ def restore_application_state(
             no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
             no_update, no_update, no_update, no_update, no_update, resolved["valid_selection"], resolved["updated_order"], False
         )
+
+
+@callback(
+    Output("at-returns-type-select", "value", allow_duplicate=True),
+    Input("at-returns-type-select-returns", "value"),
+    Input("at-returns-type-select-calendar", "value"),
+    Input("at-returns-type-select-drawdown", "value"),
+    Input("at-returns-type-select-correlogram", "value"),
+    Input("at-returns-type-select-factor", "value"),
+    Input("at-returns-type-select-regime", "value"),
+    State("at-returns-type-select", "value"),
+    prevent_initial_call=True,
+)
+def sync_at_returns_type_from_mirrors(
+    returns_value,
+    calendar_value,
+    drawdown_value,
+    correlogram_value,
+    factor_value,
+    regime_value,
+    current_value,
+):
+    value_by_trigger = {
+        "at-returns-type-select-returns": returns_value,
+        "at-returns-type-select-calendar": calendar_value,
+        "at-returns-type-select-drawdown": drawdown_value,
+        "at-returns-type-select-correlogram": correlogram_value,
+        "at-returns-type-select-factor": factor_value,
+        "at-returns-type-select-regime": regime_value,
+    }
+    next_value = value_by_trigger.get(callback_context.triggered_id)
+    if next_value is None:
+        return no_update
+    normalized = "excess" if next_value == "excess" else "total"
+    if normalized == ("excess" if current_value == "excess" else "total"):
+        return no_update
+    return normalized
+
+
+@callback(
+    Output("at-returns-type-select-returns", "value"),
+    Output("at-returns-type-select-calendar", "value"),
+    Output("at-returns-type-select-drawdown", "value"),
+    Output("at-returns-type-select-correlogram", "value"),
+    Output("at-returns-type-select-factor", "value"),
+    Output("at-returns-type-select-regime", "value"),
+    Input("at-returns-type-select", "value"),
+    State("at-returns-type-select-returns", "value"),
+    State("at-returns-type-select-calendar", "value"),
+    State("at-returns-type-select-drawdown", "value"),
+    State("at-returns-type-select-correlogram", "value"),
+    State("at-returns-type-select-factor", "value"),
+    State("at-returns-type-select-regime", "value"),
+    prevent_initial_call=False,
+)
+def sync_at_returns_type_mirrors(
+    current_value,
+    returns_value,
+    calendar_value,
+    drawdown_value,
+    correlogram_value,
+    factor_value,
+    regime_value,
+):
+    normalized = "excess" if current_value == "excess" else "total"
+
+    def _sync(value):
+        return no_update if value == normalized else normalized
+
+    return (
+        _sync(returns_value),
+        _sync(calendar_value),
+        _sync(drawdown_value),
+        _sync(correlogram_value),
+        _sync(factor_value),
+        _sync(regime_value),
+    )
 
 
 @callback(

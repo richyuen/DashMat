@@ -123,6 +123,39 @@ def test_po_restore_state_keeps_empty_selection_when_nothing_is_stored(page_modu
     assert restored[3] == []
 
 
+def test_sync_po_returns_basis_from_mirrors_updates_canonical(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(
+        portopt,
+        "callback_context",
+        type("Ctx", (), {"triggered_id": "po-returns-basis-control-calendar"})(),
+    )
+
+    result = portopt.sync_po_returns_basis_from_mirrors(
+        "total",
+        "excess",
+        "total",
+        "total",
+    )
+
+    assert result == "excess"
+
+
+def test_sync_po_returns_basis_mirrors_only_updates_mismatched(page_modules):
+    _, portopt = page_modules
+
+    result = portopt.sync_po_returns_basis_mirrors(
+        "excess",
+        "excess",
+        "total",
+        "excess",
+    )
+
+    assert result[0] is no_update
+    assert result[1] == "excess"
+    assert result[2] is no_update
+
+
 def test_po_open_modal_uses_clientside_open_seed_callback():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal")' in page_text
@@ -441,6 +474,39 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert getattr(grid, "rowData", [])[0]["Date"] == "2024-01-01"
 
 
+def test_po_render_returns_uses_excess_basis_frame(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({"P1": [0.01, 0.02]}, index=idx),
+            "total_df": pd.DataFrame({"P1": [0.01, 0.02]}, index=idx),
+            "excess_df": pd.DataFrame({"P1": [0.005, 0.01]}, index=idx),
+            "display_cols": ["P1"],
+            "benchmark_map": {"P1": "__bm__P1"},
+            "periodicity": "daily",
+        },
+    )
+
+    grid = portopt.po_render_returns(
+        {"P1": {"run_inputs": {"selected_series": []}}},
+        "returns",
+        "P1",
+        "excess",
+        "raw-json",
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+    )
+
+    assert getattr(grid, "rowData", [])[0]["P1"] == pytest.approx(0.005)
+
+
 def test_po_render_statistics_requires_active_tab(page_modules):
     _, portopt = page_modules
 
@@ -544,8 +610,19 @@ def test_po_render_growth_chart_table_mode_returns_grid_with_wide_date_column(mo
 def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=4, freq="D")
-    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
-    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+    source_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": source_df,
+            "total_df": source_df,
+            "excess_df": source_df,
+            "display_cols": ["P1"],
+            "benchmark_map": {},
+            "periodicity": "daily",
+        },
+    )
     monkeypatch.setattr(
         portopt,
         "calculate_rolling_returns",
@@ -579,10 +656,21 @@ def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeyp
 def test_po_render_rolling_uses_result_rf_setting_not_live_toggle(monkeypatch, page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=4, freq="D")
-    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
+    source_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
     captured = {}
 
-    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": source_df,
+            "total_df": source_df,
+            "excess_df": source_df,
+            "display_cols": ["P1"],
+            "benchmark_map": {},
+            "periodicity": "daily",
+        },
+    )
 
     def _fake_rolling(*args, **_kwargs):
         captured["use_risk_free"] = args[-1]
@@ -616,8 +704,19 @@ def test_po_render_rolling_uses_result_rf_setting_not_live_toggle(monkeypatch, p
 def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=4, freq="D")
-    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
-    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+    source_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": source_df,
+            "total_df": source_df,
+            "excess_df": source_df,
+            "display_cols": ["P1"],
+            "benchmark_map": {},
+            "periodicity": "daily",
+        },
+    )
     monkeypatch.setattr(
         portopt,
         "calculate_drawdown",
@@ -630,6 +729,7 @@ def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkey
         "P1",
         "daily",
         "table",
+        "total",
         "raw-json",
         {},
         {},
@@ -641,6 +741,98 @@ def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkey
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
+def test_po_render_calendar_passes_returns_basis_to_shared_helper(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    captured = {}
+
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({"P1": [0.01, 0.02], "__bm__P1": [0.005, 0.01]}, index=idx),
+            "total_df": pd.DataFrame({"P1": [0.01, 0.02]}, index=idx),
+            "excess_df": pd.DataFrame({"P1": [0.005, 0.01]}, index=idx),
+            "display_cols": ["P1"],
+            "benchmark_map": {"P1": "__bm__P1"},
+            "periodicity": "daily",
+        },
+    )
+
+    def _fake_calendar_year_returns(raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, *_args, **_kwargs):
+        captured["returns_type"] = returns_type
+        captured["benchmark_assignments"] = benchmark_assignments
+        return pd.DataFrame({"P1": [0.1]}, index=[2024])
+
+    monkeypatch.setattr(portopt, "calculate_calendar_year_returns", _fake_calendar_year_returns)
+
+    grid = portopt.po_render_calendar(
+        {"P1": {"run_inputs": {"selected_series": []}}},
+        "calendar",
+        "P1",
+        "daily",
+        "annual",
+        None,
+        "excess",
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Year"
+    assert captured["returns_type"] == "excess"
+    assert captured["benchmark_assignments"] == '{"P1":"__bm__P1"}'
+
+
+def test_po_render_drawdown_passes_returns_basis_to_shared_helper(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    captured = {}
+
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({"P1": [0.01, 0.02], "__bm__P1": [0.005, 0.01]}, index=idx),
+            "total_df": pd.DataFrame({"P1": [0.01, 0.02]}, index=idx),
+            "excess_df": pd.DataFrame({"P1": [0.005, 0.01]}, index=idx),
+            "display_cols": ["P1"],
+            "benchmark_map": {"P1": "__bm__P1"},
+            "periodicity": "daily",
+        },
+    )
+
+    def _fake_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, *_args, **_kwargs):
+        captured["returns_type"] = returns_type
+        captured["benchmark_assignments"] = benchmark_assignments
+        return pd.DataFrame({"P1": [0.0, -0.02]}, index=[pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-31")])
+
+    monkeypatch.setattr(portopt, "calculate_drawdown", _fake_drawdown)
+
+    grid = portopt.po_render_drawdown(
+        {"P1": {"run_inputs": {"selected_series": []}}},
+        "drawdown",
+        "P1",
+        "daily",
+        "table",
+        "excess",
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+        "light",
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert captured["returns_type"] == "excess"
+    assert captured["benchmark_assignments"] == '{"P1":"__bm__P1"}'
 
 
 def test_po_populate_frontier_windows_disables_for_ex_ante_model(page_modules):
@@ -712,6 +904,185 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
     assert "No data available" in status["message"]
 
 
+def test_po_run_optimization_blocks_split_reporting_without_full_benchmark_coverage(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
+    df.index = pd.to_datetime(df.index)
+    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: df.copy())
+
+    _results, _new_raw, status, _pending = portopt.po_run_optimization(
+        1,
+        raw_json,
+        "daily",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": "None", "Asset_B": "Asset_B"},
+        {},
+        {"Asset_A": True},
+        None,
+        0,
+        {},
+        {},
+        {},
+        {},
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        "MyPort",
+        "full",
+        252,
+        1,
+        "months",
+        "risk_parity",
+        "fill_na",
+        "off",
+        {},
+        [],
+        {},
+        {},
+        [],
+        0.05,
+        "maximize_sharpe",
+        {},
+        {},
+        "ret_cov",
+        [],
+        True,
+        True,
+        None,
+    )
+
+    assert status["status"] == "error"
+    assert "benchmark assignment" in status["message"].lower()
+
+
+def test_po_run_optimization_stores_split_reporting_payloads(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    opt_df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]].head(3)
+    opt_df.index = pd.to_datetime(opt_df.index)
+    reporting_df = opt_df.copy() * pd.Series({"Asset_A": 1.5, "Asset_B": 0.5})
+    benchmark_df = pd.DataFrame(
+        {
+            "Asset_A": [0.001, 0.002, 0.003],
+            "Asset_B": [0.0005, 0.001, 0.0015],
+        },
+        index=opt_df.index,
+    )
+
+    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: opt_df.copy())
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_result_basis_bundle",
+        lambda *_args, **_kwargs: (
+            {
+                "selected_series": ["Asset_A", "Asset_B"],
+                "benchmark_assignments": {"Asset_A": "Bench_A", "Asset_B": "Bench_B"},
+                "cmabench_assignments": {"Asset_A": "BCTBill13", "Asset_B": "BCTBill13"},
+                "long_short_assignments": {"Asset_A": True},
+                "date_range": None,
+                "vol_scaler": 0.0,
+                "vol_scaling_assignments": {},
+                "periodicity": "daily",
+            },
+            {
+                "optimization_df": opt_df.copy(),
+                "reporting_df": reporting_df.copy(),
+                "benchmark_asset_df": benchmark_df.copy(),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "run_portfolio_optimization",
+        lambda *_args, **_kwargs: (
+            [
+                SimpleNamespace(
+                    apply_start=opt_df.index[0],
+                    apply_end=opt_df.index[-1],
+                    est_start=opt_df.index[0],
+                    est_end=opt_df.index[-1],
+                    weights={"Asset_A": 0.6, "Asset_B": 0.4},
+                )
+            ],
+            pd.Series([0.02, 0.01, -0.005], index=opt_df.index),
+        ),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "_po_resolve_frontier_snapshot",
+        lambda **_kwargs: {
+            "window_index": 0,
+            "risk_measure": "MV",
+            "asset_order": ["Asset_A", "Asset_B"],
+            "portfolio": {"name": "MyPort", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.6, "Asset_B": 0.4}},
+            "assets": [],
+            "frontier_points": [],
+            "frontier_portfolios": [],
+            "window_est_start": "2024-01-01",
+            "window_est_end": "2024-01-03",
+        },
+    )
+
+    results_out, new_raw, status, pending = portopt.po_run_optimization(
+        1,
+        raw_json,
+        "daily",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": "Bench_A", "Asset_B": "Bench_B"},
+        {"Asset_A": "BCTBill13", "Asset_B": "BCTBill13"},
+        {"Asset_A": True},
+        None,
+        0,
+        {},
+        {},
+        {},
+        {},
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        "MyPort",
+        "full",
+        252,
+        1,
+        "months",
+        "risk_parity",
+        "fill_na",
+        "off",
+        {},
+        [],
+        {},
+        {},
+        [],
+        0.05,
+        "maximize_sharpe",
+        {},
+        {},
+        "ret_cov",
+        [],
+        True,
+        True,
+        None,
+    )
+
+    assert status["status"] == "complete"
+    assert new_raw is no_update
+    assert pending is no_update
+    entry = results_out["MyPort"]
+    assert entry["reporting_basis"] == "long_only_performance"
+    assert "reporting_returns_json" in entry
+    assert "optimization_returns_json" in entry
+    assert "benchmark_returns_json" in entry
+    assert entry["run_inputs"]["benchmark_assignments"]["Asset_A"] == "Bench_A"
+    reporting_series = pd.read_json(StringIO(entry["reporting_returns_json"]), typ="series")
+    optimization_series = pd.read_json(StringIO(entry["optimization_returns_json"]), typ="series")
+    benchmark_series = pd.read_json(StringIO(entry["benchmark_returns_json"]), typ="series")
+    assert not reporting_series.equals(optimization_series)
+    assert len(benchmark_series) == len(reporting_series)
+
+
 def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
     _, portopt = page_modules
 
@@ -750,6 +1121,21 @@ def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
     assert tooltip_disabled is False
     assert save_disabled is False
     assert download_disabled is False
+
+
+def test_po_sync_reporting_basis_control_disables_when_ineligible(page_modules):
+    _, portopt = page_modules
+
+    disabled, value, help_text = portopt.po_sync_reporting_basis_control(
+        "maximize_sharpe",
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": True},
+        "split",
+    )
+
+    assert disabled is True
+    assert value == "match"
+    assert "supported risk-based models" in help_text
 
 
 def test_po_toggle_ui_elements_waits_for_restore_completion(page_modules):
@@ -1317,6 +1703,51 @@ def test_po_render_frontier_rf_warning_non_ex_ante_skips_snapshot_lookup(monkeyp
     assert style["display"] == "block"
 
 
+def test_po_render_statistics_uses_stored_portfolio_benchmark(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    captured = {}
+
+    def _fake_calculate_statistics_cached(raw_json, periodicity, selected_series, benchmark_assignments, *_args, **_kwargs):
+        captured["df"] = pd.read_json(StringIO(raw_json), orient="split")
+        captured["periodicity"] = periodicity
+        captured["selected_series"] = selected_series
+        captured["benchmark_assignments"] = benchmark_assignments
+        return [{"Series": "P1"}]
+
+    monkeypatch.setattr(portopt, "calculate_statistics_cached", _fake_calculate_statistics_cached)
+
+    results = {
+        "P1": {
+            "reporting_returns_json": pd.Series([0.01, 0.02], index=idx).to_json(date_format="iso"),
+            "benchmark_returns_json": pd.Series([0.005, 0.01], index=idx).to_json(date_format="iso"),
+            "run_inputs": {"selected_series": [], "periodicity": "weekly_friday"},
+            "risk_free_meta": {"enabled": False},
+        }
+    }
+
+    component = portopt.po_render_statistics(
+        results,
+        "statistics",
+        "P1",
+        None,
+        False,
+        "daily",
+        None,
+        {"live": "bench"},
+        {"live": True},
+        None,
+        0,
+        {},
+    )
+
+    assert component is not None
+    assert captured["periodicity"] == "weekly_friday"
+    assert captured["selected_series"] == ("P1",)
+    assert captured["benchmark_assignments"] == '{"P1":"__bm__P1"}'
+    assert "__bm__P1" in captured["df"].columns
+
+
 def test_po_render_frontier_rf_warning_uses_result_rf_setting_not_live_toggle(monkeypatch, page_modules):
     _, portopt = page_modules
     monkeypatch.setattr(
@@ -1345,6 +1776,81 @@ def test_po_render_frontier_rf_warning_uses_result_rf_setting_not_live_toggle(mo
 
     assert warning == ""
     assert style["display"] == "none"
+
+
+def test_po_resolve_frontier_snapshot_prefers_stored_run_inputs(monkeypatch, page_modules):
+    _, portopt = page_modules
+    captured = {}
+
+    monkeypatch.setattr(portopt, "_get_cached_frontier_snapshot", lambda *_args, **_kwargs: None)
+
+    def _fake_compute_frontier_snapshot_cached(
+        selected_portfolio,
+        raw_data,
+        periodicity,
+        bench_payload,
+        ls_payload,
+        vol_scaler,
+        vol_scaling_payload,
+        *_args
+    ):
+        captured["periodicity"] = periodicity
+        captured["bench_payload"] = bench_payload
+        captured["ls_payload"] = ls_payload
+        captured["vol_scaler"] = vol_scaler
+        captured["vol_scaling_payload"] = vol_scaling_payload
+        return portopt.canonical_json_dumps(
+            {
+                "window_index": 0,
+                "risk_measure": "MV",
+                "asset_order": ["Asset_A", "Asset_B"],
+                "portfolio": {"name": "P1", "return": 0.1, "risk": 0.2, "weights": {"Asset_A": 0.6, "Asset_B": 0.4}},
+                "assets": [],
+                "frontier_points": [{"return": 0.1, "risk": 0.2}],
+                "frontier_portfolios": [],
+                "window_est_start": "2024-01-01",
+                "window_est_end": "2024-01-31",
+            }
+        )
+
+    monkeypatch.setattr(portopt, "_po_compute_frontier_snapshot_cached", _fake_compute_frontier_snapshot_cached)
+
+    snapshot = portopt._po_resolve_frontier_snapshot(
+        selected_portfolio="P1",
+        portfolio_data={
+            "window_weights": _sample_window_weights(),
+            "config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]},
+            "run_inputs": {
+                "selected_series": ["Asset_A", "Asset_B"],
+                "benchmark_assignments": {"Asset_A": "Bench_A", "Asset_B": "Bench_B"},
+                "cmabench_assignments": {"Asset_A": "BCTBill13", "Asset_B": "BCTBill13"},
+                "long_short_assignments": {"Asset_A": True},
+                "date_range": {"start": "2024-01-01", "end": "2024-01-31"},
+                "vol_scaler": 7.5,
+                "vol_scaling_assignments": {"Asset_A": False},
+                "periodicity": "weekly_friday",
+            },
+        },
+        raw_data="raw",
+        periodicity="daily",
+        bench={"live": "bench"},
+        ls={"live": True},
+        vol_scaler=0,
+        vol_scaling={},
+        window_idx=None,
+        rm="MV",
+        linear_constraints=[],
+        saved_series_store=None,
+        cmabench_assignments={"live": "cma"},
+        use_risk_free=False,
+    )
+
+    assert snapshot["risk_measure"] == "MV"
+    assert captured["periodicity"] == "weekly_friday"
+    assert captured["bench_payload"] == '{"Asset_A":"Bench_A","Asset_B":"Bench_B"}'
+    assert captured["ls_payload"] == '{"Asset_A":true}'
+    assert captured["vol_scaler"] == 7.5
+    assert captured["vol_scaling_payload"] == '{"Asset_A":false}'
 
 
 def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page_modules, raw_json):

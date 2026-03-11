@@ -63,7 +63,13 @@ from utils.exponential_weighting import decay_input_mode, normalize_decay_input,
 from utils.excel_export import format_excel_dates, format_mdy_date, write_excel_with_autofit
 from utils.optimization import run_portfolio_optimization, compute_risk_contributions, compute_efficient_frontier
 from utils.perf_timing import timed_block
-from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
+from utils.serialization import (
+    canonical_json_dumps,
+    date_range_payload_for_cache,
+    mapping_payload_for_cache,
+    normalize_date_range_payload,
+    parse_mapping_payload,
+)
 from utils.shared_metrics import (
     STATS_CONFIG,
     risk_free_json_from_store as _risk_free_json_from_store,
@@ -72,6 +78,7 @@ from utils.shared_metrics import (
 from utils.saved_series import save_series_to_raw_data
 from utils.statistics import (
     calculate_drawdown,
+    calculate_growth_of_dollar,
     calculate_statistics_cached,
     annualized_return,
     annualized_return_calendar_days,
@@ -162,6 +169,14 @@ _PO_MODEL_DEFAULT_NAME = {
     "equal_weight": "EW",
     "ex_ante_mv": "ExAnteMV",
     "black_litterman": "BL",
+}
+
+_PO_SPLIT_REPORTING_MODELS = {
+    "risk_parity",
+    "factor_risk_parity",
+    "hierarchical_risk_parity",
+    "minimize_variance",
+    "minimize_cvar",
 }
 
 PO_TAB_SPECS = (
@@ -298,7 +313,218 @@ def _po_get_working_returns(bundle: _PoWorkingReturnsBundle, selected_series) ->
     )
 
 
-def _po_collect_portfolio_returns(results, selected_portfolios=None) -> pd.DataFrame:
+def _po_supports_split_reporting(opt_model, selected_series, long_short_assignments) -> bool:
+    if opt_model not in _PO_SPLIT_REPORTING_MODELS:
+        return False
+    ls_map = long_short_assignments or {}
+    return any(bool(ls_map.get(series, False)) for series in (selected_series or []))
+
+
+def _po_result_reporting_basis(portfolio_data) -> str:
+    if not isinstance(portfolio_data, dict):
+        return "match_optimization"
+    basis = str(portfolio_data.get("reporting_basis") or "").strip()
+    if basis in {"match_optimization", "long_only_performance"}:
+        return basis
+    return "match_optimization"
+
+
+def _po_result_returns_json(portfolio_data, basis: str = "reporting") -> str:
+    if not isinstance(portfolio_data, dict):
+        return ""
+    if basis == "optimization":
+        return str(
+            portfolio_data.get("optimization_returns_json")
+            or portfolio_data.get("reporting_returns_json")
+            or portfolio_data.get("returns_json")
+            or ""
+        )
+    if basis == "benchmark":
+        return str(portfolio_data.get("benchmark_returns_json") or "")
+    return str(
+        portfolio_data.get("reporting_returns_json")
+        or portfolio_data.get("returns_json")
+        or portfolio_data.get("optimization_returns_json")
+        or ""
+    )
+
+
+def _po_result_run_inputs(
+    portfolio_data,
+    *,
+    periodicity=None,
+    bench=None,
+    cmabench=None,
+    ls=None,
+    date_range=None,
+    vol_scaler=0,
+    vol_scaling=None,
+):
+    run_inputs = {}
+    if isinstance(portfolio_data, dict):
+        stored = portfolio_data.get("run_inputs")
+        if isinstance(stored, dict):
+            run_inputs = dict(stored)
+    config = (portfolio_data or {}).get("config", {}) or {}
+    return {
+        "selected_series": list(run_inputs.get("selected_series") or config.get("selected_series") or []),
+        "benchmark_assignments": dict(run_inputs.get("benchmark_assignments") or bench or {}),
+        "cmabench_assignments": dict(run_inputs.get("cmabench_assignments") or cmabench or {}),
+        "long_short_assignments": dict(run_inputs.get("long_short_assignments") or ls or {}),
+        "date_range": run_inputs.get("date_range", date_range),
+        "vol_scaler": float(run_inputs.get("vol_scaler", vol_scaler or 0) or 0),
+        "vol_scaling_assignments": dict(run_inputs.get("vol_scaling_assignments") or vol_scaling or {}),
+        "periodicity": str(run_inputs.get("periodicity") or config.get("periodicity") or periodicity or "daily"),
+    }
+
+
+def _po_apply_window_weights_to_panel(returns_df: pd.DataFrame, window_weights) -> pd.Series:
+    if returns_df is None or returns_df.empty or not window_weights:
+        return pd.Series(dtype=float)
+    weights_df = pd.DataFrame(0.0, index=returns_df.index, columns=returns_df.columns)
+    for ww in window_weights:
+        try:
+            apply_start = pd.Timestamp(ww.get("apply_start"))
+            apply_end = pd.Timestamp(ww.get("apply_end"))
+        except Exception:
+            continue
+        mask = (weights_df.index >= apply_start) & (weights_df.index <= apply_end)
+        if not mask.any():
+            continue
+        weights = ww.get("weights", {}) or {}
+        for asset in weights_df.columns:
+            weights_df.loc[mask, asset] = float(weights.get(asset, 0.0) or 0.0)
+    weighted = (returns_df.fillna(0.0) * weights_df).sum(axis=1)
+    has_weights = weights_df.sum(axis=1) > 0
+    return weighted[has_weights]
+
+
+@cache_config.cache.memoize(timeout=0)
+def _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload):
+    try:
+        run_inputs = json.loads(run_inputs_payload) if run_inputs_payload else {}
+    except Exception:
+        run_inputs = {}
+    selected_series = tuple(run_inputs.get("selected_series") or ())
+    if not raw_data or not selected_series:
+        return canonical_json_dumps({})
+
+    periodicity = run_inputs.get("periodicity") or "daily"
+    benchmark_assignments = dict(run_inputs.get("benchmark_assignments") or {})
+    long_short_assignments = dict(run_inputs.get("long_short_assignments") or {})
+    date_range = normalize_date_range_payload(run_inputs.get("date_range"))
+    vol_scaler = float(run_inputs.get("vol_scaler") or 0.0)
+    vol_scaling_assignments = dict(run_inputs.get("vol_scaling_assignments") or {})
+
+    optimization_bundle = _build_po_working_bundle(
+        raw_data,
+        periodicity,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+    )
+    optimization_df = _po_get_working_returns(optimization_bundle, selected_series)
+    optimization_df = optimization_df.reindex(columns=list(selected_series)).dropna(how="all")
+
+    reporting_ls = {series: False for series in selected_series}
+    reporting_bundle = _build_po_working_bundle(
+        raw_data,
+        periodicity,
+        benchmark_assignments,
+        reporting_ls,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+    )
+    reporting_df = _po_get_working_returns(reporting_bundle, selected_series)
+    reporting_df = reporting_df.reindex(columns=list(selected_series)).dropna(how="all")
+
+    unique_benchmarks = []
+    for series in selected_series:
+        bench_name = str(benchmark_assignments.get(series, "") or "").strip()
+        if not bench_name or bench_name == "None" or bench_name in unique_benchmarks:
+            continue
+        unique_benchmarks.append(bench_name)
+    benchmark_source_df = pd.DataFrame()
+    if unique_benchmarks:
+        benchmark_bundle = _build_po_working_bundle(
+            raw_data,
+            periodicity,
+            {},
+            {},
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+        )
+        benchmark_source_df = _po_get_working_returns(benchmark_bundle, tuple(unique_benchmarks))
+        benchmark_source_df = benchmark_source_df.reindex(columns=unique_benchmarks).dropna(how="all")
+
+    benchmark_asset_df = pd.DataFrame(index=reporting_df.index)
+    for series in selected_series:
+        bench_name = str(benchmark_assignments.get(series, "") or "").strip()
+        if not bench_name or bench_name == "None" or bench_name not in benchmark_source_df.columns:
+            continue
+        aligned = benchmark_source_df[bench_name].reindex(reporting_df.index)
+        if series in reporting_df.columns:
+            aligned = aligned.where(reporting_df[series].notna())
+        benchmark_asset_df[series] = aligned
+    benchmark_asset_df = benchmark_asset_df.dropna(how="all")
+
+    payload = {
+        "optimization_df": df_to_json(optimization_df) if not optimization_df.empty else "",
+        "reporting_df": df_to_json(reporting_df) if not reporting_df.empty else "",
+        "benchmark_asset_df": df_to_json(benchmark_asset_df) if not benchmark_asset_df.empty else "",
+    }
+    return canonical_json_dumps(payload)
+
+
+def _po_get_result_basis_bundle(
+    portfolio_data,
+    raw_data,
+    *,
+    periodicity=None,
+    bench=None,
+    cmabench=None,
+    ls=None,
+    date_range=None,
+    vol_scaler=0,
+    vol_scaling=None,
+):
+    run_inputs = _po_result_run_inputs(
+        portfolio_data,
+        periodicity=periodicity,
+        bench=bench,
+        cmabench=cmabench,
+        ls=ls,
+        date_range=date_range,
+        vol_scaler=vol_scaler,
+        vol_scaling=vol_scaling,
+    )
+    payload = _po_build_result_basis_bundle_cached(raw_data, canonical_json_dumps(run_inputs))
+    try:
+        bundle = json.loads(payload) if payload else {}
+    except Exception:
+        bundle = {}
+
+    def _load_df(key):
+        json_payload = bundle.get(key)
+        if not json_payload:
+            return pd.DataFrame()
+        try:
+            return json_to_df(json_payload)
+        except Exception:
+            return pd.DataFrame()
+
+    return run_inputs, {
+        "optimization_df": _load_df("optimization_df"),
+        "reporting_df": _load_df("reporting_df"),
+        "benchmark_asset_df": _load_df("benchmark_asset_df"),
+    }
+
+
+def _po_collect_portfolio_returns(results, selected_portfolios=None, basis: str = "reporting") -> pd.DataFrame:
     if not results:
         return pd.DataFrame()
     show = list(selected_portfolios or list(results.keys()))
@@ -307,7 +533,7 @@ def _po_collect_portfolio_returns(results, selected_portfolios=None) -> pd.DataF
         pdata = (results or {}).get(pname)
         if not pdata:
             continue
-        returns_json = pdata.get("returns_json")
+        returns_json = _po_result_returns_json(pdata, basis=basis)
         if not returns_json:
             continue
         try:
@@ -327,7 +553,7 @@ def _po_single_portfolio_return(results, portfolio_name: str) -> pd.Series:
     if not results or not portfolio_name:
         return pd.Series(dtype=float)
     pdata = (results or {}).get(portfolio_name) or {}
-    returns_json = pdata.get("returns_json")
+    returns_json = _po_result_returns_json(pdata, basis="reporting")
     if not returns_json:
         return pd.Series(dtype=float)
     try:
@@ -338,25 +564,228 @@ def _po_single_portfolio_return(results, portfolio_name: str) -> pd.Series:
     return s.dropna().rename(portfolio_name)
 
 
+def _po_single_portfolio_benchmark_return(results, portfolio_name: str) -> pd.Series:
+    if not results or not portfolio_name:
+        return pd.Series(dtype=float)
+    pdata = (results or {}).get(portfolio_name) or {}
+    returns_json = _po_result_returns_json(pdata, basis="benchmark")
+    if not returns_json:
+        return pd.Series(dtype=float)
+    try:
+        s = pd.read_json(StringIO(returns_json), typ="series")
+    except Exception:
+        return pd.Series(dtype=float)
+    s.index = pd.to_datetime(s.index)
+    return s.dropna().rename(f"{portfolio_name} Benchmark")
+
+
+def _po_collect_portfolio_excess_returns(results, selected_portfolios=None) -> pd.DataFrame:
+    show = list(selected_portfolios or list((results or {}).keys()))
+    series_map = {}
+    for pname in show:
+        returns = _po_single_portfolio_return(results, pname)
+        if returns.empty:
+            continue
+        benchmark = _po_single_portfolio_benchmark_return(results, pname)
+        if not benchmark.empty:
+            aligned = pd.concat([returns, benchmark], axis=1).dropna()
+            series_map[pname] = (
+                aligned.iloc[:, 0] - aligned.iloc[:, 1]
+            ).rename(pname)
+        else:
+            series_map[pname] = returns.rename(pname)
+    if not series_map:
+        return pd.DataFrame()
+    combined = pd.DataFrame(series_map).sort_index()
+    combined.index.name = "Date"
+    return combined
+
+
+@cache_config.cache.memoize(timeout=0)
+def _po_build_performance_source_cached(
+    selected_portfolio,
+    reporting_returns_json,
+    benchmark_returns_json,
+    run_inputs_payload,
+    raw_data,
+):
+    if not selected_portfolio or not reporting_returns_json:
+        return canonical_json_dumps({})
+
+    try:
+        run_inputs = json.loads(run_inputs_payload) if run_inputs_payload else {}
+    except Exception:
+        run_inputs = {}
+    periodicity = str(run_inputs.get("periodicity") or "daily")
+
+    try:
+        portfolio_series = pd.read_json(StringIO(reporting_returns_json), typ="series")
+        portfolio_series.index = pd.to_datetime(portfolio_series.index)
+        portfolio_series = portfolio_series.dropna().rename(selected_portfolio)
+    except Exception:
+        portfolio_series = pd.Series(dtype=float)
+
+    try:
+        portfolio_benchmark = pd.read_json(StringIO(benchmark_returns_json), typ="series") if benchmark_returns_json else pd.Series(dtype=float)
+        portfolio_benchmark.index = pd.to_datetime(portfolio_benchmark.index)
+        portfolio_benchmark = portfolio_benchmark.dropna()
+    except Exception:
+        portfolio_benchmark = pd.Series(dtype=float)
+
+    payload = _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload) if raw_data and run_inputs else canonical_json_dumps({})
+    try:
+        basis_bundle = json.loads(payload) if payload else {}
+    except Exception:
+        basis_bundle = {}
+
+    def _load_df(key):
+        json_payload = basis_bundle.get(key)
+        if not json_payload:
+            return pd.DataFrame()
+        try:
+            return json_to_df(json_payload)
+        except Exception:
+            return pd.DataFrame()
+
+    reporting_df = _load_df("reporting_df")
+    benchmark_asset_df = _load_df("benchmark_asset_df")
+    selected_series = list(dict.fromkeys(run_inputs.get("selected_series") or []))
+
+    series_map = {}
+    benchmark_map = {}
+    display_cols = []
+
+    if not portfolio_series.empty:
+        series_map[selected_portfolio] = portfolio_series.rename(selected_portfolio)
+        display_cols.append(selected_portfolio)
+    if not portfolio_benchmark.empty:
+        bench_col = f"__bm__{selected_portfolio}"
+        series_map[bench_col] = portfolio_benchmark.rename(bench_col)
+        benchmark_map[selected_portfolio] = bench_col
+
+    for name in selected_series:
+        if name not in reporting_df.columns:
+            continue
+        component = reporting_df[name].dropna()
+        if component.empty:
+            continue
+        series_map[name] = component.rename(name)
+        if name not in display_cols:
+            display_cols.append(name)
+        if name in benchmark_asset_df.columns:
+            comp_bench = benchmark_asset_df[name].dropna()
+            if not comp_bench.empty:
+                bench_col = f"__bm__{name}"
+                series_map[bench_col] = comp_bench.rename(bench_col)
+                benchmark_map[name] = bench_col
+
+    if not series_map or not display_cols:
+        return canonical_json_dumps({})
+
+    source_df = pd.concat(series_map, axis=1).sort_index()
+    source_df.index.name = "Date"
+    total_df = source_df[display_cols].copy()
+    try:
+        excess_df = calculate_excess_returns(
+            df_to_json(source_df),
+            periodicity,
+            tuple(display_cols),
+            _mapping_payload(benchmark_map),
+            "excess",
+            "{}",
+            "null",
+            0,
+            "{}",
+        )
+    except Exception:
+        excess_df = pd.DataFrame()
+
+    return canonical_json_dumps(
+        {
+            "source_json": df_to_json(source_df),
+            "total_json": df_to_json(total_df) if not total_df.empty else "",
+            "excess_json": df_to_json(excess_df) if not excess_df.empty else "",
+            "display_cols": display_cols,
+            "benchmark_map": benchmark_map,
+        }
+    )
+
+
+def _po_get_performance_frames(
+    results,
+    selected_portfolio,
+    raw_data,
+    periodicity,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+):
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return {
+            "source_df": pd.DataFrame(),
+            "total_df": pd.DataFrame(),
+            "excess_df": pd.DataFrame(),
+            "display_cols": [],
+            "benchmark_map": {},
+            "periodicity": periodicity or "daily",
+        }
+
+    entry = (results or {}).get(selected_portfolio) or {}
+    run_inputs = _po_result_run_inputs(
+        entry,
+        periodicity=periodicity,
+        bench=benchmark_assignments,
+        ls=long_short_assignments,
+        date_range=date_range,
+        vol_scaler=vol_scaler,
+        vol_scaling=vol_scaling_assignments,
+    )
+    payload = _po_build_performance_source_cached(
+        selected_portfolio,
+        _po_result_returns_json(entry, basis="reporting"),
+        _po_result_returns_json(entry, basis="benchmark"),
+        canonical_json_dumps(run_inputs),
+        raw_data,
+    )
+    try:
+        parsed = json.loads(payload) if payload else {}
+    except Exception:
+        parsed = {}
+
+    def _load_df(key):
+        json_payload = parsed.get(key)
+        if not json_payload:
+            return pd.DataFrame()
+        try:
+            return json_to_df(json_payload)
+        except Exception:
+            return pd.DataFrame()
+
+    return {
+        "source_df": _load_df("source_json"),
+        "total_df": _load_df("total_json"),
+        "excess_df": _load_df("excess_json"),
+        "display_cols": list(parsed.get("display_cols") or []),
+        "benchmark_map": dict(parsed.get("benchmark_map") or {}),
+        "periodicity": str(run_inputs.get("periodicity") or periodicity or "daily"),
+    }
+
+
 @cache_config.cache.memoize(timeout=0)
 def _po_build_display_series_cached(
     selected_portfolio,
-    returns_json,
-    config_payload,
+    reporting_returns_json,
+    run_inputs_payload,
     raw_data,
-    periodicity,
-    benchmark_payload,
-    long_short_payload,
-    date_range_payload,
-    vol_scaler,
-    vol_scaling_payload,
 ):
-    if not selected_portfolio or not returns_json:
+    if not selected_portfolio or not reporting_returns_json:
         return None, []
 
     series_map = {}
     try:
-        portfolio_series = pd.read_json(StringIO(returns_json), typ="series")
+        portfolio_series = pd.read_json(StringIO(reporting_returns_json), typ="series")
         portfolio_series.index = pd.to_datetime(portfolio_series.index)
         portfolio_series = portfolio_series.dropna().rename(selected_portfolio)
     except Exception:
@@ -365,22 +794,15 @@ def _po_build_display_series_cached(
         series_map[selected_portfolio] = portfolio_series
 
     try:
-        config = json.loads(config_payload) if config_payload else {}
+        run_inputs = json.loads(run_inputs_payload) if run_inputs_payload else {}
     except Exception:
-        config = {}
-    source_series = list(dict.fromkeys((config or {}).get("selected_series") or []))
-    if raw_data and source_series:
-        working_bundle = _PoWorkingReturnsBundle(
-            raw_data=raw_data,
-            periodicity=periodicity or "daily",
-            benchmark_payload=benchmark_payload,
-            long_short_payload=long_short_payload,
-            date_range_payload=date_range_payload,
-            vol_scaler=vol_scaler or 0,
-            vol_scaling_payload=vol_scaling_payload,
-        )
+        run_inputs = {}
+    source_series = list(dict.fromkeys((run_inputs or {}).get("selected_series") or []))
+    if raw_data and source_series and run_inputs:
+        payload = _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload)
         try:
-            working_df = _po_get_working_returns(working_bundle, source_series)
+            bundle = json.loads(payload) if payload else {}
+            working_df = json_to_df(bundle.get("reporting_df")) if bundle.get("reporting_df") else pd.DataFrame()
         except Exception:
             working_df = pd.DataFrame()
         for name in source_series:
@@ -413,11 +835,9 @@ def _po_build_display_series(
     vol_scaler,
     vol_scaling_assignments,
 ) -> tuple[pd.DataFrame, list[str]]:
-    if not selected_portfolio or not results or selected_portfolio not in results:
-        return pd.DataFrame(), []
-
-    entry = (results or {}).get(selected_portfolio) or {}
-    bundle = _build_po_working_bundle(
+    perf = _po_get_performance_frames(
+        results,
+        selected_portfolio,
         raw_data,
         periodicity,
         benchmark_assignments,
@@ -426,25 +846,7 @@ def _po_build_display_series(
         vol_scaler,
         vol_scaling_assignments,
     )
-    display_json, ordered_cols = _po_build_display_series_cached(
-        selected_portfolio,
-        entry.get("returns_json"),
-        canonical_json_dumps(entry.get("config") or {}),
-        bundle.raw_data,
-        bundle.periodicity,
-        bundle.benchmark_payload,
-        bundle.long_short_payload,
-        bundle.date_range_payload,
-        bundle.vol_scaler,
-        bundle.vol_scaling_payload,
-    )
-    if not display_json or not ordered_cols:
-        return pd.DataFrame(), []
-    try:
-        display_df = json_to_df(display_json)
-    except Exception:
-        return pd.DataFrame(), []
-    return display_df, ordered_cols
+    return perf["total_df"], perf["display_cols"]
 
 
 def _po_missing_source_series(results, selected_portfolio, raw_data) -> list[str]:
@@ -468,15 +870,19 @@ def _po_missing_source_series(results, selected_portfolio, raw_data) -> list[str
 def _po_rolling_metric_label(metric: str) -> str:
     labels = {
         "total_return": "Total Return",
+        "excess_return": "Excess Return",
         "volatility": "Volatility",
+        "tracking_error": "Tracking Error",
+        "information_ratio": "Information Ratio",
         "sharpe_ratio": "Sharpe Ratio",
         "sortino_ratio": "Sortino Ratio",
+        "correlation": "Correlation",
     }
     return labels.get(metric or "total_return", "Total Return")
 
 
 def _po_rolling_metric_tickformat(metric: str) -> str:
-    return ".2%" if metric in {"total_return", "volatility"} else ".2f"
+    return ".2%" if metric in {"total_return", "excess_return", "volatility", "tracking_error"} else ".2f"
 
 
 def _po_tab_render_ready(active_tab, expected_tab: str, initial_tab_ready) -> bool:
@@ -939,6 +1345,37 @@ def _po_result_use_risk_free(portfolio_data) -> bool:
     if isinstance(config, dict) and "use_risk_free" in config:
         return bool(config.get("use_risk_free"))
     return True
+
+
+def _po_validate_reporting_benchmark_coverage(raw_data, run_inputs) -> str | None:
+    selected_series = list(run_inputs.get("selected_series") or [])
+    if not selected_series:
+        return "Select at least one series."
+    benchmark_assignments = dict(run_inputs.get("benchmark_assignments") or {})
+    missing_assignments = [
+        series
+        for series in selected_series
+        if not str(benchmark_assignments.get(series, "") or "").strip()
+        or str(benchmark_assignments.get(series, "") or "").strip() == "None"
+    ]
+    if missing_assignments:
+        return (
+            "Split-basis reporting requires a benchmark assignment for every selected series. "
+            f"Missing: {', '.join(missing_assignments)}."
+        )
+
+    _, basis_bundle = _po_get_result_basis_bundle({"run_inputs": run_inputs}, raw_data)
+    benchmark_asset_df = basis_bundle.get("benchmark_asset_df", pd.DataFrame())
+    missing_series = []
+    for series in selected_series:
+        if series not in benchmark_asset_df.columns or benchmark_asset_df[series].dropna().empty:
+            missing_series.append(series)
+    if missing_series:
+        return (
+            "Split-basis reporting requires usable benchmark history for every selected series. "
+            f"Unavailable: {', '.join(missing_series)}."
+        )
+    return None
 
 
 def _resolve_risk_free_context(
@@ -1683,6 +2120,16 @@ def _po_resolve_frontier_snapshot(
     config = (portfolio_data or {}).get("config", {}) or {}
     if not window_weights or not config:
         raise ValueError("No frontier data available.")
+    run_inputs = _po_result_run_inputs(
+        portfolio_data,
+        periodicity=periodicity,
+        bench=bench,
+        cmabench=cmabench_assignments,
+        ls=ls,
+        date_range=None,
+        vol_scaler=vol_scaler,
+        vol_scaling=vol_scaling,
+    )
 
     resolved_idx, _ = _resolve_frontier_window(window_weights, window_idx)
     risk_measure = _normalize_frontier_risk_measure(config.get("model", ""), rm)
@@ -1693,18 +2140,18 @@ def _po_resolve_frontier_snapshot(
     payload = _po_compute_frontier_snapshot_cached(
         str(selected_portfolio),
         raw_data,
-        periodicity or "daily",
-        _mapping_payload(bench),
-        _mapping_payload(ls),
-        float(vol_scaler or 0.0),
-        _mapping_payload(vol_scaling),
+        run_inputs.get("periodicity") or "daily",
+        _mapping_payload(run_inputs.get("benchmark_assignments") or {}),
+        _mapping_payload(run_inputs.get("long_short_assignments") or {}),
+        float(run_inputs.get("vol_scaler") or 0.0),
+        _mapping_payload(run_inputs.get("vol_scaling_assignments") or {}),
         canonical_json_dumps(window_weights),
         canonical_json_dumps(config),
         int(resolved_idx),
         risk_measure,
         canonical_json_dumps(linear_constraints or []),
         canonical_json_dumps(saved_series_store or {}),
-        _mapping_payload(cmabench_assignments),
+        _mapping_payload(run_inputs.get("cmabench_assignments") or {}),
         bool(use_risk_free),
     )
     snapshot = json.loads(payload) if payload else None
@@ -2053,6 +2500,28 @@ def build_po_main_layout():
                                                     size="sm",
                                                 ),
                                                 style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                            ),
+                                        ]),
+                                        html.Div([
+                                            dmc.Text("Portfolio Reporting", size="sm", mb=3, fw=500),
+                                            html.Div(
+                                                dmc.SegmentedControl(
+                                                    id="po-reporting-basis-control",
+                                                    data=[
+                                                        {"value": "match", "label": "Match Opt"},
+                                                        {"value": "split", "label": "Long-Only"},
+                                                    ],
+                                                    value="match",
+                                                    size="sm",
+                                                ),
+                                                style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                            ),
+                                            dmc.Text(
+                                                id="po-reporting-basis-help",
+                                                size="xs",
+                                                c="dimmed",
+                                                mt=4,
+                                                children="Uses long-only returns for portfolio performance while keeping optimization on the selected basis.",
                                             ),
                                         ]),
                                     ],
@@ -2730,6 +3199,21 @@ def build_po_main_layout():
                     dmc.Text(id="po-save-series-status-text", size="sm", c="dimmed"),
                 ],
             ),
+            html.Div(
+                id="po-returns-basis-wrapper",
+                style={"display": "none"},
+                children=[
+                    dmc.SegmentedControl(
+                        id="po-returns-basis-control",
+                        data=[
+                            {"value": "total", "label": "Total"},
+                            {"value": "excess", "label": "Excess"},
+                        ],
+                        value="total",
+                        size="sm",
+                    ),
+                ],
+            ),
 
             dmc.Tabs(
                 id="po-vis-tabs",
@@ -2923,6 +3407,10 @@ def build_po_main_layout():
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
+                            dmc.Group(
+                                mb="md",
+                                children=[_build_po_returns_basis_control("po-returns-basis-control-returns", show_label=False)],
+                            ),
                             html.Div(id="po-returns-grid-content", style={"height": "100%", "width": "100%"}),
                         ],
                     ),
@@ -2964,9 +3452,13 @@ def build_po_main_layout():
                                         id="po-rolling-metric-select",
                                         data=[
                                             {"value": "total_return", "label": "Total Return"},
+                                            {"value": "excess_return", "label": "Excess Return"},
                                             {"value": "volatility", "label": "Volatility"},
+                                            {"value": "tracking_error", "label": "Tracking Error"},
+                                            {"value": "information_ratio", "label": "Information Ratio"},
                                             {"value": "sharpe_ratio", "label": "Sharpe Ratio"},
                                             {"value": "sortino_ratio", "label": "Sortino Ratio"},
+                                            {"value": "correlation", "label": "Correlation"},
                                         ],
                                         value="total_return",
                                         w=180,
@@ -3020,6 +3512,7 @@ def build_po_main_layout():
                                 mb="md",
                                 gap="md",
                                 children=[
+                                    _build_po_returns_basis_control("po-returns-basis-control-calendar", show_label=False),
                                     dmc.SegmentedControl(
                                         id="po-calendar-view-select",
                                         data=[
@@ -3052,6 +3545,7 @@ def build_po_main_layout():
                             dmc.Group(
                                 mb="md",
                                 children=[
+                                    _build_po_returns_basis_control("po-returns-basis-control-drawdown", show_label=False),
                                     dmc.SegmentedControl(
                                         id="po-drawdown-chart-switch",
                                         data=[
@@ -3075,6 +3569,24 @@ def build_po_main_layout():
 # ---------------------------------------------------------------------------
 # Page Layout
 # ---------------------------------------------------------------------------
+
+def _build_po_returns_basis_control(control_id, value="total", show_label=True):
+    children = []
+    if show_label:
+        children.append(dmc.Text("Returns Type", size="sm", mb=3, fw=500))
+    children.append(
+        dmc.SegmentedControl(
+            id=control_id,
+            data=[
+                {"value": "total", "label": "Total"},
+                {"value": "excess", "label": "Excess"},
+            ],
+            value=value,
+            size="sm",
+        )
+    )
+    return html.Div(children)
+
 
 layout = dmc.Container(
     fluid=True,
@@ -3428,6 +3940,8 @@ layout = dmc.Container(
         dcc.Store(id="po-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="po-use-risk-free-store", data=True, storage_type="session"),
+        dcc.Store(id="po-returns-basis-store", data="total", storage_type="session"),
+        dcc.Store(id="po-reporting-basis-store", data=False, storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="po-common-daily-candidates-store", data=None, storage_type="memory"),
@@ -4352,6 +4866,8 @@ clientside_callback(
     Output("po-bl-tau-store", "data"),
     Output("po-ex-ante-mode-store", "data"),
     Output("po-use-risk-free-store", "data"),
+    Output("po-returns-basis-store", "data"),
+    Output("po-reporting-basis-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-vol-scaler-input", "value"),
     Input("po-vis-tabs", "value"),
@@ -4372,6 +4888,8 @@ clientside_callback(
     Input("po-bl-tau-input", "value"),
     Input("po-ex-ante-mode-select", "value"),
     Input("po-use-risk-free-switch", "value"),
+    Input("po-returns-basis-control", "value"),
+    Input("po-reporting-basis-control", "value"),
     prevent_initial_call=True,
 )
 
@@ -4387,6 +4905,78 @@ clientside_callback(
     Output("po-use-risk-free-switch", "value"),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-use-risk-free-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n, storedValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        return storedValue === "excess" ? "excess" : "total";
+    }
+    """,
+    Output("po-returns-basis-control", "value"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-returns-basis-store", "data"),
+    prevent_initial_call=True,
+)
+
+@callback(
+    Output("po-returns-basis-control", "value", allow_duplicate=True),
+    Input("po-returns-basis-control-returns", "value"),
+    Input("po-returns-basis-control-calendar", "value"),
+    Input("po-returns-basis-control-drawdown", "value"),
+    State("po-returns-basis-control", "value"),
+    prevent_initial_call=True,
+)
+def sync_po_returns_basis_from_mirrors(returns_value, calendar_value, drawdown_value, current_value):
+    value_by_trigger = {
+        "po-returns-basis-control-returns": returns_value,
+        "po-returns-basis-control-calendar": calendar_value,
+        "po-returns-basis-control-drawdown": drawdown_value,
+    }
+    next_value = value_by_trigger.get(callback_context.triggered_id)
+    if next_value is None:
+        return no_update
+    normalized = "excess" if next_value == "excess" else "total"
+    if normalized == ("excess" if current_value == "excess" else "total"):
+        return no_update
+    return normalized
+
+
+@callback(
+    Output("po-returns-basis-control-returns", "value"),
+    Output("po-returns-basis-control-calendar", "value"),
+    Output("po-returns-basis-control-drawdown", "value"),
+    Input("po-returns-basis-control", "value"),
+    State("po-returns-basis-control-returns", "value"),
+    State("po-returns-basis-control-calendar", "value"),
+    State("po-returns-basis-control-drawdown", "value"),
+    prevent_initial_call=False,
+)
+def sync_po_returns_basis_mirrors(current_value, returns_value, calendar_value, drawdown_value):
+    normalized = "excess" if current_value == "excess" else "total"
+
+    def _sync(value):
+        return no_update if value == normalized else normalized
+
+    return _sync(returns_value), _sync(calendar_value), _sync(drawdown_value)
+
+
+clientside_callback(
+    """
+    function(n, storedValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        return storedValue ? "split" : "match";
+    }
+    """,
+    Output("po-reporting-basis-control", "value"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-reporting-basis-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -4415,6 +5005,23 @@ clientside_callback(
     Input("po-cov-shrinkage-select", "value"),
     prevent_initial_call=True,
 )
+
+
+@callback(
+    Output("po-reporting-basis-control", "disabled"),
+    Output("po-reporting-basis-control", "value", allow_duplicate=True),
+    Output("po-reporting-basis-help", "children"),
+    Input("po-opt-model-select", "value"),
+    Input("po-series-select", "data"),
+    Input("po-long-short-store", "data"),
+    State("po-reporting-basis-control", "value"),
+    prevent_initial_call="initial_duplicate",
+)
+def po_sync_reporting_basis_control(opt_model, selected_series, long_short_assignments, current_value):
+    eligible = _po_supports_split_reporting(opt_model or "risk_parity", selected_series or [], long_short_assignments or {})
+    if eligible:
+        return False, no_update, "Uses long-only returns for portfolio performance while keeping optimization on the selected basis."
+    return True, "match", "Available only for supported risk-based models when at least one selected series is marked Long/Short."
 
 
 @callback(
@@ -8055,6 +8662,7 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-mode-store", "data"),
     State("po-linear-constraints-store", "data"),
     State("po-use-risk-free-store", "data"),
+    State("po-reporting-basis-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
@@ -8068,7 +8676,8 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         pending_series,
                         ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
                         ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints, use_risk_free,
-                        saved_series_store):
+                        split_reporting=False,
+                        saved_series_store=None):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -8155,6 +8764,11 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         model_value = opt_model or "risk_parity"
         window_value = opt_window or "full"
+        split_reporting_enabled = bool(split_reporting) and _po_supports_split_reporting(
+            model_value,
+            opt_cols,
+            long_short_assignments or {},
+        )
         if model_value not in {"ex_ante_mv", "black_litterman"} and window_value in {"rolling", "expanding"}:
             ws = int(_coerce_float(window_size) or 0)
             if ws > len(opt_df):
@@ -8230,6 +8844,25 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "force_max": force_max or {},
             "periodicity": periodicity or "daily",
         }
+        run_inputs = {
+            "selected_series": list(opt_cols),
+            "benchmark_assignments": dict(benchmark_assignments or {}),
+            "cmabench_assignments": dict(cmabench_assignments or {}),
+            "long_short_assignments": dict(long_short_assignments or {}),
+            "date_range": date_range,
+            "vol_scaler": float(vol_scaler or 0),
+            "vol_scaling_assignments": dict(vol_scaling_assignments or {}),
+            "periodicity": periodicity or "daily",
+        }
+        if split_reporting_enabled:
+            coverage_error = _po_validate_reporting_benchmark_coverage(raw_data, run_inputs)
+            if coverage_error:
+                return (
+                    no_update,
+                    no_update,
+                    {"status": "error", "name": portfolio_name, "message": coverage_error},
+                    no_update,
+                )
 
         bl_mu_frame = None
 
@@ -8346,6 +8979,39 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             window_results, portfolio_returns = run_out
             optimization_meta = {}
 
+        _, basis_bundle = _po_get_result_basis_bundle({"run_inputs": run_inputs}, raw_data)
+        reporting_panel = basis_bundle.get("reporting_df", pd.DataFrame()).reindex(columns=opt_cols)
+        benchmark_panel = basis_bundle.get("benchmark_asset_df", pd.DataFrame()).reindex(columns=opt_cols)
+        reporting_returns = _po_apply_window_weights_to_panel(reporting_panel, [
+            {
+                "apply_start": wr.apply_start.isoformat(),
+                "apply_end": wr.apply_end.isoformat(),
+                "weights": wr.weights,
+            }
+            for wr in window_results
+        ])
+        benchmark_returns = _po_apply_window_weights_to_panel(benchmark_panel, [
+            {
+                "apply_start": wr.apply_start.isoformat(),
+                "apply_end": wr.apply_end.isoformat(),
+                "weights": wr.weights,
+            }
+            for wr in window_results
+        ])
+        if not split_reporting_enabled:
+            reporting_returns = portfolio_returns.copy()
+        elif reporting_returns.empty:
+            return (
+                no_update,
+                no_update,
+                {
+                    "status": "error",
+                    "name": portfolio_name,
+                    "message": "Split-basis reporting could not build a usable long-only portfolio return series.",
+                },
+                no_update,
+            )
+
         # Determine unique portfolio name
         current_results = current_results or {}
         final_name = portfolio_name.strip() or _po_default_name_for_model(model_value)
@@ -8371,7 +9037,15 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         result_entry = {
             "window_weights": window_data,
-            "returns_json": portfolio_returns.to_json(date_format="iso"),
+            "reporting_returns_json": reporting_returns.to_json(date_format="iso"),
+            "optimization_returns_json": portfolio_returns.to_json(date_format="iso"),
+            "benchmark_returns_json": (
+                benchmark_returns.to_json(date_format="iso")
+                if not benchmark_returns.empty
+                else ""
+            ),
+            "reporting_basis": "long_only_performance" if split_reporting_enabled else "match_optimization",
+            "run_inputs": run_inputs,
             "config": config,
             "saved_series_name": None,
             "risk_free_meta": {
@@ -8581,7 +9255,7 @@ def po_save_series_to_shared_data(
         raise PreventUpdate
 
     entry = dict((results or {}).get(selected_portfolio) or {})
-    returns_json = entry.get("returns_json")
+    returns_json = _po_result_returns_json(entry, basis="reporting")
     if not returns_json:
         return no_update, no_update, no_update, "No portfolio return series available to save."
 
@@ -8849,7 +9523,7 @@ def po_render_growth_chart(
     prevent_initial_call=False,
 )
 def po_toggle_rolling_return_type(metric):
-    disabled = (metric or "total_return") != "total_return"
+    disabled = (metric or "total_return") not in {"total_return", "excess_return"}
     return disabled, ({} if not disabled else {"opacity": 0.5, "pointerEvents": "none"})
 
 
@@ -8896,28 +9570,30 @@ def po_render_rolling(
     if active_tab != "rolling" or not results:
         return html.Div()
     result_use_risk_free = _po_result_use_risk_free((results or {}).get(selected_portfolio))
-
-    display_df, ordered_cols = _po_build_display_series(
+    perf = _po_get_performance_frames(
         results,
         selected_portfolio,
         raw_data,
-        periodicity,
-        bench,
-        ls,
-        date_range,
-        vol_scaler,
-        vol_scaling,
+        periodicity=periodicity,
+        benchmark_assignments=bench,
+        long_short_assignments=ls,
+        date_range=date_range,
+        vol_scaler=vol_scaler,
+        vol_scaling_assignments=vol_scaling,
     )
-    if display_df.empty or not ordered_cols:
+    calc_periodicity = perf["periodicity"]
+    source_df = perf["source_df"]
+    ordered_cols = perf["display_cols"]
+    if source_df.empty or not ordered_cols:
         return dmc.Text("No rolling data available.", c="dimmed")
 
     metric = metric or "total_return"
     rolling_df = calculate_rolling_returns(
-        df_to_json(display_df[ordered_cols]),
-        periodicity or "daily",
+        df_to_json(source_df),
+        calc_periodicity,
         tuple(ordered_cols),
         "total",
-        "{}",
+        _mapping_payload(perf["benchmark_map"]),
         "{}",
         "null",
         rolling_window or "1y",
@@ -9023,6 +9699,7 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     Input("po-periodicity-select", "value"),
     Input("po-calendar-view-select", "value"),
     Input("po-calendar-series-select", "value"),
+    Input("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9038,6 +9715,7 @@ def po_render_calendar(
     periodicity,
     view_mode,
     monthly_series,
+    returns_basis,
     raw_data,
     bench,
     ls,
@@ -9047,8 +9725,7 @@ def po_render_calendar(
 ):
     if active_tab != "calendar" or not results:
         return html.Div()
-
-    display_df, ordered_cols = _po_build_display_series(
+    perf = _po_get_performance_frames(
         results,
         selected_portfolio,
         raw_data,
@@ -9059,18 +9736,23 @@ def po_render_calendar(
         vol_scaler,
         vol_scaling,
     )
-    if display_df.empty or not ordered_cols:
+    calc_periodicity = perf["periodicity"]
+    source_df = perf["source_df"]
+    ordered_cols = perf["display_cols"]
+    benchmark_map = perf["benchmark_map"]
+    returns_type = "excess" if returns_basis == "excess" else "total"
+    if source_df.empty or not ordered_cols:
         return dmc.Text("No calendar data available.", c="dimmed")
 
     if (view_mode or "annual") == "monthly":
         target_series = monthly_series if monthly_series in ordered_cols else ordered_cols[0]
         monthly_col_defs, monthly_rows = create_monthly_view(
-            df_to_json(display_df[ordered_cols]),
+            df_to_json(source_df),
             target_series,
-            periodicity or "daily",
-            periodicity or "daily",
-            "total",
-            {},
+            calc_periodicity,
+            calc_periodicity,
+            returns_type,
+            benchmark_map,
             {},
             tuple(ordered_cols),
             None,
@@ -9097,12 +9779,12 @@ def po_render_calendar(
         )
 
     cal_df = calculate_calendar_year_returns(
-        df_to_json(display_df[ordered_cols]),
-        periodicity or "daily",
-        periodicity or "daily",
+        df_to_json(source_df),
+        calc_periodicity,
+        calc_periodicity,
         tuple(ordered_cols),
-        "total",
-        "{}",
+        returns_type,
+        _mapping_payload(benchmark_map),
         "{}",
         "null",
         0,
@@ -9151,6 +9833,7 @@ def po_render_calendar(
     Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
     Input("po-drawdown-chart-switch", "value"),
+    Input("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9166,6 +9849,7 @@ def po_render_drawdown(
     selected_portfolio,
     periodicity,
     view_mode,
+    returns_basis,
     raw_data,
     bench,
     ls,
@@ -9176,8 +9860,7 @@ def po_render_drawdown(
 ):
     if active_tab != "drawdown" or not results:
         return html.Div()
-
-    display_df, ordered_cols = _po_build_display_series(
+    perf = _po_get_performance_frames(
         results,
         selected_portfolio,
         raw_data,
@@ -9188,15 +9871,18 @@ def po_render_drawdown(
         vol_scaler,
         vol_scaling,
     )
-    if display_df.empty or not ordered_cols:
+    calc_periodicity = perf["periodicity"]
+    source_df = perf["source_df"]
+    ordered_cols = perf["display_cols"]
+    if source_df.empty or not ordered_cols:
         return dmc.Text("No drawdown data available.", c="dimmed")
 
     drawdown_df = calculate_drawdown(
-        df_to_json(display_df[ordered_cols]),
-        periodicity or "daily",
+        df_to_json(source_df),
+        calc_periodicity,
         tuple(ordered_cols),
-        "total",
-        "{}",
+        "excess" if returns_basis == "excess" else "total",
+        _mapping_payload(perf["benchmark_map"]),
         "{}",
         "null",
         0,
@@ -9304,9 +9990,23 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, tab_loa
     )
     timing_ctx.__enter__()
     try:
-        # Get the working returns for the component series
+        run_inputs = _po_result_run_inputs(
+            portfolio_data,
+            periodicity=periodicity,
+            bench=bench,
+            ls=ls,
+            date_range=date_range,
+            vol_scaler=vol_scaler,
+            vol_scaling=vol_scaling,
+        )
         working_bundle = _build_po_working_bundle(
-            raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
+            raw_data,
+            run_inputs.get("periodicity"),
+            run_inputs.get("benchmark_assignments"),
+            run_inputs.get("long_short_assignments"),
+            run_inputs.get("date_range"),
+            run_inputs.get("vol_scaler"),
+            run_inputs.get("vol_scaling_assignments"),
         )
         attribution_monthly = _po_get_monthly_attribution(working_bundle, opt_series, window_weights)
 
@@ -9436,8 +10136,23 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, tab_loa
             portfolio=selected_portfolio,
             series_count=len(opt_series),
         ):
+            run_inputs = _po_result_run_inputs(
+                portfolio_data,
+                periodicity=periodicity,
+                bench=bench,
+                ls=ls,
+                date_range=date_range,
+                vol_scaler=vol_scaler,
+                vol_scaling=vol_scaling,
+            )
             working_bundle = _build_po_working_bundle(
-                raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
+                raw_data,
+                run_inputs.get("periodicity"),
+                run_inputs.get("benchmark_assignments"),
+                run_inputs.get("long_short_assignments"),
+                run_inputs.get("date_range"),
+                run_inputs.get("vol_scaler"),
+                run_inputs.get("vol_scaling_assignments"),
             )
             attribution_monthly = _po_get_monthly_attribution(working_bundle, opt_series, window_weights)
 
@@ -9518,10 +10233,9 @@ def po_render_statistics(
         with timed_block("portopt.render_statistics", portfolio_count=1):
             legacy_compare = isinstance(selected_portfolio, (list, tuple, set))
             if legacy_compare:
-                display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
-                ordered_cols = list(display_df.columns)
+                ordered_cols = list(selected_portfolio)
             else:
-                display_df, ordered_cols = _po_build_display_series(
+                perf = _po_get_performance_frames(
                     results,
                     selected_portfolio,
                     raw_data,
@@ -9532,21 +10246,36 @@ def po_render_statistics(
                     vol_scaler,
                     vol_scaling,
                 )
-            if display_df.empty or not ordered_cols:
+                ordered_cols = perf["display_cols"]
+            if not ordered_cols:
                 return html.Div()
 
-            raw_json = df_to_json(display_df[ordered_cols])
             series_names = list(ordered_cols)
             if legacy_compare:
                 stats = []
                 for series_name in series_names:
                     if series_name not in results:
                         continue
+                    series_perf = _po_get_performance_frames(
+                        results,
+                        series_name,
+                        raw_data,
+                        periodicity,
+                        bench,
+                        ls,
+                        date_range,
+                        vol_scaler,
+                        vol_scaling,
+                    )
+                    source_df = series_perf["source_df"]
+                    bench_map = series_perf["benchmark_map"]
+                    if source_df.empty:
+                        continue
                     series_stats = calculate_statistics_cached(
-                        df_to_json(display_df[[series_name]]),
-                        periodicity or "daily",
+                        df_to_json(source_df),
+                        series_perf["periodicity"],
                         (series_name,),
-                        "{}",
+                        _mapping_payload(bench_map),
                         "{}",
                         "null",
                         0,
@@ -9558,10 +10287,10 @@ def po_render_statistics(
                     stats.extend(series_stats or [])
             else:
                 stats = calculate_statistics_cached(
-                    raw_json,
-                    periodicity or "daily",
+                    df_to_json(perf["source_df"]),
+                    perf["periodicity"],
                     tuple(series_names),
-                    "{}",
+                    _mapping_payload(perf["benchmark_map"]),
                     "{}",
                     "null",
                     0,
@@ -9615,6 +10344,7 @@ def po_render_statistics(
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
+    Input("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -9628,6 +10358,7 @@ def po_render_returns(
     results,
     active_tab,
     selected_portfolio,
+    returns_basis="total",
     raw_data=None,
     periodicity=None,
     bench=None,
@@ -9642,10 +10373,13 @@ def po_render_returns(
     try:
         legacy_compare = isinstance(selected_portfolio, (list, tuple, set))
         if legacy_compare:
-            display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
+            if returns_basis == "excess":
+                display_df = _po_collect_portfolio_excess_returns(results, list(selected_portfolio))
+            else:
+                display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
             ordered_cols = list(display_df.columns)
         else:
-            display_df, ordered_cols = _po_build_display_series(
+            perf = _po_get_performance_frames(
                 results,
                 selected_portfolio,
                 raw_data,
@@ -9656,6 +10390,8 @@ def po_render_returns(
                 vol_scaler,
                 vol_scaling,
             )
+            display_df = perf["excess_df"] if returns_basis == "excess" else perf["total_df"]
+            ordered_cols = perf["display_cols"]
         if display_df.empty or not ordered_cols:
             return html.Div()
 
@@ -9674,7 +10410,8 @@ def po_render_returns(
             })
 
         df_reset = display_df[ordered_cols].reset_index()
-        df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
+        df_reset = df_reset.rename(columns={df_reset.columns[0]: "Date"})
+        df_reset["Date"] = pd.to_datetime(df_reset["Date"]).dt.strftime("%Y-%m-%d")
         row_data = df_reset.to_dict("records")
 
         return _po_build_result_grid("po-returns-grid", column_defs, row_data)
@@ -9702,13 +10439,14 @@ def po_render_returns(
     State("po-rolling-window-select", "value"),
     State("po-rolling-return-type-select", "value"),
     State("po-rolling-metric-select", "value"),
+    State("po-returns-basis-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-weight-portfolio-select", "value"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
-                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, use_risk_free=True, saved_series_store=None, selected_portfolio=None):
+                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, returns_basis="total", use_risk_free=True, saved_series_store=None, selected_portfolio=None):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -9718,29 +10456,53 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     if not selected_name:
         raise PreventUpdate
     active_results = {selected_name: (results or {}).get(selected_name)}
+    pdata = (active_results or {}).get(selected_name) or {}
+    run_inputs = _po_result_run_inputs(
+        pdata,
+        periodicity=periodicity,
+        bench=bench,
+        cmabench=cmabench,
+        ls=ls,
+        date_range=date_range,
+        vol_scaler=vol_scaler,
+        vol_scaling=vol_scaling,
+    )
 
     timing_ctx = timed_block("portopt.download_excel.total", portfolio_count=len(active_results))
     timing_ctx.__enter__()
     try:
         working_bundle = _build_po_working_bundle(
             raw_data,
-            periodicity,
-            bench,
-            ls,
-            date_range,
-            vol_scaler,
-            vol_scaling,
+            run_inputs.get("periodicity"),
+            run_inputs.get("benchmark_assignments"),
+            run_inputs.get("long_short_assignments"),
+            run_inputs.get("date_range"),
+            run_inputs.get("vol_scaler"),
+            run_inputs.get("vol_scaling_assignments"),
         )
         working_df_cache: dict[tuple, pd.DataFrame] = {}
 
-        # Build combined returns DataFrame (shared by multiple tabs/sheets)
-        with timed_block("portopt.download_excel.build_returns"):
-            combined_df = _po_collect_portfolio_returns(active_results, [selected_name])
+        perf = _po_get_performance_frames(
+            active_results,
+            selected_name,
+            raw_data,
+            run_inputs.get("periodicity"),
+            run_inputs.get("benchmark_assignments"),
+            run_inputs.get("long_short_assignments"),
+            run_inputs.get("date_range"),
+            run_inputs.get("vol_scaler"),
+            run_inputs.get("vol_scaling_assignments"),
+        )
+        source_df = perf["source_df"]
+        total_display_df = perf["total_df"]
+        excess_display_df = perf["excess_df"]
+        display_cols = perf["display_cols"]
+        display_df = excess_display_df if returns_basis == "excess" else total_display_df
 
-        if combined_df.empty:
+        if source_df.empty or not display_cols or display_df.empty:
             raise PreventUpdate
 
-        portfolio_names = list(combined_df.columns)
+        portfolio_names = list(display_cols)
 
         # ------------------------------------------------------------------
         # Settings tab
@@ -9762,7 +10524,6 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 return str(value)
 
         settings_rows = []
-        pdata = (active_results or {}).get(selected_name) or {}
         result_use_risk_free = _po_result_use_risk_free(pdata)
         cfg = pdata.get("config", {}) or {}
         window_weights = pdata.get("window_weights", []) or []
@@ -9784,11 +10545,11 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         _add_setting("Result Name", selected_name)
         _add_setting("Model", cfg.get("model", ""))
         _add_setting("Objective", cfg.get("objective", ""))
-        _add_setting("Periodicity", cfg.get("periodicity", periodicity or "daily"))
+        _add_setting("Periodicity", run_inputs.get("periodicity", cfg.get("periodicity", periodicity or "daily")))
         _add_setting("Selected Series Count", len(selected_series))
         _add_setting("Selected Series", ", ".join(selected_series))
-        _add_setting("Date Range Start", (date_range or {}).get("start", ""))
-        _add_setting("Date Range End", (date_range or {}).get("end", ""))
+        _add_setting("Date Range Start", (run_inputs.get("date_range") or {}).get("start", ""))
+        _add_setting("Date Range End", (run_inputs.get("date_range") or {}).get("end", ""))
         _add_setting("Window Type", cfg.get("window_type", ""))
         _add_setting("Window Size", cfg.get("window_size"))
         _add_setting("Opt Step", cfg.get("opt_step"))
@@ -9812,11 +10573,12 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         else:
             shrinkage_target_label = format_cov_shrinkage_target_label(effective_target)
         _add_setting("Covariance Shrinkage Target", shrinkage_target_label)
-        _add_setting("Vol Scaler", float(vol_scaler or 0))
-        _add_setting("Benchmark Assignments", _safe_json_text(bench or {}))
-        _add_setting("CMA Benchmark Assignments", _safe_json_text(cmabench or {}))
-        _add_setting("Long/Short Assignments", _safe_json_text(ls or {}))
-        _add_setting("Vol Scaling Assignments", _safe_json_text(vol_scaling or {}))
+        _add_setting("Vol Scaler", float(run_inputs.get("vol_scaler") or 0))
+        _add_setting("Reporting Basis", _po_result_reporting_basis(pdata))
+        _add_setting("Benchmark Assignments", _safe_json_text(run_inputs.get("benchmark_assignments") or {}))
+        _add_setting("CMA Benchmark Assignments", _safe_json_text(run_inputs.get("cmabench_assignments") or {}))
+        _add_setting("Long/Short Assignments", _safe_json_text(run_inputs.get("long_short_assignments") or {}))
+        _add_setting("Vol Scaling Assignments", _safe_json_text(run_inputs.get("vol_scaling_assignments") or {}))
         _add_setting("Min Wt Constraints", _safe_json_text(cfg.get("min_wt") or {}))
         _add_setting("Max Wt Constraints", _safe_json_text(cfg.get("max_wt") or {}))
         _add_setting("Force Max Flags", _safe_json_text(cfg.get("force_max") or {}))
@@ -9835,6 +10597,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         _add_setting("Rolling Window (Export)", rolling_window or "1y")
         _add_setting("Rolling Return Type (Export)", rolling_return_type or "annualized")
         _add_setting("Rolling Metric (Export)", rolling_metric or "total_return")
+        _add_setting("Returns Type (Export)", returns_basis or "total")
 
         settings_df = pd.DataFrame(settings_rows)
 
@@ -9900,12 +10663,11 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         stats_df = pd.DataFrame(columns=["Statistic"])
         try:
             with timed_block("portopt.download_excel.statistics"):
-                raw_json = df_to_json(combined_df)
                 stats = calculate_statistics_cached(
-                    raw_json,
-                    periodicity or "daily",
+                    df_to_json(source_df),
+                    perf["periodicity"],
                     tuple(portfolio_names),
-                    "{}",
+                    _mapping_payload(perf["benchmark_map"]),
                     "{}",
                     "null",
                     0,
@@ -9926,7 +10688,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         # Returns tab
         # ------------------------------------------------------------------
-        returns_df = combined_df.reset_index()
+        returns_df = display_df.reset_index()
         returns_date_col = returns_df.columns[0]
         returns_df = returns_df.rename(columns={returns_date_col: "Date"})
         returns_df["Date"] = returns_df["Date"].map(format_mdy_date)
@@ -9934,11 +10696,21 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # ------------------------------------------------------------------
         # Growth tab
         # ------------------------------------------------------------------
-        growth_data = {pname: (1 + combined_df[pname].dropna()).cumprod() for pname in portfolio_names}
-        growth_df = pd.DataFrame(growth_data).sort_index().reset_index()
-        growth_date_col = growth_df.columns[0]
-        growth_df = growth_df.rename(columns={growth_date_col: "Date"})
-        growth_df["Date"] = growth_df["Date"].map(format_mdy_date)
+        growth_df = calculate_growth_of_dollar(
+            df_to_json(source_df),
+            perf["periodicity"],
+            tuple(portfolio_names),
+            _mapping_payload(perf["benchmark_map"]),
+            "{}",
+            "null",
+            0,
+            "{}",
+        )
+        growth_df = growth_df.reset_index() if not growth_df.empty else pd.DataFrame()
+        if not growth_df.empty:
+            growth_date_col = growth_df.columns[0]
+            growth_df = growth_df.rename(columns={growth_date_col: "Date"})
+            growth_df["Date"] = growth_df["Date"].map(format_mdy_date)
 
         # ------------------------------------------------------------------
         # Rolling / Calendar / Drawdown tabs
@@ -9948,11 +10720,11 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         drawdown_df = pd.DataFrame()
         try:
             rolling_df = calculate_rolling_returns(
-                df_to_json(combined_df),
-                periodicity or "daily",
+                df_to_json(source_df),
+                perf["periodicity"],
                 tuple(portfolio_names),
                 "total",
-                "{}",
+                _mapping_payload(perf["benchmark_map"]),
                 "{}",
                 "null",
                 rolling_window or "1y",
@@ -9968,12 +10740,12 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         try:
             calendar_df = calculate_calendar_year_returns(
-                df_to_json(combined_df),
-                periodicity or "daily",
-                periodicity or "daily",
+                df_to_json(source_df),
+                perf["periodicity"],
+                perf["periodicity"],
                 tuple(portfolio_names),
-                "total",
-                "{}",
+                "excess" if returns_basis == "excess" else "total",
+                _mapping_payload(perf["benchmark_map"]),
                 "{}",
                 "null",
                 0,
@@ -9984,11 +10756,11 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         try:
             drawdown_df = calculate_drawdown(
-                df_to_json(combined_df),
-                periodicity or "daily",
+                df_to_json(source_df),
+                perf["periodicity"],
                 tuple(portfolio_names),
-                "total",
-                "{}",
+                "excess" if returns_basis == "excess" else "total",
+                _mapping_payload(perf["benchmark_map"]),
                 "{}",
                 "null",
                 0,
@@ -10086,16 +10858,16 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                         selected_portfolio=pname,
                         portfolio_data=pdata,
                         raw_data=raw_data,
-                        periodicity=periodicity,
-                        bench=bench,
-                        ls=ls,
-                        vol_scaler=vol_scaler,
-                        vol_scaling=vol_scaling,
+                        periodicity=run_inputs.get("periodicity"),
+                        bench=run_inputs.get("benchmark_assignments"),
+                        ls=run_inputs.get("long_short_assignments"),
+                        vol_scaler=run_inputs.get("vol_scaler"),
+                        vol_scaling=run_inputs.get("vol_scaling_assignments"),
                         window_idx=None,
                         rm="MV",
                         linear_constraints=config.get("linear_constraints", []),
                         saved_series_store=saved_series_store,
-                        cmabench_assignments=cmabench,
+                        cmabench_assignments=run_inputs.get("cmabench_assignments"),
                         use_risk_free=result_use_risk_free,
                     )
 
@@ -10216,8 +10988,23 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, tab_loaded, sw
     )
     timing_ctx.__enter__()
     try:
+        run_inputs = _po_result_run_inputs(
+            portfolio_data,
+            periodicity=periodicity,
+            bench=bench,
+            ls=ls,
+            date_range=date_range,
+            vol_scaler=vol_scaler,
+            vol_scaling=vol_scaling,
+        )
         working_bundle = _build_po_working_bundle(
-            raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
+            raw_data,
+            run_inputs.get("periodicity"),
+            run_inputs.get("benchmark_assignments"),
+            run_inputs.get("long_short_assignments"),
+            run_inputs.get("date_range"),
+            run_inputs.get("vol_scaler"),
+            run_inputs.get("vol_scaling_assignments"),
         )
         risk_rows = _po_get_window_risk_contributions(working_bundle, opt_series, window_weights, config)
         if not risk_rows:
@@ -10301,8 +11088,23 @@ def po_render_risk_table(selected_portfolio, results, active_tab, tab_loaded, sw
     )
     timing_ctx.__enter__()
     try:
+        run_inputs = _po_result_run_inputs(
+            portfolio_data,
+            periodicity=periodicity,
+            bench=bench,
+            ls=ls,
+            date_range=date_range,
+            vol_scaler=vol_scaler,
+            vol_scaling=vol_scaling,
+        )
         working_bundle = _build_po_working_bundle(
-            raw_data, periodicity, bench, ls, date_range, vol_scaler, vol_scaling
+            raw_data,
+            run_inputs.get("periodicity"),
+            run_inputs.get("benchmark_assignments"),
+            run_inputs.get("long_short_assignments"),
+            run_inputs.get("date_range"),
+            run_inputs.get("vol_scaler"),
+            run_inputs.get("vol_scaling_assignments"),
         )
         risk_rows = _po_get_window_risk_contributions(working_bundle, opt_series, window_weights, config)
         if not risk_rows:
@@ -10789,6 +11591,11 @@ def po_render_frontier_rf_warning(
     if not result_use_risk_free:
         return "", hidden
     config = portfolio_data.get("config", {}) or {}
+    run_inputs = _po_result_run_inputs(
+        portfolio_data,
+        periodicity=periodicity,
+        cmabench=cmabench_assignments,
+    )
     model = config.get("model", "")
     warning = None
 
@@ -10814,11 +11621,11 @@ def po_render_frontier_rf_warning(
         rf_ctx = _resolve_risk_free_context(
             model=model,
             asset_order=config.get("selected_series", []) or [],
-            periodicity=periodicity,
+            periodicity=run_inputs.get("periodicity"),
             expected_mu_annual=None,
             reference_index=None,
             saved_series_store=saved_series_store,
-            cmabench_assignments=cmabench_assignments,
+            cmabench_assignments=run_inputs.get("cmabench_assignments"),
             use_risk_free=result_use_risk_free,
         )
         warning = rf_ctx.get("rf_warning")

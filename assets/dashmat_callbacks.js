@@ -997,7 +997,7 @@
     ];
   }
 
-  function portoptControlSync(periodicity, volScaler, activeTab, seriesSelect, fillInSample, optStepUnit, optWindow, windowSize, optStep, optModel, portfolioName, expWtCov, halflife, covShrinkage, covShrinkageTarget, missingData, objective, blTau, exAnteMode, useRiskFree) {
+  function portoptControlSync(periodicity, volScaler, activeTab, seriesSelect, fillInSample, optStepUnit, optWindow, windowSize, optStep, optModel, portfolioName, expWtCov, halflife, covShrinkage, covShrinkageTarget, missingData, objective, blTau, exAnteMode, useRiskFree, returnsBasis, reportingBasis) {
     return [
       periodicity,
       volScaler,
@@ -1018,7 +1018,9 @@
       objective,
       blTau,
       exAnteMode || "ret_cov",
-      useRiskFree === "zero" ? false : true
+      useRiskFree === "zero" ? false : true,
+      returnsBasis === "excess" ? "excess" : "total",
+      reportingBasis === "split"
     ];
   }
 
