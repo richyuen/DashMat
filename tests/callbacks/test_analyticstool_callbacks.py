@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
-from utils.returns import build_raw_data_metadata
+from utils.returns import build_raw_data_metadata, json_to_df
 
 
 def _collect_component_text(node):
@@ -1060,14 +1060,14 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
         [],
         False,
         {},
+        "session-123",
     )
 
     out_json = result[0]
     out_periodicity = result[1]
     out_default_periodicity = result[3]
 
-    out_df = pd.read_json(StringIO(out_json), orient="split")
-    out_df.index = pd.to_datetime(out_df.index)
+    out_df = json_to_df(out_json)
 
     assert out_periodicity == "monthly"
     assert out_default_periodicity == "monthly"

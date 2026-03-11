@@ -100,7 +100,12 @@ from utils.underlying_category_imports import (
     get_underlying_category_desc_options,
     load_underlying_category_series,
 )
-from utils.artifact_store import get_dataframe_artifact, get_default_artifact_store
+from utils.artifact_store import (
+    get_dataframe_artifact,
+    get_default_artifact_store,
+    mutate_raw_data_store,
+    write_raw_data_frame,
+)
 
 register_page(__name__, path="/regression", name="Regression", title="Regression")
 
@@ -186,6 +191,15 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
+
+
+def _reg_write_raw_store(df: pd.DataFrame, session_id: str | None, periodicity: str | None):
+    payload, _ = write_raw_data_frame(
+        df=df,
+        session_id=str(session_id or "").strip(),
+        original_periodicity=periodicity or "daily",
+    )
+    return payload
 
 
 def _reg_get_working_returns(raw_data, periodicity, selected_series,
@@ -1732,8 +1746,8 @@ layout = dmc.Container(
 
 clientside_callback(
     """
-    function(data, n_intervals) {
-        if (data) {
+    function(data, meta, n_intervals) {
+        if (meta && meta.has_data) {
             return [
                 {display: "none"},
                 {display: "flex", flex: "1", flexDirection: "column", overflow: "hidden"}
@@ -1748,6 +1762,7 @@ clientside_callback(
     Output("reg-welcome-screen", "style"),
     Output("reg-main-container", "style"),
     Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
 )
 
@@ -2113,9 +2128,10 @@ def reg_validate_db_add_selection(selected_benches, raw_data, opened):
     State("reg-db-add-series-select", "value"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
-def reg_add_series_from_database(n_clicks, selected_benches, existing_data, existing_periodicity):
+def reg_add_series_from_database(n_clicks, selected_benches, existing_data, existing_periodicity, session_id=None):
     if not n_clicks:
         raise PreventUpdate
 
@@ -2157,7 +2173,7 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
         else:
             default_periodicity = merged_periodicity
         return (
-            df_to_json(merged_df),
+            _reg_write_raw_store(merged_df, session_id, merged_periodicity),
             merged_periodicity,
             default_periodicity,
             default_periodicity,
@@ -2850,6 +2866,7 @@ clientside_callback(
     State("reg-raw-db-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def reg_add_raw_series_from_database(
@@ -2858,6 +2875,7 @@ def reg_add_raw_series_from_database(
     staged_rows,
     existing_data,
     existing_periodicity,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -2904,7 +2922,7 @@ def reg_add_raw_series_from_database(
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
         return (
-            df_to_json(merged_df),
+            _reg_write_raw_store(merged_df, session_id, merged_periodicity),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -2941,6 +2959,7 @@ def reg_add_raw_series_from_database(
     State("reg-underlying-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def reg_add_underlying_categories_from_database(
@@ -2948,6 +2967,7 @@ def reg_add_underlying_categories_from_database(
     staged_rows,
     existing_data,
     existing_periodicity,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -2986,7 +3006,7 @@ def reg_add_underlying_categories_from_database(
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
         return (
-            df_to_json(merged_df),
+            _reg_write_raw_store(merged_df, session_id, merged_periodicity),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3022,6 +3042,7 @@ def reg_add_underlying_categories_from_database(
     State("reg-portfolio-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def reg_add_portfolios_from_database(
@@ -3030,6 +3051,7 @@ def reg_add_portfolios_from_database(
     staged_rows,
     existing_data,
     existing_periodicity,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -3073,7 +3095,7 @@ def reg_add_portfolios_from_database(
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
         return (
-            df_to_json(merged_df),
+            _reg_write_raw_store(merged_df, session_id, merged_periodicity),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3114,9 +3136,10 @@ def reg_add_portfolios_from_database(
     State("reg-upload-data", "filename"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
-def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
+def reg_handle_upload(contents, filename, existing_raw, existing_periodicity, session_id=None):
     if not contents:
         raise PreventUpdate
 
@@ -3147,7 +3170,7 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
         merged_periodicity = merge_result.combined_periodicity
         return (
             *sheet_no,
-            df_to_json(merged_df),
+            _reg_write_raw_store(merged_df, session_id, merged_periodicity),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3183,6 +3206,7 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
     State("reg-sheet-select-sheetnames-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def reg_handle_sheet_select_ok(
@@ -3194,6 +3218,7 @@ def reg_handle_sheet_select_ok(
     stashed_sheet_names,
     existing_raw,
     existing_periodicity,
+    session_id=None,
 ):
     if not contents:
         raise PreventUpdate
@@ -3223,7 +3248,7 @@ def reg_handle_sheet_select_ok(
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
         return (
-            df_to_json(merged_df),
+            _reg_write_raw_store(merged_df, session_id, merged_periodicity),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3741,7 +3766,12 @@ def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_dele
         to_drop = [s for s in temp_deleted if s in df.columns]
         if to_drop:
             df = df.drop(columns=to_drop)
-            updated_raw = df_to_json(df)
+            updated_raw, _ = mutate_raw_data_store(
+                raw_data,
+                session_id=session_id,
+                original_periodicity=None,
+                mutation_fn=lambda _frame: df,
+            )
             drop_set = set(to_drop)
             temp_x = [s for s in temp_x if s not in drop_set]
             if temp_dep in drop_set:
@@ -4750,9 +4780,10 @@ def reg_sync_anova_window_options(selected, results, current_window):
     State("dashmat-raw-data-store", "data"),
     State("reg-periodicity-select", "value"),
     State("dashmat-pending-new-series-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
-def reg_save_series_to_shared_data(n_clicks, selected, results, raw_data, periodicity, saved_series_store):
+def reg_save_series_to_shared_data(n_clicks, selected, results, raw_data, periodicity, saved_series_store, session_id=None):
     if not n_clicks or not selected or not results or selected not in results:
         raise PreventUpdate
 
@@ -4773,6 +4804,7 @@ def reg_save_series_to_shared_data(n_clicks, selected, results, raw_data, period
             origin_result=selected,
             series_type="predicted",
             prior_saved_name=entry.get("saved_series_name"),
+            session_id=session_id,
         )
     except Exception as exc:
         return no_update, no_update, no_update, f"Error saving series: {exc}"

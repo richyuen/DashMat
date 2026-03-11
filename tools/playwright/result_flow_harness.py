@@ -27,10 +27,10 @@ if str(REPO_ROOT) not in sys.path:
 from utils.returns import build_raw_data_metadata, df_to_json
 
 try:
-    from utils.artifact_store import ArtifactStore, store_raw_data_artifact
+    from utils.artifact_store import ArtifactStore, write_raw_data_frame
 except Exception:  # pragma: no cover - baseline repos may not support artifacts
     ArtifactStore = None  # type: ignore[assignment]
-    store_raw_data_artifact = None  # type: ignore[assignment]
+    write_raw_data_frame = None  # type: ignore[assignment]
 
 
 DEFAULT_SERIES = [
@@ -321,9 +321,10 @@ def get_seed_dataset_metadata(df: pd.DataFrame) -> dict[str, Any]:
 
 def detect_repo_features(repo_root: Path) -> dict[str, bool]:
     app_text = (repo_root / "app.py").read_text(encoding="utf-8")
+    artifact_text = (repo_root / "utils" / "artifact_store.py").read_text(encoding="utf-8") if (repo_root / "utils" / "artifact_store.py").exists() else ""
     return {
         "session_id_store": "dashmat-session-id-store" in app_text,
-        "raw_data_artifact_store": "dashmat-raw-data-artifact-store" in app_text,
+        "raw_data_descriptor_store": "RAW_DATA_DESCRIPTOR_VERSION" in artifact_text,
         "artifact_module": (repo_root / "utils" / "artifact_store.py").exists(),
     }
 
@@ -536,15 +537,16 @@ def build_seed_payloads(repo_root: Path, session_id: str) -> dict[str, Any]:
     features = detect_repo_features(repo_root)
     raw_df = build_seed_dataset()
     raw_json = df_to_json(raw_df)
+    raw_store = raw_json
     raw_meta = build_raw_data_metadata(raw_json, "daily")
-    raw_artifact = None
     use_artifacts = features["artifact_module"] and features["session_id_store"]
-    if use_artifacts and store_raw_data_artifact is not None:
-        raw_artifact = store_raw_data_artifact(
+    if features["raw_data_descriptor_store"] and write_raw_data_frame is not None:
+        raw_store, raw_meta = write_raw_data_frame(
+            df=raw_df,
             session_id=session_id,
-            raw_data_json=raw_json,
             original_periodicity="daily",
         )
+        raw_store = raw_store or ""
     po_name, po_entry, po_series = build_portopt_seed_result(
         raw_df,
         session_id=session_id if use_artifacts else None,
@@ -560,8 +562,8 @@ def build_seed_payloads(repo_root: Path, session_id: str) -> dict[str, Any]:
         "session_id": session_id,
         "raw_df": raw_df,
         "raw_json": raw_json,
+        "raw_store": raw_store,
         "raw_meta": raw_meta,
-        "raw_artifact": raw_artifact,
         "dataset_meta": get_seed_dataset_metadata(raw_df),
         "portopt": {
             "results": {po_name: po_entry},
@@ -581,7 +583,7 @@ def build_seed_payloads(repo_root: Path, session_id: str) -> dict[str, Any]:
 
 def make_portopt_storage_seed(seed_payload: dict[str, Any], *, include_results: bool = True) -> dict[str, Any]:
     payload = {
-        "dashmat-raw-data-store": seed_payload["raw_json"],
+        "dashmat-raw-data-store": seed_payload["raw_store"],
         "dashmat-raw-data-meta-store": seed_payload["raw_meta"],
         "dashmat-original-periodicity-store": "daily",
         "dashmat-pending-new-series-store": {},
@@ -601,15 +603,13 @@ def make_portopt_storage_seed(seed_payload: dict[str, Any], *, include_results: 
         payload["po-results-store"] = {}
     if seed_payload["features"]["session_id_store"]:
         payload["dashmat-session-id-store"] = seed_payload["session_id"]
-    if seed_payload["features"]["raw_data_artifact_store"] and seed_payload["raw_artifact"] is not None:
-        payload["dashmat-raw-data-artifact-store"] = seed_payload["raw_artifact"]
     return payload
 
 
 def make_regression_storage_seed(seed_payload: dict[str, Any], *, include_results: bool = True) -> dict[str, Any]:
     reg = seed_payload["regression"]
     payload = {
-        "dashmat-raw-data-store": seed_payload["raw_json"],
+        "dashmat-raw-data-store": seed_payload["raw_store"],
         "dashmat-raw-data-meta-store": seed_payload["raw_meta"],
         "dashmat-original-periodicity-store": "daily",
         "reg-page-visited-store": True,
@@ -629,8 +629,6 @@ def make_regression_storage_seed(seed_payload: dict[str, Any], *, include_result
         payload["reg-results-store"] = {}
     if seed_payload["features"]["session_id_store"]:
         payload["dashmat-session-id-store"] = seed_payload["session_id"]
-    if seed_payload["features"]["raw_data_artifact_store"] and seed_payload["raw_artifact"] is not None:
-        payload["dashmat-raw-data-artifact-store"] = seed_payload["raw_artifact"]
     return payload
 
 
@@ -739,7 +737,6 @@ def _store_bytes_subset(browser_storage: dict[str, Any]) -> dict[str, int]:
         "po-results-store",
         "reg-results-store",
         "dashmat-raw-data-store",
-        "dashmat-raw-data-artifact-store",
         "dashmat-saved-series-cache-store",
     ]
     return {key: int(item_bytes.get(key, 0)) for key in keys}

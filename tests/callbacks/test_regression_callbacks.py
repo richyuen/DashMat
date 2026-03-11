@@ -11,7 +11,7 @@ from dash import no_update
 from dash.exceptions import PreventUpdate
 
 from utils.regression import RegressionWindowResult
-from utils.returns import build_raw_data_metadata, df_to_json
+from utils.returns import build_raw_data_metadata, df_to_json, json_to_df
 from utils.shared_metrics import STATS_CONFIG
 
 
@@ -489,9 +489,10 @@ def test_reg_save_series_to_shared_data_saves_predicted_and_updates_result(regre
         df_to_json(raw_df),
         "daily",
         {},
+        "session-123",
     )
 
-    raw_after = pd.read_json(StringIO(new_raw), orient="split")
+    raw_after = json_to_df(new_raw)
     assert "R1" in raw_after.columns
     assert new_results["R1"]["saved_series_name"] == "R1"
     assert saved_store["R1"]["origin_page"] == "regression"
@@ -517,9 +518,10 @@ def test_reg_save_series_to_shared_data_overwrites_existing_saved_name(regressio
         df_to_json(raw_df),
         "daily",
         {"R1": {"origin_page": "regression", "origin_result": "R1", "series_type": "predicted"}},
+        "session-123",
     )
 
-    raw_after = pd.read_json(StringIO(new_raw), orient="split")
+    raw_after = json_to_df(new_raw)
     assert raw_after["R1"].tolist() == pytest.approx([0.001, 0.002, 0.003])
     assert saved_store["R1"]["series_type"] == "predicted"
     assert status == "Overwrote shared series R1."
@@ -586,7 +588,7 @@ def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, re
     )
 
     raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide = (
-        regression_page.reg_add_series_from_database(1, ["IDX_A"], None, None)
+        regression_page.reg_add_series_from_database(1, ["IDX_A"], None, None, "session-123")
     )
 
     assert isinstance(raw, str)
@@ -610,7 +612,7 @@ def test_reg_add_series_from_database_rejects_duplicates(monkeypatch, regression
     )
 
     raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide = (
-        regression_page.reg_add_series_from_database(1, ["IDX_A"], existing_raw, "daily")
+        regression_page.reg_add_series_from_database(1, ["IDX_A"], existing_raw, "daily", "session-123")
     )
 
     assert raw is no_update
@@ -758,7 +760,7 @@ def test_regression_upload_trigger_uses_cancel_aware_shared_helper():
 def test_reg_handle_upload_multi_sheet_opens_modal_and_releases_blocker(monkeypatch, regression_page):
     monkeypatch.setattr(regression_page, "get_sheet_names", lambda *_args, **_kwargs: ["Sheet A", "Sheet B"])
 
-    result = regression_page.reg_handle_upload("contents", "multi.xlsx", None, None)
+    result = regression_page.reg_handle_upload("contents", "multi.xlsx", None, None, "session-123")
 
     assert result[0] is True
     assert result[1] == [{"value": "Sheet A", "label": "Sheet A"}, {"value": "Sheet B", "label": "Sheet B"}]
@@ -778,7 +780,7 @@ def test_reg_handle_upload_error_releases_blocker(monkeypatch, regression_page):
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("boom")),
     )
 
-    result = regression_page.reg_handle_upload("contents", "bad.xlsx", None, None)
+    result = regression_page.reg_handle_upload("contents", "bad.xlsx", None, None, "session-123")
 
     assert all(value is no_update for value in result[:-1])
     assert result[-1] is False
@@ -812,6 +814,7 @@ def test_reg_handle_sheet_select_import_all_releases_blocker_and_clears_stash(mo
         ["Sheet A", "Sheet B"],
         None,
         None,
+        "session-123",
     )
 
     assert isinstance(result[0], str)
@@ -843,6 +846,7 @@ def test_reg_handle_sheet_select_error_keeps_modal_open_and_releases_blocker(mon
         ["Sheet A", "Sheet B"],
         None,
         None,
+        "session-123",
     )
 
     assert result[0] is no_update

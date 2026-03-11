@@ -5,6 +5,7 @@ from io import BytesIO, StringIO
 from types import SimpleNamespace
 
 import pandas as pd
+from utils.returns import json_to_df
 
 
 def _as_multi_sheet_upload_payload() -> tuple[str, str]:
@@ -55,9 +56,9 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
         [],
         False,
         {},
+        "session-123",
     )
-    selected_df = pd.read_json(StringIO(selected_result[0]), orient="split")
-    selected_df.index = pd.to_datetime(selected_df.index)
+    selected_df = json_to_df(selected_result[0])
     assert selected_result[1] == "daily"
     assert selected_result[7] == "green"
     assert selected_result[18] is False
@@ -83,9 +84,9 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
         [],
         False,
         {},
+        "session-123",
     )
-    all_df = pd.read_json(StringIO(all_result[0]), orient="split")
-    all_df.index = pd.to_datetime(all_df.index)
+    all_df = json_to_df(all_result[0])
     assert all_result[1] == "daily"
     assert all_df.shape == (3, 1)
     assert all_df.loc[pd.Timestamp("2024-01-02"), "SeriesA"] == 0.03
@@ -118,9 +119,9 @@ def test_portopt_sheet_callback_smoke_selected_and_all(monkeypatch, page_modules
         {},
         {},
         {},
+        "session-123",
     )
-    selected_df = pd.read_json(StringIO(selected_result[0]), orient="split")
-    selected_df.index = pd.to_datetime(selected_df.index)
+    selected_df = json_to_df(selected_result[0])
     assert selected_result[1] == "daily"
     assert selected_result[7] == "green"
     assert selected_df.shape == (2, 1)
@@ -148,9 +149,9 @@ def test_portopt_sheet_callback_smoke_selected_and_all(monkeypatch, page_modules
         {},
         {},
         {},
+        "session-123",
     )
-    all_df = pd.read_json(StringIO(all_result[0]), orient="split")
-    all_df.index = pd.to_datetime(all_df.index)
+    all_df = json_to_df(all_result[0])
     assert all_result[1] == "daily"
     assert all_df.shape == (3, 1)
     assert all_df.loc[pd.Timestamp("2024-01-02"), "SeriesA"] == 0.03
@@ -180,6 +181,7 @@ def test_sheet_callbacks_return_validation_error_when_selected_empty(monkeypatch
         [],
         False,
         {},
+        "session-123",
     )
     assert at_result[6] == "Select at least one sheet to import."
     assert at_result[7] == "red"
@@ -208,6 +210,7 @@ def test_sheet_callbacks_return_validation_error_when_selected_empty(monkeypatch
         {},
         {},
         {},
+        "session-123",
     )
     assert po_result[6] == "Select at least one sheet to import."
     assert po_result[7] == "red"

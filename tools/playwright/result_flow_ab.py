@@ -152,7 +152,6 @@ def build_comparison_payload(baseline_payload: dict[str, Any], variant_payload: 
         "po-results-store",
         "reg-results-store",
         "dashmat-raw-data-store",
-        "dashmat-raw-data-artifact-store",
         "dashmat-saved-series-cache-store",
     ]
     return {

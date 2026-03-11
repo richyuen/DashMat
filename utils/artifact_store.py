@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import md5
+from io import StringIO
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ from uuid import uuid4
 import pandas as pd
 
 from utils.serialization import canonical_json_dumps
-from utils.returns import build_raw_data_metadata, json_to_df
+from utils.returns import get_available_periodicities, json_to_df
 
 _DEFAULT_ARTIFACT_ROOT = Path(".cache") / "dashmat_artifacts"
 _ARTIFACT_DB_NAME = "manifest.sqlite3"
@@ -544,6 +545,217 @@ def get_dataframe_artifact(key: str | None, *, store: ArtifactStore | None = Non
         return pd.DataFrame()
 
 
+RAW_DATA_DESCRIPTOR_VERSION = 1
+
+
+def normalize_raw_data_descriptor(raw_data_store: Any) -> dict[str, Any] | None:
+    if isinstance(raw_data_store, dict):
+        descriptor = dict(raw_data_store)
+    elif isinstance(raw_data_store, str):
+        if not raw_data_store.strip():
+            return None
+        try:
+            parsed = json.loads(raw_data_store)
+        except Exception:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        descriptor = dict(parsed)
+    else:
+        return None
+
+    raw_key = descriptor.get("raw_data_key")
+    if not isinstance(raw_key, str) or not raw_key:
+        return None
+    return descriptor
+
+
+def serialize_raw_data_descriptor(descriptor: dict[str, Any] | None) -> str | None:
+    if not isinstance(descriptor, dict) or not descriptor.get("raw_data_key"):
+        return None
+    return canonical_json_dumps(descriptor)
+
+
+def _build_raw_data_metadata_from_frame(df: pd.DataFrame | None, original_periodicity: str | None) -> dict[str, Any]:
+    resolved_periodicity = original_periodicity or "daily"
+    periodicity_options = get_available_periodicities(resolved_periodicity)
+    valid_values = [option["value"] for option in periodicity_options]
+    default_periodicity = (
+        resolved_periodicity
+        if resolved_periodicity in valid_values
+        else (valid_values[0] if valid_values else "daily_trading")
+    )
+
+    if df is None or df.empty:
+        return {
+            "has_data": False,
+            "columns": [],
+            "original_periodicity": resolved_periodicity,
+            "periodicity_options": periodicity_options,
+            "default_periodicity": default_periodicity,
+            "min_date": None,
+            "max_date": None,
+        }
+
+    return {
+        "has_data": bool(df.columns.size),
+        "columns": list(df.columns),
+        "original_periodicity": resolved_periodicity,
+        "periodicity_options": periodicity_options,
+        "default_periodicity": default_periodicity,
+        "min_date": df.index.min().strftime("%Y-%m-%d"),
+        "max_date": df.index.max().strftime("%Y-%m-%d"),
+    }
+
+
+def build_raw_data_store_metadata(
+    raw_data_store: Any,
+    original_periodicity: str | None,
+    *,
+    store: ArtifactStore | None = None,
+) -> dict[str, Any]:
+    descriptor = normalize_raw_data_descriptor(raw_data_store)
+    if descriptor is None:
+        if isinstance(raw_data_store, str) and raw_data_store.strip():
+            try:
+                legacy_df = json_to_df(raw_data_store)
+            except Exception:
+                legacy_df = pd.DataFrame()
+            return _build_raw_data_metadata_from_frame(legacy_df, original_periodicity)
+        return _build_raw_data_metadata_from_frame(None, original_periodicity)
+
+    metadata = {
+        "has_data": bool(descriptor.get("has_data")),
+        "columns": list(descriptor.get("columns") or []),
+        "original_periodicity": descriptor.get("original_periodicity") or (original_periodicity or "daily"),
+        "periodicity_options": get_available_periodicities(
+            descriptor.get("original_periodicity") or (original_periodicity or "daily")
+        ),
+        "default_periodicity": None,
+        "min_date": descriptor.get("start_date"),
+        "max_date": descriptor.get("end_date"),
+    }
+    valid_values = [option["value"] for option in metadata["periodicity_options"]]
+    resolved_periodicity = metadata["original_periodicity"]
+    metadata["default_periodicity"] = (
+        resolved_periodicity
+        if resolved_periodicity in valid_values
+        else (valid_values[0] if valid_values else "daily_trading")
+    )
+    if metadata["has_data"] and metadata["columns"]:
+        return metadata
+
+    frame = load_raw_data_frame(raw_data_store, store=store)
+    return _build_raw_data_metadata_from_frame(frame, original_periodicity)
+
+
+def load_raw_data_frame(
+    raw_data_store: Any,
+    *,
+    store: ArtifactStore | None = None,
+) -> pd.DataFrame:
+    descriptor = normalize_raw_data_descriptor(raw_data_store)
+    if descriptor is None:
+        if isinstance(raw_data_store, str) and raw_data_store.strip():
+            try:
+                frame = pd.read_json(StringIO(raw_data_store), orient="split")
+            except (ValueError, TypeError):
+                return pd.DataFrame()
+            frame.index = pd.to_datetime(frame.index)
+            frame.index.name = "Date"
+            return frame
+        return pd.DataFrame()
+    return get_dataframe_artifact(descriptor.get("raw_data_key"), store=store)
+
+
+def write_raw_data_frame(
+    *,
+    df: pd.DataFrame,
+    session_id: str,
+    original_periodicity: str | None,
+    store: ArtifactStore | None = None,
+    parent_keys: list[str] | tuple[str, ...] | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    if df is None or df.empty or not session_id:
+        metadata = _build_raw_data_metadata_from_frame(df, original_periodicity)
+        return None, metadata
+
+    raw_df = df.copy().sort_index()
+    raw_df.index = pd.to_datetime(raw_df.index)
+    raw_df.index.name = raw_df.index.name or "Date"
+    metadata = _build_raw_data_metadata_from_frame(raw_df, original_periodicity)
+    artifact_store = store or get_default_artifact_store()
+    raw_json = raw_df.to_json(date_format="iso", orient="split")
+    raw_hash = md5(raw_json.encode("utf-8")).hexdigest()
+    key = artifact_store.build_key(
+        "raw_data",
+        {"raw_hash": raw_hash, "original_periodicity": original_periodicity or "daily"},
+        session_id=session_id,
+    )
+    descriptor = artifact_store.put_dataframe(
+        df=raw_df,
+        artifact_type="raw_data",
+        session_id=session_id,
+        key=key,
+        payload={"raw_hash": raw_hash, "original_periodicity": original_periodicity or "daily"},
+        metadata={
+            "raw_hash": raw_hash,
+            "columns": list(raw_df.columns),
+            "original_periodicity": original_periodicity or "daily",
+            "min_date": metadata.get("min_date"),
+            "max_date": metadata.get("max_date"),
+        },
+        parent_keys=list(parent_keys or []),
+    )
+    payload = {
+        "raw_data_key": descriptor.key,
+        "has_data": metadata.get("has_data", False),
+        "columns": metadata.get("columns", []),
+        "row_count": descriptor.row_count or 0,
+        "start_date": metadata.get("min_date"),
+        "end_date": metadata.get("max_date"),
+        "original_periodicity": metadata.get("original_periodicity"),
+        "metadata_version": RAW_DATA_DESCRIPTOR_VERSION,
+    }
+    return serialize_raw_data_descriptor(payload), metadata
+
+
+def mutate_raw_data_store(
+    raw_data_store: Any,
+    *,
+    session_id: str | None,
+    original_periodicity: str | None,
+    mutation_fn,
+    store: ArtifactStore | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    descriptor = normalize_raw_data_descriptor(raw_data_store)
+    parent_keys = []
+    resolved_session_id = str(session_id or "")
+    resolved_periodicity = original_periodicity
+    if descriptor is not None:
+        parent_keys = [descriptor["raw_data_key"]]
+        resolved_periodicity = resolved_periodicity or descriptor.get("original_periodicity")
+        artifact_store = store or get_default_artifact_store()
+        current_descriptor = artifact_store.get_descriptor(descriptor["raw_data_key"])
+        if current_descriptor is not None and not resolved_session_id:
+            resolved_session_id = current_descriptor.session_id
+    if not resolved_session_id:
+        raise ValueError("Session id is required to mutate raw data.")
+
+    frame = load_raw_data_frame(raw_data_store, store=store)
+    updated = mutation_fn(frame.copy())
+    if updated is None or updated.empty:
+        metadata = _build_raw_data_metadata_from_frame(updated, original_periodicity)
+        return None, metadata
+    return write_raw_data_frame(
+        df=updated,
+        session_id=resolved_session_id,
+        original_periodicity=resolved_periodicity,
+        store=store,
+        parent_keys=parent_keys,
+    )
+
+
 def store_raw_data_artifact(
     *,
     session_id: str,
@@ -554,36 +766,21 @@ def store_raw_data_artifact(
     """Persist raw data JSON to the artifact store and return a compact descriptor."""
     if not raw_data_json:
         return None
-
-    artifact_store = store or get_default_artifact_store()
     df = json_to_df(raw_data_json)
-    metadata = build_raw_data_metadata(raw_data_json, original_periodicity)
-    raw_hash = md5(raw_data_json.encode("utf-8")).hexdigest()
-    key = artifact_store.build_key(
-        "raw_data",
-        {"raw_hash": raw_hash, "original_periodicity": original_periodicity or "daily"},
-        session_id=session_id,
-    )
-    descriptor = artifact_store.put_dataframe(
+    payload, metadata = write_raw_data_frame(
         df=df,
-        artifact_type="raw_data",
         session_id=session_id,
-        key=key,
-        payload={"raw_hash": raw_hash, "original_periodicity": original_periodicity or "daily"},
-        metadata={
-            "raw_hash": raw_hash,
-            "columns": list(df.columns),
-            "original_periodicity": original_periodicity or "daily",
-            "min_date": metadata.get("min_date"),
-            "max_date": metadata.get("max_date"),
-        },
+        original_periodicity=original_periodicity,
+        store=store,
     )
+    descriptor = normalize_raw_data_descriptor(payload)
+    if descriptor is None:
+        return None
     return {
         "has_data": metadata.get("has_data", False),
-        "raw_data_key": descriptor.key,
-        "row_count": descriptor.row_count or 0,
-        "col_count": descriptor.col_count or 0,
-        "byte_size": descriptor.byte_size or 0,
+        "raw_data_key": descriptor["raw_data_key"],
+        "row_count": descriptor.get("row_count", 0),
+        "col_count": len(metadata.get("columns", [])),
         "columns": metadata.get("columns", []),
         "min_date": metadata.get("min_date"),
         "max_date": metadata.get("max_date"),

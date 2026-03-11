@@ -79,7 +79,8 @@ def test_app_layout_includes_session_and_artifact_stores():
     import app as app_module
 
     assert _find_component_by_id(app_module.app.layout, "dashmat-session-id-store") is not None
-    assert _find_component_by_id(app_module.app.layout, "dashmat-raw-data-artifact-store") is not None
+    assert _find_component_by_id(app_module.app.layout, "dashmat-raw-data-store") is not None
+    assert _find_component_by_id(app_module.app.layout, "dashmat-raw-data-meta-store") is not None
     assert _find_component_by_id(app_module.app.layout, "dashmat-session-export-request-store") is not None
     assert _find_component_by_id(app_module.app.layout, "dashmat-session-import-request-store") is not None
     assert _find_component_by_id(app_module.app.layout, "dashmat-save-session-download") is not None
@@ -100,29 +101,31 @@ def test_ensure_dashmat_session_id_generates_uuid_when_missing():
     assert len(value) >= 32
 
 
-def test_refresh_raw_data_artifact_store_returns_none_without_raw_data():
+def test_refresh_raw_data_meta_store_returns_empty_metadata_without_raw_data():
     import app as app_module
 
-    assert app_module.refresh_raw_data_artifact_store(None, "daily", "session-123") is None
+    result = app_module.refresh_raw_data_meta_store(None, "daily")
+    assert result["has_data"] is False
+    assert result["columns"] == []
 
 
-def test_refresh_raw_data_artifact_store_delegates_to_artifact_writer(monkeypatch):
+def test_refresh_raw_data_meta_store_delegates_to_descriptor_metadata_builder(monkeypatch):
     import app as app_module
 
-    expected = {"raw_data_key": "abc", "has_data": True}
+    expected = {"has_data": True, "columns": ["A"]}
     captured = {}
 
-    def fake_store_raw_data_artifact(**kwargs):
-        captured.update(kwargs)
+    def fake_build(raw_data, original_periodicity):
+        captured["raw_data"] = raw_data
+        captured["original_periodicity"] = original_periodicity
         return expected
 
-    monkeypatch.setattr(app_module, "store_raw_data_artifact", fake_store_raw_data_artifact)
+    monkeypatch.setattr(app_module, "build_raw_data_store_metadata", fake_build)
 
-    result = app_module.refresh_raw_data_artifact_store("{}", "daily", "session-123")
+    result = app_module.refresh_raw_data_meta_store('{"raw_data_key":"abc"}', "daily")
 
     assert result == expected
-    assert captured["session_id"] == "session-123"
-    assert captured["raw_data_json"] == "{}"
+    assert captured["raw_data"] == '{"raw_data_key":"abc"}'
     assert captured["original_periodicity"] == "daily"
 
 

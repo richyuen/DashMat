@@ -65,12 +65,16 @@ def test_run_mode_storage_seeds_exclude_results_and_set_run_flags():
     po_seed = harness.make_portopt_storage_seed(seed, include_results=False)
     reg_seed = harness.make_regression_storage_seed(seed, include_results=False)
 
+    assert seed["raw_store"]
+    assert po_seed["dashmat-raw-data-store"] == seed["raw_store"]
     assert po_seed["po-results-store"] == {}
     assert po_seed["po-restore-complete-store"] is True
     assert po_seed["dashmat-pending-new-series-store"] == {}
+    assert "dashmat-raw-data-artifact-store" not in po_seed
     assert reg_seed["reg-results-store"] == {}
     assert reg_seed["reg-model-store"] == "ols"
     assert reg_seed["reg-window-type-store"] == "full"
+    assert "dashmat-raw-data-artifact-store" not in reg_seed
 
 
 def test_summarize_numeric_runs_and_storage_medians():

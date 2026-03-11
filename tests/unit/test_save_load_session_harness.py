@@ -17,6 +17,7 @@ def _seed_payload() -> dict:
     return {
         "session_id": "session-123",
         "raw_json": "{}",
+        "raw_store": "{}",
         "raw_meta": {"columns": ["SPX_TRIndex"], "has_data": True},
         "dataset_meta": {"start": "2021-01-04", "end": "2023-12-29"},
     }

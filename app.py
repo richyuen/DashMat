@@ -8,9 +8,8 @@ from dash.exceptions import PreventUpdate
 from uuid import uuid4
 
 from cache_config import init_cache
-from utils.artifact_store import store_raw_data_artifact
+from utils.artifact_store import build_raw_data_store_metadata
 from utils.perf_timing import record_payload_size, timed_block
-from utils.returns import build_raw_data_metadata
 from utils.serialization import canonical_json_dumps
 from utils.workspace_session import build_workspace_session_bundle, restore_workspace_session_bundle
 
@@ -58,7 +57,6 @@ REGRESSION_PATH = _registry_path("pages.regression", "/regression")
 _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-session-id-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
-    dcc.Store(id="dashmat-raw-data-artifact-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
@@ -204,34 +202,6 @@ def guard_protected_pages(pathname, userinfo):
 
 
 @app.callback(
-    Output("dashmat-raw-data-artifact-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("dashmat-original-periodicity-store", "data"),
-    Input("dashmat-session-id-store", "data"),
-    prevent_initial_call=False,
-)
-def refresh_raw_data_artifact_store(raw_data, original_periodicity, session_id):
-    if not raw_data or not session_id:
-        return None
-    with timed_block(
-        "refresh_raw_data_artifact_store",
-        has_data=bool(raw_data),
-        session_id=session_id,
-    ):
-        descriptor = store_raw_data_artifact(
-            session_id=session_id,
-            raw_data_json=raw_data,
-            original_periodicity=original_periodicity,
-        )
-    record_payload_size(
-        "dashmat_raw_data_artifact_store.output",
-        descriptor,
-        session_id=session_id,
-    )
-    return descriptor
-
-
-@app.callback(
     Output("dashmat-save-session-download", "data"),
     Input("dashmat-session-export-request-store", "data"),
     prevent_initial_call=True,
@@ -273,7 +243,10 @@ def import_workspace_session_bundle(request_data):
     prevent_initial_call=False,
 )
 def refresh_raw_data_meta_store(raw_data, original_periodicity):
-    return build_raw_data_metadata(raw_data, original_periodicity)
+    with timed_block("refresh_raw_data_meta_store", has_data=bool(raw_data)):
+        metadata = build_raw_data_store_metadata(raw_data, original_periodicity)
+    record_payload_size("dashmat_raw_data_meta_store.output", metadata)
+    return metadata
 
 
 clientside_callback(

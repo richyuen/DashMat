@@ -126,7 +126,7 @@ def launch_app_process(repo_root: Path, port: int, artifact_root: Path, log_path
 def build_analyticstool_storage_seed(seed_payload: dict[str, Any]) -> dict[str, Any]:
     dataset = seed_payload["dataset_meta"]
     return {
-        "dashmat-raw-data-store": seed_payload["raw_json"],
+        "dashmat-raw-data-store": seed_payload["raw_store"],
         "dashmat-raw-data-meta-store": seed_payload["raw_meta"],
         "dashmat-original-periodicity-store": "daily",
         "dashmat-pending-new-series-store": {},
@@ -266,8 +266,6 @@ def validate_bundle_structure(bundle: dict[str, Any], workflow: str) -> dict[str
         raise RuntimeError("Bundle missing artifacts.")
     if "dashmat-saved-series-cache-store" in workspace_session:
         raise RuntimeError("Bundle should not export dashmat-saved-series-cache-store as runtime workspace state.")
-    if "dashmat-raw-data-artifact-store" in workspace_session:
-        raise RuntimeError("Bundle should not export dashmat-raw-data-artifact-store as runtime workspace state.")
     expectations = bundle_expectations_for_workflow(workflow)
     artifact_types = [str(record.get("artifact_type")) for record in bundle.get("artifacts", []) if isinstance(record, dict)]
     if len(artifact_types) < int(expectations["min_artifacts"]):
@@ -461,15 +459,20 @@ def assert_regression_restored(page, *, lightweight: bool = False) -> dict[str, 
     return metrics
 
 
-def assert_raw_data_artifact_regenerated(page) -> None:
+def assert_raw_data_restored(page) -> None:
     page.wait_for_function(
         """
         () => {
-          const value = window.sessionStorage.getItem('dashmat-raw-data-artifact-store');
-          if (!value) return false;
+          const rawValue = window.sessionStorage.getItem('dashmat-raw-data-store');
+          const metaValue = window.sessionStorage.getItem('dashmat-raw-data-meta-store');
+          if (!rawValue || !metaValue) return false;
           try {
-            const parsed = JSON.parse(value);
-            return !!(parsed && parsed.raw_data_key);
+            const rawParsed = JSON.parse(rawValue);
+            const metaParsed = JSON.parse(metaValue);
+            const hasDescriptor = typeof rawParsed === "string"
+              ? String(rawParsed).includes("raw_data_key")
+              : !!(rawParsed && rawParsed.raw_data_key);
+            return !!(metaParsed && metaParsed.has_data) && hasDescriptor;
           } catch (error) {
             return false;
           }
@@ -606,7 +609,7 @@ def apply_restore(
         metrics = assert_regression_restored(page, lightweight=lightweight_assertions)
         page.goto(base_url + "/portopt", wait_until="domcontentloaded")
         metrics["portopt"] = assert_portopt_restored(page, lightweight=lightweight_assertions)
-    assert_raw_data_artifact_regenerated(page)
+    assert_raw_data_restored(page)
     return metrics
 
 

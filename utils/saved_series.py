@@ -7,10 +7,10 @@ import pandas as pd
 from utils.returns import (
     align_monthly_index_to_month_end,
     align_monthly_series_to_month_end,
-    df_to_json,
     json_to_df,
     merge_returns,
 )
+from utils.artifact_store import get_default_artifact_store, normalize_raw_data_descriptor, write_raw_data_frame
 
 
 def normalize_saved_series_store(store: Any) -> dict[str, dict[str, Any]]:
@@ -56,6 +56,7 @@ def save_series_to_raw_data(
     origin_result: str,
     series_type: str,
     prior_saved_name: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist a result series into the shared raw-data store."""
     clean_series = series.dropna()
@@ -96,8 +97,22 @@ def save_series_to_raw_data(
         "series_type": series_type,
     }
 
+    resolved_session_id = str(session_id or "").strip()
+    raw_descriptor = normalize_raw_data_descriptor(raw_data)
+    if not resolved_session_id and raw_descriptor is not None:
+        current_descriptor = get_default_artifact_store().get_descriptor(raw_descriptor["raw_data_key"])
+        if current_descriptor is not None:
+            resolved_session_id = str(current_descriptor.session_id or "").strip()
+    if not resolved_session_id:
+        raise ValueError("Session id is required to save series.")
+    raw_payload, _ = write_raw_data_frame(
+        df=merged_df,
+        session_id=resolved_session_id,
+        original_periodicity=resolved_periodicity,
+    )
+
     return {
-        "raw_data": df_to_json(merged_df),
+        "raw_data": raw_payload,
         "saved_series_store": normalized_store,
         "saved_name": target_name,
         "action": action,

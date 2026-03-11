@@ -29,6 +29,7 @@ def test_save_series_to_raw_data_uses_base_name_on_first_save():
         origin_page="portopt",
         origin_result="P1",
         series_type="portfolio",
+        session_id="session-123",
     )
 
     merged = json_to_df(out["raw_data"])
@@ -52,6 +53,7 @@ def test_save_series_to_raw_data_suffixes_on_first_collision():
         origin_page="regression",
         origin_result="P1",
         series_type="predicted",
+        session_id="session-123",
     )
 
     merged = json_to_df(out["raw_data"])
@@ -75,6 +77,7 @@ def test_save_series_to_raw_data_overwrites_prior_saved_name_idempotently():
         origin_result="P1",
         series_type="portfolio",
         prior_saved_name="P1",
+        session_id="session-123",
     )
 
     merged = json_to_df(out["raw_data"])
@@ -102,6 +105,7 @@ def test_save_series_to_raw_data_aligns_monthly_series_to_month_end():
         origin_page="portopt",
         origin_result="MonthlyPort",
         series_type="portfolio",
+        session_id="session-123",
     )
 
     merged = json_to_df(out["raw_data"])

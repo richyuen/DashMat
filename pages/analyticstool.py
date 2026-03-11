@@ -156,6 +156,7 @@ from utils.regime_definitions import (
     save_regime_definition,
     validate_regime_definition_payload,
 )
+from utils.artifact_store import mutate_raw_data_store, write_raw_data_frame
 
 register_page(__name__, path="/analyticstool", name="Analytics Tool", title="Analytics Tool")
 
@@ -210,6 +211,15 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
+
+
+def _at_write_raw_store(df: pd.DataFrame, session_id: str | None, periodicity: str | None):
+    payload, _ = write_raw_data_frame(
+        df=df,
+        session_id=str(session_id or "").strip(),
+        original_periodicity=periodicity or "daily",
+    )
+    return payload
 
 
 def _has_complete_date_range(value) -> bool:
@@ -3446,8 +3456,8 @@ layout = dmc.Container(
 # cross-page navigation, plus dashmat-raw-data-store Input for same-page uploads.
 clientside_callback(
     """
-    function(data, n_intervals) {
-        if (data) {
+    function(data, meta, n_intervals) {
+        if (meta && meta.has_data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
         return [{display: "block"}, {display: "none"}];
@@ -3456,6 +3466,7 @@ clientside_callback(
     Output("at-welcome-screen-container", "style"),
     Output("at-main-app-container", "style"),
     Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("at-page-load-trigger", "n_intervals"),
 )
 
@@ -4059,7 +4070,12 @@ def on_modal_ok(
         series_to_drop = [s for s in temp_deleted if s in df.columns]
         if series_to_drop:
             df = df.drop(columns=series_to_drop)
-            updated_raw_data = df_to_json(df)
+            updated_raw_data, _ = mutate_raw_data_store(
+                raw_data,
+                session_id=session_id,
+                original_periodicity=None,
+                mutation_fn=lambda _frame: df,
+            )
             
             # Clean up assignments and order
             if temp_bench:
@@ -5452,6 +5468,7 @@ def at_manage_regime_definitions(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def add_series_from_database(
@@ -5465,6 +5482,7 @@ def add_series_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -5566,7 +5584,7 @@ def add_series_from_database(
         new_first_load = True
 
         return (
-            df_to_json(merged_df),
+            _at_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -5634,6 +5652,7 @@ def add_series_from_database(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def at_add_raw_series_from_database(
@@ -5648,6 +5667,7 @@ def at_add_raw_series_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -5726,7 +5746,7 @@ def at_add_raw_series_from_database(
         updated_bench.update(load_result.benchmark_assignments or {})
 
         return (
-            df_to_json(merged_df),
+            _at_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -5798,6 +5818,7 @@ def at_add_raw_series_from_database(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def at_add_underlying_categories_from_database(
@@ -5811,6 +5832,7 @@ def at_add_underlying_categories_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -5870,7 +5892,7 @@ def at_add_underlying_categories_from_database(
         updated_selection = (current_selection or []) + new_series
 
         return (
-            df_to_json(merged_df),
+            _at_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -5945,6 +5967,7 @@ def at_add_underlying_categories_from_database(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def at_add_portfolios_from_database(
@@ -5959,6 +5982,7 @@ def at_add_portfolios_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6038,7 +6062,7 @@ def at_add_portfolios_from_database(
         updated_bench.update(load_result.benchmark_assignments or {})
 
         return (
-            df_to_json(merged_df),
+            _at_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6114,9 +6138,10 @@ def at_add_portfolios_from_database(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
-def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load, current_vol_scaling):
+def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load, current_vol_scaling, session_id=None):
     """Handle file upload, parse data, and update stores."""
     if contents is None:
         raise PreventUpdate
@@ -6166,7 +6191,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             new_first_load = True
 
         return (
-            df_to_json(merged_df),
+            _at_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6242,11 +6267,12 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename, stashed_sheet_names,
                        existing_data, existing_periodicity, current_selection,
-                       current_bench, current_ls, current_order, first_load, current_vol_scaling):
+                       current_bench, current_ls, current_order, first_load, current_vol_scaling, session_id=None):
     """Parse selected sheet(s) and complete the import."""
     if not stashed_contents:
         raise PreventUpdate
@@ -6312,7 +6338,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             new_first_load = True
 
         return (
-            df_to_json(merged_df),
+            _at_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6665,7 +6691,12 @@ def save_edit(
 
     # Rename column in DataFrame
     df = df.rename(columns={old_name: new_name})
-    new_raw_data = df_to_json(df)
+    new_raw_data, _ = mutate_raw_data_store(
+        raw_data,
+        session_id=session_id,
+        original_periodicity=None,
+        mutation_fn=lambda _frame: df,
+    )
 
     # Update benchmark assignments
     new_benchmark_assignments = {}

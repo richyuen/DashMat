@@ -97,6 +97,7 @@ def restore_workspace_session_bundle(
     }
     key_map: dict[str, str] = {}
     warnings = []
+    required_restore_errors = []
 
     for ref in artifact_refs:
         artifact_key = ref.get("artifact_key")
@@ -104,17 +105,27 @@ def restore_workspace_session_bundle(
             continue
         record = artifact_records_by_key.get(artifact_key)
         if record is None:
-            warnings.append(f"Missing bundled artifact for {ref.get('store_key')}:{'.'.join(ref.get('path') or [])}")
+            message = f"Missing bundled artifact for {ref.get('store_key')}:{'.'.join(ref.get('path') or [])}"
+            if ref.get("required"):
+                required_restore_errors.append(message)
+            else:
+                warnings.append(message)
             continue
         try:
             key_map[artifact_key] = _restore_artifact_record(record, new_session_id, artifact_store)
         except Exception as exc:
-            warnings.append(f"Failed to restore artifact {artifact_key}: {exc}")
+            message = f"Failed to restore artifact {artifact_key}: {exc}"
+            if ref.get("required"):
+                required_restore_errors.append(message)
+            else:
+                warnings.append(message)
+
+    if required_restore_errors:
+        return {"error": "; ".join(required_restore_errors)}
 
     remapped_payload = remap_workspace_artifact_refs(restored_payload, artifact_refs, key_map)
     remapped_payload["dashmat-session-id-store"] = json.dumps(new_session_id)
     remapped_payload.pop("dashmat-saved-series-cache-store", None)
-    remapped_payload.pop("dashmat-raw-data-artifact-store", None)
 
     result = {
         "workspace_session": remapped_payload,
@@ -128,6 +139,7 @@ def restore_workspace_session_bundle(
 def collect_workspace_artifact_refs(workspace_session: dict[str, str] | None) -> list[dict[str, Any]]:
     payload = workspace_session or {}
     refs: list[dict[str, Any]] = []
+    refs.extend(_collect_raw_data_artifact_refs(payload.get("dashmat-raw-data-store")))
     refs.extend(_collect_portopt_artifact_refs(payload.get("po-results-store")))
     refs.extend(_collect_regression_artifact_refs(payload.get("reg-results-store")))
     return refs
@@ -153,9 +165,8 @@ def remap_workspace_artifact_refs(
         raw_value = payload.get(store_key)
         if not isinstance(raw_value, str):
             continue
-        try:
-            parsed = json.loads(raw_value)
-        except Exception:
+        parsed, nested_string = _parse_store_value(raw_value)
+        if parsed is None:
             continue
         updated = deepcopy(parsed)
         changed = False
@@ -168,7 +179,8 @@ def remap_workspace_artifact_refs(
             if _set_nested_path(updated, path, new_key):
                 changed = True
         if changed:
-            payload[store_key] = canonical_json_dumps(updated)
+            encoded = canonical_json_dumps(updated)
+            payload[store_key] = json.dumps(encoded) if nested_string else encoded
     return payload
 
 
@@ -189,6 +201,21 @@ def _collect_portopt_artifact_refs(raw_value: str | None) -> list[dict[str, Any]
                 }
             )
     return refs
+
+
+def _collect_raw_data_artifact_refs(raw_value: str | None) -> list[dict[str, Any]]:
+    descriptor = _parse_json_object(raw_value, unwrap_nested_string=True)
+    artifact_key = descriptor.get("raw_data_key")
+    if isinstance(artifact_key, str) and artifact_key:
+        return [
+            {
+                "store_key": "dashmat-raw-data-store",
+                "path": ["raw_data_key"],
+                "artifact_key": artifact_key,
+                "required": True,
+            }
+        ]
+    return []
 
 
 def _collect_regression_artifact_refs(raw_value: str | None) -> list[dict[str, Any]]:
@@ -264,14 +291,29 @@ def _restore_artifact_record(record: dict[str, Any], session_id: str, store: Art
     raise ValueError(f"Unsupported artifact format: {format_name}")
 
 
-def _parse_json_object(raw_value: str | None) -> dict[str, Any]:
+def _parse_json_object(raw_value: str | None, *, unwrap_nested_string: bool = False) -> dict[str, Any]:
+    parsed, nested_string = _parse_store_value(raw_value)
+    if isinstance(parsed, dict):
+        return parsed
+    if unwrap_nested_string and nested_string and isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
+def _parse_store_value(raw_value: str | None) -> tuple[Any | None, bool]:
     if not isinstance(raw_value, str) or not raw_value:
-        return {}
+        return None, False
     try:
         parsed = json.loads(raw_value)
     except Exception:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        return None, False
+    if isinstance(parsed, str):
+        try:
+            nested = json.loads(parsed)
+        except Exception:
+            return parsed, False
+        return nested, True
+    return parsed, False
 
 
 def _set_nested_path(obj: Any, path: Any, value: Any) -> bool:

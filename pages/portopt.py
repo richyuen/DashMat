@@ -112,7 +112,12 @@ from utils.dashmat_welcome_modal import (
     js_underlying_delete_row,
 )
 from utils.portfolio_series import load_portfolio_series
-from utils.artifact_store import get_dataframe_artifact, get_default_artifact_store
+from utils.artifact_store import (
+    get_dataframe_artifact,
+    get_default_artifact_store,
+    mutate_raw_data_store,
+    write_raw_data_frame,
+)
 from utils.underlying_category_imports import (
     expand_underlying_category_rows,
     get_underlying_category_desc_options,
@@ -249,6 +254,15 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
+
+
+def _po_write_raw_store(df: pd.DataFrame, session_id: str | None, periodicity: str | None):
+    payload, _ = write_raw_data_frame(
+        df=df,
+        session_id=str(session_id or "").strip(),
+        original_periodicity=periodicity or "daily",
+    )
+    return payload
 
 
 @dataclass(frozen=True)
@@ -5432,8 +5446,8 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(data, n_intervals) {
-        if (data) {
+    function(data, meta, n_intervals) {
+        if (meta && meta.has_data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }
         return [{display: "block"}, {display: "none"}];
@@ -5442,6 +5456,7 @@ clientside_callback(
     Output("po-welcome-screen", "style"),
     Output("po-main-container", "style"),
     Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("po-page-load-trigger", "n_intervals"),
 )
 
@@ -5971,6 +5986,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_series_from_database(
@@ -5987,6 +6003,7 @@ def po_add_series_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6081,7 +6098,7 @@ def po_add_series_from_database(
             alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(daily_transition_notes)}"
 
         return (
-            df_to_json(merged_df),
+            _po_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6157,6 +6174,7 @@ def po_add_series_from_database(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_raw_series_from_database(
@@ -6174,6 +6192,7 @@ def po_add_raw_series_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6252,7 +6271,7 @@ def po_add_raw_series_from_database(
         updated_bench.update(load_result.benchmark_assignments or {})
 
         return (
-            df_to_json(merged_df),
+            _po_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6333,6 +6352,7 @@ def po_add_raw_series_from_database(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_underlying_categories_from_database(
@@ -6349,6 +6369,7 @@ def po_add_underlying_categories_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6402,7 +6423,7 @@ def po_add_underlying_categories_from_database(
         updated_selection = (current_selection or []) + new_series
 
         return (
-            df_to_json(merged_df),
+            _po_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6483,6 +6504,7 @@ def po_add_underlying_categories_from_database(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_portfolios_from_database(
@@ -6500,6 +6522,7 @@ def po_add_portfolios_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6577,7 +6600,7 @@ def po_add_portfolios_from_database(
         updated_bench.update(load_result.benchmark_assignments or {})
 
         return (
-            df_to_json(merged_df),
+            _po_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6662,11 +6685,12 @@ def po_add_portfolios_from_database(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_handle_upload(contents, filename, existing_data, existing_periodicity,
                      current_selection, current_bench, current_cmabench, current_ls, current_order,
-                     current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
+                     current_vol_scaling, current_min_wt, current_max_wt, current_force_max, session_id=None):
     if contents is None:
         raise PreventUpdate
 
@@ -6703,7 +6727,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
         alert_msg = f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from {filename}"
 
         return (
-            df_to_json(merged_df),
+            _po_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6782,12 +6806,13 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename, stashed_sheet_names,
                           existing_data, existing_periodicity, current_selection,
                           current_bench, current_cmabench, current_ls, current_order,
-                          current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
+                          current_vol_scaling, current_min_wt, current_max_wt, current_force_max, session_id=None):
     """Parse selected sheet(s) and complete the import."""
     if not stashed_contents:
         raise PreventUpdate
@@ -6837,7 +6862,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
         )
 
         return (
-            df_to_json(merged_df),
+            _po_write_raw_store(merged_df, session_id, combined_periodicity),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7551,7 +7576,12 @@ def po_save_edit(
     if old_name not in df.columns or new_name in df.columns:
         raise PreventUpdate
     df = df.rename(columns={old_name: new_name})
-    new_raw_data = df_to_json(df)
+    new_raw_data, _ = mutate_raw_data_store(
+        raw_data,
+        session_id=session_id,
+        original_periodicity=None,
+        mutation_fn=lambda _frame: df,
+    )
 
     def _rename_keys(mapping, rename_values=False):
         mapping = mapping or {}
@@ -7688,6 +7718,7 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_on_modal_ok(
@@ -7713,6 +7744,7 @@ def po_on_modal_ok(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -7759,7 +7791,12 @@ def po_on_modal_ok(
         to_drop = [s for s in temp_deleted if s in df.columns]
         if to_drop:
             df = df.drop(columns=to_drop)
-            updated_raw_data = df_to_json(df)
+            updated_raw_data, _ = mutate_raw_data_store(
+                raw_data,
+                session_id=session_id,
+                original_periodicity=None,
+                mutation_fn=lambda _frame: df,
+            )
             if temp_bench:
                 temp_bench = {k: v for k, v in temp_bench.items() if k not in to_drop}
                 remaining_cols = set(df.columns)
@@ -8537,6 +8574,7 @@ def po_sync_save_series_ui(selected_portfolio, results):
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-pending-new-series-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_save_series_to_shared_data(
@@ -8546,6 +8584,7 @@ def po_save_series_to_shared_data(
     raw_data,
     periodicity,
     saved_series_store,
+    session_id=None,
 ):
     if not n_clicks or not selected_portfolio or not results or selected_portfolio not in results:
         raise PreventUpdate
@@ -8566,6 +8605,7 @@ def po_save_series_to_shared_data(
             origin_result=selected_portfolio,
             series_type="portfolio",
             prior_saved_name=entry.get("saved_series_name"),
+            session_id=session_id,
         )
     except Exception as exc:
         return no_update, no_update, no_update, f"Error saving series: {exc}"

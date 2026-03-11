@@ -4,7 +4,7 @@ import json
 
 import pandas as pd
 
-from utils.artifact_store import ArtifactStore
+from utils.artifact_store import ArtifactStore, write_raw_data_frame
 from utils.saved_series_cache import (
     build_saved_series_cache_descriptor,
     load_saved_series_cache_frame,
@@ -123,3 +123,49 @@ def test_build_workspace_session_bundle_warns_on_missing_artifact(tmp_path):
 
     assert bundle["artifacts"] == []
     assert bundle["export_warnings"]
+
+
+def test_workspace_session_bundle_collects_and_restores_raw_data_descriptor_artifact(tmp_path):
+    store = ArtifactStore(tmp_path / "artifacts")
+    raw_df = pd.DataFrame(
+        {"Asset_A": [0.01, 0.02]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02"]),
+    )
+    raw_df.index.name = "Date"
+    raw_store, _raw_meta = write_raw_data_frame(
+        df=raw_df,
+        session_id="session-export",
+        original_periodicity="daily",
+        store=store,
+    )
+    workspace_session = {
+        "dashmat-session-id-store": json.dumps("session-export"),
+        "dashmat-raw-data-store": json.dumps(raw_store),
+        "dashmat-raw-data-meta-store": json.dumps({"has_data": True}),
+    }
+
+    bundle = build_workspace_session_bundle(workspace_session, store=store)
+
+    assert len(bundle["artifact_refs"]) == 1
+    assert bundle["artifact_refs"][0]["store_key"] == "dashmat-raw-data-store"
+    assert len(bundle["artifacts"]) == 1
+
+    restored = restore_workspace_session_bundle(bundle, store=store)
+
+    assert "error" not in restored
+    restored_descriptor = json.loads(json.loads(restored["workspace_session"]["dashmat-raw-data-store"]))
+    assert restored_descriptor["raw_data_key"]
+    assert restored_descriptor["raw_data_key"] != json.loads(raw_store)["raw_data_key"]
+    restored_frame = store.get_dataframe(restored_descriptor["raw_data_key"])
+    pd.testing.assert_frame_equal(restored_frame, raw_df, check_freq=False)
+
+
+def test_remap_workspace_artifact_refs_updates_nested_raw_data_descriptor():
+    session_payload = {
+        "dashmat-raw-data-store": json.dumps(json.dumps({"raw_data_key": "old-key", "has_data": True})),
+    }
+    refs = [{"store_key": "dashmat-raw-data-store", "path": ["raw_data_key"], "artifact_key": "old-key"}]
+
+    remapped = remap_workspace_artifact_refs(session_payload, refs, {"old-key": "new-key"})
+
+    assert json.loads(json.loads(remapped["dashmat-raw-data-store"]))["raw_data_key"] == "new-key"

@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from utils.artifact_store import ArtifactStore, get_dataframe_artifact, get_default_artifact_store
+from utils.serialization import canonical_json_dumps
 from utils.returns import df_to_json
 
 
@@ -103,7 +104,7 @@ def build_saved_series_cache_descriptor(
     session_id: str,
     saved_df: pd.DataFrame,
     series_max_dates: dict[str, str],
-    raw_data_json: str,
+    raw_data_json: Any,
     store: ArtifactStore | None = None,
 ) -> dict[str, Any] | None:
     if not session_id or saved_df is None or saved_df.empty:
@@ -112,7 +113,7 @@ def build_saved_series_cache_descriptor(
     saved_df = saved_df.sort_index()
     saved_df.index = pd.to_datetime(saved_df.index)
     saved_df.index.name = saved_df.index.name or "Date"
-    raw_hash = md5(str(raw_data_json or "").encode("utf-8")).hexdigest()
+    raw_hash = md5(canonical_json_dumps(raw_data_json or "").encode("utf-8")).hexdigest()
     payload = {
         "columns": list(saved_df.columns),
         "series_max_dates": dict(series_max_dates or {}),

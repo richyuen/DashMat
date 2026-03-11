@@ -1,5 +1,6 @@
 """Returns calculation utilities for compounding and resampling."""
 
+import json
 import logging
 from io import StringIO
 import numpy as np
@@ -405,6 +406,15 @@ def build_raw_data_metadata(json_str: str | None, original_periodicity: str | No
                 "max_date": None,
             }
 
+        try:
+            parsed = json.loads(json_str) if isinstance(json_str, str) else None
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("raw_data_key"):
+            from utils.artifact_store import build_raw_data_store_metadata
+
+            return build_raw_data_store_metadata(parsed, resolved_periodicity)
+
         df = json_to_df(json_str)
         if df.empty:
             return {
@@ -460,7 +470,7 @@ def merge_returns(existing_df: pd.DataFrame | None, new_df: pd.DataFrame) -> pd.
 # JSON/DataFrame conversion with caching
 
 @cache_config.cache.memoize(timeout=0)
-def json_to_df(json_str: str) -> pd.DataFrame:
+def json_to_df(json_str: str | dict) -> pd.DataFrame:
     """Convert JSON string back to DataFrame with caching.
 
     This is the primary performance bottleneck - caching this operation
@@ -468,6 +478,20 @@ def json_to_df(json_str: str) -> pd.DataFrame:
     """
     record_payload_size("json_to_df.input", json_str)
     with timed_block("json_to_df"):
+        if isinstance(json_str, dict) and json_str.get("raw_data_key"):
+            from utils.artifact_store import load_raw_data_frame
+
+            return load_raw_data_frame(json_str)
+        if not isinstance(json_str, str):
+            return pd.DataFrame()
+        try:
+            parsed = json.loads(json_str)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("raw_data_key"):
+            from utils.artifact_store import load_raw_data_frame
+
+            return load_raw_data_frame(parsed)
         df = pd.read_json(StringIO(json_str), orient="split")
         df.index = pd.to_datetime(df.index)
         df.index.name = "Date"

@@ -11,7 +11,7 @@ import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
 
-from utils.returns import build_raw_data_metadata, df_to_json
+from utils.returns import build_raw_data_metadata, df_to_json, json_to_df
 
 
 def _sample_window_weights() -> list[dict]:
@@ -1380,10 +1380,10 @@ def test_po_save_series_aligns_month_end_and_updates_result(page_modules):
         raw_json,
         "monthly",
         {},
+        "session-123",
     )
 
-    df_after = pd.read_json(StringIO(new_raw), orient="split")
-    df_after.index = pd.to_datetime(df_after.index)
+    df_after = json_to_df(new_raw)
     assert pd.Timestamp("1976-07-30") not in df_after.index
     assert pd.Timestamp("1976-07-31") in df_after.index
     assert pd.Timestamp("1976-08-31") in df_after.index
@@ -1980,6 +1980,7 @@ def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monke
         {},
         {},
         {},
+        "session-123",
     )
 
     assert calls == [("Asset_A",)]
@@ -2012,6 +2013,7 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
         {},
         {},
         {},
+        "session-123",
     )
 
     assert result[0] is no_update
@@ -2057,9 +2059,10 @@ def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
         {},
         {},
         {},
+        "session-123",
     )
 
-    updated_df = pd.read_json(StringIO(result[7]), orient="split")
+    updated_df = json_to_df(result[7])
     assert list(updated_df.columns) == ["Asset_A"]
     assert result[12] == {}
 
