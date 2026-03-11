@@ -907,7 +907,7 @@
     return periodicityValue;
   }
 
-  function analyticsControlSync(periodicity, returnsType, volScaler, seriesSelect, activeTab, rollingWindow, rollingMetric, rollingReturnType, monthlyView, monthlySeries) {
+  function analyticsControlSync(periodicity, returnsType, volScaler, seriesSelect, activeTab, rollingWindow, rollingMetric, rollingReturnType, monthlyView, monthlySeries, useRiskFree) {
     return [
       periodicity,
       returnsType,
@@ -918,7 +918,8 @@
       rollingMetric || "total_return",
       rollingReturnType || "annualized",
       monthlyView !== null && monthlyView !== undefined ? monthlyView : "annual",
-      monthlySeries
+      monthlySeries,
+      useRiskFree === "zero" ? false : true
     ];
   }
 
@@ -961,7 +962,7 @@
     ];
   }
 
-  function regressionControlSync(periodicity, volScaler, model, name, forceZero, robustSe, expWt, halflife, windowType, windowSize, optStep, optStepUnit, fillInSample, missingData, alpha, l1Ratio, activeTab) {
+  function regressionControlSync(periodicity, volScaler, model, name, forceZero, robustSe, expWt, halflife, windowType, windowSize, optStep, optStepUnit, fillInSample, missingData, alpha, l1Ratio, activeTab, useRiskFree) {
     return [
       periodicity,
       volScaler !== null && volScaler !== undefined ? volScaler : 0,
@@ -979,11 +980,12 @@
       missingData,
       alpha !== null && alpha !== undefined ? alpha : 1.0,
       l1Ratio !== null && l1Ratio !== undefined ? l1Ratio : 0.5,
-      activeTab
+      activeTab,
+      useRiskFree === "zero" ? false : true
     ];
   }
 
-  function portoptControlSync(periodicity, volScaler, activeTab, seriesSelect, fillInSample, optStepUnit, optWindow, windowSize, optStep, optModel, portfolioName, expWtCov, halflife, covShrinkage, covShrinkageTarget, missingData, objective, blTau, exAnteMode) {
+  function portoptControlSync(periodicity, volScaler, activeTab, seriesSelect, fillInSample, optStepUnit, optWindow, windowSize, optStep, optModel, portfolioName, expWtCov, halflife, covShrinkage, covShrinkageTarget, missingData, objective, blTau, exAnteMode, useRiskFree) {
     return [
       periodicity,
       volScaler,
@@ -1003,7 +1005,8 @@
       missingData,
       objective,
       blTau,
-      exAnteMode || "ret_cov"
+      exAnteMode || "ret_cov",
+      useRiskFree === "zero" ? false : true
     ];
   }
 

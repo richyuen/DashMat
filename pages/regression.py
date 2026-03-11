@@ -784,6 +784,21 @@ def build_reg_main_layout():
                                                 ),
                                             ),
                                         ]),
+                                        html.Div([
+                                            dmc.Text("Sharpe/Sortino RF", size="sm", mb=3, fw=500),
+                                            html.Div(
+                                                dmc.SegmentedControl(
+                                                    id="reg-use-risk-free-switch",
+                                                    data=[
+                                                        {"value": "zero", "label": "Zero"},
+                                                        {"value": "tbill", "label": "T-Bill"},
+                                                    ],
+                                                    value="tbill",
+                                                    size="sm",
+                                                ),
+                                                style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                            ),
+                                        ]),
                                     ],
                                 ),
                                 html.Div(
@@ -1636,6 +1651,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-periodicity-value-store", data="daily", storage_type="session"),
         dcc.Store(id="reg-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="reg-vol-scaler-value-store", data=0, storage_type="session"),
+        dcc.Store(id="reg-use-risk-free-store", data=True, storage_type="session"),
         dcc.Store(id="reg-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="reg-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-common-daily-candidates-store", data=None, storage_type="memory"),
@@ -1900,6 +1916,7 @@ clientside_callback(
     Output("reg-alpha-store", "data"),
     Output("reg-l1-ratio-store", "data"),
     Output("reg-active-tab-store", "data"),
+    Output("reg-use-risk-free-store", "data"),
     Input("reg-periodicity-select", "value"),
     Input("reg-vol-scaler-input", "value"),
     Input("reg-model-select", "value"),
@@ -1917,11 +1934,27 @@ clientside_callback(
     Input("reg-alpha-input", "value"),
     Input("reg-l1-ratio-input", "value"),
     Input("reg-tabs", "value"),
+    Input("reg-use-risk-free-switch", "value"),
     prevent_initial_call=True,
 )
 
 clientside_callback("function(v){return v;}",
     Output("reg-periodicity-select","value", allow_duplicate=True), Input("reg-periodicity-load-sync-dummy","data"), prevent_initial_call=True)
+
+clientside_callback(
+    """
+    function(n, storedValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        return storedValue === false ? "zero" : "tbill";
+    }
+    """,
+    Output("reg-use-risk-free-switch", "value"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("reg-use-risk-free-store", "data"),
+    prevent_initial_call=True,
+)
 
 
 # ===========================================================================
@@ -3965,6 +3998,8 @@ def reg_toggle_file_menu_actions(raw_data, results):
     State("reg-rolling-metric-select", "value"),
     State("reg-calendar-view-select", "value"),
     State("reg-calendar-series-select", "value"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
 )
 def reg_download_excel(
@@ -3978,6 +4013,8 @@ def reg_download_excel(
     rolling_metric=None,
     calendar_view=None,
     calendar_series=None,
+    saved_series_store=None,
+    use_risk_free=True,
 ):
     if n_clicks is None or not results:
         raise PreventUpdate
@@ -4042,6 +4079,7 @@ def reg_download_excel(
         {"Parameter": "ARIMA Order (p,d,q)", "Value": _safe_json(config.get("arima_order"))},
         {"Parameter": "GARCH Order (p,q)", "Value": _safe_json(config.get("garch_order"))},
         {"Parameter": "Vol Scaler", "Value": entry.get("vol_scaler", 0)},
+        {"Parameter": "Use BCTBill13 for Sharpe/Sortino", "Value": bool(use_risk_free)},
         {"Parameter": "Benchmark Assignments", "Value": _safe_json(entry.get("benchmark_assignments") or {})},
         {"Parameter": "Long/Short Assignments", "Value": _safe_json(entry.get("long_short_assignments") or {})},
         {"Parameter": "Vol Scaling Assignments", "Value": _safe_json(entry.get("vol_scaling_assignments") or {})},
@@ -4178,6 +4216,9 @@ def reg_download_excel(
                     "null",
                     0,
                     "{}",
+                    risk_free_json_from_store(saved_series_store),
+                    spx_json_from_store(saved_series_store),
+                    bool(use_risk_free),
                 )
                 normalized = _normalize_stats_payload(stats_payload)
                 if normalized:
@@ -4253,6 +4294,8 @@ def reg_download_excel(
                 metric,
                 0,
                 "{}",
+                risk_free_json_from_store(saved_series_store),
+                bool(use_risk_free),
             )
             if rolling_calc is not None and not rolling_calc.empty:
                 rolling_df = rolling_calc.reset_index()
@@ -5015,6 +5058,8 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
     Input("reg-rolling-return-type-select", "value"),
     Input("reg-rolling-metric-select", "value"),
     Input("reg-rolling-chart-switch", "value"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-use-risk-free-store", "data"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
@@ -5028,6 +5073,8 @@ def reg_render_rolling_returns(
     rolling_return_type,
     rolling_metric,
     view_mode,
+    saved_series_store,
+    use_risk_free,
     theme,
     active_tab="rolling_returns",
     initial_tab_ready=True,
@@ -5088,6 +5135,8 @@ def reg_render_rolling_returns(
             metric,
             0,
             "{}",
+            risk_free_json_from_store(saved_series_store),
+            bool(use_risk_free),
         )
     if rolling_df is None or rolling_df.empty:
         return dmc.Text("No rolling values available for selected window.", size="sm", c="dimmed")
@@ -5595,11 +5644,12 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-use-risk-free-store", "data"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, active_tab="statistics", initial_tab_ready=True):
+def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, use_risk_free=True, active_tab="statistics", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "statistics", initial_tab_ready):
         raise PreventUpdate
     if not selected or not results or selected not in results:
@@ -5749,6 +5799,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
                 "{}",
                 risk_free_json_from_store(saved_series_store),
                 spx_json_from_store(saved_series_store),
+                bool(use_risk_free),
             )
     except Exception as exc:
         return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")

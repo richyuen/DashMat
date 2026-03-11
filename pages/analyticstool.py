@@ -2045,6 +2045,21 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                 ),
                                             ),
                                         ]),
+                                        html.Div([
+                                            dmc.Text("Sharpe/Sortino RF", size="sm", mb=3, fw=500),
+                                            html.Div(
+                                                dmc.SegmentedControl(
+                                                    id="at-use-risk-free-switch",
+                                                    data=[
+                                                        {"value": "zero", "label": "Zero"},
+                                                        {"value": "tbill", "label": "T-Bill"},
+                                                    ],
+                                                    value="tbill",
+                                                    size="sm",
+                                                ),
+                                                style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                            ),
+                                        ]),
                                     ],
                                 ),
                                 html.Div([
@@ -3351,6 +3366,7 @@ layout = dmc.Container(
         dcc.Store(id="at-rolling-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="at-drawdown-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="at-growth-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="at-use-risk-free-store", data=True, storage_type="session"),
         dcc.Store(id="at-monthly-view-store", data="annual", storage_type="session"),
         dcc.Store(id="at-monthly-series-store", data=None, storage_type="session"),
         dcc.Store(id="at-factor-mode-store", data="box", storage_type="session"),
@@ -4187,6 +4203,7 @@ clientside_callback(
     Output("at-rolling-return-type-store", "data"),
     Output("at-monthly-view-store", "data"),
     Output("at-monthly-series-store", "data"),
+    Output("at-use-risk-free-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-returns-type-select", "value"),
     Input("at-vol-scaler-input", "value"),
@@ -4197,11 +4214,28 @@ clientside_callback(
     Input("at-rolling-return-type-select", "value"),
     Input("at-monthly-view-checkbox", "value"),
     Input("at-monthly-series-select", "value"),
+    Input("at-use-risk-free-switch", "value"),
     prevent_initial_call=True,
 )
 
 
 # Sync periodicity to PortOpt only on raw-data load/update events.
+clientside_callback(
+    """
+    function(n, storedValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        return storedValue === false ? "zero" : "tbill";
+    }
+    """,
+    Output("at-use-risk-free-switch", "value"),
+    Input("at-page-load-trigger", "n_intervals"),
+    State("at-use-risk-free-store", "data"),
+    prevent_initial_call=True,
+)
+
+
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="syncAnalyticsPeriodicity"),
     Output("at-periodicity-load-sync-dummy", "data"),
@@ -7079,9 +7113,11 @@ def control_statistics_loading_display(active_tab, state_ready, statistics_loade
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-use-risk-free-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
+def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store):
     """Update the Rolling Returns grid with rolling window calculations."""
     # Lazy loading: only calculate when rolling tab/table view is active and ready.
     if active_tab != "rolling" or chart_checked != "table" or not state_ready or not _has_complete_date_range(date_range):
@@ -7105,7 +7141,9 @@ def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, select
             rolling_return_type,
             rolling_metric or "total_return",
             vol_scaler or 0,
-            _mapping_payload(vol_scaling_assignments)
+            _mapping_payload(vol_scaling_assignments),
+            _risk_free_json_from_store(saved_series_store),
+            bool(use_risk_free),
         )
 
         if rolling_df.empty:
@@ -7162,10 +7200,12 @@ def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, select
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-use-risk-free-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
+def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store, theme):
     """Update the Rolling Returns chart with rolling window calculations."""
     # Create empty figure
     empty_fig = go.Figure()
@@ -7199,7 +7239,9 @@ def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selec
             rolling_return_type,
             rolling_metric or "total_return",
             vol_scaler or 0,
-            _mapping_payload(vol_scaling_assignments)
+            _mapping_payload(vol_scaling_assignments),
+            _risk_free_json_from_store(saved_series_store),
+            bool(use_risk_free),
         )
 
         if rolling_df.empty:
@@ -7496,12 +7538,13 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-use-risk-free-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, saved_series_store=None, active_tab="statistics", initial_tab_ready=True):
+def update_statistics(raw_data=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, active_tab="statistics", initial_tab_ready=True):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if active_tab != "statistics" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
@@ -7523,6 +7566,7 @@ def update_statistics(raw_data=None, periodicity=None, selected_series=None, ben
                 _mapping_payload(vol_scaling_assignments),
                 _risk_free_json_from_store(saved_series_store),
                 _spx_json_from_store(saved_series_store),
+                bool(use_risk_free),
             )
 
         if not stats:
@@ -9010,6 +9054,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-monthly-series-store", "data"),
     State("at-vol-scaler-value-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("at-use-risk-free-store", "data"),
     State("at-correlation-exp-wt-switch", "checked"),
     State("at-correlation-halflife-input", "value"),
     State("at-correlation-shrinkage-select", "value"),
@@ -9042,6 +9087,7 @@ def download_excel(
     monthly_series,
     vol_scaler,
     vol_scaling_assignments,
+    use_risk_free,
     correlation_exp_wt,
     correlation_halflife,
     correlation_shrinkage,
@@ -9107,6 +9153,7 @@ def download_excel(
                 bundle.vol_scaling_payload,
                 _risk_free_json_from_store(saved_series_store),
                 _spx_json_from_store(saved_series_store),
+                bool(use_risk_free),
             )
 
         # Build statistics DataFrame (transposed: statistics as rows, series as columns)

@@ -928,6 +928,19 @@ def _risk_free_series_for_periodicity(saved_series_store, periodicity):
     return rf_series.sort_index().dropna()
 
 
+def _po_result_use_risk_free(portfolio_data) -> bool:
+    """Resolve the run-time RF toggle stored on a portfolio result."""
+    if not isinstance(portfolio_data, dict):
+        return True
+    risk_free_meta = portfolio_data.get("risk_free_meta")
+    if isinstance(risk_free_meta, dict) and "enabled" in risk_free_meta:
+        return bool(risk_free_meta.get("enabled"))
+    config = portfolio_data.get("config")
+    if isinstance(config, dict) and "use_risk_free" in config:
+        return bool(config.get("use_risk_free"))
+    return True
+
+
 def _resolve_risk_free_context(
     model,
     asset_order,
@@ -936,8 +949,17 @@ def _resolve_risk_free_context(
     reference_index,
     saved_series_store,
     cmabench_assignments,
+    use_risk_free=True,
 ):
     """Resolve annual risk-free rate for optimization/frontier Sharpe logic."""
+    if not use_risk_free:
+        return {
+            "rf_annual": 0.0,
+            "rf_source": "disabled",
+            "rf_warning": None,
+            "rf_asset": None,
+        }
+
     if model in {"ex_ante_mv", "black_litterman"}:
         rf_asset = _resolve_risk_free_asset_name(asset_order, cmabench_assignments)
         if rf_asset and expected_mu_annual:
@@ -1422,6 +1444,7 @@ def _build_frontier_snapshot(
     linear_constraints,
     saved_series_store=None,
     cmabench_assignments=None,
+    use_risk_free=True,
 ):
     """Compute frontier snapshot for chart/table/export with optional custom moments."""
     window_weights = portfolio_data.get("window_weights", []) or []
@@ -1528,6 +1551,7 @@ def _build_frontier_snapshot(
         reference_index=est_data.index,
         saved_series_store=saved_series_store,
         cmabench_assignments=cmabench_assignments,
+        use_risk_free=use_risk_free,
     )
     rf_annual = float(rf_context.get("rf_annual", 0.0) or 0.0)
 
@@ -1609,6 +1633,7 @@ def _po_compute_frontier_snapshot_cached(
     linear_constraints_payload: str,
     saved_series_payload: str,
     cmabench_payload: str,
+    use_risk_free: bool = True,
 ) -> str:
     if not raw_data or not window_weights_payload or not config_payload:
         raise ValueError("No frontier data available.")
@@ -1631,6 +1656,7 @@ def _po_compute_frontier_snapshot_cached(
         linear_constraints=json.loads(linear_constraints_payload) if linear_constraints_payload else [],
         saved_series_store=json.loads(saved_series_payload) if saved_series_payload else None,
         cmabench_assignments=json.loads(cmabench_payload) if cmabench_payload else None,
+        use_risk_free=use_risk_free,
     )
     return canonical_json_dumps(snapshot)
 
@@ -1650,6 +1676,7 @@ def _po_resolve_frontier_snapshot(
     linear_constraints,
     saved_series_store=None,
     cmabench_assignments=None,
+    use_risk_free=True,
     persist_cache=False,
 ):
     window_weights = (portfolio_data or {}).get("window_weights", []) or []
@@ -1659,7 +1686,7 @@ def _po_resolve_frontier_snapshot(
 
     resolved_idx, _ = _resolve_frontier_window(window_weights, window_idx)
     risk_measure = _normalize_frontier_risk_measure(config.get("model", ""), rm)
-    cached = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
+    cached = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure, use_risk_free=use_risk_free)
     if cached is not None:
         return cached
 
@@ -1678,12 +1705,13 @@ def _po_resolve_frontier_snapshot(
         canonical_json_dumps(linear_constraints or []),
         canonical_json_dumps(saved_series_store or {}),
         _mapping_payload(cmabench_assignments),
+        bool(use_risk_free),
     )
     snapshot = json.loads(payload) if payload else None
     if snapshot is None:
         raise ValueError("No frontier data available.")
     if persist_cache:
-        _cache_frontier_snapshot(portfolio_data, snapshot)
+        _cache_frontier_snapshot(portfolio_data, snapshot, use_risk_free=use_risk_free)
     return snapshot
 
 
@@ -1784,7 +1812,7 @@ def _build_frontier_column_defs(snapshot):
     return cols
 
 
-def _cache_frontier_snapshot(portfolio_entry, snapshot):
+def _cache_frontier_snapshot(portfolio_entry, snapshot, use_risk_free=True):
     """Insert a computed snapshot into result-level frontier cache."""
     if not isinstance(portfolio_entry, dict) or not snapshot:
         return
@@ -1792,19 +1820,28 @@ def _cache_frontier_snapshot(portfolio_entry, snapshot):
     idx_key = str(snapshot.get("window_index", 0))
     rm_key = str(snapshot.get("risk_measure", "MV"))
     by_window = cache.get(idx_key) or {}
-    by_window[rm_key] = snapshot
+    rf_key = "rf_on" if use_risk_free else "rf_off"
+    by_rm = by_window.get(rm_key)
+    if isinstance(by_rm, dict) and any(key in by_rm for key in ("rf_on", "rf_off")):
+        by_rm[rf_key] = snapshot
+        by_window[rm_key] = by_rm
+    else:
+        by_window[rm_key] = {rf_key: snapshot}
     cache[idx_key] = by_window
     portfolio_entry["frontier_cache"] = cache
 
 
-def _get_cached_frontier_snapshot(portfolio_entry, window_idx, rm):
+def _get_cached_frontier_snapshot(portfolio_entry, window_idx, rm, use_risk_free=True):
     """Read cached snapshot if present."""
     if not isinstance(portfolio_entry, dict):
         return None
     cache = portfolio_entry.get("frontier_cache") or {}
     idx_key = str(window_idx)
     rm_key = str(rm)
-    return (cache.get(idx_key) or {}).get(rm_key)
+    cached = (cache.get(idx_key) or {}).get(rm_key)
+    if isinstance(cached, dict) and any(key in cached for key in ("rf_on", "rf_off")):
+        return cached.get("rf_on" if use_risk_free else "rf_off")
+    return cached
 
 
 def _get_cma_stats_map(version: int, cma_type: str) -> dict[str, dict[str, float]]:
@@ -2001,6 +2038,21 @@ def build_po_main_layout():
                                                     suffix="%",
                                                     w=120,
                                                 ),
+                                            ),
+                                        ]),
+                                        html.Div([
+                                            dmc.Text("Sharpe/Sortino RF", size="sm", mb=3, fw=500),
+                                            html.Div(
+                                                dmc.SegmentedControl(
+                                                    id="po-use-risk-free-switch",
+                                                    data=[
+                                                        {"value": "zero", "label": "Zero"},
+                                                        {"value": "tbill", "label": "T-Bill"},
+                                                    ],
+                                                    value="tbill",
+                                                    size="sm",
+                                                ),
+                                                style={"height": "36px", "display": "flex", "alignItems": "center"},
                                             ),
                                         ]),
                                     ],
@@ -3375,6 +3427,7 @@ layout = dmc.Container(
         dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="po-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
+        dcc.Store(id="po-use-risk-free-store", data=True, storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="po-common-daily-candidates-store", data=None, storage_type="memory"),
@@ -4298,6 +4351,7 @@ clientside_callback(
     Output("po-objective-store", "data"),
     Output("po-bl-tau-store", "data"),
     Output("po-ex-ante-mode-store", "data"),
+    Output("po-use-risk-free-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-vol-scaler-input", "value"),
     Input("po-vis-tabs", "value"),
@@ -4317,6 +4371,22 @@ clientside_callback(
     Input("po-objective-select", "value"),
     Input("po-bl-tau-input", "value"),
     Input("po-ex-ante-mode-select", "value"),
+    Input("po-use-risk-free-switch", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n, storedValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        return storedValue === false ? "zero" : "tbill";
+    }
+    """,
+    Output("po-use-risk-free-switch", "value"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-use-risk-free-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -7984,6 +8054,7 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-corr-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-linear-constraints-store", "data"),
+    State("po-use-risk-free-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
@@ -7996,7 +8067,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         opt_model, missing_data, fill_in_sample_value, current_results,
                         pending_series,
                         ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
-                        ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints,
+                        ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints, use_risk_free,
                         saved_series_store):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
@@ -8252,13 +8323,15 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 reference_index=opt_df.index,
                 saved_series_store=saved_series_store,
                 cmabench_assignments=cmabench_assignments,
+                use_risk_free=bool(use_risk_free),
             )
-            if model_value == "maximize_sharpe":
+            if model_value == "maximize_sharpe" and use_risk_free:
                 rf_series_runtime = _risk_free_series_for_periodicity(saved_series_store, periodicity)
 
         config["risk_free_source"] = resolved_rf_context.get("rf_source")
         config["risk_free_annual_default"] = float(resolved_rf_context.get("rf_annual", 0.0) or 0.0)
         config["risk_free_warning"] = resolved_rf_context.get("rf_warning")
+        config["use_risk_free"] = bool(use_risk_free)
 
         runtime_config = dict(config)
         runtime_config["risk_free_annual"] = float(resolved_rf_context.get("rf_annual", 0.0) or 0.0)
@@ -8305,6 +8378,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 "source": resolved_rf_context.get("rf_source"),
                 "annual": float(resolved_rf_context.get("rf_annual", 0.0) or 0.0),
                 "warning": resolved_rf_context.get("rf_warning"),
+                "enabled": bool(use_risk_free),
             },
         }
         try:
@@ -8322,6 +8396,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 linear_constraints=linear_constraints,
                 saved_series_store=saved_series_store,
                 cmabench_assignments=cmabench_assignments,
+                use_risk_free=bool(use_risk_free),
                 persist_cache=True,
             )
         except Exception:
@@ -8788,6 +8863,8 @@ def po_toggle_rolling_return_type(metric):
     Input("po-rolling-return-type-select", "value"),
     Input("po-rolling-metric-select", "value"),
     Input("po-rolling-chart-switch", "value"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("po-use-risk-free-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -8806,6 +8883,8 @@ def po_render_rolling(
     return_type,
     metric,
     view_mode,
+    saved_series_store,
+    use_risk_free,
     raw_data,
     bench,
     ls,
@@ -8816,6 +8895,7 @@ def po_render_rolling(
 ):
     if active_tab != "rolling" or not results:
         return html.Div()
+    result_use_risk_free = _po_result_use_risk_free((results or {}).get(selected_portfolio))
 
     display_df, ordered_cols = _po_build_display_series(
         results,
@@ -8845,6 +8925,8 @@ def po_render_rolling(
         metric,
         0,
         "{}",
+        _risk_free_json_from_store(saved_series_store),
+        result_use_risk_free,
     )
     if rolling_df.empty:
         return dmc.Text("No rolling values available for selected settings.", c="dimmed")
@@ -9405,6 +9487,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, tab_loa
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
     Input("dashmat-saved-series-cache-store", "data"),
+    Input("po-use-risk-free-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -9419,6 +9502,7 @@ def po_render_statistics(
     active_tab,
     selected_portfolio,
     saved_series_store,
+    use_risk_free,
     periodicity=None,
     raw_data=None,
     bench=None,
@@ -9453,19 +9537,39 @@ def po_render_statistics(
 
             raw_json = df_to_json(display_df[ordered_cols])
             series_names = list(ordered_cols)
-
-            stats = calculate_statistics_cached(
-                raw_json,
-                periodicity or "daily",
-                tuple(series_names),
-                "{}",
-                "{}",
-                "null",
-                0,
-                "{}",
-                _risk_free_json_from_store(saved_series_store),
-                _spx_json_from_store(saved_series_store),
-            )
+            if legacy_compare:
+                stats = []
+                for series_name in series_names:
+                    if series_name not in results:
+                        continue
+                    series_stats = calculate_statistics_cached(
+                        df_to_json(display_df[[series_name]]),
+                        periodicity or "daily",
+                        (series_name,),
+                        "{}",
+                        "{}",
+                        "null",
+                        0,
+                        "{}",
+                        _risk_free_json_from_store(saved_series_store),
+                        _spx_json_from_store(saved_series_store),
+                        _po_result_use_risk_free(results.get(series_name)),
+                    )
+                    stats.extend(series_stats or [])
+            else:
+                stats = calculate_statistics_cached(
+                    raw_json,
+                    periodicity or "daily",
+                    tuple(series_names),
+                    "{}",
+                    "{}",
+                    "null",
+                    0,
+                    "{}",
+                    _risk_free_json_from_store(saved_series_store),
+                    _spx_json_from_store(saved_series_store),
+                    _po_result_use_risk_free(results.get(selected_portfolio)),
+                )
 
             if not stats:
                 return html.Div()
@@ -9598,12 +9702,13 @@ def po_render_returns(
     State("po-rolling-window-select", "value"),
     State("po-rolling-return-type-select", "value"),
     State("po-rolling-metric-select", "value"),
+    State("po-use-risk-free-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-weight-portfolio-select", "value"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
-                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, saved_series_store=None, selected_portfolio=None):
+                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, use_risk_free=True, saved_series_store=None, selected_portfolio=None):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -9658,6 +9763,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         settings_rows = []
         pdata = (active_results or {}).get(selected_name) or {}
+        result_use_risk_free = _po_result_use_risk_free(pdata)
         cfg = pdata.get("config", {}) or {}
         window_weights = pdata.get("window_weights", []) or []
         risk_free_meta = pdata.get("risk_free_meta", {}) or {}
@@ -9722,6 +9828,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         _add_setting("Ex-Ante Correlation", _safe_json_text(cfg.get("ex_ante_corr") or {}))
         _add_setting("BL Tau", cfg.get("bl_tau"))
         _add_setting("BL Views", _safe_json_text(cfg.get("bl_views") or []))
+        _add_setting("Use BCTBill13 for Sharpe/Sortino", result_use_risk_free)
         _add_setting("Risk-Free Source", risk_free_meta.get("source", cfg.get("risk_free_source", "")))
         _add_setting("Risk-Free Annual", risk_free_meta.get("annual", cfg.get("risk_free_annual_default")))
         _add_setting("Risk-Free Warning", risk_free_meta.get("warning", cfg.get("risk_free_warning", "")))
@@ -9805,6 +9912,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                     "{}",
                     _risk_free_json_from_store(saved_series_store),
                     _spx_json_from_store(saved_series_store),
+                    result_use_risk_free,
                 )
                 if stats:
                     stats_data = {"Statistic": [sn for sn, _ in STATS_CONFIG]}
@@ -9852,6 +9960,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 rolling_metric or "total_return",
                 0,
                 "{}",
+                _risk_free_json_from_store(saved_series_store),
+                result_use_risk_free,
             )
         except Exception:
             rolling_df = pd.DataFrame()
@@ -9986,6 +10096,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                         linear_constraints=config.get("linear_constraints", []),
                         saved_series_store=saved_series_store,
                         cmabench_assignments=cmabench,
+                        use_risk_free=result_use_risk_free,
                     )
 
                     window_start = format_mdy_date(snapshot.get("window_est_start"))
@@ -10425,6 +10536,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-vol-scaling-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
+    State("po-use-risk-free-store", "data"),
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("po-linear-constraints-store", "data"),
@@ -10433,7 +10545,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
 def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded, switch_value,
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
-                             vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, series_select, theme,
+                             vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, use_risk_free, series_select, theme,
                              linear_constraints):
     if not _po_lazy_tab_render_ready(active_tab, "frontier", tab_loaded) or switch_value != "chart" or not selected_portfolio or not results:
         return html.Div()
@@ -10441,6 +10553,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded
         return html.Div()
 
     portfolio_data = results[selected_portfolio]
+    result_use_risk_free = _po_result_use_risk_free(portfolio_data)
     window_weights = portfolio_data.get("window_weights", [])
     config = portfolio_data.get("config", {})
     opt_series = config.get("selected_series", [])
@@ -10474,6 +10587,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded
             linear_constraints=linear_constraints,
             saved_series_store=saved_series_store,
             cmabench_assignments=cmabench_assignments,
+            use_risk_free=result_use_risk_free,
         )
 
         frontier_pts = snapshot.get("frontier_points", []) or []
@@ -10567,6 +10681,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded
     State("po-vol-scaling-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
+    State("po-use-risk-free-store", "data"),
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
@@ -10586,6 +10701,7 @@ def po_render_frontier_table(
     vol_scaling,
     cmabench_assignments,
     saved_series_store,
+    use_risk_free,
     linear_constraints,
 ):
     if not _po_lazy_tab_render_ready(active_tab, "frontier", tab_loaded) or switch_value != "table" or not selected_portfolio or not results:
@@ -10594,6 +10710,7 @@ def po_render_frontier_table(
         return html.Div()
 
     portfolio_data = results[selected_portfolio]
+    result_use_risk_free = _po_result_use_risk_free(portfolio_data)
     window_weights = portfolio_data.get("window_weights", []) or []
     config = portfolio_data.get("config", {}) or {}
     opt_series = config.get("selected_series", []) or []
@@ -10623,6 +10740,7 @@ def po_render_frontier_table(
                 linear_constraints=linear_constraints,
                 saved_series_store=saved_series_store,
                 cmabench_assignments=cmabench_assignments,
+                use_risk_free=result_use_risk_free,
             )
         except Exception:
             return html.Div()
@@ -10642,6 +10760,7 @@ def po_render_frontier_table(
     Input("po-vis-tabs", "value"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
+    Input("po-use-risk-free-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -10653,6 +10772,7 @@ def po_render_frontier_rf_warning(
     active_tab,
     window_idx,
     rm,
+    use_risk_free,
     periodicity,
     saved_series_store,
     cmabench_assignments,
@@ -10665,6 +10785,9 @@ def po_render_frontier_rf_warning(
         return "", hidden
 
     portfolio_data = results[selected_portfolio]
+    result_use_risk_free = _po_result_use_risk_free(portfolio_data)
+    if not result_use_risk_free:
+        return "", hidden
     config = portfolio_data.get("config", {}) or {}
     model = config.get("model", "")
     warning = None
@@ -10675,7 +10798,12 @@ def po_render_frontier_rf_warning(
             risk_measure = "MV"
         try:
             resolved_idx, _ = _resolve_frontier_window(portfolio_data.get("window_weights", []) or [], window_idx)
-            snapshot = _get_cached_frontier_snapshot(portfolio_data, resolved_idx, risk_measure)
+            snapshot = _get_cached_frontier_snapshot(
+                portfolio_data,
+                resolved_idx,
+                risk_measure,
+                use_risk_free=result_use_risk_free,
+            )
         except Exception:
             snapshot = None
         warning = (
@@ -10691,6 +10819,7 @@ def po_render_frontier_rf_warning(
             reference_index=None,
             saved_series_store=saved_series_store,
             cmabench_assignments=cmabench_assignments,
+            use_risk_free=result_use_risk_free,
         )
         warning = rf_ctx.get("rf_warning")
 

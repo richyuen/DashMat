@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import utils.returns as returns_module
 from utils.returns import (
     _fast_rolling_return_series,
     _legacy_rolling_return_series,
@@ -12,6 +13,7 @@ from utils.returns import (
     annualization_factor,
     build_raw_data_metadata,
     calculate_excess_returns,
+    calculate_rolling_returns,
     df_to_json,
     fill_calendar_gaps,
     filter_to_trading_days,
@@ -158,6 +160,87 @@ def test_calculate_excess_returns_computes_selected_series_only():
     assert list(excess.columns) == ["A", "C"]
     assert excess["A"].iloc[1] == pytest.approx(0.02)
     assert excess["C"].iloc[1] == pytest.approx(0.0)
+
+
+def test_calculate_rolling_returns_can_disable_risk_free_proxy():
+    idx = pd.date_range("2024-01-01", periods=300, freq="B")
+    df = pd.DataFrame({"A": np.linspace(0.008, 0.012, len(idx))}, index=idx)
+    df.index.name = "Date"
+    rf_df = pd.DataFrame({"BCTBill13_TRIndex": [0.002] * len(idx)}, index=idx)
+    rf_df.index.name = "Date"
+    raw_json = df_to_json(df)
+
+    with_rf = calculate_rolling_returns(
+        raw_json,
+        "daily",
+        ("A",),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        "1y",
+        "annualized",
+        "sharpe_ratio",
+        0,
+        mapping_payload_for_cache({}),
+        df_to_json(rf_df),
+        True,
+    )
+    without_rf = calculate_rolling_returns(
+        raw_json,
+        "daily",
+        ("A",),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        "1y",
+        "annualized",
+        "sharpe_ratio",
+        0,
+        mapping_payload_for_cache({}),
+        df_to_json(rf_df),
+        False,
+    )
+
+    assert not with_rf.empty
+    assert not without_rf.empty
+    assert with_rf.iloc[-1, 0] != without_rf.iloc[-1, 0]
+
+
+def test_calculate_rolling_returns_skips_risk_free_resample_for_non_rf_metrics(monkeypatch):
+    idx = pd.date_range("2024-01-01", periods=10, freq="B")
+    df = pd.DataFrame({"A": np.linspace(0.008, 0.012, len(idx))}, index=idx)
+    df.index.name = "Date"
+
+    monkeypatch.setattr(
+        returns_module,
+        "resample_returns_cached",
+        lambda json_str, *_args, **_kwargs: (
+            pytest.fail("risk-free resample should not run for total_return")
+            if json_str == "unused-rf-json"
+            else returns_module.json_to_df(json_str)
+        ),
+    )
+
+    rolling = calculate_rolling_returns(
+        df_to_json(df),
+        "daily",
+        ("A",),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        "3m",
+        "annualized",
+        "total_return",
+        0,
+        mapping_payload_for_cache({}),
+        "unused-rf-json",
+        True,
+    )
+
+    assert isinstance(rolling, pd.DataFrame)
 
 
 def test_annualization_factor_defaults_to_daily():

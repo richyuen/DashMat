@@ -1433,6 +1433,8 @@ def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, reg
         "annualized",
         "total_return",
         "table",
+        None,
+        True,
         "light",
     )
 

@@ -688,10 +688,30 @@ def _fast_rolling_return_series(
 
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, rolling_window="1y", rolling_return_type="annualized", rolling_metric="total_return", vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+def calculate_rolling_returns(
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    rolling_window="1y",
+    rolling_return_type="annualized",
+    rolling_metric="total_return",
+    vol_scaler: float = 0,
+    vol_scaling_assignments: str = "",
+    risk_free_returns_json: str = "",
+    use_risk_free: bool = True,
+):
     """Calculate rolling returns for Excel export - matches the Rolling grid logic."""
     try:
-        from utils.statistics import sharpe_ratio, sortino_ratio
+        from utils.statistics import (
+            sharpe_ratio,
+            sharpe_ratio_with_risk_free,
+            sortino_ratio,
+            sortino_ratio_with_risk_free,
+        )
 
         # Get working returns (forces alignment and filtering)
         # working_df contains Series (aligned) OR (Series - Bench) if L/S
@@ -711,6 +731,17 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
         # Parse assignments
         benchmark_dict = parse_mapping_payload(benchmark_assignments)
         long_short_dict = parse_mapping_payload(long_short_assignments)
+        needs_risk_free = use_risk_free and rolling_metric in {"sharpe_ratio", "sortino_ratio"}
+        risk_free_series = None
+        if needs_risk_free and risk_free_returns_json:
+            try:
+                rf_df = resample_returns_cached(risk_free_returns_json, periodicity or "daily")
+                if not rf_df.empty:
+                    rf_col = rf_df.columns[0]
+                    risk_free_series = rf_df[rf_col].dropna()
+            except Exception:
+                logger.exception("Rolling risk-free benchmark payload could not be resampled.")
+                risk_free_series = None
 
         # Calculate periods per year and window size
         periods_per_year = annualization_factor(periodicity or "daily")
@@ -853,11 +884,21 @@ def calculate_rolling_returns(raw_data, periodicity, selected_series, returns_ty
                     rolling_df[series] = res
 
             elif rolling_metric == "sharpe_ratio":
-                func = lambda x: sharpe_ratio(x, periods_per_year)
+                if needs_risk_free:
+                    func = lambda x: sharpe_ratio_with_risk_free(
+                        x, periodicity or "daily", periods_per_year, risk_free_series
+                    )
+                else:
+                    func = lambda x: sharpe_ratio(x, periods_per_year)
                 rolling_df[series] = apply_rolling_stat(series_ret, func)
 
             elif rolling_metric == "sortino_ratio":
-                func = lambda x: sortino_ratio(x, periods_per_year)
+                if needs_risk_free:
+                    func = lambda x: sortino_ratio_with_risk_free(
+                        x, periodicity or "daily", periods_per_year, risk_free_series
+                    )
+                else:
+                    func = lambda x: sortino_ratio(x, periods_per_year)
                 rolling_df[series] = apply_rolling_stat(series_ret, func)
 
             elif rolling_metric == "information_ratio":

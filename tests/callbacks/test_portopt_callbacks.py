@@ -396,13 +396,37 @@ def test_po_render_statistics_transposes_stats(monkeypatch, page_modules):
         "P2": {"returns_json": s2.to_json(date_format="iso")},
     }
 
-    grid = portopt.po_render_statistics(results, "statistics", ["P1", "P2"], None, "daily")
+    grid = portopt.po_render_statistics(results, "statistics", ["P1", "P2"], None, True, "daily")
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Statistic"
     assert {c["field"] for c in getattr(grid, "columnDefs", [])[1:]} == {"P1", "P2"}
     row = next(r for r in getattr(grid, "rowData", []) if r["Statistic"] == "Cumulative Return")
     assert row["P1"] == pytest.approx(0.1)
     assert row["P2"] == pytest.approx(0.2)
+
+
+def test_po_render_statistics_uses_result_rf_setting_not_live_toggle(monkeypatch, page_modules):
+    _, portopt = page_modules
+    captured = {}
+
+    def _fake_stats(*args, **_kwargs):
+        captured["use_risk_free"] = args[-1]
+        return [{"Series": "P1", "Cumulative Return": 0.1}]
+
+    monkeypatch.setattr(portopt, "calculate_statistics_cached", _fake_stats)
+
+    s1 = pd.Series([0.01, 0.02], index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
+    results = {
+        "P1": {
+            "returns_json": s1.to_json(date_format="iso"),
+            "risk_free_meta": {"enabled": False},
+            "config": {"model": "risk_parity"},
+        }
+    }
+
+    portopt.po_render_statistics(results, "statistics", "P1", None, True, "daily")
+
+    assert captured["use_risk_free"] is False
 
 
 def test_po_render_returns_builds_returns_grid(page_modules):
@@ -425,6 +449,7 @@ def test_po_render_statistics_requires_active_tab(page_modules):
         "weight",
         "P1",
         None,
+        True,
         "daily",
         None,
         {},
@@ -536,6 +561,8 @@ def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeyp
         "annualized",
         "total_return",
         "table",
+        None,
+        True,
         "raw-json",
         {},
         {},
@@ -547,6 +574,43 @@ def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeyp
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
+def test_po_render_rolling_uses_result_rf_setting_not_live_toggle(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
+    captured = {}
+
+    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+
+    def _fake_rolling(*args, **_kwargs):
+        captured["use_risk_free"] = args[-1]
+        return pd.DataFrame({"P1": [0.08]}, index=[pd.Timestamp("2024-01-31")])
+
+    monkeypatch.setattr(portopt, "calculate_rolling_returns", _fake_rolling)
+
+    portopt.po_render_rolling(
+        {"P1": {"risk_free_meta": {"enabled": False}}},
+        "rolling",
+        "P1",
+        "daily",
+        "1y",
+        "annualized",
+        "sharpe_ratio",
+        "table",
+        None,
+        True,
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+        "light",
+    )
+
+    assert captured["use_risk_free"] is False
 
 
 def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
@@ -632,7 +696,7 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
             {}, {}, {}, False, 63, "none", "scaled_identity", "MyPortfolio", "full", 252, 21, "periods",
             "risk_parity", "fill_na", "off", {}, [],
             {}, {}, [], 0.05, "maximize_sharpe",
-            {}, {}, "ret_cov", [], None,
+            {}, {}, "ret_cov", [], True, None,
         )
 
     # Now force callback path and verify returned error payload.
@@ -641,7 +705,7 @@ def test_po_run_optimization_returns_error_when_working_df_empty(monkeypatch, pa
         {}, {}, {}, False, 63, "none", "scaled_identity", "MyPortfolio", "full", 252, 21, "periods",
         "risk_parity", "fill_na", "off", {}, [],
         {}, {}, [], 0.05, "maximize_sharpe",
-        {}, {}, "ret_cov", [], None,
+        {}, {}, "ret_cov", [], True, None,
     )
     status = result[2]
     assert status["status"] == "error"
@@ -1041,6 +1105,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         {},
         {},
         None,
+        True,
         [],
     )
 
@@ -1087,6 +1152,7 @@ def test_po_render_frontier_chart_uses_shared_snapshot_resolver(monkeypatch, pag
         {},
         {},
         None,
+        True,
         ["Asset_A", "Asset_B"],
         "light",
         [],
@@ -1124,6 +1190,7 @@ def test_po_render_frontier_chart_reports_missing_source_series(page_modules, ra
         {},
         {},
         None,
+        True,
         ["Asset_A", "Asset_B"],
         "light",
         [],
@@ -1210,6 +1277,7 @@ def test_po_run_optimization_stores_default_frontier_cache_for_standard_model(mo
         {},
         "ret_cov",
         [],
+        True,
         None,
     )
 
@@ -1239,6 +1307,7 @@ def test_po_render_frontier_rf_warning_non_ex_ante_skips_snapshot_lookup(monkeyp
         "frontier",
         "1",
         "MV",
+        True,
         "daily",
         None,
         None,
@@ -1246,6 +1315,36 @@ def test_po_render_frontier_rf_warning_non_ex_ante_skips_snapshot_lookup(monkeyp
 
     assert "Warning text" in " ".join(_collect_component_text(warning))
     assert style["display"] == "block"
+
+
+def test_po_render_frontier_rf_warning_uses_result_rf_setting_not_live_toggle(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(
+        portopt,
+        "_resolve_risk_free_context",
+        lambda **_kwargs: pytest.fail("stored disabled RF should bypass warning resolution"),
+    )
+
+    warning, style = portopt.po_render_frontier_rf_warning(
+        "P1",
+        {
+            "P1": {
+                "config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]},
+                "window_weights": _sample_window_weights(),
+                "risk_free_meta": {"enabled": False},
+            }
+        },
+        "frontier",
+        "1",
+        "MV",
+        True,
+        "daily",
+        None,
+        None,
+    )
+
+    assert warning == ""
+    assert style["display"] == "none"
 
 
 def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page_modules, raw_json):
@@ -1339,6 +1438,7 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
         {},
         "ret_cov",
         [],
+        True,
         None,
     )
 
@@ -1458,6 +1558,7 @@ def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_
         {},
         "ret_cov",
         [],
+        True,
         None,
     )
 
@@ -1549,9 +1650,12 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
         "P1": {
             "returns_json": ret_series.to_json(date_format="iso"),
             "window_weights": _sample_window_weights(),
-            "config": {"selected_series": ["Asset_A", "Asset_B"], "model": "risk_parity"},
+            "config": {"selected_series": ["Asset_A", "Asset_B"], "model": "risk_parity", "use_risk_free": False},
+            "risk_free_meta": {"enabled": False},
         }
     }
+
+    frontier_calls = {}
 
     monkeypatch.setattr(
         portopt,
@@ -1578,7 +1682,7 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     monkeypatch.setattr(
         portopt,
         "_po_resolve_frontier_snapshot",
-        lambda **_kwargs: {
+        lambda **kwargs: frontier_calls.setdefault("use_risk_free", kwargs["use_risk_free"]) or {
             "window_index": 0,
             "risk_measure": "MV",
             "asset_order": ["Asset_A", "Asset_B"],
@@ -1650,10 +1754,12 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     settings_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Settings")
     settings_map = dict(zip(settings_df["Parameter"], settings_df["Value"]))
     assert settings_map["Result Name"] == "P1"
+    assert settings_map["Use BCTBill13 for Sharpe/Sortino"] == False
     assert settings_map["Decay Input"] == pytest.approx(63.0)
     assert settings_map["Decay Mode"] == "halflife_periods"
     assert settings_map["Selected Series"] == "Asset_A, Asset_B"
     assert settings_map["Benchmark Assignments"] == "{}"
+    assert frontier_calls["use_risk_free"] is False
 
     weights_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Weights")
     assert list(weights_df.columns) == ["Apply Start", "Apply End", "Asset_A", "Asset_B"]
