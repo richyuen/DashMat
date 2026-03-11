@@ -135,6 +135,55 @@ def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str)
     return f"warm_switch_{timestamp}_{label_token}_{git_token}_{port_token}"
 
 
+def collect_browser_storage_metrics(page) -> dict:
+    return page.evaluate(
+        """
+        () => {
+          const encoder = new TextEncoder();
+          const summarize = (store) => {
+            const keys = [];
+            let totalBytes = 0;
+            const itemBytes = {};
+            for (let i = 0; i < store.length; i += 1) {
+              const key = store.key(i);
+              if (!key) continue;
+              const value = store.getItem(key) || "";
+              const size = encoder.encode(key).length + encoder.encode(value).length;
+              keys.push(key);
+              itemBytes[key] = size;
+              totalBytes += size;
+            }
+            keys.sort();
+            return { count: keys.length, totalBytes, itemBytes, keys };
+          };
+          return {
+            sessionStorage: summarize(window.sessionStorage),
+            localStorage: summarize(window.localStorage),
+          };
+        }
+        """
+    )
+
+
+def collect_artifact_store_metrics(repo_root: Path) -> dict:
+    root = repo_root / ".cache" / "dashmat_artifacts"
+    if not root.exists():
+        return {"exists": False, "fileCount": 0, "totalBytes": 0}
+    file_count = 0
+    total_bytes = 0
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        file_count += 1
+        total_bytes += path.stat().st_size
+    return {
+        "exists": True,
+        "path": str(root),
+        "fileCount": file_count,
+        "totalBytes": total_bytes,
+    }
+
+
 def write_failure_artifacts(
     *,
     out_dir: Path,
@@ -418,7 +467,7 @@ def measure_portopt(page, cfg: dict[str, str]) -> dict[str, int]:
     }
 
 
-def run_harness(base_url: str, runs: int, label: str, db_series: list[str], headed: bool) -> dict:
+def run_harness(base_url: str, runs: int, label: str, db_series: list[str], headed: bool, repo_root: Path) -> dict:
     pages = {
         "analytics": {"path": "/analyticstool", "shell": "#at-main-app-container", "ready": "#at-periodicity-select"},
         "portopt": {"path": "/portopt", "shell": "#po-main-container", "ready": "#po-periodicity-select"},
@@ -481,6 +530,7 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
         results["portopt"]["riskOpenMedian"] = round(median(results["portopt"]["riskOpenMs"]))
         results["portopt"]["attributionOpenMedian"] = round(median(results["portopt"]["attributionOpenMs"]))
 
+        browser_storage = collect_browser_storage_metrics(page)
         browser.close()
 
     return {
@@ -493,6 +543,8 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
         "rendererMode": renderer_mode,
         "results": results,
         "consoleMessages": console_messages,
+        "browserStorage": browser_storage,
+        "artifactStore": collect_artifact_store_metrics(repo_root),
     }
 
 
@@ -525,6 +577,7 @@ def main() -> int:
             label=args.label,
             db_series=args.db_series,
             headed=args.headed,
+            repo_root=root,
         )
     except Exception as exc:
         page_state: dict | None = None
@@ -589,6 +642,8 @@ def main() -> int:
         "analytics": result["results"]["analytics"],
         "portopt": result["results"]["portopt"],
         "regression": result["results"]["regression"],
+        "browserStorage": result["browserStorage"],
+        "artifactStore": result["artifactStore"],
         "consoleMessages": result["consoleMessages"],
     }
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
