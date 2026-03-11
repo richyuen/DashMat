@@ -252,6 +252,12 @@ Any imported series can be used as the factor, including series that are not par
 
 - **Box Plot** buckets factor observations into quantiles and shows the distribution of selected-series returns within each bucket.
 - **Scatter** plots factor values against selected-series returns and adds an OLS trend line.
+- **Q-Q Plot** compares each selected series either to a fitted normal distribution or to a chosen reference series.
+
+### Q-Q references
+
+- **Normal** checks whether the selected series looks close to normally distributed.
+- **Reference** compares the selected series against another imported or defined reference series using standardized quantiles, which is mainly a shape comparison rather than a level comparison.
 
 ### Factor transforms
 

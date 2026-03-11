@@ -17,7 +17,7 @@ Use this page when you want to answer questions such as:
 4. Set periodicity, date range, missing-data behavior, and model-specific options.
 5. Choose the regression type and any advanced controls.
 6. Run the model and save the result under a name.
-7. Review ANOVA, coefficients, rolling outputs, derived returns, and scatter diagnostics.
+7. Review ANOVA, coefficients, rolling outputs, derived returns, scatter diagnostics, and the residual Q-Q plot.
 8. Save multiple named results if you want to compare model families or parameter settings.
 
 ## Data sources and import behavior

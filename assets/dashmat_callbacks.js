@@ -940,7 +940,7 @@
     ];
   }
 
-  function analyticsFactorRegimeSync(factorMode, factorQuantiles, factorTransform, factorSeries, regimeDefinition, regimeMethodType) {
+  function analyticsFactorRegimeSync(factorMode, factorQuantiles, factorTransform, factorSeries, factorQqReference, regimeDefinition, regimeMethodType) {
     let quantiles = 5;
     if (factorQuantiles !== null && factorQuantiles !== undefined) {
       const parsed = parseInt(factorQuantiles, 10);
@@ -949,13 +949,25 @@
       }
     }
     const mode = factorMode || "box";
+    const qqReference = factorQqReference === "reference" ? "reference" : "normal";
     const method = String(regimeMethodType || "1");
+    const showFactorControls = mode === "box" || mode === "scatter" || (mode === "qq" && qqReference === "reference");
+    const quantileStyle = mode === "box" ? { display: "block" } : { display: "none" };
+    const transformStyle = mode === "box" || mode === "scatter" ? { display: "block" } : { display: "none" };
+    const qqReferenceStyle = mode === "qq" ? { display: "block" } : { display: "none" };
+    const factorStyle = showFactorControls ? { display: "block" } : { display: "none" };
     return [
       mode,
       quantiles,
       factorTransform === "zscore" ? "zscore" : "raw",
       factorSeries,
-      mode === "box" ? { display: "block" } : { display: "none" },
+      qqReference,
+      factorStyle,
+      factorStyle,
+      quantileStyle,
+      transformStyle,
+      qqReferenceStyle,
+      mode === "qq" ? "Reference" : "Factor",
       regimeDefinition,
       method === "3" ? { display: "none" } : { display: "block" },
       method === "3" ? { display: "block" } : { display: "none" }

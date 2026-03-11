@@ -59,6 +59,7 @@ from utils.exponential_weighting import normalize_decay_input
 from utils.charting import apply_chart_theme
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
 from utils.perf_timing import timed_block
+from utils.qq import build_normal_qq_series, build_qq_figure, build_reference_qq_series
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.shared_metrics import (
     MARKET_BETA_SERIES,
@@ -1085,6 +1086,87 @@ def _build_factor_pair_df(factor_values: pd.Series, dependent_values: pd.Series)
     return paired
 
 
+def _prepare_factor_analysis_selected_df(
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+):
+    if not raw_data or not selected_series:
+        return pd.DataFrame()
+    return calculate_excess_returns(
+        raw_data,
+        periodicity or "daily",
+        tuple(selected_series or ()),
+        _mapping_payload(benchmark_assignments),
+        returns_type or "total",
+        _mapping_payload(long_short_assignments),
+        _date_range_payload(date_range),
+        vol_scaler or 0,
+        _mapping_payload(vol_scaling_assignments),
+    )
+
+
+def _prepare_at_qq_reference_series(
+    raw_data,
+    periodicity,
+    reference_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
+):
+    if not raw_data or not reference_series:
+        return pd.Series(dtype=float)
+    reference_prefix, reference_name = _split_factor_select_key(reference_series)
+    if reference_prefix == "def":
+        definition = _lookup_factor_definition(reference_name, factor_definitions_db, factor_definitions_local)
+        if not definition:
+            return pd.Series(dtype=float)
+        ref_values = compute_factor_series(
+            MRD_ENGINE,
+            {
+                "FactorName": definition.get("FactorName"),
+                "LongComponent": definition.get("LongComponent"),
+                "ShortComponent": definition.get("ShortComponent"),
+                "LongAggType": definition.get("LongAggType"),
+                "ShortAggType": definition.get("ShortAggType"),
+                "LongLag": definition.get("LongLag"),
+                "OutputTransform": definition.get("OutputTransform"),
+                "UPDATE_DATE": definition.get("UPDATE_DATE"),
+            },
+            periodicity or "daily",
+            date_range,
+        )
+        ref_values.name = str(definition.get("FactorName") or reference_name)
+        return ref_values.replace([np.inf, -np.inf], np.nan).dropna()
+
+    raw_reference = reference_name if reference_prefix == "raw" else str(reference_series or "")
+    ref_df = calculate_excess_returns(
+        raw_data,
+        periodicity or "daily",
+        (raw_reference,),
+        _mapping_payload(benchmark_assignments),
+        returns_type or "total",
+        _mapping_payload(long_short_assignments),
+        _date_range_payload(date_range),
+        vol_scaler or 0,
+        _mapping_payload(vol_scaling_assignments),
+    )
+    if ref_df.empty or raw_reference not in ref_df.columns:
+        return pd.Series(dtype=float)
+    return ref_df[raw_reference].replace([np.inf, -np.inf], np.nan).dropna()
+
+
 def _coerce_factor_quantiles(value, default: int = 5) -> int:
     """Clamp factor quantiles to a practical range."""
     try:
@@ -1960,7 +2042,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
                       monthly_series_options, monthly_select_disabled, factor_mode,
                       factor_quantiles, factor_transform, factor_series_options,
-                      factor_series_value):
+                      factor_series_value, factor_qq_reference):
     
     # Calculate visibility styles - use flex for full height
     flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
@@ -2517,32 +2599,57 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         data=[
                                             {"value": "box", "label": "Box Plot"},
                                             {"value": "scatter", "label": "Scatter"},
+                                            {"value": "qq", "label": "Q-Q Plot"},
                                         ],
                                         value=factor_mode,
                                         size="sm",
                                     ),
                                 ]),
-                                dmc.Select(
-                                    id="at-factor-series-select",
-                                    label="Factor",
-                                    data=factor_series_options,
-                                    value=factor_series_value,
-                                    w=280,
-                                    size="sm",
-                                    searchable=True,
-                                    clearable=False,
-                                    placeholder="Select factor series",
+                                html.Div(
+                                    id="at-factor-qq-reference-wrapper",
+                                    style={"display": "none"},
+                                    children=[
+                                        dmc.Text("Q-Q Reference", size="sm", fw=500, mb=3),
+                                        dmc.SegmentedControl(
+                                            id="at-factor-qq-reference-select",
+                                            data=[
+                                                {"value": "normal", "label": "Normal"},
+                                                {"value": "reference", "label": "Reference"},
+                                            ],
+                                            value=factor_qq_reference,
+                                            size="sm",
+                                        ),
+                                    ],
                                 ),
-                                html.Div([
-                                    dmc.Text("Definitions", size="sm", fw=500, mb=3),
-                                    dmc.Button(
-                                        "Edit factors",
-                                        id="at-factor-open-modal-btn",
-                                        size="sm",
-                                        variant="light",
-                                        leftSection=DashIconify(icon="tabler:math-function", width=14),
-                                    ),
-                                ]),
+                                html.Div(
+                                    id="at-factor-series-wrapper",
+                                    children=[
+                                        dmc.Select(
+                                            id="at-factor-series-select",
+                                            label="Factor",
+                                            data=factor_series_options,
+                                            value=factor_series_value,
+                                            w=280,
+                                            size="sm",
+                                            searchable=True,
+                                            clearable=False,
+                                            placeholder="Select factor series",
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    id="at-factor-open-modal-wrapper",
+                                    children=[
+                                        dmc.Text("Definitions", size="sm", fw=500, mb=3),
+                                        dmc.Button(
+                                            "Edit factors",
+                                            id="at-factor-open-modal-btn",
+                                            size="sm",
+                                            variant="light",
+                                            leftSection=DashIconify(icon="tabler:math-function", width=14),
+                                        ),
+                                    ],
+                                ),
                                 html.Div(
                                     id="at-factor-quantiles-wrapper",
                                     style={"display": "block"},
@@ -2559,18 +2666,21 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         ),
                                     ],
                                 ),
-                                html.Div([
-                                    dmc.Text("Factor Transform", size="sm", fw=500, mb=3),
-                                    dmc.SegmentedControl(
-                                        id="at-factor-transform-select",
-                                        data=[
-                                            {"value": "raw", "label": "Raw"},
-                                            {"value": "zscore", "label": "Z-Score"},
-                                        ],
-                                        value=factor_transform,
-                                        size="sm",
-                                    ),
-                                ]),
+                                html.Div(
+                                    id="at-factor-transform-wrapper",
+                                    children=[
+                                        dmc.Text("Factor Transform", size="sm", fw=500, mb=3),
+                                        dmc.SegmentedControl(
+                                            id="at-factor-transform-select",
+                                            data=[
+                                                {"value": "raw", "label": "Raw"},
+                                                {"value": "zscore", "label": "Z-Score"},
+                                            ],
+                                            value=factor_transform,
+                                            size="sm",
+                                        ),
+                                    ],
+                                ),
                             ],
                         ),
                         html.Div(id="at-factor-analysis-warning"),
@@ -3346,6 +3456,7 @@ layout = dmc.Container(
                 factor_transform="raw",
                 factor_series_options=[],
                 factor_series_value=None,
+                factor_qq_reference="normal",
             ),
             style={"display": "none"}
         ),
@@ -3373,6 +3484,7 @@ layout = dmc.Container(
         dcc.Store(id="at-factor-quantiles-store", data=5, storage_type="session"),
         dcc.Store(id="at-factor-transform-store", data="raw", storage_type="session"),
         dcc.Store(id="at-factor-series-store", data=None, storage_type="session"),
+        dcc.Store(id="at-factor-qq-reference-store", data="normal", storage_type="session"),
         dcc.Store(id="at-factor-definitions-db-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-def-modal-draft-store", data=None, storage_type="session"),
@@ -3515,6 +3627,7 @@ def _at_restore_defaults():
         "factor_mode": "box",
         "factor_quantiles": 5,
         "factor_transform": "raw",
+        "factor_qq_reference": "normal",
         "monthly_view": "annual",
         "valid_selection": [],
         "updated_order": [],
@@ -3537,6 +3650,7 @@ def _at_resolve_restore_state(
     stored_factor_mode,
     stored_factor_quantiles,
     stored_factor_transform,
+    stored_factor_qq_reference,
     stored_monthly_view,
     stored_order,
     po_origin_series,
@@ -3590,9 +3704,14 @@ def _at_resolve_restore_state(
             "roll_chart": stored_roll_chart if stored_roll_chart is not None else "chart",
             "dd_chart": stored_dd_chart if stored_dd_chart is not None else "chart",
             "gr_chart": stored_gr_chart if stored_gr_chart is not None else "chart",
-            "factor_mode": stored_factor_mode if stored_factor_mode in {"box", "scatter"} else "box",
+            "factor_mode": stored_factor_mode if stored_factor_mode in {"box", "scatter", "qq"} else "box",
             "factor_quantiles": _coerce_factor_quantiles(stored_factor_quantiles, default=5),
             "factor_transform": stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw",
+            "factor_qq_reference": (
+                stored_factor_qq_reference
+                if stored_factor_qq_reference in {"normal", "reference"}
+                else "normal"
+            ),
             "monthly_view": stored_monthly_view if stored_monthly_view is not None else "annual",
             "valid_selection": valid_selection,
             "updated_order": updated_order,
@@ -3618,6 +3737,7 @@ def _at_resolve_restore_state(
     Output("at-factor-mode-select", "value"),
     Output("at-factor-quantiles-input", "value"),
     Output("at-factor-transform-select", "value"),
+    Output("at-factor-qq-reference-select", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
     Output("at-series-order-store", "data", allow_duplicate=True),
@@ -3638,6 +3758,7 @@ def _at_resolve_restore_state(
     State("at-factor-mode-store", "data"),
     State("at-factor-quantiles-store", "data"),
     State("at-factor-transform-store", "data"),
+    State("at-factor-qq-reference-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
     State("at-series-order-store", "data"),
@@ -3662,6 +3783,7 @@ def restore_application_state(
     stored_factor_mode,
     stored_factor_quantiles,
     stored_factor_transform,
+    stored_factor_qq_reference,
     stored_monthly_view,
     stored_monthly_series,
     stored_order,
@@ -3685,6 +3807,7 @@ def restore_application_state(
             stored_factor_mode,
             stored_factor_quantiles,
             stored_factor_transform,
+            stored_factor_qq_reference,
             stored_monthly_view,
             stored_order,
             po_origin_series,
@@ -3705,7 +3828,8 @@ def restore_application_state(
             resolved["factor_mode"],
             resolved["factor_quantiles"],
             resolved["factor_transform"],
-        ) if active_tab == "factor_analysis" else (no_update, no_update, no_update)
+            resolved["factor_qq_reference"],
+        ) if active_tab == "factor_analysis" else (no_update, no_update, no_update, no_update)
         monthly_output = resolved["monthly_view"] if active_tab == "calendar" else no_update
 
         return (
@@ -3728,7 +3852,7 @@ def restore_application_state(
         return (
             resolved["periodicity_options"], resolved["valid_periodicity"], resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
             no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
-            no_update, no_update, no_update, no_update, resolved["valid_selection"], resolved["updated_order"], False
+            no_update, no_update, no_update, no_update, no_update, resolved["valid_selection"], resolved["updated_order"], False
         )
 
 
@@ -3744,6 +3868,7 @@ def restore_application_state(
     Output("at-factor-mode-select", "value", allow_duplicate=True),
     Output("at-factor-quantiles-input", "value", allow_duplicate=True),
     Output("at-factor-transform-select", "value", allow_duplicate=True),
+    Output("at-factor-qq-reference-select", "value", allow_duplicate=True),
     Output("at-monthly-view-checkbox", "value", allow_duplicate=True),
     Input("at-secondary-restore-ready-store", "data"),
     State("dashmat-raw-data-meta-store", "data"),
@@ -3761,6 +3886,7 @@ def restore_application_state(
     State("at-factor-mode-store", "data"),
     State("at-factor-quantiles-store", "data"),
     State("at-factor-transform-store", "data"),
+    State("at-factor-qq-reference-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-series-order-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
@@ -3784,6 +3910,7 @@ def at_restore_secondary_controls(
     stored_factor_mode,
     stored_factor_quantiles,
     stored_factor_transform,
+    stored_factor_qq_reference,
     stored_monthly_view,
     stored_order,
     po_origin_series,
@@ -3808,6 +3935,7 @@ def at_restore_secondary_controls(
         stored_factor_mode,
         stored_factor_quantiles,
         stored_factor_transform,
+        stored_factor_qq_reference,
         stored_monthly_view,
         stored_order,
         po_origin_series,
@@ -3826,6 +3954,7 @@ def at_restore_secondary_controls(
         no_update if active_tab == "factor_analysis" else resolved["factor_mode"],
         no_update if active_tab == "factor_analysis" else resolved["factor_quantiles"],
         no_update if active_tab == "factor_analysis" else resolved["factor_transform"],
+        no_update if active_tab == "factor_analysis" else resolved["factor_qq_reference"],
         no_update if active_tab == "calendar" else resolved["monthly_view"],
     )
 
@@ -4283,7 +4412,13 @@ clientside_callback(
     Output("at-factor-quantiles-store", "data"),
     Output("at-factor-transform-store", "data"),
     Output("at-factor-series-store", "data"),
+    Output("at-factor-qq-reference-store", "data"),
+    Output("at-factor-series-wrapper", "style"),
+    Output("at-factor-open-modal-wrapper", "style"),
     Output("at-factor-quantiles-wrapper", "style"),
+    Output("at-factor-transform-wrapper", "style"),
+    Output("at-factor-qq-reference-wrapper", "style"),
+    Output("at-factor-series-select", "label"),
     Output("at-regime-definition-store", "data"),
     Output("at-regime-def-universe-wrapper", "style"),
     Output("at-regime-def-single-wrapper", "style"),
@@ -4291,6 +4426,7 @@ clientside_callback(
     Input("at-factor-quantiles-input", "value"),
     Input("at-factor-transform-select", "value"),
     Input("at-factor-series-select", "value"),
+    Input("at-factor-qq-reference-select", "value"),
     Input("at-regime-definition-select", "value"),
     Input("at-regime-def-method-type", "value"),
     prevent_initial_call=False,
@@ -8161,6 +8297,7 @@ def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_ser
     Output("at-factor-analysis-container", "children"),
     Input("at-main-tabs", "value"),
     Input("at-factor-mode-select", "value"),
+    Input("at-factor-qq-reference-select", "value"),
     Input("at-factor-series-select", "value"),
     Input("at-factor-quantiles-input", "value"),
     Input("at-factor-transform-select", "value"),
@@ -8182,6 +8319,7 @@ def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_ser
 def update_factor_analysis(
     active_tab,
     factor_mode,
+    factor_qq_reference,
     factor_series,
     factor_quantiles,
     factor_transform,
@@ -8209,30 +8347,45 @@ def update_factor_analysis(
 
     if raw_data is None or not selected_series:
         return None, dmc.Text("Select series to view factor analysis.", size="sm", c="dimmed")
-    if not factor_series:
+    mode = factor_mode if factor_mode in {"box", "scatter", "qq"} else "box"
+    qq_reference = factor_qq_reference if factor_qq_reference in {"normal", "reference"} else "normal"
+    if mode != "qq" and not factor_series:
         return None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
 
-    dependent_df, factor_values = _prepare_factor_analysis_frames(
-        raw_data,
-        periodicity,
-        selected_series,
-        factor_series,
-        returns_type,
-        benchmark_assignments,
-        long_short_assignments,
-        date_range,
-        vol_scaler,
-        vol_scaling_assignments,
-        factor_transform,
-        factor_definitions_db,
-        factor_definitions_local,
-    )
+    if mode == "qq":
+        dependent_df = _prepare_factor_analysis_selected_df(
+            raw_data,
+            periodicity,
+            selected_series,
+            returns_type,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+        )
+        factor_values = pd.Series(dtype=float)
+    else:
+        dependent_df, factor_values = _prepare_factor_analysis_frames(
+            raw_data,
+            periodicity,
+            selected_series,
+            factor_series,
+            returns_type,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+            factor_transform,
+            factor_definitions_db,
+            factor_definitions_local,
+        )
     if dependent_df.empty:
         return None, dmc.Text("No dependent-series data available for current settings.", size="sm", c="dimmed")
-    if factor_values.empty:
+    if mode != "qq" and factor_values.empty:
         return None, dmc.Text("No factor data available for current settings.", size="sm", c="dimmed")
 
-    mode = factor_mode if factor_mode in {"box", "scatter"} else "box"
     quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
     _factor_prefix, _factor_name = _split_factor_select_key(factor_series)
     display_factor_name = _factor_name if _factor_name else str(factor_series)
@@ -8241,89 +8394,147 @@ def update_factor_analysis(
         if (factor_transform or "raw") == "zscore"
         else display_factor_name
     )
+    qq_reference_series = pd.Series(dtype=float)
+    qq_reference_name = None
+    if mode == "qq" and qq_reference == "reference":
+        if not factor_series:
+            return None, dmc.Text("Select a reference series to view this Q-Q plot.", size="sm", c="dimmed")
+        qq_reference_series = _prepare_at_qq_reference_series(
+            raw_data,
+            periodicity,
+            factor_series,
+            returns_type,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+            factor_definitions_db,
+            factor_definitions_local,
+        )
+        if qq_reference_series.empty:
+            return None, dmc.Text("No reference data available for current settings.", size="sm", c="dimmed")
+        qq_reference_name = qq_reference_series.name or display_factor_name
 
     charts = []
     total_points = 0
     for series_name in selected_series:
         if series_name not in dependent_df.columns:
             continue
-        paired = _build_factor_pair_df(factor_values, dependent_df[series_name])
-        if len(paired) < 2:
-            continue
-        total_points += len(paired)
-
-        fig = go.Figure()
-        if mode == "scatter":
-            fig.add_trace(
-                go.Scattergl(
-                    x=paired["Factor"],
-                    y=paired["Dependent"],
-                    mode="markers",
-                    name=series_name,
-                    marker={"size": 5, "opacity": 0.65},
+        if mode == "qq":
+            if qq_reference == "reference":
+                reference_prefix, reference_name = _split_factor_select_key(factor_series)
+                if reference_prefix == "raw" and reference_name == series_name:
+                    continue
+                qq_data = build_reference_qq_series(
+                    dependent_df[series_name],
+                    qq_reference_series,
+                    standardize=True,
                 )
-            )
+                if qq_data is None:
+                    continue
+                fig = build_qq_figure(
+                    qq_data,
+                    title=f"Q-Q Plot: {series_name} vs {qq_reference_name}",
+                    xlabel=f"{qq_reference_name} Quantiles (Z-Score)",
+                    ylabel=f"{series_name} Quantiles (Z-Score)",
+                    theme=theme,
+                    height=420,
+                )
+            else:
+                qq_data = build_normal_qq_series(dependent_df[series_name])
+                if qq_data is None:
+                    continue
+                fig = build_qq_figure(
+                    qq_data,
+                    title=f"Q-Q Plot: {series_name} vs Normal",
+                    xlabel="Theoretical Quantiles",
+                    ylabel=f"{series_name} Quantiles",
+                    theme=theme,
+                    height=420,
+                )
+        else:
+            paired = _build_factor_pair_df(factor_values, dependent_df[series_name])
+            if len(paired) < 2:
+                continue
+            total_points += len(paired)
 
-            if paired["Factor"].nunique() > 1:
-                slope, intercept = np.polyfit(paired["Factor"].to_numpy(), paired["Dependent"].to_numpy(), 1)
-                x_line = np.linspace(float(paired["Factor"].min()), float(paired["Factor"].max()), 100)
-                y_line = slope * x_line + intercept
+            fig = go.Figure()
+            if mode == "scatter":
                 fig.add_trace(
-                    go.Scatter(
-                        x=x_line,
-                        y=y_line,
-                        mode="lines",
-                        name="Trend Line",
-                        line={"width": 2},
+                    go.Scattergl(
+                        x=paired["Factor"],
+                        y=paired["Dependent"],
+                        mode="markers",
+                        name=series_name,
+                        marker={"size": 5, "opacity": 0.65},
                     )
                 )
 
-            fig.update_layout(
-                title=f"Factor Scatter: {series_name} vs {display_factor_name}",
-                xaxis_title=factor_label,
-                yaxis_title=series_name,
-                yaxis_tickformat=".2%",
-                hovermode="closest",
-                height=420,
-            )
-        else:
-            labels, ordered_labels = _factor_quantile_labels(paired["Factor"], quantiles)
-            if labels is None:
-                continue
-            paired = paired.assign(Quantile=labels.astype(str))
-            fig.add_trace(
-                go.Box(
-                    x=paired["Quantile"],
-                    y=paired["Dependent"],
-                    name=series_name,
-                    boxpoints="outliers",
-                    jitter=0.3,
-                    pointpos=0.0,
-                    marker={"size": 4, "opacity": 0.6},
-                    showlegend=False,
-                )
-            )
-            fig.update_xaxes(
-                title_text=f"{factor_label} Quantile",
-                categoryorder="array",
-                categoryarray=ordered_labels,
-            )
-            fig.update_layout(
-                title=f"Factor Box Plot: {series_name} by {display_factor_name} Quantiles",
-                yaxis_title=series_name,
-                yaxis_tickformat=".2%",
-                hovermode="closest",
-                height=420,
-            )
+                if paired["Factor"].nunique() > 1:
+                    slope, intercept = np.polyfit(paired["Factor"].to_numpy(), paired["Dependent"].to_numpy(), 1)
+                    x_line = np.linspace(float(paired["Factor"].min()), float(paired["Factor"].max()), 100)
+                    y_line = slope * x_line + intercept
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_line,
+                            y=y_line,
+                            mode="lines",
+                            name="Trend Line",
+                            line={"width": 2},
+                        )
+                    )
 
-        apply_chart_theme(fig, theme)
+                fig.update_layout(
+                    title=f"Factor Scatter: {series_name} vs {display_factor_name}",
+                    xaxis_title=factor_label,
+                    yaxis_title=series_name,
+                    yaxis_tickformat=".2%",
+                    hovermode="closest",
+                    height=420,
+                )
+            else:
+                labels, ordered_labels = _factor_quantile_labels(paired["Factor"], quantiles)
+                if labels is None:
+                    continue
+                paired = paired.assign(Quantile=labels.astype(str))
+                fig.add_trace(
+                    go.Box(
+                        x=paired["Quantile"],
+                        y=paired["Dependent"],
+                        name=series_name,
+                        boxpoints="outliers",
+                        jitter=0.3,
+                        pointpos=0.0,
+                        marker={"size": 4, "opacity": 0.6},
+                        showlegend=False,
+                    )
+                )
+                fig.update_xaxes(
+                    title_text=f"{factor_label} Quantile",
+                    categoryorder="array",
+                    categoryarray=ordered_labels,
+                )
+                fig.update_layout(
+                    title=f"Factor Box Plot: {series_name} by {display_factor_name} Quantiles",
+                    yaxis_title=series_name,
+                    yaxis_tickformat=".2%",
+                    hovermode="closest",
+                    height=420,
+                )
+
+            apply_chart_theme(fig, theme)
         charts.append(dcc.Graph(figure=fig, style={"marginBottom": "1.5rem"}))
 
     if not charts:
+        if mode == "qq" and qq_reference == "reference":
+            return None, dmc.Text("No overlapping data available to render Q-Q reference analysis.", size="sm", c="dimmed")
+        if mode == "qq":
+            return None, dmc.Text("No data available to render Q-Q analysis.", size="sm", c="dimmed")
         return None, dmc.Text("No overlapping data available to render factor analysis.", size="sm", c="dimmed")
 
     warning_children = None
-    if len(charts) > 12 or total_points > 50000:
+    if mode != "qq" and (len(charts) > 12 or total_points > 50000):
         warning_children = dmc.Alert(
             "Large factor analysis render. Consider narrowing date range or series selection for faster interaction.",
             color="yellow",

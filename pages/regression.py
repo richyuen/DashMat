@@ -48,6 +48,7 @@ from utils.statistics import (
     calculate_statistics_cached,
 )
 from utils.charting import apply_chart_theme
+from utils.qq import build_normal_qq_series, build_qq_figure
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
@@ -1423,6 +1424,7 @@ def build_reg_main_layout():
                                                     {"value": "actual_vs_predicted", "label": "Actual vs Predicted"},
                                                     {"value": "actual_vs_x", "label": "Actual vs X"},
                                                     {"value": "predicted_vs_x", "label": "Predicted vs X"},
+                                                    {"value": "qq", "label": "Q-Q Plot"},
                                                 ],
                                                 value="residual_vs_predicted",
                                                 w=220,
@@ -5846,6 +5848,18 @@ def reg_render_scatter(selected, results, mode, x_var, raw_data, theme, active_t
     predicted = display_df["Predicted"] if "Predicted" in display_df.columns else pd.Series(dtype=float)
     actual = display_df["Actual (Y)"] if "Actual (Y)" in display_df.columns else pd.Series(dtype=float)
     residual = display_df["Residual"] if "Residual" in display_df.columns else pd.Series(dtype=float)
+    if mode == "qq":
+        qq_data = build_normal_qq_series(residual)
+        if qq_data is None:
+            return dmc.Text("Not enough residual data to render the Q-Q plot.", size="sm", c="dimmed")
+        fig = build_qq_figure(
+            qq_data,
+            title="Residual Q-Q Plot",
+            xlabel="Theoretical Quantiles",
+            ylabel="Residual Quantiles",
+            theme=theme,
+        )
+        return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
     if mode in {"actual_vs_x", "predicted_vs_x"}:
         if not x_var or x_var not in display_df.columns:

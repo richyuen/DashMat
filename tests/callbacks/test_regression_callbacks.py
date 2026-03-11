@@ -1405,6 +1405,69 @@ def test_reg_sync_anova_window_options_defaults_to_latest_on_results_refresh(mon
     assert value == "2"
 
 
+def test_reg_sync_scatter_x_options_disables_x_for_qq_mode(regression_page):
+    results = {"R1": {"independent_vars": ["X1", "X2"]}}
+
+    options, value, disabled = regression_page.reg_sync_scatter_x_options("R1", results, "qq", "X1")
+
+    assert [opt["value"] for opt in options] == ["X1", "X2"]
+    assert value == "X1"
+    assert disabled is True
+
+
+def test_reg_render_scatter_renders_residual_qq_plot(regression_page):
+    idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    entry = {
+        "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.01, 0.0, 0.02, -0.01, 0.01, 0.015]}, index=idx)),
+        "residuals_json": df_to_json(pd.DataFrame({"residuals": [0.002, -0.001, 0.0, 0.0015, -0.0005, 0.0008]}, index=idx)),
+        "dependent_var": "Y",
+        "independent_vars": ["X1"],
+        "window_type": "full",
+    }
+    raw_df = pd.DataFrame({"Y": [0.012, -0.001, 0.02, -0.008, 0.009, 0.015], "X1": [1, 2, 3, 4, 5, 6]}, index=idx)
+
+    graph = regression_page.reg_render_scatter(
+        "R1",
+        {"R1": entry},
+        "qq",
+        None,
+        df_to_json(raw_df),
+        "light",
+        "scatter",
+        True,
+    )
+
+    assert getattr(graph, "figure", None) is not None
+    assert graph.figure.layout.title.text == "Residual Q-Q Plot"
+    assert graph.figure.layout.xaxis.title.text == "Theoretical Quantiles"
+    assert graph.figure.layout.yaxis.title.text == "Residual Quantiles"
+
+
+def test_reg_render_scatter_qq_requires_enough_residual_data(regression_page):
+    idx = pd.date_range("2024-01-01", periods=2, freq="D")
+    entry = {
+        "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.01, 0.0]}, index=idx)),
+        "residuals_json": df_to_json(pd.DataFrame({"residuals": [0.002, -0.001]}, index=idx)),
+        "dependent_var": "Y",
+        "independent_vars": ["X1"],
+        "window_type": "full",
+    }
+    raw_df = pd.DataFrame({"Y": [0.012, -0.001], "X1": [1, 2]}, index=idx)
+
+    text = regression_page.reg_render_scatter(
+        "R1",
+        {"R1": entry},
+        "qq",
+        None,
+        df_to_json(raw_df),
+        "light",
+        "scatter",
+        True,
+    )
+
+    assert "not enough residual data" in "".join(str(part).lower() for part in text.children)
+
+
 def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, regression_page):
     idx = pd.date_range("2024-01-01", periods=4, freq="D")
     predicted = pd.DataFrame({"predicted": [0.01, 0.0, 0.002, -0.001]}, index=idx)
