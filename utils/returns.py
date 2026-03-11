@@ -15,6 +15,7 @@ from utils.serialization import (
     parse_mapping_payload,
 )
 import cache_config
+from utils.perf_timing import record_payload_size, timed_block
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,10 @@ def fill_trading_gaps(df: pd.DataFrame, trading_days: pd.DatetimeIndex | None = 
 
 def df_to_json(df: pd.DataFrame) -> str:
     """Convert DataFrame to JSON string for storage."""
-    return df.to_json(date_format="iso", orient="split")
+    with timed_block("df_to_json", rows=df.shape[0], cols=df.shape[1]):
+        payload = df.to_json(date_format="iso", orient="split")
+    record_payload_size("df_to_json.output", payload, rows=df.shape[0], cols=df.shape[1])
+    return payload
 
 
 def compound_returns(returns: pd.Series) -> float:
@@ -372,46 +376,56 @@ def get_available_periodicities(original_periodicity: str) -> list[dict]:
 def build_raw_data_metadata(json_str: str | None, original_periodicity: str | None) -> dict:
     """Build compact shared metadata for the current raw-data payload."""
     resolved_periodicity = original_periodicity or "daily"
-    periodicity_options = get_available_periodicities(resolved_periodicity)
-    valid_values = [option["value"] for option in periodicity_options]
-    default_periodicity = (
-        resolved_periodicity
-        if resolved_periodicity in valid_values
-        else (valid_values[0] if valid_values else "daily_trading")
+    record_payload_size(
+        "build_raw_data_metadata.input",
+        json_str,
+        original_periodicity=resolved_periodicity,
     )
+    with timed_block(
+        "build_raw_data_metadata",
+        has_data=bool(json_str),
+        original_periodicity=resolved_periodicity,
+    ):
+        periodicity_options = get_available_periodicities(resolved_periodicity)
+        valid_values = [option["value"] for option in periodicity_options]
+        default_periodicity = (
+            resolved_periodicity
+            if resolved_periodicity in valid_values
+            else (valid_values[0] if valid_values else "daily_trading")
+        )
 
-    if not json_str:
+        if not json_str:
+            return {
+                "has_data": False,
+                "columns": [],
+                "original_periodicity": resolved_periodicity,
+                "periodicity_options": periodicity_options,
+                "default_periodicity": default_periodicity,
+                "min_date": None,
+                "max_date": None,
+            }
+
+        df = json_to_df(json_str)
+        if df.empty:
+            return {
+                "has_data": False,
+                "columns": [],
+                "original_periodicity": resolved_periodicity,
+                "periodicity_options": periodicity_options,
+                "default_periodicity": default_periodicity,
+                "min_date": None,
+                "max_date": None,
+            }
+
         return {
-            "has_data": False,
-            "columns": [],
+            "has_data": bool(df.columns.size),
+            "columns": list(df.columns),
             "original_periodicity": resolved_periodicity,
             "periodicity_options": periodicity_options,
             "default_periodicity": default_periodicity,
-            "min_date": None,
-            "max_date": None,
+            "min_date": df.index.min().strftime("%Y-%m-%d"),
+            "max_date": df.index.max().strftime("%Y-%m-%d"),
         }
-
-    df = json_to_df(json_str)
-    if df.empty:
-        return {
-            "has_data": False,
-            "columns": [],
-            "original_periodicity": resolved_periodicity,
-            "periodicity_options": periodicity_options,
-            "default_periodicity": default_periodicity,
-            "min_date": None,
-            "max_date": None,
-        }
-
-    return {
-        "has_data": bool(df.columns.size),
-        "columns": list(df.columns),
-        "original_periodicity": resolved_periodicity,
-        "periodicity_options": periodicity_options,
-        "default_periodicity": default_periodicity,
-        "min_date": df.index.min().strftime("%Y-%m-%d"),
-        "max_date": df.index.max().strftime("%Y-%m-%d"),
-    }
 
 
 def merge_returns(existing_df: pd.DataFrame | None, new_df: pd.DataFrame) -> pd.DataFrame:
@@ -452,9 +466,11 @@ def json_to_df(json_str: str) -> pd.DataFrame:
     This is the primary performance bottleneck - caching this operation
     prevents repeated deserialization of the same data.
     """
-    df = pd.read_json(StringIO(json_str), orient="split")
-    df.index = pd.to_datetime(df.index)
-    df.index.name = "Date"
+    record_payload_size("json_to_df.input", json_str)
+    with timed_block("json_to_df"):
+        df = pd.read_json(StringIO(json_str), orient="split")
+        df.index = pd.to_datetime(df.index)
+        df.index.name = "Date"
     return df
 
 

@@ -1470,6 +1470,92 @@ def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_
     assert pending is no_update
 
 
+def test_po_run_optimization_stores_returns_as_artifact_when_session_present(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
+    df.index = pd.to_datetime(df.index)
+
+    monkeypatch.setattr(portopt, "_po_get_working_returns", lambda *_args, **_kwargs: df.copy())
+    monkeypatch.setattr(
+        portopt,
+        "run_portfolio_optimization",
+        lambda *_args, **_kwargs: (
+            [
+                SimpleNamespace(
+                    apply_start=df.index[0],
+                    apply_end=df.index[-1],
+                    est_start=df.index[0],
+                    est_end=df.index[-1],
+                    weights={"Asset_A": 0.5, "Asset_B": 0.5},
+                )
+            ],
+            pd.Series(0.001, index=df.index),
+        ),
+    )
+    monkeypatch.setattr(portopt, "_po_store_returns_series", lambda session_id, name, series: f"{session_id}:{name}:{len(series)}")
+
+    results_out, _new_raw, status, _pending = portopt.po_run_optimization(
+        1,
+        raw_json,
+        "daily",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        {},
+        {},
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        "MyPort",
+        "full",
+        252,
+        1,
+        "months",
+        "risk_parity",
+        "fill_na",
+        "off",
+        {},
+        [],
+        {},
+        {},
+        [],
+        0.05,
+        "maximize_sharpe",
+        {},
+        {},
+        "ret_cov",
+        [],
+        None,
+        "session-123",
+    )
+
+    assert status["status"] == "complete"
+    assert results_out["MyPort"]["returns_key"] == f"session-123:MyPort:{len(df)}"
+    assert "returns_json" not in results_out["MyPort"]
+
+
+def test_po_load_returns_series_prefers_artifact_key(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    frame = pd.DataFrame({"ArtifactPort": [0.01, 0.02]}, index=idx)
+    frame.index.name = "Date"
+
+    monkeypatch.setattr(portopt, "get_dataframe_artifact", lambda key: frame if key == "artifact-key" else pd.DataFrame())
+
+    series = portopt._po_load_returns_series({"returns_key": "artifact-key"}, "ArtifactPort")
+
+    assert list(series.index) == list(idx)
+    assert list(series.values) == [0.01, 0.02]
+    assert series.name == "ArtifactPort"
+
+
 def test_compute_window_risk_contributions_uses_custom_cov_for_shrinkage(monkeypatch, page_modules, raw_json):
     _, portopt = page_modules
     working_df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]

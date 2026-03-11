@@ -68,6 +68,10 @@ from utils.shared_metrics import (
     spx_json_from_store as _spx_json_from_store,
 )
 from utils.saved_series import saved_series_store_names
+from utils.saved_series_cache import (
+    build_saved_series_cache_descriptor,
+    saved_series_cache_is_fresh,
+)
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -1559,10 +1563,11 @@ def at_update_raw_db_preview(
     Output("dashmat-saved-series-cache-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-session-id-store", "data"),
 )
-def refresh_saved_series_cache(raw_data, cache_data):
+def refresh_saved_series_cache(raw_data, cache_data, session_id):
     """Cache shared saved benchmark series and refresh if raw data extends beyond them."""
-    if not raw_data:
+    if not raw_data or not session_id:
         raise PreventUpdate
 
     try:
@@ -1574,22 +1579,7 @@ def refresh_saved_series_cache(raw_data, cache_data):
         raise PreventUpdate
 
     raw_end = pd.to_datetime(raw_df.index.max())
-
-    cache_is_fresh = isinstance(cache_data, dict) and isinstance(cache_data.get("series_data"), dict)
-    if cache_is_fresh:
-        for series_name in SAVED_SERIES_CONFIG:
-            series_payload = cache_data["series_data"].get(series_name)
-            if not isinstance(series_payload, dict):
-                cache_is_fresh = False
-                break
-            payload_json = series_payload.get("returns_json")
-            payload_max_raw = series_payload.get("max_date")
-            payload_max = pd.to_datetime(payload_max_raw, errors="coerce")
-            if not isinstance(payload_json, str) or pd.isna(payload_max) or raw_end > payload_max:
-                cache_is_fresh = False
-                break
-
-    if cache_is_fresh:
+    if saved_series_cache_is_fresh(cache_data, raw_end):
         raise PreventUpdate
 
     try:
@@ -1605,7 +1595,8 @@ def refresh_saved_series_cache(raw_data, cache_data):
         raise PreventUpdate
 
     saved_df = saved_df.sort_index()
-    series_data = {}
+    series_frames = {}
+    series_max_dates = {}
     for series_name, config in SAVED_SERIES_CONFIG.items():
         if series_name not in saved_df.columns:
             continue
@@ -1620,15 +1611,23 @@ def refresh_saved_series_cache(raw_data, cache_data):
             continue
 
         series_max = pd.to_datetime(series_returns.index.max())
-        series_data[series_name] = {
-            "max_date": series_max.strftime("%Y-%m-%d"),
-            "returns_json": df_to_json(series_returns.to_frame(series_name)),
-        }
+        series_frames[series_name] = series_returns.rename(series_name)
+        series_max_dates[series_name] = series_max.strftime("%Y-%m-%d")
 
-    if not series_data:
+    if not series_frames:
         raise PreventUpdate
 
-    return {"series_data": series_data}
+    cache_df = pd.concat(series_frames, axis=1).sort_index()
+    cache_df.index.name = "Date"
+    descriptor = build_saved_series_cache_descriptor(
+        session_id=str(session_id),
+        saved_df=cache_df,
+        series_max_dates=series_max_dates,
+        raw_data_json=raw_data,
+    )
+    if not descriptor:
+        raise PreventUpdate
+    return descriptor
 
 
 @callback(

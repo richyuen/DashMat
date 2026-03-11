@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from utils.saved_series_cache import series_json_from_saved_series_cache
+
 
 STATS_CONFIG = [
     ("Start Date", None),
@@ -67,6 +69,9 @@ def series_json_from_store(store_data, series_name: str) -> str:
                 payload = series_payload.get("returns_json")
                 if isinstance(payload, str):
                     return payload
+        payload = series_json_from_saved_series_cache(store_data, series_name)
+        if isinstance(payload, str):
+            return payload
     return ""
 
 

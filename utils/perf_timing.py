@@ -8,6 +8,8 @@ import os
 import time
 from typing import Any
 
+from utils.serialization import canonical_json_dumps
+
 
 def _env_bool(name: str, default: str = "0") -> bool:
     val = os.getenv(name, default).strip().lower()
@@ -26,6 +28,40 @@ def _format_fields(fields: dict[str, Any]) -> str:
             continue
         parts.append(f"{key}={value}")
     return " ".join(parts)
+
+
+def estimate_payload_bytes(payload: Any) -> int:
+    """Best-effort UTF-8 payload size estimate for structured logging."""
+    if payload is None:
+        return 0
+    if isinstance(payload, bytes):
+        return len(payload)
+    if isinstance(payload, str):
+        return len(payload.encode("utf-8"))
+    try:
+        return len(canonical_json_dumps(payload).encode("utf-8"))
+    except TypeError:
+        return len(str(payload).encode("utf-8"))
+
+
+def record_metric(name: str, value: float | int | None, **fields: Any) -> None:
+    """Emit a structured metric log when timing instrumentation is enabled."""
+    if not _TIMING_ENABLED or value is None:
+        return
+    suffix = _format_fields(fields)
+    if suffix:
+        _TIMING_LOGGER.info("metric name=%s value=%s %s", name, value, suffix)
+    else:
+        _TIMING_LOGGER.info("metric name=%s value=%s", name, value)
+
+
+def record_payload_size(name: str, payload: Any, **fields: Any) -> int:
+    """Measure and log a payload size in bytes when instrumentation is enabled."""
+    payload_bytes = estimate_payload_bytes(payload)
+    if not _TIMING_ENABLED:
+        return payload_bytes
+    record_metric(f"{name}.bytes", payload_bytes, **fields)
+    return payload_bytes
 
 
 @contextmanager

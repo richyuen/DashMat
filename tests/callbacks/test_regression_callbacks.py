@@ -153,6 +153,102 @@ def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(
     assert "1 window(s)" in status
 
 
+def test_reg_run_regression_stores_series_as_artifact_when_session_present(monkeypatch, regression_page):
+    idx = pd.date_range("2020-01-01", periods=6, freq="B")
+    working_df = pd.DataFrame({"Y": np.linspace(0.01, 0.06, 6), "X1": np.linspace(0.02, 0.07, 6)}, index=idx)
+    monkeypatch.setattr(regression_page, "_reg_get_working_returns", lambda *_args, **_kwargs: working_df.copy())
+    monkeypatch.setattr(
+        regression_page,
+        "run_regression",
+        lambda *_args, **_kwargs: (
+            [
+                RegressionWindowResult(
+                    est_start=idx[0],
+                    est_end=idx[-1],
+                    apply_start=idx[0],
+                    apply_end=idx[-1],
+                    coefficients={"X1": 0.5},
+                    p_values={"X1": 0.01},
+                    r_squared=0.8,
+                    adj_r_squared=0.79,
+                    anova_table={},
+                    diagnostics={},
+                    arima_garch={},
+                    residual_std=0.02,
+                    oos_metrics={},
+                    n_obs=len(idx),
+                )
+            ],
+            pd.Series(np.linspace(0.01, 0.06, 6), index=idx),
+            pd.Series(np.zeros(6), index=idx),
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        regression_page,
+        "_reg_store_result_frame",
+        lambda session_id, df, artifact_type, result_name: f"{artifact_type}:{session_id}:{result_name}:{len(df)}",
+    )
+
+    results_out, _options, selected, status = regression_page.reg_run_regression(
+        1,
+        "raw-json",
+        "daily",
+        ["X1"],
+        "Y",
+        {},
+        {},
+        {"start": "2020-01-01", "end": "2020-01-31"},
+        0,
+        {},
+        {},
+        {},
+        {},
+        {},
+        "ols",
+        "MyRegression",
+        False,
+        False,
+        False,
+        63,
+        "full",
+        36,
+        1,
+        "months",
+        "off",
+        "fill_na",
+        1.0,
+        0.5,
+        0,
+        0,
+        0,
+        0,
+        0,
+        None,
+        {},
+        "session-123",
+    )
+
+    entry = results_out[selected]
+    assert "predicted_key" in entry
+    assert "residuals_key" in entry
+    assert "predicted_json" not in entry
+    assert "residuals_json" not in entry
+    assert status.startswith("✓")
+
+
+def test_reg_load_result_frame_prefers_artifact_key(monkeypatch, regression_page):
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    frame = pd.DataFrame({"predicted": [0.01, 0.02]}, index=idx)
+    frame.index.name = "Date"
+
+    monkeypatch.setattr(regression_page, "get_dataframe_artifact", lambda key: frame if key == "artifact-key" else pd.DataFrame())
+
+    resolved = regression_page._reg_load_result_frame({"predicted_key": "artifact-key"}, "predicted_key", "predicted_json")
+
+    pd.testing.assert_frame_equal(resolved, frame)
+
+
 def test_reg_run_regression_persists_stats_inputs(monkeypatch, regression_page):
     idx = pd.date_range("2020-01-01", periods=6, freq="B")
     working_df = pd.DataFrame(

@@ -100,6 +100,7 @@ from utils.underlying_category_imports import (
     get_underlying_category_desc_options,
     load_underlying_category_series,
 )
+from utils.artifact_store import get_dataframe_artifact, get_default_artifact_store
 
 register_page(__name__, path="/regression", name="Regression", title="Regression")
 
@@ -594,6 +595,43 @@ def _reg_default_chart_visibility(label: str):
     return "legendonly"
 
 
+def _reg_store_result_frame(session_id, df: pd.DataFrame, *, artifact_type: str, result_name: str) -> str | None:
+    if not session_id or df is None or df.empty:
+        return None
+    frame = df.copy()
+    frame.index.name = frame.index.name or "Date"
+    descriptor = get_default_artifact_store().put_dataframe(
+        df=frame,
+        artifact_type=artifact_type,
+        session_id=str(session_id),
+        payload={
+            "result_name": result_name or "Regression",
+            "artifact_type": artifact_type,
+            "rows": int(frame.shape[0]),
+            "columns": list(frame.columns),
+        },
+        metadata={"result_name": result_name or "Regression", "columns": list(frame.columns)},
+    )
+    return descriptor.key
+
+
+def _reg_load_result_frame(entry, key_field: str, json_field: str) -> pd.DataFrame:
+    if not entry:
+        return pd.DataFrame()
+    artifact_key = entry.get(key_field)
+    if artifact_key:
+        frame = get_dataframe_artifact(artifact_key)
+        if frame is not None and not frame.empty:
+            return frame
+    payload = entry.get(json_field)
+    if not payload:
+        return pd.DataFrame()
+    try:
+        return json_to_df(payload)
+    except Exception:
+        return pd.DataFrame()
+
+
 @cache_config.cache.memoize(timeout=0)
 def _reg_build_display_series_cached(entry_payload, raw_data):
     """Build canonical series used across Statistics/Returns/Growth/Scatter."""
@@ -620,19 +658,13 @@ def _reg_build_display_series_cached(entry_payload, raw_data):
 
     predicted = pd.Series(dtype=float)
     residual = pd.Series(dtype=float)
-    try:
-        predicted_df = json_to_df(entry.get("predicted_json"))
-        if predicted_df is not None and not predicted_df.empty:
-            predicted = predicted_df.iloc[:, 0].dropna().rename("Predicted")
-    except Exception:
-        predicted = pd.Series(dtype=float)
+    predicted_df = _reg_load_result_frame(entry, "predicted_key", "predicted_json")
+    if predicted_df is not None and not predicted_df.empty:
+        predicted = predicted_df.iloc[:, 0].dropna().rename("Predicted")
 
-    try:
-        residuals_df = json_to_df(entry.get("residuals_json"))
-        if residuals_df is not None and not residuals_df.empty:
-            residual = residuals_df.iloc[:, 0].dropna().rename("Residual")
-    except Exception:
-        residual = pd.Series(dtype=float)
+    residuals_df = _reg_load_result_frame(entry, "residuals_key", "residuals_json")
+    if residuals_df is not None and not residuals_df.empty:
+        residual = residuals_df.iloc[:, 0].dropna().rename("Residual")
 
     actual = pd.Series(dtype=float)
     if not predicted.empty and not residual.empty:
@@ -4414,6 +4446,7 @@ def reg_download_excel(
     State("reg-garch-q-input", "value"),
     State("reg-linear-constraints-store", "data"),
     State("reg-results-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def reg_run_regression(
@@ -4424,7 +4457,7 @@ def reg_run_regression(
     window_type, window_size, opt_step, opt_step_unit, fill_in_sample,
     missing_data, alpha, l1_ratio,
     arima_p, arima_d, arima_q, garch_p, garch_q,
-    linear_constraints, current_results,
+    linear_constraints, current_results, session_id=None,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -4595,8 +4628,6 @@ def reg_run_regression(
 
     result_entry = {
         "window_results": [_serialize_wr(wr) for wr in window_results],
-        "predicted_json": df_to_json(predicted.to_frame("predicted")),
-        "residuals_json": df_to_json(residuals.to_frame("residuals")),
         "saved_series_name": None,
         "dependent_var": dep_var,
         "independent_vars": x_display_cols,
@@ -4611,6 +4642,26 @@ def reg_run_regression(
         "periodicity": periodicity or "daily",
         "arima_garch_summary": _clean_dict(arima_garch_summary),
     }
+    predicted_key = _reg_store_result_frame(
+        session_id,
+        predicted.to_frame("predicted"),
+        artifact_type="reg_predicted_series",
+        result_name=name,
+    )
+    residuals_key = _reg_store_result_frame(
+        session_id,
+        residuals.to_frame("residuals"),
+        artifact_type="reg_residuals_series",
+        result_name=name,
+    )
+    if predicted_key:
+        result_entry["predicted_key"] = predicted_key
+    else:
+        result_entry["predicted_json"] = df_to_json(predicted.to_frame("predicted"))
+    if residuals_key:
+        result_entry["residuals_key"] = residuals_key
+    else:
+        result_entry["residuals_json"] = df_to_json(residuals.to_frame("residuals"))
 
     new_results = {**current_results, name: result_entry}
     result_options = [{"value": k, "label": k} for k in new_results]
@@ -4706,7 +4757,7 @@ def reg_save_series_to_shared_data(n_clicks, selected, results, raw_data, period
         raise PreventUpdate
 
     entry = dict((results or {}).get(selected) or {})
-    predicted_df = json_to_df(entry.get("predicted_json")) if entry.get("predicted_json") else pd.DataFrame()
+    predicted_df = _reg_load_result_frame(entry, "predicted_key", "predicted_json")
     if predicted_df.empty:
         return no_update, no_update, no_update, "No predicted series available to save."
 

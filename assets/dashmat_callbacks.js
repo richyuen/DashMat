@@ -790,19 +790,18 @@
   }
 
   function saveWorkspaceSession(n_clicks) {
-    if (!n_clicks) {
+      if (!n_clicks) {
+        return noUpdate();
+      }
+      const data = collectWorkspaceSessionData();
+      window.dash_clientside.set_props("dashmat-session-export-request-store", {
+        data: {
+          workspace_session: data,
+          nonce: Date.now()
+        }
+      });
       return noUpdate();
     }
-    const data = collectWorkspaceSessionData();
-    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "dashmat_session.json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    return noUpdate();
-  }
 
   function loadWorkspaceSessionDialog(rootId, n_clicks) {
     if (!n_clicks) {
@@ -813,21 +812,42 @@
   }
 
   function loadWorkspaceSession(contents) {
-    if (!contents) {
+      if (!contents) {
+        return noUpdate();
+      }
+      const raw = atob(contents.split(",")[1]);
+      const bundle = JSON.parse(raw);
+      window.dash_clientside.set_props("dashmat-session-import-request-store", {
+        data: {
+          bundle: bundle,
+          nonce: Date.now()
+        }
+      });
       return noUpdate();
     }
-    const raw = atob(contents.split(",")[1]);
-    const data = JSON.parse(raw);
-    clearWorkspaceSessionKeys();
-    Object.keys(data || {}).forEach(function (key) {
-      if (!isWorkspaceSessionKey(key)) {
-        return;
+
+    function applyLoadedWorkspaceSession(result) {
+      if (!result) {
+        return noUpdate();
       }
-      sessionStorage.setItem(key, data[key]);
-    });
-    window.location.reload();
-    return noUpdate();
-  }
+      if (result.error) {
+        window.alert(result.error);
+        return noUpdate();
+      }
+      const sessionPayload = result.workspace_session;
+      if (!sessionPayload || typeof sessionPayload !== "object") {
+        return noUpdate();
+      }
+      clearWorkspaceSessionKeys();
+      Object.keys(sessionPayload).forEach(function (key) {
+        if (!isWorkspaceSessionKey(key)) {
+          return;
+        }
+        sessionStorage.setItem(key, sessionPayload[key]);
+      });
+      window.location.reload();
+      return noUpdate();
+    }
 
   function navigateAnalytics(menuExit, menuPortfolio, menuRegression, welcomePortfolio, welcomeRegression) {
     const trigger = triggeredId();
@@ -1035,6 +1055,7 @@
       commonDailyButtonDisabled: commonDailyButtonDisabled,
       loadWorkspaceSession: loadWorkspaceSession,
       loadWorkspaceSessionDialog: loadWorkspaceSessionDialog,
+      applyLoadedWorkspaceSession: applyLoadedWorkspaceSession,
       navigateAnalytics: navigateAnalytics,
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,

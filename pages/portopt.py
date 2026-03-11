@@ -112,6 +112,7 @@ from utils.dashmat_welcome_modal import (
     js_underlying_delete_row,
 )
 from utils.portfolio_series import load_portfolio_series
+from utils.artifact_store import get_dataframe_artifact, get_default_artifact_store
 from utils.underlying_category_imports import (
     expand_underlying_category_rows,
     get_underlying_category_desc_options,
@@ -307,14 +308,9 @@ def _po_collect_portfolio_returns(results, selected_portfolios=None) -> pd.DataF
         pdata = (results or {}).get(pname)
         if not pdata:
             continue
-        returns_json = pdata.get("returns_json")
-        if not returns_json:
+        s = _po_load_returns_series(pdata, pname)
+        if s.empty:
             continue
-        try:
-            s = pd.read_json(StringIO(returns_json), typ="series")
-        except Exception:
-            continue
-        s.index = pd.to_datetime(s.index)
         all_returns[pname] = s
     if not all_returns:
         return pd.DataFrame()
@@ -327,21 +323,66 @@ def _po_single_portfolio_return(results, portfolio_name: str) -> pd.Series:
     if not results or not portfolio_name:
         return pd.Series(dtype=float)
     pdata = (results or {}).get(portfolio_name) or {}
-    returns_json = pdata.get("returns_json")
+    return _po_load_returns_series(pdata, portfolio_name)
+
+
+def _po_store_returns_series(session_id, portfolio_name: str, series: pd.Series) -> str | None:
+    if not session_id or series is None or series.empty:
+        return None
+    frame = series.rename(portfolio_name or "Portfolio").to_frame()
+    frame.index.name = frame.index.name or "Date"
+    descriptor = get_default_artifact_store().put_dataframe(
+        df=frame,
+        artifact_type="po_portfolio_returns",
+        session_id=str(session_id),
+        payload={
+            "portfolio_name": portfolio_name or "Portfolio",
+            "rows": int(frame.shape[0]),
+            "start": str(pd.Timestamp(frame.index.min()))[:10] if len(frame.index) else None,
+            "end": str(pd.Timestamp(frame.index.max()))[:10] if len(frame.index) else None,
+        },
+        metadata={"portfolio_name": portfolio_name or "Portfolio"},
+    )
+    return descriptor.key
+
+
+def _po_load_returns_series(entry, portfolio_name: str | None = None) -> pd.Series:
+    if not entry:
+        return pd.Series(dtype=float)
+
+    returns_key = entry.get("returns_key")
+    if returns_key:
+        frame = get_dataframe_artifact(returns_key)
+        if frame is not None and not frame.empty:
+            series = frame.iloc[:, 0]
+            series.index = pd.to_datetime(series.index)
+            return series.dropna().rename(portfolio_name or frame.columns[0])
+
+    returns_json = entry.get("returns_json")
     if not returns_json:
         return pd.Series(dtype=float)
     try:
         s = pd.read_json(StringIO(returns_json), typ="series")
+        s.index = pd.to_datetime(s.index)
+        return s.dropna().rename(portfolio_name or s.name or "Portfolio")
     except Exception:
         return pd.Series(dtype=float)
-    s.index = pd.to_datetime(s.index)
-    return s.dropna().rename(portfolio_name)
+
+
+def _po_returns_ref_payload(entry) -> str:
+    entry = entry or {}
+    return canonical_json_dumps(
+        {
+            "returns_key": entry.get("returns_key"),
+            "returns_json": entry.get("returns_json"),
+        }
+    )
 
 
 @cache_config.cache.memoize(timeout=0)
 def _po_build_display_series_cached(
     selected_portfolio,
-    returns_json,
+    returns_ref_payload,
     config_payload,
     raw_data,
     periodicity,
@@ -351,16 +392,15 @@ def _po_build_display_series_cached(
     vol_scaler,
     vol_scaling_payload,
 ):
-    if not selected_portfolio or not returns_json:
+    if not selected_portfolio or not returns_ref_payload:
         return None, []
 
     series_map = {}
     try:
-        portfolio_series = pd.read_json(StringIO(returns_json), typ="series")
-        portfolio_series.index = pd.to_datetime(portfolio_series.index)
-        portfolio_series = portfolio_series.dropna().rename(selected_portfolio)
+        returns_ref = json.loads(returns_ref_payload) if returns_ref_payload else {}
     except Exception:
-        portfolio_series = pd.Series(dtype=float)
+        returns_ref = {}
+    portfolio_series = _po_load_returns_series(returns_ref, selected_portfolio)
     if not portfolio_series.empty:
         series_map[selected_portfolio] = portfolio_series
 
@@ -428,7 +468,7 @@ def _po_build_display_series(
     )
     display_json, ordered_cols = _po_build_display_series_cached(
         selected_portfolio,
-        entry.get("returns_json"),
+        _po_returns_ref_payload(entry),
         canonical_json_dumps(entry.get("config") or {}),
         bundle.raw_data,
         bundle.periodicity,
@@ -7985,6 +8025,7 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-mode-store", "data"),
     State("po-linear-constraints-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-session-id-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -7997,7 +8038,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         pending_series,
                         ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
                         ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints,
-                        saved_series_store):
+                        saved_series_store, session_id=None):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -8298,7 +8339,6 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         result_entry = {
             "window_weights": window_data,
-            "returns_json": portfolio_returns.to_json(date_format="iso"),
             "config": config,
             "saved_series_name": None,
             "risk_free_meta": {
@@ -8307,6 +8347,11 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 "warning": resolved_rf_context.get("rf_warning"),
             },
         }
+        returns_key = _po_store_returns_series(session_id, final_name, portfolio_returns)
+        if returns_key:
+            result_entry["returns_key"] = returns_key
+        else:
+            result_entry["returns_json"] = portfolio_returns.to_json(date_format="iso")
         try:
             frontier_snapshot = _po_resolve_frontier_snapshot(
                 selected_portfolio=final_name,
@@ -8506,15 +8551,9 @@ def po_save_series_to_shared_data(
         raise PreventUpdate
 
     entry = dict((results or {}).get(selected_portfolio) or {})
-    returns_json = entry.get("returns_json")
-    if not returns_json:
+    portfolio_series = _po_load_returns_series(entry, selected_portfolio)
+    if portfolio_series.empty:
         return no_update, no_update, no_update, "No portfolio return series available to save."
-
-    try:
-        portfolio_series = pd.read_json(StringIO(returns_json), typ="series")
-        portfolio_series.index = pd.to_datetime(portfolio_series.index)
-    except Exception as exc:
-        return no_update, no_update, no_update, f"Error saving series: {exc}"
 
     try:
         save_out = save_series_to_raw_data(

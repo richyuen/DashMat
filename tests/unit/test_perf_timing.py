@@ -64,3 +64,19 @@ def test_env_bool_truthy_and_falsy(monkeypatch):
 
 def test_format_fields_omits_none():
     assert perf_timing._format_fields({"a": 1, "b": None, "c": "x"}) == "a=1 c=x"
+
+
+def test_estimate_payload_bytes_handles_text_and_objects():
+    assert perf_timing.estimate_payload_bytes("abc") == 3
+    assert perf_timing.estimate_payload_bytes({"a": 1}) >= 1
+
+
+def test_record_payload_size_logs_metric_when_enabled(monkeypatch, caplog):
+    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="0")
+    caplog.set_level(logging.INFO, logger="dashmat.timing")
+
+    payload_bytes = mod.record_payload_size("sample", {"a": 1}, scope="unit")
+
+    assert payload_bytes >= 1
+    assert any("metric name=sample.bytes" in rec.getMessage() for rec in caplog.records)
+    assert any("scope=unit" in rec.getMessage() for rec in caplog.records)
