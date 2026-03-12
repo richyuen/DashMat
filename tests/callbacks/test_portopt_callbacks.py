@@ -2323,6 +2323,16 @@ def test_po_ui_blocker_release_uses_db_error_alert():
     assert 'Input("po-db-add-error-alert", "hide")' in text_blob
 
 
+def test_portopt_file_menu_includes_account_list_actions():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    assert 'id="po-menu-load-account-list"' in page_text
+    assert 'id="po-menu-save-account-list"' in page_text
+    assert "welcome_switch_buttons=()," in page_text
+    assert 'id="po-menu-save-session"' in page_text
+    assert 'disabled=True' in page_text
+    assert page_text.index('id="po-menu-save-session"') < page_text.index('id="po-menu-load-account-list"')
+
+
 def test_ui_blocker_release_only_clears_on_series_selection_modal_close():
     text_blob = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert 'if (trigger.indexOf("series-selection-modal") !== -1) {' in text_blob
@@ -2529,6 +2539,7 @@ def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monke
         {"Asset_A": 0.0, "Asset_B": 0.0},
         {"Asset_A": 100.0, "Asset_B": 100.0},
         {"Asset_A": False, "Asset_B": False},
+        {},
     )
 
     assert calls == [("Asset_A",)]
@@ -2567,6 +2578,7 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
         {"Asset_A": 0.0},
         {"Asset_A": 100.0},
         {"Asset_A": False},
+        {},
     )
 
     assert result[0] is no_update
@@ -2582,6 +2594,7 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
     assert result[10] is no_update
     assert result[11] is no_update
     assert result[12] is no_update
+    assert result[13] is no_update
 
 
 def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
@@ -2627,6 +2640,7 @@ def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
         {},
         {},
         ["Asset_A", "Port_1"],
+        {},
         {},
         {},
         {},

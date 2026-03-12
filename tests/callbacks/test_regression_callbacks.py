@@ -493,8 +493,8 @@ def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, re
         lambda *_args, **_kwargs: (new_df, {"IDX_A": {"starts_daily": True}}),
     )
 
-    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide = (
-        regression_page.reg_add_series_from_database(1, ["IDX_A"], None, None)
+    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide, provenance = (
+        regression_page.reg_add_series_from_database(1, ["IDX_A"], None, None, {})
     )
 
     assert isinstance(raw, str)
@@ -505,6 +505,7 @@ def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, re
     assert selected == []
     assert err_hide is True
     assert err_text is no_update
+    assert isinstance(provenance, dict)
 
 
 def test_reg_add_series_from_database_rejects_duplicates(monkeypatch, regression_page):
@@ -517,8 +518,8 @@ def test_reg_add_series_from_database_rejects_duplicates(monkeypatch, regression
         lambda *_args, **_kwargs: (existing_df.copy(), {"IDX_A": {"starts_daily": True}}),
     )
 
-    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide = (
-        regression_page.reg_add_series_from_database(1, ["IDX_A"], existing_raw, "daily")
+    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide, provenance = (
+        regression_page.reg_add_series_from_database(1, ["IDX_A"], existing_raw, "daily", {})
     )
 
     assert raw is no_update
@@ -529,6 +530,7 @@ def test_reg_add_series_from_database_rejects_duplicates(monkeypatch, regression
     assert selected is no_update
     assert "duplicate" in str(err_text).lower()
     assert err_hide is False
+    assert provenance is no_update
 
 
 def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_page):
@@ -788,6 +790,17 @@ def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Input("reg-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionInitialSeriesBlocker")' in page_text
+
+
+def test_regression_file_menu_includes_account_list_actions():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'id="reg-menu-load-account-list"' in page_text
+    assert 'id="reg-menu-save-account-list"' in page_text
+    assert "welcome_switch_buttons=()," in page_text
+    assert 'id="reg-menu-save-session"' in page_text
+    assert 'disabled=True' in page_text
+    assert page_text.index('id="reg-menu-save-session"') < page_text.index('id="reg-menu-load-account-list"')
     assert 'Input("reg-url-location", "pathname")' in page_text
     assert 'Input("reg-series-selection-modal", "opened")' in page_text
     assert 'Input("reg-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
@@ -831,6 +844,7 @@ def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page
         {"Asset_A": -999.0},
         {"Asset_A": 999.0},
         {"Asset_A": False},
+        {},
     )
 
     assert result[0] is no_update
@@ -845,6 +859,7 @@ def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page
     assert result[10] is no_update
     assert result[11] is no_update
     assert result[12] is no_update
+    assert result[13] is no_update
 
 
 def test_reg_series_modal_uses_clientside_single_y_enforcer():

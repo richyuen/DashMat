@@ -369,6 +369,57 @@ def build_welcome_screen(cfg: PagePrefixConfig):
                             ],
                         ),
                     ),
+                    dmc.Paper(
+                        withBorder=True,
+                        radius="md",
+                        p="md",
+                        className="dashmat-welcome-section-card",
+                        children=dmc.Stack(
+                            gap="sm",
+                            children=[
+                                dmc.Group(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-header",
+                                    children=[
+                                        dmc.ThemeIcon(
+                                            DashIconify(icon="tabler:list-details"),
+                                            size="md",
+                                            radius="xl",
+                                            variant="light",
+                                            color="violet",
+                                        ),
+                                        dmc.Stack(
+                                            gap=0,
+                                            children=[
+                                                dmc.Text(
+                                                    "Load Account List",
+                                                    className="dashmat-welcome-section-title",
+                                                ),
+                                                dmc.Text(
+                                                    "Restore saved DB-backed series with latest data",
+                                                    className="dashmat-welcome-section-subtitle",
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                                dmc.Stack(
+                                    gap="xs",
+                                    className="dashmat-welcome-section-actions",
+                                    children=[
+                                        dmc.Button(
+                                            "Load account list",
+                                            leftSection=DashIconify(icon="tabler:bookmark-plus"),
+                                            variant="outline",
+                                            size="sm",
+                                            fullWidth=True,
+                                            id=_sid(cfg.prefix, "welcome-load-account-list-btn"),
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ),
                 ],
             ),
         ],

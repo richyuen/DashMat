@@ -98,6 +98,48 @@
     padding: 16px 18px 18px;
 }
 
+.dashmat-account-list-modal-load .mantine-Modal-content {
+    display: flex;
+    flex-direction: column;
+    height: min(820px, calc(100vh - 72px));
+}
+
+.dashmat-account-list-modal-load .mantine-Modal-header {
+    flex: 0 0 auto;
+}
+
+.dashmat-account-list-modal-load .mantine-Modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.dashmat-account-list-modal-load #dashmat-account-list-modal-root {
+    height: 100%;
+    min-height: 0;
+}
+
+.dashmat-account-list-modal-load #dashmat-account-list-load-section {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.dashmat-account-list-modal-load #dashmat-account-list-load-stack {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.dashmat-account-list-modal-load .dashmat-account-list-panel {
+    flex: 1 1 0;
+    min-height: 0;
+}
+
+.dashmat-account-list-modal-load .dashmat-account-list-panel .ag-theme-alpine {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
 [data-mantine-color-scheme="light"] .dashmat-modal .mantine-InputWrapper-label,
 [data-mantine-color-scheme="light"] .dashmat-modal .mantine-Switch-label,
 [data-mantine-color-scheme="light"] .dashmat-modal .mantine-Checkbox-label,

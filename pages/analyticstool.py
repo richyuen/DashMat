@@ -69,6 +69,12 @@ from utils.shared_metrics import (
     spx_json_from_store as _spx_json_from_store,
 )
 from utils.saved_series import saved_series_store_names
+from utils.account_lists import (
+    add_db_import_provenance_entry,
+    prune_db_import_provenance,
+    remove_db_import_provenance_series,
+    rename_db_import_provenance_series,
+)
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
     build_db_add_modal,
@@ -171,10 +177,7 @@ AT_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     series_modal_size="80vw",
     series_modal_max_width="1250px",
     series_modal_transition_ms=180,
-    welcome_switch_buttons=(
-        ("welcome-view-portfolio", "Switch to Optimization", "grommet-icons:optimize"),
-        ("welcome-view-regression", "Switch to Regression", "tabler:chart-dots-3"),
-    ),
+    welcome_switch_buttons=(),
 )
 
 
@@ -1212,12 +1215,10 @@ clientside_callback(
 
 @callback(
     Output("at-menu-save-session", "disabled"),
-    Input("at-welcome-screen-container", "style"),
+    Input("dashmat-raw-data-store", "data"),
 )
-def at_toggle_save_session(welcome_style):
-    if not welcome_style:
-        return True
-    return welcome_style.get("display") != "none"
+def at_toggle_save_session(raw_data):
+    return not bool(raw_data)
 
 
 @callback(
@@ -2934,6 +2935,17 @@ layout = dmc.Container(
                                         ),
                                         dmc.MenuDivider(),
                                         dmc.MenuItem(
+                                            "Load account list",
+                                            id="at-menu-load-account-list",
+                                            leftSection=DashIconify(icon="tabler:list-details", width=14),
+                                        ),
+                                        dmc.MenuItem(
+                                            "Save account list",
+                                            id="at-menu-save-account-list",
+                                            leftSection=DashIconify(icon="tabler:bookmark-plus", width=14),
+                                        ),
+                                        dmc.MenuDivider(),
+                                        dmc.MenuItem(
                                             "Download Excel",
                                             id="at-menu-download-excel",
                                             disabled=True,
@@ -3089,6 +3101,10 @@ layout = dmc.Container(
                     ],
                 ),
             ],
+        ),
+        html.Div(
+            id="dashmat-account-list-notice-container",
+            style={"marginTop": "-8px", "marginBottom": "12px"},
         ),
         
         # Hidden file upload (triggered by menu item) - Moved here for startup priority
@@ -4122,8 +4138,6 @@ clientside_callback(
     Input("at-menu-exit", "n_clicks"),
     Input("at-menu-view-portfolio", "n_clicks"),
     Input("at-menu-view-regression", "n_clicks"),
-    Input("at-welcome-view-portfolio", "n_clicks"),
-    Input("at-welcome-view-regression", "n_clicks"),
     prevent_initial_call=True,
 )
 
@@ -5547,6 +5561,7 @@ def at_manage_regime_definitions(
     Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("at-db-add-modal", "opened", allow_duplicate=True),
     Output("at-db-add-series-select", "value", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-db-add-ok-button", "n_clicks"),
     State("at-db-add-series-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -5557,6 +5572,7 @@ def at_manage_regime_definitions(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def add_series_from_database(
@@ -5570,6 +5586,7 @@ def add_series_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -5584,7 +5601,7 @@ def add_series_from_database(
             False,
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
-            True, n_no,
+            True, n_no, n_no,
         )
 
     try:
@@ -5600,7 +5617,7 @@ def add_series_from_database(
                     False,
                     n_no, n_no, n_no, n_no, n_no,
                     n_no, n_no, n_no,
-                    True, n_no,
+                    True, n_no, n_no,
                 )
 
         new_df, db_meta = load_cma_returns_for_benches_with_meta(
@@ -5670,6 +5687,13 @@ def add_series_from_database(
         alert_hide = False
         new_first_load = True
 
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type="cma_bench",
+            loader_args={"selected_benches": list(selected_benches or [])},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -5690,6 +5714,7 @@ def add_series_from_database(
             current_vol_scaling or {},
             False,
             [],
+            updated_provenance,
         )
     except Exception as e:
         return (
@@ -5700,7 +5725,7 @@ def add_series_from_database(
             False,
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no,
-            True, n_no,
+            True, n_no, n_no,
         )
 
 
@@ -5728,6 +5753,7 @@ def add_series_from_database(
     Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
     Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
     Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-raw-db-add-ok-button", "n_clicks"),
     State("at-raw-db-add-mode-store", "data"),
     State("at-raw-db-add-rows-store", "data"),
@@ -5739,6 +5765,7 @@ def add_series_from_database(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def at_add_raw_series_from_database(
@@ -5753,6 +5780,7 @@ def at_add_raw_series_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -5772,6 +5800,7 @@ def at_add_raw_series_from_database(
             "Stage at least one row before importing.",
             False,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            n_no,
         )
 
     try:
@@ -5799,6 +5828,7 @@ def at_add_raw_series_from_database(
                     rows,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
+                    n_no,
                     n_no,
                 )
 
@@ -5830,6 +5860,13 @@ def at_add_raw_series_from_database(
         updated_bench = dict(current_bench or {})
         updated_bench.update(load_result.benchmark_assignments or {})
 
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type=f"raw_{mode_key}",
+            loader_args={"rows": rows},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -5854,6 +5891,7 @@ def at_add_raw_series_from_database(
             no_update,
             True,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            updated_provenance,
         )
     except Exception as e:
         return (
@@ -5866,6 +5904,7 @@ def at_add_raw_series_from_database(
             rows,
             f"Error loading raw database series: {str(e)}",
             False,
+            n_no,
             n_no,
         )
 
@@ -5893,6 +5932,7 @@ def at_add_raw_series_from_database(
     Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-underlying-add-ok-button", "n_clicks"),
     State("at-underlying-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
@@ -5903,6 +5943,7 @@ def at_add_raw_series_from_database(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def at_add_underlying_categories_from_database(
@@ -5916,6 +5957,7 @@ def at_add_underlying_categories_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -5936,6 +5978,7 @@ def at_add_underlying_categories_from_database(
             rows,
             "Stage at least one underlying category row before importing.",
             False,
+            n_no,
         )
 
     try:
@@ -5962,6 +6005,7 @@ def at_add_underlying_categories_from_database(
                     rows,
                     duplicate_text,
                     False,
+                    n_no,
                 )
 
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
@@ -5974,6 +6018,13 @@ def at_add_underlying_categories_from_database(
         new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
 
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type="underlying_category",
+            loader_args={"rows": rows},
+            emitted_series=list(imported_df.columns),
+            primary_series=list(imported_df.columns)[0] if list(imported_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -5997,6 +6048,7 @@ def at_add_underlying_categories_from_database(
             [],
             no_update,
             True,
+            updated_provenance,
         )
     except Exception as exc:
         error_text = f"Error loading underlying category series: {exc}"
@@ -6013,6 +6065,7 @@ def at_add_underlying_categories_from_database(
             rows,
             error_text,
             False,
+            n_no,
         )
 
 
@@ -6039,6 +6092,7 @@ def at_add_underlying_categories_from_database(
     Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-portfolio-add-ok-button", "n_clicks"),
     State("at-portfolio-add-mode-store", "data"),
     State("at-portfolio-add-rows-store", "data"),
@@ -6050,6 +6104,7 @@ def at_add_underlying_categories_from_database(
     State("at-series-order-store", "data"),
     State("at-first-load-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def at_add_portfolios_from_database(
@@ -6064,6 +6119,7 @@ def at_add_portfolios_from_database(
     current_order,
     first_load,
     current_vol_scaling,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6084,6 +6140,7 @@ def at_add_portfolios_from_database(
             rows,
             "Stage at least one portfolio row before importing.",
             False,
+            n_no,
         )
 
     try:
@@ -6114,6 +6171,7 @@ def at_add_portfolios_from_database(
                     rows,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
+                    n_no,
                 )
 
         new_periodicity = load_result.periodicity or "monthly"
@@ -6142,6 +6200,13 @@ def at_add_portfolios_from_database(
         updated_bench = dict(current_bench or {})
         updated_bench.update(load_result.benchmark_assignments or {})
 
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type=f"portfolio_{mode}",
+            loader_args={"rows": rows},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             combined_periodicity,
@@ -6165,6 +6230,7 @@ def at_add_portfolios_from_database(
             [],
             no_update,
             True,
+            updated_provenance,
         )
     except Exception as e:
         return (
@@ -6180,6 +6246,7 @@ def at_add_portfolios_from_database(
             rows,
             f"Error loading portfolio series: {str(e)}",
             False,
+            n_no,
         )
 
 
@@ -6711,6 +6778,7 @@ clientside_callback(
     Output("at-series-select-value-store", "data", allow_duplicate=True),
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-series-grid-snapshot-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("at-series-select", "data"),
@@ -6718,6 +6786,7 @@ clientside_callback(
     State("at-long-short-store", "data"),
     State("at-series-order-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def on_modal_ok(
@@ -6728,6 +6797,7 @@ def on_modal_ok(
     current_ls,
     current_order,
     current_vol_scaling,
+    current_provenance,
 ):
     rows = []
     if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
@@ -6801,6 +6871,10 @@ def on_modal_ok(
     next_series_value = no_update if next_select == current_select else next_select
     next_vol_output = no_update if next_vol_scaling == current_vol_scaling else next_vol_scaling
     updated_raw_data = no_update if list(df.columns) == existing_cols else df_to_json(df)
+    updated_provenance = rename_db_import_provenance_series(current_provenance, rename_map) if rename_map else current_provenance
+    updated_provenance = remove_db_import_provenance_series(updated_provenance, deleted_names) if deleted_names else updated_provenance
+    updated_provenance = prune_db_import_provenance(updated_provenance, list(df.columns))
+    next_provenance_output = no_update if updated_provenance == (current_provenance or {}) else updated_provenance
 
     return (
         next_series_select,
@@ -6811,6 +6885,7 @@ def on_modal_ok(
         next_series_value,
         updated_raw_data,
         next_vol_output,
+        next_provenance_output,
     )
 
 

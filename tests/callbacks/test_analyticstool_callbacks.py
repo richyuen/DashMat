@@ -464,6 +464,23 @@ def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert "function analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
 
 
+def test_analyticstool_file_menu_includes_account_list_actions():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'id="at-menu-load-account-list"' in page_text
+    assert 'id="at-menu-save-account-list"' in page_text
+    assert "welcome_switch_buttons=()," in page_text
+    assert page_text.index('id="at-menu-save-session"') < page_text.index('id="at-menu-load-account-list"')
+    assert 'Input("dashmat-raw-data-store", "data")' in page_text
+
+
+def test_analyticstool_save_session_disabled_without_raw_data(page_modules):
+    analyticstool, _ = page_modules
+
+    assert analyticstool.at_toggle_save_session(None) is True
+    assert analyticstool.at_toggle_save_session("") is True
+    assert analyticstool.at_toggle_save_session('{"columns":["Asset_A"]}') is False
+
+
 def test_initial_series_blocker_holds_while_modal_is_open():
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert "function startInitialSeriesModalBlocker(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath)" in js_text
@@ -1055,10 +1072,11 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
         {},
         ["Asset_A"],
         {},
+        {},
     )
 
     assert result[6] is no_update
-    assert len(result) == 8
+    assert len(result) == 9
 
 
 def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modules, raw_json):
@@ -1084,6 +1102,7 @@ def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modu
         {"Asset_A": False},
         ["Asset_A"],
         {"Asset_A": True},
+        {},
     )
 
     assert result[0] is no_update
@@ -1093,6 +1112,7 @@ def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modu
     assert result[5] is no_update
     assert result[6] is no_update
     assert result[7] is no_update
+    assert result[8] is no_update
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):
@@ -1126,6 +1146,7 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
         {},
         [],
         False,
+        {},
         {},
     )
 

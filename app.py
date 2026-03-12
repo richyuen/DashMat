@@ -2,10 +2,15 @@
 
 import dash
 import dash_mantine_components as dmc
-from dash import Dash, Input, Output, dcc, page_container
+from dash import Dash, Input, Output, dcc, html, page_container
 from dash_iconify import DashIconify
 from dash.exceptions import PreventUpdate
 from cache_config import init_cache
+from dbengine import engine as DB_ENGINE, engine_MRD as MRD_ENGINE, engine_PERFORMANCE as PERF_ENGINE
+from utils.account_list_modal import (
+    build_account_list_modal_components,
+    register_account_list_callbacks,
+)
 from utils.returns import build_raw_data_metadata
 
 # Initialize the app with multi-page support
@@ -55,7 +60,18 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-db-import-provenance-store", data={}, storage_type="session"),
+    dcc.Store(id="dashmat-account-list-notice-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-account-list-modal-mode-store", data="load"),
+    dcc.Store(id="dashmat-account-list-rows-store", data=[]),
+    dcc.Store(id="dashmat-account-list-selected-id-store", data=None),
+    dcc.Store(id="dashmat-account-list-session-snapshot-store", data={}),
+    dcc.Store(id="dashmat-account-list-refresh-store", data=0),
+    dcc.Store(id="dashmat-account-list-session-apply-store", data=None),
+    dcc.Store(id="dashmat-account-list-enter-submit-dummy", data=None),
+    dcc.Store(id="dashmat-account-list-focus-dummy", data=None),
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
+    *build_account_list_modal_components(),
     dmc.AppShell(
         header={"height": 45},
         padding=0,
@@ -186,6 +202,14 @@ def guard_protected_pages(pathname, userinfo):
 )
 def refresh_raw_data_meta_store(raw_data, original_periodicity):
     return build_raw_data_metadata(raw_data, original_periodicity)
+
+
+register_account_list_callbacks(
+    app,
+    db_engine=DB_ENGINE,
+    mrd_engine=MRD_ENGINE,
+    perf_engine=PERF_ENGINE,
+)
 
 # Theme consumer callbacks are defined in page modules for charts.
 

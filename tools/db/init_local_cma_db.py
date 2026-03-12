@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 import sys
 
@@ -22,8 +22,10 @@ from dbengine import (
     engine_MRD,
     engine_PERFORMANCE,
 )
+from tools.db.migrate_account_lists import ensure_account_list_tables
 from tools.db.migrate_factor_definitions import ensure_factor_definition_tables_and_seed
 from utils.sample_data import get_sample_file_path
+from utils.serialization import canonical_json_dumps
 
 
 VERSIONS = [2025, 2026]
@@ -33,6 +35,8 @@ RISK_FREE_BENCH = "BCTBill13"
 MTH_TO_DLY_BENCH = "MthToDly"
 MTH_TO_DLY_DAILY_START = pd.Timestamp("2022-01-03")
 FRED_DGS3MO_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS3MO"
+LOCAL_ACCOUNT_LIST_SEED_USERNAME = "Admin User"
+LOCAL_ACCOUNT_LIST_SEED_UPDATE_BY = "init_local_cma_db.py"
 
 CORE_CATEGORY_MAP: dict[str, dict[str, str]] = {
     "SPX": {
@@ -847,7 +851,9 @@ def _build_perf_seed_rows(
     return account_rows, benchmark_rows, daily_rows, monthly_rows
 
 
-def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table]:
+def _build_tables(
+    metadata: MetaData,
+) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table, Table]:
     cma_corr = Table(
         "CMACorrelation",
         metadata,
@@ -985,6 +991,27 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
         Column("UPDATE_BY", String(128), nullable=False),
         Column("ARCHIVE_DATE", DateTime, nullable=False),
     )
+    account_lists = Table(
+        "DMAccountLists",
+        metadata,
+        Column("AccountListID", Integer, primary_key=True, autoincrement=True),
+        Column("Username", String(128), nullable=False),
+        Column("ListName", String(256), nullable=False),
+        Column("ConfigJson", String, nullable=False),
+        Column("UPDATE_DATE", DateTime, nullable=False),
+        Column("UPDATE_BY", String(128), nullable=False),
+    )
+    account_lists_archive = Table(
+        "DMAccountListsArchive",
+        metadata,
+        Column("AccountListID", Integer, nullable=False),
+        Column("Username", String(128), nullable=False),
+        Column("ListName", String(256), nullable=False),
+        Column("ConfigJson", String, nullable=False),
+        Column("UPDATE_DATE", DateTime, nullable=False),
+        Column("UPDATE_BY", String(128), nullable=False),
+        Column("ARCHIVE_DATE", DateTime, nullable=False),
+    )
     return (
         cma_corr,
         cma_ret,
@@ -999,6 +1026,8 @@ def _build_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table
         factor_defs_archive,
         regime_defs,
         regime_defs_archive,
+        account_lists,
+        account_lists_archive,
     )
 
 
@@ -1089,6 +1118,164 @@ def _default_core_category_meta(bench: str) -> dict[str, str]:
         "PeerBench": "Unspecified",
         "AATool": bench,
     }
+
+
+def _build_account_list_seed_rows() -> list[dict]:
+    def _payload(
+        *,
+        captured_at: str,
+        entry_id: str,
+        series: list[str],
+        at_selected: list[str],
+        po_selected: list[str],
+        reg_selected: list[str],
+        reg_dep: str | None,
+        benchmark_map: dict[str, str] | None = None,
+        po_cmabench: dict[str, str] | None = None,
+    ) -> str:
+        benchmark = dict(benchmark_map or {})
+        po_cmabench_map = dict(po_cmabench or {})
+        settings_order = list(series)
+        return canonical_json_dumps(
+            {
+                "schema_version": 1,
+                "captured_at": captured_at,
+                "series_entries": [
+                    {
+                        "entry_id": entry_id,
+                        "loader_type": "cma_bench",
+                        "loader_args": {"selected_benches": list(series)},
+                        "emitted_series": list(series),
+                        "primary_series": series[0] if series else None,
+                    }
+                ],
+                "settings": {
+                    "at": {
+                        "selected": list(at_selected),
+                        "order": settings_order,
+                        "benchmark": benchmark,
+                        "long_short": {},
+                        "scale_vol": {name: True for name in at_selected},
+                    },
+                    "po": {
+                        "selected": list(po_selected),
+                        "order": settings_order,
+                        "benchmark": benchmark,
+                        "cmabench": po_cmabench_map,
+                        "long_short": {},
+                        "scale_vol": {name: True for name in po_selected},
+                        "min_wt": {name: 0.0 for name in po_selected},
+                        "max_wt": {name: 100.0 for name in po_selected},
+                        "force_max": {name: False for name in po_selected},
+                    },
+                    "reg": {
+                        "selected": list(reg_selected),
+                        "order": settings_order,
+                        "benchmark": benchmark,
+                        "long_short": {},
+                        "scale_vol": {name: True for name in reg_selected},
+                        "lag": {name: 0 for name in reg_selected},
+                        "min_beta": {name: -999.0 for name in reg_selected},
+                        "max_beta": {name: 999.0 for name in reg_selected},
+                        "enable_constraint": {name: False for name in reg_selected},
+                        "dependent_var": reg_dep,
+                    },
+                },
+            }
+        )
+
+    return [
+        {
+            "Username": LOCAL_ACCOUNT_LIST_SEED_USERNAME,
+            "ListName": "Seed Core Allocation",
+            "ConfigJson": _payload(
+                captured_at="2026-01-15 09:30:00",
+                entry_id="seed-core-allocation",
+                series=[
+                    "SPX_TRIndex",
+                    "R2000_TRIndex",
+                    "EAFE_TRIndex",
+                    "BCAgg_TRIndex",
+                    "BCTBill13_TRIndex",
+                ],
+                at_selected=[
+                    "SPX_TRIndex",
+                    "R2000_TRIndex",
+                    "EAFE_TRIndex",
+                    "BCAgg_TRIndex",
+                ],
+                po_selected=[
+                    "SPX_TRIndex",
+                    "R2000_TRIndex",
+                    "EAFE_TRIndex",
+                    "BCAgg_TRIndex",
+                ],
+                reg_selected=[
+                    "R2000_TRIndex",
+                    "EAFE_TRIndex",
+                    "BCAgg_TRIndex",
+                    "BCTBill13_TRIndex",
+                ],
+                reg_dep="SPX_TRIndex",
+                benchmark_map={
+                    "R2000_TRIndex": "SPX_TRIndex",
+                    "EAFE_TRIndex": "SPX_TRIndex",
+                    "BCAgg_TRIndex": "BCTBill13_TRIndex",
+                },
+                po_cmabench={
+                    "SPX_TRIndex": "SPX",
+                    "R2000_TRIndex": "R2000",
+                    "EAFE_TRIndex": "EAFE",
+                    "BCAgg_TRIndex": "BCAgg",
+                },
+            ),
+            "UPDATE_DATE": datetime(2026, 1, 15, 9, 30, 0),
+            "UPDATE_BY": LOCAL_ACCOUNT_LIST_SEED_UPDATE_BY,
+        },
+        {
+            "Username": LOCAL_ACCOUNT_LIST_SEED_USERNAME,
+            "ListName": "Seed Global Equity",
+            "ConfigJson": _payload(
+                captured_at="2026-02-05 08:45:00",
+                entry_id="seed-global-equity",
+                series=[
+                    "SPX_TRIndex",
+                    "EAFE_TRIndex",
+                    "EM_TRIndex",
+                    "MSCIUSREIT_TRIndex",
+                ],
+                at_selected=[
+                    "SPX_TRIndex",
+                    "EAFE_TRIndex",
+                    "EM_TRIndex",
+                    "MSCIUSREIT_TRIndex",
+                ],
+                po_selected=[
+                    "SPX_TRIndex",
+                    "EAFE_TRIndex",
+                    "EM_TRIndex",
+                ],
+                reg_selected=[
+                    "EAFE_TRIndex",
+                    "EM_TRIndex",
+                    "MSCIUSREIT_TRIndex",
+                ],
+                reg_dep="SPX_TRIndex",
+                benchmark_map={
+                    "EAFE_TRIndex": "SPX_TRIndex",
+                    "EM_TRIndex": "SPX_TRIndex",
+                    "MSCIUSREIT_TRIndex": "SPX_TRIndex",
+                },
+                po_cmabench={
+                    "SPX_TRIndex": "SPX",
+                    "EAFE_TRIndex": "EAFE",
+                    "EM_TRIndex": "EM",
+                },
+            ),
+            "UPDATE_DATE": datetime(2026, 2, 5, 8, 45, 0),
+            "UPDATE_BY": LOCAL_ACCOUNT_LIST_SEED_UPDATE_BY,
+        },
+    ]
 
 
 def _core_category_rows(benches: list[str]) -> list[dict]:
@@ -1385,11 +1572,14 @@ def main() -> None:
         factor_defs_archive,
         regime_defs,
         regime_defs_archive,
+        account_lists,
+        account_lists_archive,
     ) = _build_tables(metadata)
     mrd_metadata = MetaData()
     mrd_account, mrd_factor_data, mrd_account_returns, mrd_account_returns_m = _build_mrd_tables(mrd_metadata)
     perf_metadata = MetaData()
     perf_account, perf_account_benchmark, perf_daily_return, perf_monthly_return = _build_performance_tables(perf_metadata)
+    account_list_seed_rows = _build_account_list_seed_rows()
 
     metadata.drop_all(engine, checkfirst=True)
     metadata.create_all(engine)
@@ -1525,6 +1715,8 @@ def main() -> None:
             conn.execute(index_ts.insert(), index_ts_rows)
         if alt_ts_rows:
             conn.execute(alt_ts.insert(), alt_ts_rows)
+        if account_list_seed_rows:
+            conn.execute(account_lists.insert(), account_list_seed_rows)
 
     with engine_MRD.begin() as conn:
         if mrd_account_rows:
@@ -1551,11 +1743,14 @@ def main() -> None:
         engine_MRD,
         update_by="init_local_cma_db.py",
     )
+    ensure_account_list_tables(engine)
     with engine.connect() as conn:
         factor_def_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitions")).scalar_one())
         factor_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitionsArchive")).scalar_one())
         regime_def_count = int(conn.execute(text("SELECT COUNT(*) FROM RegimeDefinitions")).scalar_one())
         regime_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM RegimeDefinitionsArchive")).scalar_one())
+        account_list_count = int(conn.execute(text("SELECT COUNT(*) FROM DMAccountLists")).scalar_one())
+        account_list_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM DMAccountListsArchive")).scalar_one())
 
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
@@ -1571,6 +1766,9 @@ def main() -> None:
     print(f"FactorDefinitionsArchive rows: {factor_archive_count}")
     print(f"RegimeDefinitions rows: {regime_def_count}")
     print(f"RegimeDefinitionsArchive rows: {regime_archive_count}")
+    print(f"DMAccountLists rows: {account_list_count}")
+    print(f"DMAccountListsArchive rows: {account_list_archive_count}")
+    print(f"DMAccountLists seed rows: {len(account_list_seed_rows)}")
     print(
         "FactorDefinitions seed stats: "
         f"inserted={factor_seed_stats['inserted']}, "
