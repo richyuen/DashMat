@@ -504,6 +504,23 @@ def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
     assert getattr(blocker_overlay, "zIndex", None) == 2500
 
 
+def test_at_result_grids_treat_series_fields_as_literal_keys(page_modules):
+    analyticstool, _ = page_modules
+
+    grid_ids = [
+        "at-returns-grid",
+        "at-rolling-grid",
+        "at-statistics-grid",
+        "at-calendar-grid",
+        "at-growth-grid",
+        "at-drawdown-grid",
+    ]
+
+    for grid_id in grid_ids:
+        grid = _find_component_by_id(analyticstool.layout, grid_id)
+        assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
+
+
 def test_at_series_modal_has_explicit_zindex():
     modal_text = Path("utils/dashmat_welcome_modal.py").read_text(encoding="utf-8")
     assert "zIndex=1900" in modal_text

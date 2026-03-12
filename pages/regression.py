@@ -48,6 +48,7 @@ from utils.statistics import (
     calculate_statistics_cached,
 )
 from utils.charting import apply_chart_theme
+from utils.ag_grid import literal_field_dash_grid_options
 from utils.qq import build_normal_qq_series, build_qq_figure
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
@@ -4855,7 +4856,7 @@ def reg_render_anova(selected, results, selected_window, active_tab="anova", ini
             rowData=anova_rows,
             defaultColDef={"resizable": True, "sortable": False},
             style={"height": "132px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
         blocks.extend([dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"), anova_grid])
     else:
@@ -4883,7 +4884,7 @@ def reg_render_anova(selected, results, selected_window, active_tab="anova", ini
             rowData=param_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": f"{max(150, 36 + 30 * len(param_df))}px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
         blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), param_grid])
     else:
@@ -5048,7 +5049,7 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
         rowData=df_display[table_fields].to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "380px"},
-        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
     )
     if view_mode == "table":
         return table
@@ -5171,7 +5172,7 @@ def reg_render_rolling_returns(
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "440px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5262,7 +5263,7 @@ def reg_render_weights(selected, results, view_mode, theme, active_tab="weights"
                 rowData=table_df[table_fields].to_dict("records"),
                 defaultColDef={"resizable": True, "sortable": True},
                 style={"height": "420px"},
-                dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+                dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
             )
             ],
         )
@@ -5338,11 +5339,11 @@ def reg_render_returns(selected, results, raw_data, active_tab="returns", initia
         rowData=df_reset.to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "500px"},
-        dashGridOptions={
+        dashGridOptions=literal_field_dash_grid_options({
             "pagination": False,
             "suppressExcelExport": True,
             "suppressCsvExport": True,
-        },
+        }),
     )
 
 
@@ -5402,7 +5403,7 @@ def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab=
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "460px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5505,7 +5506,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
             rowData=monthly_rows,
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "460px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     cal_df = calculate_calendar_year_returns(
@@ -5543,7 +5544,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
         rowData=table_df.to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "460px"},
-        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
     )
 
 
@@ -5605,7 +5606,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "440px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5774,7 +5775,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
             rowData=row_data,
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "600px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     entry = results[selected]

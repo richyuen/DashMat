@@ -90,6 +90,7 @@ from utils.statistics import (
     annualized_return_calendar_days,
 )
 from utils.charting import apply_chart_theme
+from utils.ag_grid import literal_field_dash_grid_options
 from utils.help_links import PORTOPT_HELP_URL
 from utils.core_categories import (
     clear_dropdown_caches,
@@ -223,13 +224,13 @@ def _po_build_result_grid(
             "headerClass": "dashmat-center-header",
         },
         style={"height": "100%", "width": "100%"},
-        dashGridOptions={
+        dashGridOptions=literal_field_dash_grid_options({
             "animateRows": True,
             "pagination": pagination,
             "suppressExcelExport": True,
             "enableRangeSelection": True,
             "suppressCsvExport": True,
-        },
+        }),
     )
 
 
@@ -9170,7 +9171,7 @@ def po_render_growth_chart(
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True, "suppressHeaderMenuButton": True},
             style={"height": "460px", "width": "100%"},
-            dashGridOptions={"animateRows": True, "pagination": False, "suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"animateRows": True, "pagination": False, "suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -9323,7 +9324,7 @@ def po_render_rolling(
                 "headerClass": "dashmat-center-header",
             },
             style={"height": "100%", "width": "100%"},
-            dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -9460,7 +9461,7 @@ def po_render_calendar(
                 "headerClass": "dashmat-center-header",
             },
             style={"height": "100%", "width": "100%"},
-            dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True}),
         )
 
     cal_df = calculate_calendar_year_returns(
@@ -9507,7 +9508,7 @@ def po_render_calendar(
             "headerClass": "dashmat-center-header",
         },
         style={"height": "100%", "width": "100%"},
-        dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+        dashGridOptions=literal_field_dash_grid_options({"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True}),
     )
 
 
@@ -9604,7 +9605,7 @@ def po_render_drawdown(
                 "headerClass": "dashmat-center-header",
             },
             style={"height": "100%", "width": "100%"},
-            dashGridOptions={"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"animateRows": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()

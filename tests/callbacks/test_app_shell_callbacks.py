@@ -68,13 +68,21 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
 
     assert 'dcc.Store(id="dashmat-db-import-provenance-store"' in app_text
     assert 'dcc.Store(id="dashmat-account-list-session-apply-store"' in app_text
+    assert 'dcc.Store(id="dashmat-account-list-load-state-store"' in app_text
     assert "build_account_list_modal_components" in app_text
     assert "register_account_list_callbacks" in app_text
     assert 'id="dashmat-account-list-modal"' in account_list_text
+    assert 'id="dashmat-account-list-load-overlay"' in account_list_text
+    assert 'id="dashmat-account-list-load-overlay-shell"' in account_list_text
     assert 'id="dashmat-account-list-grid"' in account_list_text
     assert 'id="dashmat-account-list-preview-grid"' in account_list_text
     assert 'dashmat-series-modal-grid' in account_list_text
     assert 'ACCOUNT_LIST_MODAL_LOAD_CLASS' in account_list_text
+    assert 'Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True)' in account_list_text
+    assert 'Output("dashmat-account-list-load-overlay", "visible")' in account_list_text
+    assert 'Output("dashmat-account-list-load-overlay-shell", "style")' in account_list_text
+    assert 'Input("dashmat-account-list-load-button", "n_clicks")' in account_list_text
+    assert 'Input("dashmat-account-list-modal", "opened")' in account_list_text
     assert '"welcome-load-account-list-btn"' in welcome_text
     assert '"Load Account List"' in welcome_text
     assert 'Input("at-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text

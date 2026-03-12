@@ -648,6 +648,12 @@ def _merge_imported_with_existing(
     return merge_returns(working_existing, working_new), combined_periodicity
 
 
+def _entry_load_priority_key(entry: dict[str, Any]) -> tuple[int, str]:
+    emitted = _dedupe_strings(entry.get("emitted_series"))
+    primary_series = str(entry.get("primary_series") or "").strip()
+    return (-len(emitted), primary_series.lower())
+
+
 def _load_entry_frame(
     entry: dict[str, Any],
     *,
@@ -759,8 +765,26 @@ def build_account_list_session_payload(
     added_series: list[str] = []
     skipped_conflicts: list[str] = []
     missing_series: list[str] = []
+    added_set: set[str] = set()
 
-    for entry in normalized_payload.get("series_entries", []):
+    entries_to_load = sorted(
+        normalized_payload.get("series_entries", []),
+        key=_entry_load_priority_key,
+    )
+
+    for entry in entries_to_load:
+        entry_emitted = _dedupe_strings(entry.get("emitted_series"))
+        if not entry_emitted:
+            continue
+        pending_series = [
+            series
+            for series in entry_emitted
+            if series not in existing_set and series not in added_set
+        ]
+        if not pending_series:
+            skipped_conflicts.extend(entry_emitted)
+            continue
+
         entry_df, entry_periodicity = _load_entry_frame(
             entry,
             db_engine=db_engine,
@@ -771,8 +795,8 @@ def build_account_list_session_payload(
             missing_series.extend(entry.get("emitted_series", []))
             continue
 
-        candidate_cols = [col for col in entry_df.columns if col not in existing_set and col not in set(added_series)]
-        conflict_cols = [col for col in entry_df.columns if col in existing_set or col in set(added_series)]
+        candidate_cols = [col for col in entry_df.columns if col not in existing_set and col not in added_set]
+        conflict_cols = [col for col in entry_df.columns if col in existing_set or col in added_set]
         if conflict_cols:
             skipped_conflicts.extend(conflict_cols)
         if not candidate_cols:
@@ -786,6 +810,7 @@ def build_account_list_session_payload(
             entry_periodicity,
         )
         added_series.extend(candidate_cols)
+        added_set.update(candidate_cols)
         existing_set = set(merged_df.columns)
         updated_provenance = add_db_import_provenance_entry(
             updated_provenance,

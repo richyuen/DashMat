@@ -23,8 +23,76 @@ ACCOUNT_LIST_MODAL_BASE_CLASS = "dashmat-modal dashmat-account-list-modal"
 ACCOUNT_LIST_MODAL_LOAD_CLASS = f"{ACCOUNT_LIST_MODAL_BASE_CLASS} dashmat-account-list-modal-load"
 
 
+def build_account_list_load_state(status: str, token: int | None = None) -> dict[str, object]:
+    return {"status": str(status or "idle").strip().lower() or "idle", "token": token}
+
+
+def account_list_loader_visible(load_state) -> bool:
+    return isinstance(load_state, dict) and str(load_state.get("status") or "").strip().lower() == "loading"
+
+
+def account_list_loader_wrapper_style(load_state) -> dict[str, object]:
+    if not account_list_loader_visible(load_state):
+        return {"display": "none"}
+    return {"position": "fixed", "inset": 0, "zIndex": 4100}
+
+
+def load_selected_account_list_session(
+    *,
+    n_clicks,
+    selected_id,
+    raw_data,
+    original_periodicity,
+    provenance_store,
+    session_snapshot,
+    userinfo,
+    db_engine: Engine,
+    mrd_engine: Engine,
+    perf_engine: Engine,
+):
+    if not n_clicks:
+        raise PreventUpdate
+    if selected_id is None:
+        return no_update, {"message": "Select an account list to load.", "color": "orange"}, build_account_list_load_state("error", n_clicks)
+    row = load_account_list_by_id(db_engine, selected_id, _account_list_username(userinfo))
+    if row is None:
+        return no_update, {"message": "Saved account list no longer exists.", "color": "red"}, build_account_list_load_state("error", n_clicks)
+    try:
+        session_payload, _stats = build_account_list_session_payload(
+            payload=row.get("ConfigJson"),
+            current_raw_data=raw_data,
+            current_original_periodicity=original_periodicity,
+            current_provenance=provenance_store,
+            current_session_snapshot=session_snapshot,
+            db_engine=db_engine,
+            mrd_engine=mrd_engine,
+            perf_engine=perf_engine,
+        )
+    except Exception as exc:
+        return (
+            no_update,
+            {"message": f"Unable to load account list: {exc}", "color": "red"},
+            build_account_list_load_state("error", n_clicks),
+        )
+    return session_payload, no_update, build_account_list_load_state("success", n_clicks)
+
+
 def build_account_list_modal_components() -> list:
     return [
+        html.Div(
+            id="dashmat-account-list-load-overlay-shell",
+            style={"display": "none"},
+            children=[
+                dmc.LoadingOverlay(
+                    id="dashmat-account-list-load-overlay",
+                    visible=False,
+                    zIndex=4100,
+                    overlayProps={"radius": "sm", "blur": 2},
+                    loaderProps={"variant": "bars", "size": "lg"},
+                    style={"position": "absolute", "inset": 0},
+                ),
+            ],
+        ),
         dmc.Modal(
             id="dashmat-account-list-modal",
             opened=False,
@@ -459,6 +527,35 @@ def register_account_list_callbacks(
 
     app.clientside_callback(
         """
+        function(modalOpened, loadClicks) {
+            const ctx = window.dash_clientside.callback_context;
+            const triggered = (ctx && ctx.triggered && ctx.triggered.length) ? ctx.triggered[0].prop_id.split(".")[0] : null;
+            if (triggered === "dashmat-account-list-modal") {
+                return {status: "idle", token: null};
+            }
+            if (triggered === "dashmat-account-list-load-button" && loadClicks) {
+                return {status: "loading", token: loadClicks};
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
+        Input("dashmat-account-list-modal", "opened"),
+        Input("dashmat-account-list-load-button", "n_clicks"),
+        prevent_initial_call=True,
+    )
+
+    @app.callback(
+        Output("dashmat-account-list-load-overlay", "visible"),
+        Output("dashmat-account-list-load-overlay-shell", "style"),
+        Input("dashmat-account-list-load-state-store", "data"),
+        prevent_initial_call=False,
+    )
+    def _sync_account_list_load_overlay(load_state):
+        return account_list_loader_visible(load_state), account_list_loader_wrapper_style(load_state)
+
+    app.clientside_callback(
+        """
         function(opened, mode, saveDisabled, currentClicks) {
             const handlerKey = "__dashmatAccountListEnterHandler";
             const resolveInput = function() {
@@ -746,6 +843,7 @@ def register_account_list_callbacks(
     @app.callback(
         Output("dashmat-account-list-session-apply-store", "data", allow_duplicate=True),
         Output("dashmat-account-list-notice-store", "data", allow_duplicate=True),
+        Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-load-button", "n_clicks"),
         State("dashmat-account-list-selected-id-store", "data"),
         State("dashmat-raw-data-store", "data"),
@@ -764,24 +862,15 @@ def register_account_list_callbacks(
         session_snapshot,
         userinfo,
     ):
-        if not n_clicks:
-            raise PreventUpdate
-        if selected_id is None:
-            return no_update, {"message": "Select an account list to load.", "color": "orange"}
-        row = load_account_list_by_id(db_engine, selected_id, _account_list_username(userinfo))
-        if row is None:
-            return no_update, {"message": "Saved account list no longer exists.", "color": "red"}
-        try:
-            session_payload, _stats = build_account_list_session_payload(
-                payload=row.get("ConfigJson"),
-                current_raw_data=raw_data,
-                current_original_periodicity=original_periodicity,
-                current_provenance=provenance_store,
-                current_session_snapshot=session_snapshot,
-                db_engine=db_engine,
-                mrd_engine=mrd_engine,
-                perf_engine=perf_engine,
-            )
-        except Exception as exc:
-            return no_update, {"message": f"Unable to load account list: {exc}", "color": "red"}
-        return session_payload, no_update
+        return load_selected_account_list_session(
+            n_clicks=n_clicks,
+            selected_id=selected_id,
+            raw_data=raw_data,
+            original_periodicity=original_periodicity,
+            provenance_store=provenance_store,
+            session_snapshot=session_snapshot,
+            userinfo=userinfo,
+            db_engine=db_engine,
+            mrd_engine=mrd_engine,
+            perf_engine=perf_engine,
+        )

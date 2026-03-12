@@ -57,6 +57,7 @@ from utils.covariance import (
 )
 from utils.exponential_weighting import normalize_decay_input
 from utils.charting import apply_chart_theme
+from utils.ag_grid import literal_field_dash_grid_options
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
 from utils.perf_timing import timed_block
 from utils.qq import build_normal_qq_series, build_qq_figure, build_reference_qq_series
@@ -2278,12 +2279,12 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
+                                    dashGridOptions=literal_field_dash_grid_options({
                                         "animateRows": True,
                                         "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
-                                    },
+                                    }),
                                 ),
                             ],
                         ),
@@ -2369,13 +2370,13 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
+                                    dashGridOptions=literal_field_dash_grid_options({
                                         "animateRows": True,
                                         "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                         "suppressCsvExport": True,
-                                    },
+                                    }),
                                 ),
                             ],
                         ),
@@ -2415,12 +2416,12 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
+                                    dashGridOptions=literal_field_dash_grid_options({
                                         "animateRows": True,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                         "suppressCsvExport": True,
-                                    },
+                                    }),
                                 ),
                             ],
                         ),
@@ -2470,12 +2471,12 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 "headerClass": "dashmat-center-header",
                             },
                             style={"height": "100%", "width": "100%"},
-                            dashGridOptions={
+                            dashGridOptions=literal_field_dash_grid_options({
                                 "animateRows": True,
                                 "suppressExcelExport": True,
                                 "enableRangeSelection": True,
                                 "suppressCsvExport": True,
-                            },
+                            }),
                         ),
                     ],
                 ),
@@ -2804,13 +2805,13 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
+                                    dashGridOptions=literal_field_dash_grid_options({
                                         "animateRows": True,
                                         "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                         "suppressCsvExport": True,
-                                    },
+                                    }),
                                 ),
                             ],
                         ),
@@ -2862,13 +2863,13 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         "headerClass": "dashmat-center-header",
                                     },
                                     style={"height": "100%", "width": "100%"},
-                                    dashGridOptions={
+                                    dashGridOptions=literal_field_dash_grid_options({
                                         "animateRows": True,
                                         "pagination": False,
                                         "suppressExcelExport": True,
                                         "enableRangeSelection": True,
                                         "suppressCsvExport": True,
-                                    },
+                                    }),
                                 ),
                             ],
                         ),
@@ -8559,13 +8560,13 @@ def _build_regime_grid_component(
                     "headerClass": "dashmat-center-header",
                 },
                 style={"height": f"{grid_height}px", "width": "100%"},
-                dashGridOptions={
+                dashGridOptions=literal_field_dash_grid_options({
                     "animateRows": True,
                     "pagination": False,
                     "suppressExcelExport": True,
                     "enableRangeSelection": True,
                     "suppressCsvExport": True,
-                },
+                }),
             ),
         ],
     )

@@ -73,6 +73,7 @@ def _seed_mrd_engine():
                 "(3, 'PERF_EXCL', 'EXCL Index', 'SEC_FACTOR', 'TRIndex', 'PERF'), "
                 "(10, 'Fund A', 'FUNDA', 'OE', 'Ret', 'MSTAR'), "
                 "(11, 'Fund B', 'FUNDB', 'TRUST', 'Ret', 'MSTAR'), "
+                "(13, 'T. Rowe Fund', 'TRFUND', 'OE', 'Ret', 'MSTAR'), "
                 "(12, 'Fund Excluded', 'FUNDX', 'OE', 'Ret', 'OTHER')"
             )
         )
@@ -129,6 +130,14 @@ def _seed_mrd_engine():
                 text(
                     "INSERT INTO [CORE_DATA.ACCOUNT_RETURNS] "
                     "(ACCT_ID, REFERENCE_DATE, GROSS, NET, SOURCE_SYSTEM) VALUES "
+                    "(13, :dt, 0.0060, 0.0055, 'MSTAR')"
+                ),
+                {"dt": dt},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO [CORE_DATA.ACCOUNT_RETURNS] "
+                    "(ACCT_ID, REFERENCE_DATE, GROSS, NET, SOURCE_SYSTEM) VALUES "
                     "(12, :dt, 0.0200, 0.0190, 'OTHER')"
                 ),
                 {"dt": dt},
@@ -149,6 +158,14 @@ def _seed_mrd_engine():
                     "INSERT INTO [CORE_DATA.ACCOUNT_RETURNS_M] "
                     "(ACCT_ID, REFERENCE_DATE, GROSS, NET, SOURCE_SYSTEM) VALUES "
                     "(11, :dt, 0.0110, 0.0102, 'MSTAR')"
+                ),
+                {"dt": dt},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO [CORE_DATA.ACCOUNT_RETURNS_M] "
+                    "(ACCT_ID, REFERENCE_DATE, GROSS, NET, SOURCE_SYSTEM) VALUES "
+                    "(13, :dt, 0.0150, 0.0142, 'MSTAR')"
                 ),
                 {"dt": dt},
             )
@@ -345,6 +362,26 @@ def test_funds_options_preview_and_load():
     assert list(result.returns_df.columns) == ["Fund A", "Fund B"]
     assert result.returns_df["Fund A"].dropna().iloc[0] == pytest.approx(0.01)
     assert result.periodicity == "daily"
+
+
+def test_load_fund_series_preserves_dotted_account_names():
+    mrd = _seed_mrd_engine()
+
+    result = load_fund_series(
+        mrd,
+        [
+            {
+                "mode": "funds",
+                "series_key": "13",
+                "import_name": "T. Rowe Fund",
+                "table_choice": "daily",
+                "fee_choice": "gross",
+            }
+        ],
+    )
+
+    assert list(result.returns_df.columns) == ["T. Rowe Fund"]
+    assert result.returns_df["T. Rowe Fund"].dropna().iloc[0] == pytest.approx(0.006)
 
 
 def test_performance_options_preview_and_load_filters():

@@ -1586,6 +1586,25 @@ def test_reg_render_growth_table_mode_returns_grid_with_wide_date_column(regress
     assert len(getattr(grid, "rowData", [])) == 4
 
 
+def test_reg_render_returns_preserves_dotted_series_fields(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=2, freq="D")
+    dotted_name = "T. Rowe Fund"
+    monkeypatch.setattr(
+        regression_page,
+        "_reg_build_display_series",
+        lambda *_args, **_kwargs: (
+            pd.DataFrame({dotted_name: [0.01, 0.02]}, index=idx),
+            [dotted_name],
+        ),
+    )
+
+    grid = regression_page.reg_render_returns("R1", {"R1": {"periodicity": "daily"}}, "raw-json")
+
+    assert getattr(grid, "columnDefs", [])[1]["field"] == dotted_name
+    assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
+    assert getattr(grid, "rowData", [])[0][dotted_name] == pytest.approx(0.01)
+
+
 def test_reg_render_weights_table_mode_returns_grid_with_wide_date_column(regression_page):
     results = {
         "R1": {

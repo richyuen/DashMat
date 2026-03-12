@@ -18,7 +18,7 @@ from utils.account_lists import (
     normalize_db_import_provenance_store,
     save_account_list,
 )
-from utils.returns import df_to_json
+from utils.returns import df_to_json, json_to_df
 
 
 def _seed_db_engine():
@@ -185,3 +185,72 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
     assert session_payload[REG_STORE_IDS["dep"]] == "A"
     normalized_provenance = normalize_db_import_provenance_store(session_payload["dashmat-db-import-provenance-store"])
     assert any("C" in entry["emitted_series"] for entry in normalized_provenance.values())
+
+
+def test_build_account_list_session_payload_skips_redundant_fetch_for_saved_benchmark(monkeypatch):
+    payload = {
+        "schema_version": 1,
+        "series_entries": [
+            {
+                "entry_id": "bench-only",
+                "loader_type": "cma_bench",
+                "loader_args": {"selected_benches": ["BM"]},
+                "emitted_series": ["BM"],
+                "primary_series": "BM",
+            },
+            {
+                "entry_id": "asset-with-bench",
+                "loader_type": "raw_performance",
+                "loader_args": {"rows": [{"import_name": "Asset", "include_benchmark": True}]},
+                "emitted_series": ["Asset", "BM"],
+                "primary_series": "Asset",
+            },
+        ],
+        "settings": {
+            "at": {"selected": ["Asset", "BM"], "order": ["Asset", "BM"], "benchmark": {}, "long_short": {}, "scale_vol": {}},
+            "po": {"selected": [], "order": [], "benchmark": {}, "cmabench": {}, "long_short": {}, "scale_vol": {}, "min_wt": {}, "max_wt": {}, "force_max": {}},
+            "reg": {
+                "selected": [],
+                "order": [],
+                "benchmark": {},
+                "long_short": {},
+                "scale_vol": {},
+                "lag": {},
+                "min_beta": {},
+                "max_beta": {},
+                "enable_constraint": {},
+                "dependent_var": None,
+            },
+        },
+    }
+
+    calls: list[str] = []
+
+    def fake_load_entry_frame(entry, **_kwargs):
+        calls.append(entry["entry_id"])
+        if entry["entry_id"] == "asset-with-bench":
+            df = pd.DataFrame(
+                {"Asset": [0.01, 0.02], "BM": [0.03, 0.04]},
+                index=pd.to_datetime(["2025-01-31", "2025-02-28"]),
+            )
+            return df, "daily"
+        raise AssertionError("Redundant benchmark-only entry should not be fetched")
+
+    monkeypatch.setattr(account_lists, "_load_entry_frame", fake_load_entry_frame)
+
+    session_payload, stats = build_account_list_session_payload(
+        payload=payload,
+        current_raw_data=None,
+        current_original_periodicity="daily",
+        current_provenance={},
+        current_session_snapshot={},
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert calls == ["asset-with-bench"]
+    assert stats["added_series"] == ["Asset", "BM"]
+    assert stats["skipped_conflicts"] == ["BM"]
+    loaded_df = json_to_df(session_payload["dashmat-raw-data-store"])
+    assert list(loaded_df.columns) == ["Asset", "BM"]

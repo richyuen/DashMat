@@ -511,6 +511,42 @@ def test_po_render_returns_uses_excess_basis_frame(monkeypatch, page_modules):
     assert getattr(grid, "rowData", [])[0]["P1"] == pytest.approx(0.005)
 
 
+def test_po_render_returns_preserves_dotted_series_fields(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    dotted_name = "T. Rowe Fund"
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({dotted_name: [0.01, 0.02]}, index=idx),
+            "total_df": pd.DataFrame({dotted_name: [0.01, 0.02]}, index=idx),
+            "excess_df": pd.DataFrame({dotted_name: [0.01, 0.02]}, index=idx),
+            "display_cols": [dotted_name],
+            "benchmark_map": {},
+            "periodicity": "daily",
+        },
+    )
+
+    grid = portopt.po_render_returns(
+        {"Portfolio": {"run_inputs": {"selected_series": []}}},
+        "returns",
+        "Portfolio",
+        "total",
+        "raw-json",
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+    )
+
+    assert getattr(grid, "columnDefs", [])[1]["field"] == dotted_name
+    assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
+    assert getattr(grid, "rowData", [])[0][dotted_name] == pytest.approx(0.01)
+
+
 def test_po_render_statistics_requires_active_tab(page_modules):
     _, portopt = page_modules
 
