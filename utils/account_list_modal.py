@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 from dash import Input, Output, State, clientside_callback, html, no_update
@@ -7,6 +9,7 @@ from dash.exceptions import PreventUpdate
 from sqlalchemy.engine import Engine
 
 from utils.account_lists import (
+    ACCOUNT_LIST_CAPTURE_STORE_IDS,
     account_list_tables_available,
     build_account_list_payload,
     build_account_list_session_payload,
@@ -41,6 +44,7 @@ def load_selected_account_list_session(
     *,
     n_clicks,
     selected_id,
+    apply_settings,
     raw_data,
     original_periodicity,
     provenance_store,
@@ -64,6 +68,7 @@ def load_selected_account_list_session(
             current_original_periodicity=original_periodicity,
             current_provenance=provenance_store,
             current_session_snapshot=session_snapshot,
+            apply_settings=bool(apply_settings),
             db_engine=db_engine,
             mrd_engine=mrd_engine,
             perf_engine=perf_engine,
@@ -216,6 +221,12 @@ def build_account_list_modal_components() -> list:
                                                 ),
                                             ],
                                         ),
+                                        dmc.Switch(
+                                            id="dashmat-account-list-apply-settings-switch",
+                                            label="Apply Saved Settings",
+                                            checked=True,
+                                            size="sm",
+                                        ),
                                     ],
                                 ),
                             ],
@@ -347,9 +358,9 @@ def toggle_account_list_modal(
         "dashmat-account-list-close-button": close_clicks,
     }
     if triggered_id == "dashmat-account-list-close-button":
-        return False, no_update, "", None
+        return False, no_update, "", None, True
     if triggered_id in {"at-menu-save-account-list", "po-menu-save-account-list", "reg-menu-save-account-list"} and click_map.get(triggered_id):
-        return True, "save", "", None
+        return True, "save", "", None, True
     if triggered_id in {
         "at-menu-load-account-list",
         "at-welcome-load-account-list-btn",
@@ -358,7 +369,7 @@ def toggle_account_list_modal(
         "reg-menu-load-account-list",
         "reg-welcome-load-account-list-btn",
     } and click_map.get(triggered_id):
-        return True, "load", "", None
+        return True, "load", "", None, True
     raise PreventUpdate
 
 
@@ -418,7 +429,7 @@ def render_account_list_modal_view(opened, mode, rows, selected_id):
         visible,
         list_row_data,
         preview_rows if isinstance(preview_rows, list) else [],
-        "Load adds latest DB data for saved series and restores global series-grid settings.",
+        "Load adds latest DB data for saved series. Apply Saved Settings restores all saved page controls; off keeps the current series-dialog restore behavior.",
         selected_row is None,
         selected_row is None,
         visible,
@@ -450,49 +461,24 @@ def register_account_list_callbacks(
     perf_engine: Engine,
 ):
     app.clientside_callback(
-        """
-        function() {
-            const keys = [
-                "at-series-select",
-                "at-benchmark-assignments-store",
-                "at-long-short-store",
-                "at-series-order-store",
-                "at-vol-scaling-assignments-store",
-                "po-series-select",
-                "po-benchmark-assignments-store",
-                "po-cmabench-assignments-store",
-                "po-long-short-store",
-                "po-series-order-store",
-                "po-vol-scaling-assignments-store",
-                "po-min-wt-store",
-                "po-max-wt-store",
-                "po-force-max-store",
-                "reg-series-select",
-                "reg-benchmark-assignments-store",
-                "reg-long-short-store",
-                "reg-series-order-store",
-                "reg-vol-scaling-assignments-store",
-                "reg-dependent-var-store",
-                "reg-lag-store",
-                "reg-min-beta-store",
-                "reg-max-beta-store",
-                "reg-enable-constraint-store"
-            ];
-            const out = {};
-            for (let i = 0; i < keys.length; i += 1) {
+        f"""
+        function() {{
+            const keys = {json.dumps(ACCOUNT_LIST_CAPTURE_STORE_IDS)};
+            const out = {{}};
+            for (let i = 0; i < keys.length; i += 1) {{
                 const key = keys[i];
                 const raw = sessionStorage.getItem(key);
-                if (raw == null) {
+                if (raw == null) {{
                     continue;
-                }
-                try {
+                }}
+                try {{
                     out[key] = JSON.parse(raw);
-                } catch (err) {
+                }} catch (err) {{
                     out[key] = null;
-                }
-            }
+                }}
+            }}
             return out;
-        }
+        }}
         """,
         Output("dashmat-account-list-session-snapshot-store", "data"),
         Input("at-menu-save-account-list", "n_clicks", allow_optional=True),
@@ -688,6 +674,7 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-modal-mode-store", "data"),
         Output("dashmat-account-list-name-input", "value"),
         Output("dashmat-account-list-selected-id-store", "data"),
+        Output("dashmat-account-list-apply-settings-switch", "checked"),
         Input("at-menu-save-account-list", "n_clicks", allow_optional=True),
         Input("at-menu-load-account-list", "n_clicks", allow_optional=True),
         Input("at-welcome-load-account-list-btn", "n_clicks", allow_optional=True),
@@ -846,6 +833,7 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-load-button", "n_clicks"),
         State("dashmat-account-list-selected-id-store", "data"),
+        State("dashmat-account-list-apply-settings-switch", "checked"),
         State("dashmat-raw-data-store", "data"),
         State("dashmat-original-periodicity-store", "data"),
         State("dashmat-db-import-provenance-store", "data"),
@@ -856,6 +844,7 @@ def register_account_list_callbacks(
     def _load_selected_account_list(
         n_clicks,
         selected_id,
+        apply_settings,
         raw_data,
         original_periodicity,
         provenance_store,
@@ -865,6 +854,7 @@ def register_account_list_callbacks(
         return load_selected_account_list_session(
             n_clicks=n_clicks,
             selected_id=selected_id,
+            apply_settings=apply_settings,
             raw_data=raw_data,
             original_periodicity=original_periodicity,
             provenance_store=provenance_store,

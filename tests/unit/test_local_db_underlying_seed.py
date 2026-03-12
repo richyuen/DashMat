@@ -7,6 +7,7 @@ from tools.db.backfill_underlying_category_peerts import backfill_underlying_cat
 from tools.db.init_local_cma_db import (
     UNDERLYING_CATEGORY_ITEM,
     UNDERLYING_CATEGORY_PORTFOLIO_DESCS,
+    _build_account_list_seed_rows,
     build_underlying_category_seed_rows,
 )
 
@@ -87,3 +88,18 @@ def test_backfill_underlying_category_peerts_is_idempotent():
         ).scalar_one()
 
     assert int(row_count) == first["generated"]
+
+
+def test_account_list_seed_rows_use_control_values_schema():
+    rows = _build_account_list_seed_rows()
+
+    assert rows
+
+    for row in rows:
+        payload = row["ConfigJson"]
+        assert '"schema_version":2' in payload
+        assert '"control_values"' in payload
+        assert '"settings"' not in payload
+        assert '"at-series-select"' in payload
+        assert '"po-series-select"' in payload
+        assert '"reg-series-select"' in payload

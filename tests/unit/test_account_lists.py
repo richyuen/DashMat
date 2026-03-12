@@ -44,9 +44,9 @@ def test_build_account_list_payload_filters_to_db_backed_series():
     payload = build_account_list_payload(provenance, snapshot)
     normalized = normalize_account_list_payload(payload)
 
-    assert normalized["settings"]["at"]["selected"] == ["SPX_TRIndex"]
-    assert normalized["settings"]["at"]["order"] == ["SPX_TRIndex"]
-    assert normalized["settings"]["reg"]["dependent_var"] is None
+    assert normalized["control_values"][AT_STORE_IDS["selected"]] == ["SPX_TRIndex", "UploadedOnly"]
+    assert normalized["control_values"][AT_STORE_IDS["order"]] == ["UploadedOnly", "SPX_TRIndex"]
+    assert normalized["control_values"][REG_STORE_IDS["dep"]] == "UploadedOnly"
 
 
 def test_save_list_load_and_delete_account_list_support_duplicate_names():
@@ -106,7 +106,7 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
         index=pd.to_datetime(["2025-01-31", "2025-02-28"]),
     )
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "series_entries": [
             {
                 "entry_id": "entry-1",
@@ -116,37 +116,14 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
                 "primary_series": "B",
             }
         ],
-        "settings": {
-            "at": {
-                "selected": ["C"],
-                "order": ["C"],
-                "benchmark": {"C": "B"},
-                "long_short": {"C": False},
-                "scale_vol": {"C": True},
-            },
-            "po": {
-                "selected": [],
-                "order": [],
-                "benchmark": {},
-                "cmabench": {},
-                "long_short": {},
-                "scale_vol": {},
-                "min_wt": {},
-                "max_wt": {},
-                "force_max": {},
-            },
-            "reg": {
-                "selected": [],
-                "order": [],
-                "benchmark": {},
-                "long_short": {},
-                "scale_vol": {},
-                "lag": {},
-                "min_beta": {},
-                "max_beta": {},
-                "enable_constraint": {},
-                "dependent_var": "C",
-            },
+        "control_values": {
+            AT_STORE_IDS["selected"]: ["C"],
+            AT_STORE_IDS["order"]: ["C"],
+            AT_STORE_IDS["bench"]: {"C": "B"},
+            AT_STORE_IDS["long_short"]: {"C": False},
+            AT_STORE_IDS["vol"]: {"C": True},
+            "at-periodicity-value-store": "monthly",
+            REG_STORE_IDS["dep"]: "C",
         },
     }
 
@@ -173,6 +150,7 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
             AT_STORE_IDS["bench"]: {"A": "None"},
             REG_STORE_IDS["dep"]: "A",
         },
+        apply_settings=True,
         db_engine=None,  # not used because loader is monkeypatched
         mrd_engine=None,
         perf_engine=None,
@@ -183,13 +161,58 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
     assert session_payload[AT_STORE_IDS["selected"]] == ["A", "C"]
     assert session_payload[AT_STORE_IDS["bench"]]["C"] == "B"
     assert session_payload[REG_STORE_IDS["dep"]] == "A"
+    assert session_payload["at-periodicity-value-store"] == "monthly"
     normalized_provenance = normalize_db_import_provenance_store(session_payload["dashmat-db-import-provenance-store"])
     assert any("C" in entry["emitted_series"] for entry in normalized_provenance.values())
 
 
+def test_build_account_list_session_payload_skips_extra_controls_when_apply_settings_is_off(monkeypatch):
+    payload = {
+        "schema_version": 2,
+        "series_entries": [
+            {
+                "entry_id": "entry-1",
+                "loader_type": "cma_bench",
+                "loader_args": {"selected_benches": ["C"]},
+                "emitted_series": ["C"],
+                "primary_series": "C",
+            }
+        ],
+        "control_values": {
+            AT_STORE_IDS["selected"]: ["C"],
+            AT_STORE_IDS["order"]: ["C"],
+            "at-active-tab-store": "conditional_returns",
+        },
+    }
+
+    monkeypatch.setattr(
+        account_lists,
+        "_load_entry_frame",
+        lambda *_args, **_kwargs: (
+            pd.DataFrame({"C": [0.01, 0.02]}, index=pd.to_datetime(["2025-01-31", "2025-02-28"])),
+            "daily",
+        ),
+    )
+
+    session_payload, _stats = build_account_list_session_payload(
+        payload=payload,
+        current_raw_data=None,
+        current_original_periodicity="daily",
+        current_provenance={},
+        current_session_snapshot={},
+        apply_settings=False,
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert session_payload[AT_STORE_IDS["selected"]] == ["C"]
+    assert "at-active-tab-store" not in session_payload
+
+
 def test_build_account_list_session_payload_skips_redundant_fetch_for_saved_benchmark(monkeypatch):
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "series_entries": [
             {
                 "entry_id": "bench-only",
@@ -206,21 +229,9 @@ def test_build_account_list_session_payload_skips_redundant_fetch_for_saved_benc
                 "primary_series": "Asset",
             },
         ],
-        "settings": {
-            "at": {"selected": ["Asset", "BM"], "order": ["Asset", "BM"], "benchmark": {}, "long_short": {}, "scale_vol": {}},
-            "po": {"selected": [], "order": [], "benchmark": {}, "cmabench": {}, "long_short": {}, "scale_vol": {}, "min_wt": {}, "max_wt": {}, "force_max": {}},
-            "reg": {
-                "selected": [],
-                "order": [],
-                "benchmark": {},
-                "long_short": {},
-                "scale_vol": {},
-                "lag": {},
-                "min_beta": {},
-                "max_beta": {},
-                "enable_constraint": {},
-                "dependent_var": None,
-            },
+        "control_values": {
+            AT_STORE_IDS["selected"]: ["Asset", "BM"],
+            AT_STORE_IDS["order"]: ["Asset", "BM"],
         },
     }
 
@@ -244,6 +255,7 @@ def test_build_account_list_session_payload_skips_redundant_fetch_for_saved_benc
         current_original_periodicity="daily",
         current_provenance={},
         current_session_snapshot={},
+        apply_settings=True,
         db_engine=None,
         mrd_engine=None,
         perf_engine=None,

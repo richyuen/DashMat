@@ -25,6 +25,7 @@ def test_load_selected_account_list_session_requires_click():
         modal_module.load_selected_account_list_session(
             n_clicks=0,
             selected_id=1,
+            apply_settings=True,
             raw_data=None,
             original_periodicity="daily",
             provenance_store={},
@@ -40,6 +41,7 @@ def test_load_selected_account_list_session_handles_missing_selection():
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=2,
         selected_id=None,
+        apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
@@ -61,6 +63,7 @@ def test_load_selected_account_list_session_handles_missing_row(monkeypatch):
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=4,
         selected_id=8,
+        apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
@@ -91,6 +94,7 @@ def test_load_selected_account_list_session_handles_loader_error(monkeypatch):
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=5,
         selected_id=9,
+        apply_settings=False,
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
@@ -121,6 +125,7 @@ def test_load_selected_account_list_session_reports_success(monkeypatch):
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=6,
         selected_id=10,
+        apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
@@ -142,6 +147,7 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
     first = modal_module.load_selected_account_list_session(
         n_clicks=7,
         selected_id=11,
+        apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
@@ -154,6 +160,7 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
     second = modal_module.load_selected_account_list_session(
         n_clicks=8,
         selected_id=11,
+        apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},

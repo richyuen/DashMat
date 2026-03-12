@@ -23,7 +23,7 @@ from utils.serialization import canonical_json_dumps
 from utils.underlying_category_imports import load_underlying_category_series
 
 
-ACCOUNT_LIST_SCHEMA_VERSION = 1
+ACCOUNT_LIST_SCHEMA_VERSION = 2
 
 AT_STORE_IDS = {
     "selected": "at-series-select",
@@ -60,6 +60,123 @@ REG_STORE_IDS = {
     "max_beta": "reg-max-beta-store",
     "enable": "reg-enable-constraint-store",
 }
+
+AT_EXTRA_CONTROL_STORE_IDS = [
+    "at-periodicity-value-store",
+    "at-returns-type-value-store",
+    "at-active-tab-store",
+    "at-rolling-window-store",
+    "at-rolling-metric-store",
+    "at-rolling-return-type-store",
+    "at-rolling-chart-switch-store",
+    "at-drawdown-chart-switch-store",
+    "at-growth-chart-switch-store",
+    "at-use-risk-free-store",
+    "at-monthly-view-store",
+    "at-monthly-series-store",
+    "at-factor-mode-store",
+    "at-factor-quantiles-store",
+    "at-factor-transform-store",
+    "at-factor-series-store",
+    "at-factor-qq-reference-store",
+    "at-conditional-view-store",
+    "at-conditional-comparator-store",
+    "at-conditional-threshold-store",
+    "at-conditional-window-conversion-store",
+    "at-conditional-step-store",
+    "at-conditional-step-unit-store",
+    "at-conditional-display-mode-store",
+    "at-regime-definition-store",
+    "at-date-range-store",
+    "at-vol-scaler-value-store",
+]
+
+PO_EXTRA_CONTROL_STORE_IDS = [
+    "po-periodicity-value-store",
+    "po-vol-scaler-value-store",
+    "po-use-risk-free-store",
+    "po-returns-basis-store",
+    "po-reporting-basis-store",
+    "po-date-range-store",
+    "po-opt-window-store",
+    "po-window-size-store",
+    "po-opt-step-store",
+    "po-opt-step-unit-store",
+    "po-opt-model-store",
+    "po-portfolio-name-store",
+    "po-exp-wt-cov-store",
+    "po-halflife-store",
+    "po-cov-shrinkage-store",
+    "po-cov-shrinkage-target-store",
+    "po-missing-data-store",
+    "po-fill-in-sample-store",
+    "po-ex-ante-mode-store",
+    "po-bl-tau-store",
+    "po-objective-store",
+    "po-active-tab-store",
+    "po-weight-chart-switch-store",
+    "po-attribution-chart-switch-store",
+    "po-risk-chart-switch-store",
+    "po-turnover-chart-switch-store",
+    "po-frontier-chart-switch-store",
+]
+
+REG_EXTRA_CONTROL_STORE_IDS = [
+    "reg-periodicity-value-store",
+    "reg-vol-scaler-value-store",
+    "reg-use-risk-free-store",
+    "reg-date-range-store",
+    "reg-model-store",
+    "reg-regression-name-store",
+    "reg-force-zero-intercept-store",
+    "reg-robust-se-store",
+    "reg-exp-wt-store",
+    "reg-halflife-store",
+    "reg-window-type-store",
+    "reg-window-size-store",
+    "reg-opt-step-store",
+    "reg-opt-step-unit-store",
+    "reg-fill-in-sample-store",
+    "reg-missing-data-store",
+    "reg-alpha-store",
+    "reg-l1-ratio-store",
+    "reg-active-tab-store",
+]
+
+ACCOUNT_LIST_SERIES_DIALOG_STORE_IDS = [
+    AT_STORE_IDS["selected"],
+    AT_STORE_IDS["bench"],
+    AT_STORE_IDS["long_short"],
+    AT_STORE_IDS["order"],
+    AT_STORE_IDS["vol"],
+    PO_STORE_IDS["selected"],
+    PO_STORE_IDS["bench"],
+    PO_STORE_IDS["cmabench"],
+    PO_STORE_IDS["long_short"],
+    PO_STORE_IDS["order"],
+    PO_STORE_IDS["vol"],
+    PO_STORE_IDS["min_wt"],
+    PO_STORE_IDS["max_wt"],
+    PO_STORE_IDS["force_max"],
+    REG_STORE_IDS["selected"],
+    REG_STORE_IDS["bench"],
+    REG_STORE_IDS["long_short"],
+    REG_STORE_IDS["order"],
+    REG_STORE_IDS["vol"],
+    REG_STORE_IDS["dep"],
+    REG_STORE_IDS["lag"],
+    REG_STORE_IDS["min_beta"],
+    REG_STORE_IDS["max_beta"],
+    REG_STORE_IDS["enable"],
+]
+
+ACCOUNT_LIST_EXTRA_CONTROL_STORE_IDS = (
+    AT_EXTRA_CONTROL_STORE_IDS
+    + PO_EXTRA_CONTROL_STORE_IDS
+    + REG_EXTRA_CONTROL_STORE_IDS
+)
+
+ACCOUNT_LIST_CAPTURE_STORE_IDS = ACCOUNT_LIST_SERIES_DIALOG_STORE_IDS + ACCOUNT_LIST_EXTRA_CONTROL_STORE_IDS
 
 
 def _now_utc() -> datetime:
@@ -256,6 +373,16 @@ def _session_value(snapshot: Any, key: str, default: Any) -> Any:
     return default
 
 
+def _saved_control_values(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): value.get(key)
+        for key in ACCOUNT_LIST_CAPTURE_STORE_IDS
+        if str(key) in value
+    }
+
+
 def _series_names_from_entries(entries: list[dict[str, Any]]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -271,74 +398,11 @@ def _series_names_from_entries(entries: list[dict[str, Any]]) -> list[str]:
 
 def build_account_list_payload(provenance_store: Any, session_snapshot: Any) -> dict[str, Any]:
     entries = list(normalize_db_import_provenance_store(provenance_store).values())
-    series_names = _series_names_from_entries(entries)
-    allowed = set(series_names)
-
-    at_selected = _normalize_snapshot_list(_session_value(session_snapshot, AT_STORE_IDS["selected"], []), allowed)
-    at_order = _normalize_snapshot_list(_session_value(session_snapshot, AT_STORE_IDS["order"], []), allowed)
-    at_bench = _normalize_snapshot_mapping(_session_value(session_snapshot, AT_STORE_IDS["bench"], {}), allowed)
-    at_ls = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, AT_STORE_IDS["long_short"], {}), allowed).items()}
-    at_vol = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, AT_STORE_IDS["vol"], {}), allowed).items()}
-
-    po_selected = _normalize_snapshot_list(_session_value(session_snapshot, PO_STORE_IDS["selected"], []), allowed)
-    po_order = _normalize_snapshot_list(_session_value(session_snapshot, PO_STORE_IDS["order"], []), allowed)
-    po_bench = _normalize_snapshot_mapping(_session_value(session_snapshot, PO_STORE_IDS["bench"], {}), allowed)
-    po_cmabench = {k: str(v or "").strip() for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, PO_STORE_IDS["cmabench"], {}), allowed).items()}
-    po_ls = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, PO_STORE_IDS["long_short"], {}), allowed).items()}
-    po_vol = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, PO_STORE_IDS["vol"], {}), allowed).items()}
-    po_min = {k: float(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, PO_STORE_IDS["min_wt"], {}), allowed).items()}
-    po_max = {k: float(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, PO_STORE_IDS["max_wt"], {}), allowed).items()}
-    po_force = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, PO_STORE_IDS["force_max"], {}), allowed).items()}
-
-    reg_selected = _normalize_snapshot_list(_session_value(session_snapshot, REG_STORE_IDS["selected"], []), allowed)
-    reg_order = _normalize_snapshot_list(_session_value(session_snapshot, REG_STORE_IDS["order"], []), allowed)
-    reg_bench = _normalize_snapshot_mapping(_session_value(session_snapshot, REG_STORE_IDS["bench"], {}), allowed)
-    reg_ls = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, REG_STORE_IDS["long_short"], {}), allowed).items()}
-    reg_vol = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, REG_STORE_IDS["vol"], {}), allowed).items()}
-    reg_lag = {k: int(v or 0) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, REG_STORE_IDS["lag"], {}), allowed).items()}
-    reg_min = {k: float(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, REG_STORE_IDS["min_beta"], {}), allowed).items()}
-    reg_max = {k: float(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, REG_STORE_IDS["max_beta"], {}), allowed).items()}
-    reg_enable = {k: bool(v) for k, v in _normalize_snapshot_mapping(_session_value(session_snapshot, REG_STORE_IDS["enable"], {}), allowed).items()}
-    reg_dep = str(_session_value(session_snapshot, REG_STORE_IDS["dep"], "") or "").strip()
-    if reg_dep and reg_dep not in allowed:
-        reg_dep = ""
-
     return {
         "schema_version": ACCOUNT_LIST_SCHEMA_VERSION,
         "captured_at": _now_utc().strftime("%Y-%m-%d %H:%M:%S"),
         "series_entries": entries,
-        "settings": {
-            "at": {
-                "selected": at_selected,
-                "order": at_order,
-                "benchmark": at_bench,
-                "long_short": at_ls,
-                "scale_vol": at_vol,
-            },
-            "po": {
-                "selected": po_selected,
-                "order": po_order,
-                "benchmark": po_bench,
-                "cmabench": po_cmabench,
-                "long_short": po_ls,
-                "scale_vol": po_vol,
-                "min_wt": po_min,
-                "max_wt": po_max,
-                "force_max": po_force,
-            },
-            "reg": {
-                "selected": reg_selected,
-                "order": reg_order,
-                "benchmark": reg_bench,
-                "long_short": reg_ls,
-                "scale_vol": reg_vol,
-                "lag": reg_lag,
-                "min_beta": reg_min,
-                "max_beta": reg_max,
-                "enable_constraint": reg_enable,
-                "dependent_var": reg_dep or None,
-            },
-        },
+        "control_values": _saved_control_values(session_snapshot),
     }
 
 
@@ -359,48 +423,12 @@ def normalize_account_list_payload(payload: Any) -> dict[str, Any]:
         for idx, entry in enumerate(payload.get("series_entries") or [])
         if isinstance(entry, dict)
     }).values())
-    series_names = set(_series_names_from_entries(entries))
-    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
-    at = settings.get("at") if isinstance(settings.get("at"), dict) else {}
-    po = settings.get("po") if isinstance(settings.get("po"), dict) else {}
-    reg = settings.get("reg") if isinstance(settings.get("reg"), dict) else {}
 
     return {
         "schema_version": int(payload.get("schema_version") or ACCOUNT_LIST_SCHEMA_VERSION),
         "captured_at": str(payload.get("captured_at") or ""),
         "series_entries": entries,
-        "settings": {
-            "at": {
-                "selected": _normalize_snapshot_list(at.get("selected"), series_names),
-                "order": _normalize_snapshot_list(at.get("order"), series_names),
-                "benchmark": _normalize_snapshot_mapping(at.get("benchmark"), series_names),
-                "long_short": {k: bool(v) for k, v in _normalize_snapshot_mapping(at.get("long_short"), series_names).items()},
-                "scale_vol": {k: bool(v) for k, v in _normalize_snapshot_mapping(at.get("scale_vol"), series_names).items()},
-            },
-            "po": {
-                "selected": _normalize_snapshot_list(po.get("selected"), series_names),
-                "order": _normalize_snapshot_list(po.get("order"), series_names),
-                "benchmark": _normalize_snapshot_mapping(po.get("benchmark"), series_names),
-                "cmabench": {k: str(v or "").strip() for k, v in _normalize_snapshot_mapping(po.get("cmabench"), series_names).items()},
-                "long_short": {k: bool(v) for k, v in _normalize_snapshot_mapping(po.get("long_short"), series_names).items()},
-                "scale_vol": {k: bool(v) for k, v in _normalize_snapshot_mapping(po.get("scale_vol"), series_names).items()},
-                "min_wt": {k: float(v) for k, v in _normalize_snapshot_mapping(po.get("min_wt"), series_names).items()},
-                "max_wt": {k: float(v) for k, v in _normalize_snapshot_mapping(po.get("max_wt"), series_names).items()},
-                "force_max": {k: bool(v) for k, v in _normalize_snapshot_mapping(po.get("force_max"), series_names).items()},
-            },
-            "reg": {
-                "selected": _normalize_snapshot_list(reg.get("selected"), series_names),
-                "order": _normalize_snapshot_list(reg.get("order"), series_names),
-                "benchmark": _normalize_snapshot_mapping(reg.get("benchmark"), series_names),
-                "long_short": {k: bool(v) for k, v in _normalize_snapshot_mapping(reg.get("long_short"), series_names).items()},
-                "scale_vol": {k: bool(v) for k, v in _normalize_snapshot_mapping(reg.get("scale_vol"), series_names).items()},
-                "lag": {k: int(v or 0) for k, v in _normalize_snapshot_mapping(reg.get("lag"), series_names).items()},
-                "min_beta": {k: float(v) for k, v in _normalize_snapshot_mapping(reg.get("min_beta"), series_names).items()},
-                "max_beta": {k: float(v) for k, v in _normalize_snapshot_mapping(reg.get("max_beta"), series_names).items()},
-                "enable_constraint": {k: bool(v) for k, v in _normalize_snapshot_mapping(reg.get("enable_constraint"), series_names).items()},
-                "dependent_var": str(reg.get("dependent_var") or "").strip() or None,
-            },
-        },
+        "control_values": _saved_control_values(payload.get("control_values")),
     }
 
 
@@ -408,10 +436,12 @@ def account_list_preview_rows(payload: Any) -> list[dict[str, Any]]:
     normalized = normalize_account_list_payload(payload)
     if not normalized:
         return []
-    at_selected = set(normalized["settings"]["at"].get("selected") or [])
-    po_selected = set(normalized["settings"]["po"].get("selected") or [])
-    reg_selected = set(normalized["settings"]["reg"].get("selected") or [])
-    reg_dep = str(normalized["settings"]["reg"].get("dependent_var") or "").strip()
+    series_names = set(_series_names_from_entries(normalized.get("series_entries", [])))
+    control_values = normalized.get("control_values") if isinstance(normalized.get("control_values"), dict) else {}
+    at_selected = set(_normalize_snapshot_list(control_values.get(AT_STORE_IDS["selected"]), series_names))
+    po_selected = set(_normalize_snapshot_list(control_values.get(PO_STORE_IDS["selected"]), series_names))
+    reg_selected = set(_normalize_snapshot_list(control_values.get(REG_STORE_IDS["selected"]), series_names))
+    reg_dep = str(control_values.get(REG_STORE_IDS["dep"]) or "").strip()
     if reg_dep:
         reg_selected.add(reg_dep)
 
@@ -741,6 +771,28 @@ def _normalize_benchmark_map(current: Any, saved: Any, loaded_series: set[str], 
     return out
 
 
+def _filter_monthly_series_list(saved: Any, available_series: set[str]) -> list[str]:
+    return _normalize_snapshot_list(saved, available_series)
+
+
+def _filter_factor_series_value(saved: Any, available_series: set[str]) -> str | None:
+    text_val = str(saved or "").strip()
+    if not text_val:
+        return None
+    if text_val.startswith("raw::"):
+        raw_name = text_val.split("::", 1)[1]
+        return text_val if raw_name in available_series else None
+    return text_val
+
+
+def _filtered_extra_control_value(store_id: str, saved_value: Any, available_series: set[str]) -> Any:
+    if store_id == "at-monthly-series-store":
+        return _filter_monthly_series_list(saved_value, available_series)
+    if store_id == "at-factor-series-store":
+        return _filter_factor_series_value(saved_value, available_series)
+    return saved_value
+
+
 def build_account_list_session_payload(
     *,
     payload: Any,
@@ -748,6 +800,7 @@ def build_account_list_session_payload(
     current_original_periodicity: str | None,
     current_provenance: Any,
     current_session_snapshot: Any,
+    apply_settings: bool,
     db_engine: Engine,
     mrd_engine: Engine,
     perf_engine: Engine,
@@ -827,41 +880,39 @@ def build_account_list_session_payload(
     merged_columns = list(merged_df.columns)
     current_snapshot = current_session_snapshot if isinstance(current_session_snapshot, dict) else {}
 
-    at_settings = normalized_payload["settings"]["at"]
-    po_settings = normalized_payload["settings"]["po"]
-    reg_settings = normalized_payload["settings"]["reg"]
+    control_values = normalized_payload.get("control_values") if isinstance(normalized_payload.get("control_values"), dict) else {}
 
-    at_selected = _merge_selected_list(current_snapshot.get(AT_STORE_IDS["selected"]), at_settings.get("selected"), loaded_set)
-    at_order = _merge_order_list(current_snapshot.get(AT_STORE_IDS["order"]), at_settings.get("order"), merged_columns, loaded_set)
-    at_bench = _normalize_benchmark_map(current_snapshot.get(AT_STORE_IDS["bench"]), at_settings.get("benchmark"), loaded_set, available_series)
-    at_ls = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["long_short"]), at_settings.get("long_short"), loaded_set)
-    at_vol = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["vol"]), at_settings.get("scale_vol"), loaded_set)
+    at_selected = _merge_selected_list(current_snapshot.get(AT_STORE_IDS["selected"]), control_values.get(AT_STORE_IDS["selected"]), loaded_set)
+    at_order = _merge_order_list(current_snapshot.get(AT_STORE_IDS["order"]), control_values.get(AT_STORE_IDS["order"]), merged_columns, loaded_set)
+    at_bench = _normalize_benchmark_map(current_snapshot.get(AT_STORE_IDS["bench"]), control_values.get(AT_STORE_IDS["bench"]), loaded_set, available_series)
+    at_ls = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["long_short"]), control_values.get(AT_STORE_IDS["long_short"]), loaded_set)
+    at_vol = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["vol"]), control_values.get(AT_STORE_IDS["vol"]), loaded_set)
 
-    po_selected = _merge_selected_list(current_snapshot.get(PO_STORE_IDS["selected"]), po_settings.get("selected"), loaded_set)
-    po_order = _merge_order_list(current_snapshot.get(PO_STORE_IDS["order"]), po_settings.get("order"), merged_columns, loaded_set)
-    po_bench = _normalize_benchmark_map(current_snapshot.get(PO_STORE_IDS["bench"]), po_settings.get("benchmark"), loaded_set, available_series)
+    po_selected = _merge_selected_list(current_snapshot.get(PO_STORE_IDS["selected"]), control_values.get(PO_STORE_IDS["selected"]), loaded_set)
+    po_order = _merge_order_list(current_snapshot.get(PO_STORE_IDS["order"]), control_values.get(PO_STORE_IDS["order"]), merged_columns, loaded_set)
+    po_bench = _normalize_benchmark_map(current_snapshot.get(PO_STORE_IDS["bench"]), control_values.get(PO_STORE_IDS["bench"]), loaded_set, available_series)
     po_cmabench = dict(current_snapshot.get(PO_STORE_IDS["cmabench"]) or {})
-    for key, value in dict(po_settings.get("cmabench") or {}).items():
+    for key, value in dict(control_values.get(PO_STORE_IDS["cmabench"]) or {}).items():
         clean_key = str(key or "").strip()
         if clean_key in loaded_set:
             po_cmabench[clean_key] = str(value or "").strip()
-    po_ls = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["long_short"]), po_settings.get("long_short"), loaded_set)
-    po_vol = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["vol"]), po_settings.get("scale_vol"), loaded_set)
-    po_min = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["min_wt"]), po_settings.get("min_wt"), loaded_set)
-    po_max = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["max_wt"]), po_settings.get("max_wt"), loaded_set)
-    po_force = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["force_max"]), po_settings.get("force_max"), loaded_set)
+    po_ls = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["long_short"]), control_values.get(PO_STORE_IDS["long_short"]), loaded_set)
+    po_vol = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["vol"]), control_values.get(PO_STORE_IDS["vol"]), loaded_set)
+    po_min = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["min_wt"]), control_values.get(PO_STORE_IDS["min_wt"]), loaded_set)
+    po_max = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["max_wt"]), control_values.get(PO_STORE_IDS["max_wt"]), loaded_set)
+    po_force = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["force_max"]), control_values.get(PO_STORE_IDS["force_max"]), loaded_set)
 
-    reg_selected = _merge_selected_list(current_snapshot.get(REG_STORE_IDS["selected"]), reg_settings.get("selected"), loaded_set)
-    reg_order = _merge_order_list(current_snapshot.get(REG_STORE_IDS["order"]), reg_settings.get("order"), merged_columns, loaded_set)
-    reg_bench = _normalize_benchmark_map(current_snapshot.get(REG_STORE_IDS["bench"]), reg_settings.get("benchmark"), loaded_set, available_series)
-    reg_ls = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["long_short"]), reg_settings.get("long_short"), loaded_set)
-    reg_vol = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["vol"]), reg_settings.get("scale_vol"), loaded_set)
-    reg_lag = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["lag"]), reg_settings.get("lag"), loaded_set)
-    reg_min = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["min_beta"]), reg_settings.get("min_beta"), loaded_set)
-    reg_max = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["max_beta"]), reg_settings.get("max_beta"), loaded_set)
-    reg_enable = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["enable"]), reg_settings.get("enable_constraint"), loaded_set)
+    reg_selected = _merge_selected_list(current_snapshot.get(REG_STORE_IDS["selected"]), control_values.get(REG_STORE_IDS["selected"]), loaded_set)
+    reg_order = _merge_order_list(current_snapshot.get(REG_STORE_IDS["order"]), control_values.get(REG_STORE_IDS["order"]), merged_columns, loaded_set)
+    reg_bench = _normalize_benchmark_map(current_snapshot.get(REG_STORE_IDS["bench"]), control_values.get(REG_STORE_IDS["bench"]), loaded_set, available_series)
+    reg_ls = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["long_short"]), control_values.get(REG_STORE_IDS["long_short"]), loaded_set)
+    reg_vol = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["vol"]), control_values.get(REG_STORE_IDS["vol"]), loaded_set)
+    reg_lag = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["lag"]), control_values.get(REG_STORE_IDS["lag"]), loaded_set)
+    reg_min = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["min_beta"]), control_values.get(REG_STORE_IDS["min_beta"]), loaded_set)
+    reg_max = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["max_beta"]), control_values.get(REG_STORE_IDS["max_beta"]), loaded_set)
+    reg_enable = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["enable"]), control_values.get(REG_STORE_IDS["enable"]), loaded_set)
     current_dep = str(current_snapshot.get(REG_STORE_IDS["dep"]) or "").strip()
-    saved_dep = str(reg_settings.get("dependent_var") or "").strip()
+    saved_dep = str(control_values.get(REG_STORE_IDS["dep"]) or "").strip()
     if current_dep and current_dep in available_series:
         reg_dep = current_dep
     elif saved_dep and saved_dep in available_series and saved_dep in loaded_set:
@@ -910,6 +961,16 @@ def build_account_list_session_payload(
         REG_STORE_IDS["max_beta"]: reg_max,
         REG_STORE_IDS["enable"]: reg_enable,
     }
+
+    if apply_settings:
+        for store_id in ACCOUNT_LIST_EXTRA_CONTROL_STORE_IDS:
+            if store_id not in control_values:
+                continue
+            session_payload[store_id] = _filtered_extra_control_value(
+                store_id,
+                control_values.get(store_id),
+                available_series,
+            )
 
     return session_payload, {
         "added_series": added_series,
