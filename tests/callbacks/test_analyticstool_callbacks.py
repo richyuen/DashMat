@@ -291,31 +291,38 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
     restored = analyticstool.restore_application_state(
         1,
         _raw_meta(raw_json),
-        "daily_trading",
-        [],
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        [],
-        [],
-        False,
+        stored_periodicity="daily_trading",
+        stored_series=[],
+        stored_returns=None,
+        stored_vol=None,
+        stored_tab=None,
+        stored_roll_win=None,
+        stored_roll_metric=None,
+        stored_roll_type=None,
+        stored_roll_chart=None,
+        stored_dd_chart=None,
+        stored_gr_chart=None,
+        stored_factor_mode=None,
+        stored_factor_quantiles=None,
+        stored_factor_transform=None,
+        stored_factor_qq_reference=None,
+        stored_conditional_view=None,
+        stored_conditional_comparator=None,
+        stored_conditional_threshold=None,
+        stored_conditional_window_conversion=None,
+        stored_conditional_step=None,
+        stored_conditional_step_unit=None,
+        stored_conditional_display_mode=None,
+        stored_monthly_view=None,
+        stored_monthly_series=[],
+        stored_order=[],
+        po_origin_series=[],
+        page_visited=False,
     )
 
-    assert restored[18] == []
-    assert restored[19] == []
-    assert restored[20] is False
+    assert restored[25] == []
+    assert restored[26] == []
+    assert restored[27] is False
 
 
 def test_restore_application_state_silently_adds_po_series_after_first_visit(page_modules, raw_json):
@@ -324,31 +331,38 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
     restored = analyticstool.restore_application_state(
         1,
         _raw_meta(raw_json),
-        "daily_trading",
-        ["Asset_A"],
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        ["Asset_A", "Asset_B"],
-        {"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
-        True,
+        stored_periodicity="daily_trading",
+        stored_series=["Asset_A"],
+        stored_returns=None,
+        stored_vol=None,
+        stored_tab=None,
+        stored_roll_win=None,
+        stored_roll_metric=None,
+        stored_roll_type=None,
+        stored_roll_chart=None,
+        stored_dd_chart=None,
+        stored_gr_chart=None,
+        stored_factor_mode=None,
+        stored_factor_quantiles=None,
+        stored_factor_transform=None,
+        stored_factor_qq_reference=None,
+        stored_conditional_view=None,
+        stored_conditional_comparator=None,
+        stored_conditional_threshold=None,
+        stored_conditional_window_conversion=None,
+        stored_conditional_step=None,
+        stored_conditional_step_unit=None,
+        stored_conditional_display_mode=None,
+        stored_monthly_view=None,
+        stored_monthly_series=None,
+        stored_order=["Asset_A", "Asset_B"],
+        po_origin_series={"Asset_C": {"origin_page": "portopt", "origin_result": "Asset_C", "series_type": "portfolio"}},
+        page_visited=True,
     )
 
-    assert restored[18] == ["Asset_A", "Asset_C"]
-    assert restored[19] == ["Asset_A", "Asset_B", "Asset_C"]
-    assert restored[20] is False
+    assert restored[25] == ["Asset_A", "Asset_C"]
+    assert restored[26] == ["Asset_A", "Asset_B", "Asset_C"]
+    assert restored[27] is False
 
 
 def test_restore_application_state_defers_non_active_tab_controls(page_modules, raw_json):
@@ -357,26 +371,33 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
     restored = analyticstool.restore_application_state(
         1,
         _raw_meta(raw_json),
-        "daily_trading",
-        ["Asset_A"],
-        "excess",
-        7,
-        "statistics",
-        "3y",
-        "volatility",
-        "cumulative",
-        "table",
-        "table",
-        "table",
-        "scatter",
-        7,
-        "zscore",
-        "reference",
-        "monthly",
-        None,
-        ["Asset_A"],
-        [],
-        True,
+        stored_periodicity="daily_trading",
+        stored_series=["Asset_A"],
+        stored_returns="excess",
+        stored_vol=7,
+        stored_tab="statistics",
+        stored_roll_win="3y",
+        stored_roll_metric="volatility",
+        stored_roll_type="cumulative",
+        stored_roll_chart="table",
+        stored_dd_chart="table",
+        stored_gr_chart="table",
+        stored_factor_mode="scatter",
+        stored_factor_quantiles=7,
+        stored_factor_transform="zscore",
+        stored_factor_qq_reference="reference",
+        stored_conditional_view=None,
+        stored_conditional_comparator=None,
+        stored_conditional_threshold=None,
+        stored_conditional_window_conversion=None,
+        stored_conditional_step=None,
+        stored_conditional_step_unit=None,
+        stored_conditional_display_mode=None,
+        stored_monthly_view="monthly",
+        stored_monthly_series=None,
+        stored_order=["Asset_A"],
+        po_origin_series=[],
+        page_visited=True,
     )
 
     assert restored[2] == "excess"
@@ -391,7 +412,14 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
     assert restored[15] is no_update
     assert restored[16] is no_update
     assert restored[17] is no_update
-    assert restored[18] == ["Asset_A"]
+    assert restored[18] is no_update
+    assert restored[19] is no_update
+    assert restored[20] is no_update
+    assert restored[21] is no_update
+    assert restored[22] is no_update
+    assert restored[23] is no_update
+    assert restored[24] is no_update
+    assert restored[25] == ["Asset_A"]
 
 
 def test_at_restore_secondary_controls_restores_deferred_values(page_modules, raw_json):
@@ -400,25 +428,32 @@ def test_at_restore_secondary_controls_restores_deferred_values(page_modules, ra
     restored = analyticstool.at_restore_secondary_controls(
         True,
         _raw_meta(raw_json),
-        "daily_trading",
-        ["Asset_A"],
-        "excess",
-        7,
-        "statistics",
-        "3y",
-        "volatility",
-        "cumulative",
-        "table",
-        "table",
-        "table",
-        "scatter",
-        7,
-        "zscore",
-        "reference",
-        "monthly",
-        ["Asset_A"],
-        [],
-        True,
+        stored_periodicity="daily_trading",
+        stored_series=["Asset_A"],
+        stored_returns="excess",
+        stored_vol=7,
+        stored_tab="statistics",
+        stored_roll_win="3y",
+        stored_roll_metric="volatility",
+        stored_roll_type="cumulative",
+        stored_roll_chart="table",
+        stored_dd_chart="table",
+        stored_gr_chart="table",
+        stored_factor_mode="scatter",
+        stored_factor_quantiles=7,
+        stored_factor_transform="zscore",
+        stored_factor_qq_reference="reference",
+        stored_conditional_view=None,
+        stored_conditional_comparator=None,
+        stored_conditional_threshold=None,
+        stored_conditional_window_conversion=None,
+        stored_conditional_step=None,
+        stored_conditional_step_unit=None,
+        stored_conditional_display_mode=None,
+        stored_monthly_view="monthly",
+        stored_order=["Asset_A"],
+        po_origin_series=[],
+        page_visited=True,
     )
 
     assert restored[0] == "3y"
@@ -431,7 +466,14 @@ def test_at_restore_secondary_controls_restores_deferred_values(page_modules, ra
     assert restored[9] == 7
     assert restored[10] == "zscore"
     assert restored[11] == "reference"
-    assert restored[12] == "monthly"
+    assert restored[12] == "forward"
+    assert restored[13] == "le"
+    assert restored[14] == 0
+    assert restored[15] == "compound"
+    assert restored[16] == 1
+    assert restored[17] == "months"
+    assert restored[18] == "summary"
+    assert restored[19] == "monthly"
 
 
 def test_at_series_modal_open_is_clientside():
@@ -792,6 +834,7 @@ def test_sync_at_returns_type_from_mirrors_updates_canonical(monkeypatch, page_m
         "excess",
         "total",
         "total",
+        "total",
     )
 
     assert result == "excess"
@@ -807,6 +850,7 @@ def test_sync_at_returns_type_mirrors_only_updates_mismatched(page_modules):
         "excess",
         "total",
         "total",
+        "total",
         "excess",
     )
 
@@ -815,7 +859,8 @@ def test_sync_at_returns_type_mirrors_only_updates_mismatched(page_modules):
     assert result[2] is no_update
     assert result[3] == "excess"
     assert result[4] == "excess"
-    assert result[5] is no_update
+    assert result[5] == "excess"
+    assert result[6] is no_update
 
 
 def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules):
@@ -1190,7 +1235,7 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
 def test_update_factor_series_select_includes_unselected_series(page_modules, raw_json):
     analyticstool, _ = page_modules
 
-    options, value = analyticstool.update_factor_series_select(
+    options, value, conditional_options, conditional_value = analyticstool.update_factor_series_select(
         raw_json,
         ["Asset_C", "Asset_A"],
         [],
@@ -1203,12 +1248,14 @@ def test_update_factor_series_select_includes_unselected_series(page_modules, ra
     assert ordered_values[:2] == ["raw::Asset_C", "raw::Asset_A"]
     assert set(ordered_values) == {"raw::Asset_A", "raw::Asset_B", "raw::Asset_C", "raw::Asset_D"}
     assert value == "raw::Asset_C"
+    assert conditional_options == options
+    assert conditional_value == value
 
 
 def test_update_factor_series_select_includes_saved_and_session_definitions(page_modules, raw_json):
     analyticstool, _ = page_modules
 
-    options, _value = analyticstool.update_factor_series_select(
+    options, _value, conditional_options, _conditional_value = analyticstool.update_factor_series_select(
         raw_json,
         ["Asset_A"],
         [{"FactorName": "SavedFactor"}],
@@ -1220,6 +1267,7 @@ def test_update_factor_series_select_includes_saved_and_session_definitions(page
     option_map = {opt["value"]: opt["label"] for opt in options}
     assert "def::SavedFactor" in option_map
     assert "def::SessionFactor" in option_map
+    assert conditional_options == options
     assert option_map["def::SavedFactor"].startswith("[DB]")
     assert option_map["def::SessionFactor"].startswith("[Session]")
 
@@ -1584,32 +1632,115 @@ def test_restore_application_state_restores_factor_analysis_qq_controls(page_mod
     restored = analyticstool.restore_application_state(
         1,
         _raw_meta(raw_json),
-        "daily_trading",
-        ["Asset_A"],
-        "excess",
-        7,
-        "factor_analysis",
-        "3y",
-        "volatility",
-        "cumulative",
-        "table",
-        "table",
-        "table",
-        "qq",
-        7,
-        "zscore",
-        "reference",
-        "monthly",
-        None,
-        ["Asset_A"],
-        [],
-        True,
+        stored_periodicity="daily_trading",
+        stored_series=["Asset_A"],
+        stored_returns="excess",
+        stored_vol=7,
+        stored_tab="factor_analysis",
+        stored_roll_win="3y",
+        stored_roll_metric="volatility",
+        stored_roll_type="cumulative",
+        stored_roll_chart="table",
+        stored_dd_chart="table",
+        stored_gr_chart="table",
+        stored_factor_mode="qq",
+        stored_factor_quantiles=7,
+        stored_factor_transform="zscore",
+        stored_factor_qq_reference="reference",
+        stored_conditional_view=None,
+        stored_conditional_comparator=None,
+        stored_conditional_threshold=None,
+        stored_conditional_window_conversion=None,
+        stored_conditional_step=None,
+        stored_conditional_step_unit=None,
+        stored_conditional_display_mode=None,
+        stored_monthly_view="monthly",
+        stored_monthly_series=None,
+        stored_order=["Asset_A"],
+        po_origin_series=[],
+        page_visited=True,
     )
 
     assert restored[13] == "qq"
     assert restored[14] == 7
     assert restored[15] == "zscore"
     assert restored[16] == "reference"
+
+
+def test_conditional_window_specs_include_1w_for_daily_and_weekly(page_modules):
+    analyticstool, _ = page_modules
+
+    daily_labels = [spec["label"] for spec in analyticstool._conditional_window_specs("daily_trading")]
+    weekly_labels = [spec["label"] for spec in analyticstool._conditional_window_specs("weekly_friday")]
+    monthly_labels = [spec["label"] for spec in analyticstool._conditional_window_specs("monthly")]
+
+    assert daily_labels[0] == "1W"
+    assert weekly_labels[0] == "1W"
+    assert "1W" not in monthly_labels
+
+
+def test_compute_conditional_returns_cached_builds_coincident_and_forward_frames(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    payload = analyticstool._compute_conditional_returns_cached(
+        raw_json,
+        "daily_trading",
+        ("Asset_B", "Asset_C"),
+        "total",
+        analyticstool._mapping_payload({}),
+        analyticstool._mapping_payload({}),
+        analyticstool._date_range_payload({"start": "2023-01-02", "end": "2024-03-31"}),
+        0,
+        analyticstool._mapping_payload({}),
+        "raw::Asset_A",
+        "zscore",
+        "",
+        "le",
+        0.0,
+        "compound",
+        1,
+        "months",
+    )
+
+    assert list(payload.coincident_mean_df.index) == ["1W", "1M", "3M", "6M", "9M", "12M"]
+    assert list(payload.coincident_mean_df.columns) == ["Asset_B", "Asset_C"]
+    assert set(payload.forward_mean_by_series) == {"Asset_B", "Asset_C"}
+    assert list(payload.forward_mean_by_series["Asset_B"].columns) == ["1W", "1M", "3M", "6M", "9M", "12M"]
+    assert payload.factor_label.endswith("(Z-Score)")
+
+
+def test_compute_conditional_returns_cached_builds_detail_frames_when_requested(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    payload = analyticstool._compute_conditional_returns_cached(
+        raw_json,
+        "daily_trading",
+        ("Asset_B", "Asset_C"),
+        "total",
+        analyticstool._mapping_payload({}),
+        analyticstool._mapping_payload({}),
+        analyticstool._date_range_payload({"start": "2023-01-02", "end": "2024-03-31"}),
+        0,
+        analyticstool._mapping_payload({}),
+        "raw::Asset_A",
+        "zscore",
+        "",
+        "le",
+        0.0,
+        "compound",
+        1,
+        "months",
+        True,
+    )
+
+    assert list(payload.coincident_detail_df.columns[:4]) == ["Lookback", "End Date", "Factor Value", "Condition Met"]
+    assert list(payload.forward_detail_df.columns[:5]) == ["Lookback", "Forward Period", "End Date", "Factor Value", "Condition Met"]
+    assert {"Asset_B", "Asset_C"}.issubset(payload.coincident_detail_df.columns)
+    assert {"Asset_B", "Asset_C"}.issubset(payload.forward_detail_df.columns)
+    assert payload.coincident_row_count > 0
+    assert payload.forward_row_count > payload.coincident_row_count
+    first_forward = payload.forward_detail_df[["Lookback", "Forward Period"]].drop_duplicates().iloc[0].to_dict()
+    assert first_forward == {"Lookback": "1W", "Forward Period": "1W"}
 
 
 def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_modules):
@@ -1720,6 +1851,12 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         "Factor_X",
         5,
         "raw",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
         None,
         None,
         "def::SavedRegime",
@@ -1731,6 +1868,10 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     xl = pd.ExcelFile(BytesIO(payload["content"]))
     assert "Factor Analysis - Box" in xl.sheet_names
     assert "Factor Analysis - Scatter" in xl.sheet_names
+    assert "Conditional Coincident" in xl.sheet_names
+    assert "Conditional Forward" in xl.sheet_names
+    assert "Cond Coincident Detail" in xl.sheet_names
+    assert "Cond Forward Detail" in xl.sheet_names
     assert "Regime - Settings" in xl.sheet_names
     assert "Regime - Statistics" in xl.sheet_names
     assert "Regime - Timeline" in xl.sheet_names

@@ -32,6 +32,7 @@ from utils.upload_flow import (
 )
 from utils.returns import (
     align_monthly_index_to_month_end,
+    annualization_factor,
     calculate_calendar_year_returns,
     calculate_excess_returns,
     calculate_rolling_returns,
@@ -39,6 +40,7 @@ from utils.returns import (
     df_to_json,
     get_available_periodicities,
     get_working_returns,
+    is_daily,
     json_to_df,
     merge_returns,
     resample_returns,
@@ -135,6 +137,7 @@ from utils.factor_definitions import (
     OUTPUT_TRANSFORM_OPTIONS,
     compute_factor_preview_lines,
     compute_factor_series,
+    compute_factor_series_cached,
     delete_factor_definition,
     factor_tables_available,
     get_sec_factor_component_options_cached,
@@ -169,6 +172,30 @@ SAVED_SERIES_CONFIG = {
     RISK_FREE_SERIES: {},
     MARKET_BETA_SERIES: {"start_date": "1988-01-04"},
 }
+
+CONDITIONAL_VIEW_OPTIONS = [
+    {"value": "coincident", "label": "Coincident"},
+    {"value": "forward", "label": "Forward"},
+]
+
+CONDITIONAL_DISPLAY_MODE_OPTIONS = [
+    {"value": "summary", "label": "Summary"},
+    {"value": "detail", "label": "Detail"},
+]
+
+CONDITIONAL_COMPARATOR_OPTIONS = [
+    {"value": "le", "label": "<="},
+    {"value": "ge", "label": ">="},
+]
+
+CONDITIONAL_FACTOR_CONVERSION_OPTIONS = [
+    {"value": "compound", "label": "Compound Return"},
+    {"value": "end", "label": "End of Period"},
+    {"value": "average", "label": "Average"},
+    {"value": "sum", "label": "Sum"},
+]
+
+CONDITIONAL_DETAIL_RENDER_ROW_LIMIT = 5000
 
 AT_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     prefix="at",
@@ -218,6 +245,13 @@ def _has_complete_date_range(value) -> bool:
         and bool(value.get("start"))
         and bool(value.get("end"))
     )
+
+
+def _coerce_positive_int(value, default: int = 1) -> int:
+    parsed = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(parsed):
+        return default
+    return max(default, int(parsed))
 
 
 def _correlogram_request_key(
@@ -288,6 +322,20 @@ class _RegimeAnalysisBuildResult:
     status: str
     message: str | None = None
     payload: _RegimeAnalysisPayload | None = None
+
+
+@dataclass(frozen=True)
+class _ConditionalReturnsPayload:
+    factor_label: str
+    factor_display_name: str
+    coincident_mean_df: pd.DataFrame
+    coincident_count_df: pd.DataFrame
+    forward_mean_by_series: dict[str, pd.DataFrame]
+    forward_count_by_series: dict[str, pd.DataFrame]
+    coincident_detail_df: pd.DataFrame
+    forward_detail_df: pd.DataFrame
+    coincident_row_count: int
+    forward_row_count: int
 
 
 def _build_analytics_compute_bundle(
@@ -980,7 +1028,7 @@ def _build_regime_series_options(raw_data, selected_series, regime_series_store,
     return options, ordered_series, raw_series_order
 
 
-def _prepare_factor_analysis_frames(
+def _prepare_factor_base_frames(
     raw_data,
     periodicity,
     selected_series,
@@ -991,11 +1039,10 @@ def _prepare_factor_analysis_frames(
     date_range,
     vol_scaler,
     vol_scaling_assignments,
-    factor_transform,
     factor_definitions_db=None,
     factor_definitions_local=None,
 ):
-    """Prepare dependent-series returns and factor returns for factor analysis."""
+    """Prepare dependent-series returns and raw factor values for factor workflows."""
     if not raw_data or not selected_series or not factor_series:
         return pd.DataFrame(), pd.Series(dtype=float)
 
@@ -1064,6 +1111,42 @@ def _prepare_factor_analysis_frames(
     if factor_values.empty:
         return dependent_df, pd.Series(dtype=float)
 
+    return dependent_df, factor_values
+
+
+def _prepare_factor_analysis_frames(
+    raw_data,
+    periodicity,
+    selected_series,
+    factor_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    factor_transform,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
+):
+    """Prepare dependent-series returns and factor returns for factor analysis."""
+    dependent_df, factor_values = _prepare_factor_base_frames(
+        raw_data,
+        periodicity,
+        selected_series,
+        factor_series,
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+        factor_definitions_db,
+        factor_definitions_local,
+    )
+    if factor_values.empty:
+        return dependent_df, factor_values
+
     if (factor_transform or "raw") == "zscore":
         std = factor_values.std(ddof=0)
         if std and not np.isclose(std, 0.0):
@@ -1112,6 +1195,533 @@ def _prepare_factor_analysis_selected_df(
         _date_range_payload(date_range),
         vol_scaler or 0,
         _mapping_payload(vol_scaling_assignments),
+    )
+
+
+def _is_weekly_periodicity(periodicity: str) -> bool:
+    return str(periodicity or "").startswith("weekly_")
+
+
+def _conditional_window_specs(periodicity: str) -> list[dict[str, object]]:
+    specs: list[dict[str, object]] = []
+    periodicity_value = periodicity or "daily"
+    if is_daily(periodicity_value):
+        specs.append({"key": "1w", "label": "1W", "kind": "days", "value": 7})
+    elif _is_weekly_periodicity(periodicity_value):
+        specs.append({"key": "1w", "label": "1W", "kind": "periods", "value": 1})
+
+    for months in (1, 3, 6, 9, 12):
+        specs.append(
+            {
+                "key": f"{months}m",
+                "label": f"{months}M",
+                "kind": "periods" if periodicity_value == "monthly" else "months",
+                "value": months,
+            }
+        )
+    return specs
+
+
+def _resolve_conditional_anchor_positions(
+    index: pd.DatetimeIndex,
+    step_value,
+    step_unit,
+) -> np.ndarray:
+    if len(index) == 0:
+        return np.array([], dtype=int)
+
+    step = _coerce_positive_int(step_value, default=1)
+    if (step_unit or "months") != "months":
+        return np.arange(0, len(index), step, dtype=int)
+
+    anchors: list[int] = []
+    current_anchor_date = pd.Timestamp(index[0]) + pd.offsets.MonthEnd(0)
+    last_date = pd.Timestamp(index[-1])
+
+    while current_anchor_date <= last_date:
+        pos = index.searchsorted(current_anchor_date, side="right") - 1
+        if pos >= 0 and (not anchors or pos > anchors[-1]):
+            anchors.append(int(pos))
+        current_anchor_date = current_anchor_date + pd.DateOffset(months=step)
+        current_anchor_date = current_anchor_date + pd.offsets.MonthEnd(0)
+
+    if not anchors:
+        anchors.append(len(index) - 1)
+    return np.asarray(anchors, dtype=int)
+
+
+def _shift_index_by_months(index: pd.DatetimeIndex, months: int) -> pd.DatetimeIndex:
+    return pd.DatetimeIndex([pd.Timestamp(dt) + pd.DateOffset(months=months) for dt in index])
+
+
+def _resolve_window_bounds(
+    index: pd.DatetimeIndex,
+    spec: dict[str, object],
+    *,
+    forward: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    n = len(index)
+    positions = np.arange(n, dtype=int)
+    kind = str(spec.get("kind") or "periods")
+    value = int(spec.get("value") or 1)
+
+    if kind == "periods":
+        if forward:
+            start_pos = positions + 1
+            end_pos = positions + value
+            valid = end_pos < n
+        else:
+            start_pos = positions - value + 1
+            end_pos = positions
+            valid = start_pos >= 0
+        return start_pos, end_pos, valid
+
+    if kind == "days":
+        if forward:
+            start_pos = positions + 1
+            end_dates = index + pd.Timedelta(days=value)
+            end_pos = index.searchsorted(end_dates, side="right") - 1
+            valid = (start_pos < n) & (end_dates <= index[-1]) & (end_pos >= start_pos)
+        else:
+            start_dates = index - pd.Timedelta(days=value)
+            start_pos = index.searchsorted(start_dates, side="right")
+            end_pos = positions
+            valid = start_dates >= index[0]
+        return start_pos.astype(int), end_pos.astype(int), valid
+
+    if forward:
+        start_pos = positions + 1
+        end_dates = _shift_index_by_months(index, value)
+        end_pos = index.searchsorted(end_dates, side="right") - 1
+        valid = (start_pos < n) & (end_dates <= index[-1]) & (end_pos >= start_pos)
+    else:
+        start_dates = _shift_index_by_months(index, -value)
+        start_pos = index.searchsorted(start_dates, side="right")
+        end_pos = positions
+        valid = start_dates >= index[0]
+    return start_pos.astype(int), end_pos.astype(int), valid
+
+
+def _aggregate_window_values(
+    series: pd.Series,
+    start_pos: np.ndarray,
+    end_pos: np.ndarray,
+    valid_mask: np.ndarray,
+    method: str,
+) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float, copy=False)
+    n = len(values)
+    result = np.full(n, np.nan, dtype=float)
+    valid_mask = np.asarray(valid_mask, dtype=bool)
+    safe_start = np.clip(np.asarray(start_pos, dtype=int), 0, max(n - 1, 0))
+    safe_end = np.clip(np.asarray(end_pos, dtype=int), 0, max(n - 1, 0))
+    if n == 0:
+        return pd.Series(dtype=float, index=series.index)
+
+    if method == "end":
+        ok = valid_mask & np.isfinite(values)
+        result[ok] = values[ok]
+        return pd.Series(result, index=series.index, dtype=float)
+
+    lengths = (safe_end - safe_start + 1).astype(int)
+    finite = np.isfinite(values)
+    prefix_valid = np.concatenate(([0], np.cumsum(finite.astype(int))))
+
+    if method in {"average", "sum"}:
+        prefix_sum = np.concatenate(([0.0], np.cumsum(np.where(finite, values, 0.0))))
+        sums = prefix_sum[safe_end + 1] - prefix_sum[safe_start]
+        complete = valid_mask & (prefix_valid[safe_end + 1] - prefix_valid[safe_start] == lengths)
+        result[complete] = sums[complete]
+        if method == "average":
+            result[complete] = result[complete] / lengths[complete]
+        return pd.Series(result, index=series.index, dtype=float)
+
+    compound_valid = finite & (values > -1.0)
+    prefix_compound_valid = np.concatenate(([0], np.cumsum(compound_valid.astype(int))))
+    prefix_log = np.concatenate(([0.0], np.cumsum(np.where(compound_valid, np.log1p(values), 0.0))))
+    complete = valid_mask & (prefix_compound_valid[safe_end + 1] - prefix_compound_valid[safe_start] == lengths)
+    result[complete] = np.expm1(prefix_log[safe_end + 1] - prefix_log[safe_start])[complete]
+    return pd.Series(result, index=series.index, dtype=float)
+
+
+def _apply_zscore(values: pd.Series) -> pd.Series:
+    clean = values.replace([np.inf, -np.inf], np.nan)
+    std = clean.std(ddof=0)
+    if std and not np.isclose(std, 0.0):
+        return (clean - clean.mean()) / std
+    if clean.notna().any():
+        return pd.Series(0.0, index=clean.index, dtype=float)
+    return clean.astype(float)
+
+
+def _factor_conversion_warning_text(conversion: str) -> str | None:
+    if conversion == "compound":
+        return "Compound Return is usually most natural for return-like factors; End of Period or Average is often a better fit for level-like factors."
+    if conversion == "sum":
+        return "Sum is usually most natural for additive factors; End of Period or Average is often a better fit for level-like factors."
+    return None
+
+
+def _empty_conditional_returns_payload() -> _ConditionalReturnsPayload:
+    return _ConditionalReturnsPayload(
+        factor_label="",
+        factor_display_name="",
+        coincident_mean_df=pd.DataFrame(),
+        coincident_count_df=pd.DataFrame(),
+        forward_mean_by_series={},
+        forward_count_by_series={},
+        coincident_detail_df=pd.DataFrame(),
+        forward_detail_df=pd.DataFrame(),
+        coincident_row_count=0,
+        forward_row_count=0,
+    )
+
+
+def _estimate_conditional_detail_row_counts(
+    index: pd.DatetimeIndex,
+    periodicity: str,
+    step_value,
+    step_unit,
+) -> tuple[int, int]:
+    if len(index) == 0:
+        return 0, 0
+    window_specs = _conditional_window_specs(periodicity or "daily")
+    anchor_count = len(_resolve_conditional_anchor_positions(index, step_value, step_unit))
+    coincident_rows = anchor_count * len(window_specs)
+    forward_rows = coincident_rows * len(window_specs)
+    return coincident_rows, forward_rows
+
+
+@cache_config.cache.memoize(timeout=0)
+def _estimate_conditional_detail_rows_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple,
+    returns_type: str,
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    factor_series: str,
+    factor_definition_payload: str,
+    step_value: int,
+    step_unit: str,
+) -> tuple[int, int]:
+    factor_definitions_local = None
+    if factor_definition_payload:
+        try:
+            factor_definitions_local = [json.loads(factor_definition_payload)]
+        except Exception:
+            factor_definitions_local = None
+
+    dependent_df, factor_values = _prepare_factor_base_frames(
+        raw_data,
+        periodicity,
+        selected_series,
+        factor_series,
+        returns_type,
+        benchmark_payload,
+        long_short_payload,
+        date_range_payload,
+        vol_scaler,
+        vol_scaling_payload,
+        None,
+        factor_definitions_local,
+    )
+    factor_values = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
+    if dependent_df.empty or factor_values.empty:
+        return 0, 0
+
+    master_index = pd.DatetimeIndex(dependent_df.index.union(factor_values.index).sort_values().unique())
+    return _estimate_conditional_detail_row_counts(master_index, periodicity, step_value, step_unit)
+
+
+def _build_conditional_summary_frames_from_detail(
+    detail_df: pd.DataFrame,
+    window_labels: list[str],
+    series_names: tuple[str, ...],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    mean_df = pd.DataFrame(index=window_labels, columns=list(series_names), dtype=float)
+    count_df = pd.DataFrame(index=window_labels, columns=list(series_names), dtype=float)
+    if detail_df is None or detail_df.empty:
+        return mean_df, count_df.fillna(0.0)
+
+    qualified = detail_df.loc[detail_df["Condition Met"] == True]
+    if qualified.empty:
+        return mean_df, count_df.fillna(0.0)
+
+    for series_name in series_names:
+        if series_name not in qualified.columns:
+            continue
+        grouped = qualified.groupby("Lookback", observed=False)[series_name].agg(["mean", "count"])
+        if grouped.empty:
+            continue
+        mean_df.loc[grouped.index, series_name] = grouped["mean"].astype(float)
+        count_df.loc[grouped.index, series_name] = grouped["count"].astype(float)
+    return mean_df, count_df.fillna(0.0)
+
+
+def _build_conditional_forward_summary_from_detail(
+    detail_df: pd.DataFrame,
+    window_labels: list[str],
+    series_names: tuple[str, ...],
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    mean_by_series: dict[str, pd.DataFrame] = {}
+    count_by_series: dict[str, pd.DataFrame] = {}
+    qualified = detail_df.loc[detail_df["Condition Met"] == True] if detail_df is not None and not detail_df.empty else pd.DataFrame()
+
+    for series_name in series_names:
+        mean_df = pd.DataFrame(index=window_labels, columns=window_labels, dtype=float)
+        count_df = pd.DataFrame(index=window_labels, columns=window_labels, dtype=float)
+        if not qualified.empty and series_name in qualified.columns:
+            grouped = qualified.groupby(["Lookback", "Forward Period"], observed=False)[series_name].agg(["mean", "count"])
+            if not grouped.empty:
+                mean_pivot = grouped["mean"].unstack("Forward Period")
+                count_pivot = grouped["count"].unstack("Forward Period")
+                mean_df.loc[mean_pivot.index, mean_pivot.columns] = mean_pivot.astype(float)
+                count_df.loc[count_pivot.index, count_pivot.columns] = count_pivot.astype(float)
+        mean_by_series[series_name] = mean_df
+        count_by_series[series_name] = count_df.fillna(0.0)
+    return mean_by_series, count_by_series
+
+
+def _order_conditional_detail_frame(
+    detail_df: pd.DataFrame,
+    window_labels: list[str],
+    *,
+    include_forward: bool,
+) -> pd.DataFrame:
+    if detail_df is None or detail_df.empty:
+        return pd.DataFrame()
+
+    frame = detail_df.copy()
+    frame["Lookback"] = pd.Categorical(frame["Lookback"], categories=window_labels, ordered=True)
+    ordered_columns = ["Lookback"]
+    sort_cols = ["Lookback"]
+    if include_forward:
+        frame["Forward Period"] = pd.Categorical(frame["Forward Period"], categories=window_labels, ordered=True)
+        ordered_columns.append("Forward Period")
+        sort_cols.append("Forward Period")
+    ordered_columns.extend(["End Date", "Factor Value", "Condition Met"])
+    series_columns = [
+        col for col in frame.columns
+        if col not in {"Lookback", "Forward Period", "End Date", "Factor Value", "Condition Met"}
+    ]
+    ordered_columns.extend(series_columns)
+    sort_cols.append("End Date")
+    frame = frame.sort_values(sort_cols, kind="stable").reset_index(drop=True)
+    frame["Lookback"] = frame["Lookback"].astype(str)
+    if include_forward:
+        frame["Forward Period"] = frame["Forward Period"].astype(str)
+    return frame.loc[:, [col for col in ordered_columns if col in frame.columns]]
+
+
+@cache_config.cache.memoize(timeout=0)
+def _compute_conditional_returns_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple,
+    returns_type: str,
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    factor_series: str,
+    factor_transform: str,
+    factor_definition_payload: str,
+    comparator: str,
+    threshold: float,
+    window_conversion: str,
+    step_value: int,
+    step_unit: str,
+    include_detail: bool = False,
+) -> _ConditionalReturnsPayload:
+    factor_definitions_local = None
+    if factor_definition_payload:
+        try:
+            factor_definitions_local = [json.loads(factor_definition_payload)]
+        except Exception:
+            factor_definitions_local = None
+
+    dependent_df, factor_values = _prepare_factor_base_frames(
+        raw_data,
+        periodicity,
+        selected_series,
+        factor_series,
+        returns_type,
+        benchmark_payload,
+        long_short_payload,
+        date_range_payload,
+        vol_scaler,
+        vol_scaling_payload,
+        None,
+        factor_definitions_local,
+    )
+
+    factor_values = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
+    if dependent_df.empty or factor_values.empty:
+        return _empty_conditional_returns_payload()
+
+    _factor_prefix, factor_name = _split_factor_select_key(factor_series)
+    display_factor_name = factor_name if factor_name else str(factor_series or "")
+    factor_label = f"{display_factor_name} (Z-Score)" if factor_transform == "zscore" else display_factor_name
+
+    master_index = pd.DatetimeIndex(dependent_df.index.union(factor_values.index).sort_values().unique())
+    dependent_aligned = dependent_df.reindex(master_index)
+    factor_aligned = factor_values.reindex(master_index)
+
+    window_specs = _conditional_window_specs(periodicity or "daily")
+    window_labels = [str(spec["label"]) for spec in window_specs]
+    anchor_positions = _resolve_conditional_anchor_positions(master_index, step_value, step_unit)
+    threshold_value = float(pd.to_numeric(pd.Series([threshold]), errors="coerce").iloc[0] or 0.0)
+
+    coincident_mean = pd.DataFrame(index=window_labels, columns=list(selected_series), dtype=float)
+    coincident_count = pd.DataFrame(index=window_labels, columns=list(selected_series), dtype=float)
+    forward_mean_by_series: dict[str, pd.DataFrame] = {}
+    forward_count_by_series: dict[str, pd.DataFrame] = {}
+
+    qualified_masks: dict[str, pd.Series] = {}
+    factor_windows: dict[str, pd.Series] = {}
+    coincident_series_windows: dict[str, dict[str, pd.Series]] = {}
+    forward_series_windows: dict[str, dict[str, pd.Series]] = {}
+    eval_mask = np.zeros(len(master_index), dtype=bool)
+    eval_mask[anchor_positions] = True
+
+    for spec in window_specs:
+        label = str(spec["label"])
+        start_pos, end_pos, valid_mask = _resolve_window_bounds(master_index, spec, forward=False)
+        factor_window = _aggregate_window_values(factor_aligned, start_pos, end_pos, valid_mask, window_conversion)
+        if factor_transform == "zscore":
+            factor_window = _apply_zscore(factor_window)
+        factor_windows[label] = factor_window
+
+        qualified = pd.Series(False, index=master_index, dtype=bool)
+        if comparator == "ge":
+            qualified.loc[eval_mask] = factor_window.loc[eval_mask] >= threshold_value
+        else:
+            qualified.loc[eval_mask] = factor_window.loc[eval_mask] <= threshold_value
+        qualified_masks[label] = qualified
+        coincident_series_windows[label] = {}
+
+        for series_name in selected_series:
+            if series_name not in dependent_aligned.columns:
+                continue
+            series_values = dependent_aligned[series_name]
+            series_window = _aggregate_window_values(series_values, start_pos, end_pos, valid_mask, "compound")
+            coincident_series_windows[label][series_name] = series_window
+
+            if not include_detail:
+                selected_mask = qualified & series_window.notna()
+                coincident_mean.loc[label, series_name] = series_window[selected_mask].mean() if selected_mask.any() else np.nan
+                coincident_count.loc[label, series_name] = int(selected_mask.sum())
+
+    for series_name in selected_series:
+        if series_name not in dependent_aligned.columns:
+            continue
+        mean_df = pd.DataFrame(index=window_labels, columns=window_labels, dtype=float)
+        count_df = pd.DataFrame(index=mean_df.index, columns=mean_df.columns, dtype=float)
+        series_values = dependent_aligned[series_name]
+
+        for horizon_spec in window_specs:
+            start_pos, end_pos, valid_mask = _resolve_window_bounds(master_index, horizon_spec, forward=True)
+            series_window = _aggregate_window_values(series_values, start_pos, end_pos, valid_mask, "compound")
+            forward_series_windows.setdefault(series_name, {})[str(horizon_spec["label"])] = series_window
+
+        if not include_detail:
+            for back_spec in window_specs:
+                qualified = qualified_masks[str(back_spec["label"])]
+                for horizon_spec in window_specs:
+                    forward_window = forward_series_windows[series_name][str(horizon_spec["label"])]
+                    selected_mask = qualified & forward_window.notna()
+                    mean_df.loc[str(back_spec["label"]), str(horizon_spec["label"])] = (
+                        forward_window[selected_mask].mean() if selected_mask.any() else np.nan
+                    )
+                    count_df.loc[str(back_spec["label"]), str(horizon_spec["label"])] = int(selected_mask.sum())
+
+        forward_mean_by_series[series_name] = mean_df
+        forward_count_by_series[series_name] = count_df
+
+    coincident_rows, forward_rows = _estimate_conditional_detail_row_counts(
+        master_index,
+        periodicity,
+        step_value,
+        step_unit,
+    )
+    if not include_detail:
+        return _ConditionalReturnsPayload(
+            factor_label=factor_label,
+            factor_display_name=display_factor_name,
+            coincident_mean_df=coincident_mean,
+            coincident_count_df=coincident_count.fillna(0.0),
+            forward_mean_by_series=forward_mean_by_series,
+            forward_count_by_series={k: v.fillna(0.0) for k, v in forward_count_by_series.items()},
+            coincident_detail_df=pd.DataFrame(),
+            forward_detail_df=pd.DataFrame(),
+            coincident_row_count=coincident_rows,
+            forward_row_count=forward_rows,
+        )
+
+    anchor_index = master_index[anchor_positions]
+    coincident_detail_frames: list[pd.DataFrame] = []
+    forward_detail_frames: list[pd.DataFrame] = []
+
+    for label in window_labels:
+        base_frame = pd.DataFrame(
+            {
+                "End Date": anchor_index,
+                "Lookback": label,
+                "Factor Value": factor_windows[label].iloc[anchor_positions].to_numpy(dtype=float, copy=False),
+                "Condition Met": qualified_masks[label].iloc[anchor_positions].fillna(False).to_numpy(dtype=bool, copy=False),
+            }
+        )
+        for series_name in selected_series:
+            if series_name in coincident_series_windows[label]:
+                base_frame[series_name] = coincident_series_windows[label][series_name].iloc[anchor_positions].to_numpy(dtype=float, copy=False)
+        coincident_detail_frames.append(base_frame)
+
+        for horizon_label in window_labels:
+            forward_frame = base_frame.copy()
+            forward_frame.insert(2, "Forward Period", horizon_label)
+            for series_name in selected_series:
+                forward_windows = forward_series_windows.get(series_name, {})
+                if horizon_label in forward_windows:
+                    forward_frame[series_name] = forward_windows[horizon_label].iloc[anchor_positions].to_numpy(dtype=float, copy=False)
+            forward_detail_frames.append(forward_frame)
+
+    coincident_detail_df = _order_conditional_detail_frame(
+        pd.concat(coincident_detail_frames, ignore_index=True, sort=False) if coincident_detail_frames else pd.DataFrame(),
+        window_labels,
+        include_forward=False,
+    )
+    forward_detail_df = _order_conditional_detail_frame(
+        pd.concat(forward_detail_frames, ignore_index=True, sort=False) if forward_detail_frames else pd.DataFrame(),
+        window_labels,
+        include_forward=True,
+    )
+    coincident_mean, coincident_count = _build_conditional_summary_frames_from_detail(
+        coincident_detail_df,
+        window_labels,
+        tuple(selected_series or ()),
+    )
+    forward_mean_by_series, forward_count_by_series = _build_conditional_forward_summary_from_detail(
+        forward_detail_df,
+        window_labels,
+        tuple(selected_series or ()),
+    )
+
+    return _ConditionalReturnsPayload(
+        factor_label=factor_label,
+        factor_display_name=display_factor_name,
+        coincident_mean_df=coincident_mean,
+        coincident_count_df=coincident_count,
+        forward_mean_by_series=forward_mean_by_series,
+        forward_count_by_series=forward_count_by_series,
+        coincident_detail_df=coincident_detail_df,
+        forward_detail_df=forward_detail_df,
+        coincident_row_count=coincident_rows,
+        forward_row_count=forward_rows,
     )
 
 
@@ -2061,7 +2671,9 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                       drawdown_chart_switch, growth_chart_switch, monthly_view, monthly_series,
                       monthly_series_options, monthly_select_disabled, factor_mode,
                       factor_quantiles, factor_transform, factor_series_options,
-                      factor_series_value, factor_qq_reference):
+                      factor_series_value, factor_qq_reference, conditional_view,
+                      conditional_comparator, conditional_threshold, conditional_window_conversion,
+                      conditional_step, conditional_step_unit, conditional_display_mode):
     
     # Calculate visibility styles - use flex for full height
     flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
@@ -2244,6 +2856,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.TabsTab("Drawdown", value="drawdown"),
                         dmc.TabsTab("Correlation", value="correlogram"),
                         dmc.TabsTab("Factor Analysis", value="factor_analysis"),
+                        dmc.TabsTab("Conditional Returns", value="conditional_returns"),
                         dmc.TabsTab("Regime Analysis", value="regime_analysis"),
                     ],
                 ),
@@ -2715,6 +3328,162 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         html.Div(
                             id="at-factor-analysis-container",
                             style={"flex": "1", "overflow": "auto"},
+                        ),
+                    ],
+                ),
+                dmc.TabsPanel(
+                    value="conditional_returns",
+                    pt="md",
+                    style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
+                    children=[
+                        dmc.Group(
+                            mb="md",
+                            gap="md",
+                            align="flex-end",
+                            children=[
+                                _build_at_returns_type_control("at-returns-type-select-conditional", returns_type),
+                                html.Div(
+                                    children=[
+                                        dmc.Select(
+                                            id="at-factor-series-select-conditional",
+                                            label="Factor",
+                                            data=factor_series_options,
+                                            value=factor_series_value,
+                                            w=280,
+                                            size="sm",
+                                            searchable=True,
+                                            clearable=False,
+                                            placeholder="Select factor series",
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    children=[
+                                        dmc.Text("Definitions", size="sm", fw=500, mb=3),
+                                        dmc.Button(
+                                            "Edit factors",
+                                            id="at-factor-open-modal-btn-conditional",
+                                            size="sm",
+                                            variant="light",
+                                            leftSection=DashIconify(icon="tabler:math-function", width=14),
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    children=[
+                                        dmc.Text("Factor Transform", size="sm", fw=500, mb=3),
+                                        dmc.SegmentedControl(
+                                            id="at-factor-transform-select-conditional",
+                                            data=[
+                                                {"value": "raw", "label": "Raw"},
+                                                {"value": "zscore", "label": "Z-Score"},
+                                            ],
+                                            value=factor_transform,
+                                            size="sm",
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    children=[
+                                        dmc.Text("Display", size="sm", fw=500, mb=3),
+                                        dmc.SegmentedControl(
+                                            id="at-conditional-display-mode-select",
+                                            data=CONDITIONAL_DISPLAY_MODE_OPTIONS,
+                                            value=conditional_display_mode,
+                                            size="sm",
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    children=[
+                                        dmc.Text("View", size="sm", fw=500, mb=3),
+                                        dmc.SegmentedControl(
+                                            id="at-conditional-view-select",
+                                            data=CONDITIONAL_VIEW_OPTIONS,
+                                            value=conditional_view,
+                                            size="sm",
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    children=[
+                                        dmc.Text("Comparator", size="sm", fw=500, mb=3),
+                                        dmc.SegmentedControl(
+                                            id="at-conditional-comparator-select",
+                                            data=CONDITIONAL_COMPARATOR_OPTIONS,
+                                            value=conditional_comparator,
+                                            size="sm",
+                                        ),
+                                    ],
+                                ),
+                                dmc.NumberInput(
+                                    id="at-conditional-threshold-input",
+                                    label="Threshold",
+                                    value=conditional_threshold,
+                                    step=0.1,
+                                    w=120,
+                                    size="sm",
+                                ),
+                                html.Div(
+                                    children=[
+                                        dmc.Text("Factor Window", size="sm", fw=500, mb=3),
+                                        dmc.Select(
+                                            id="at-conditional-window-conversion-select",
+                                            data=CONDITIONAL_FACTOR_CONVERSION_OPTIONS,
+                                            value=conditional_window_conversion,
+                                            w=170,
+                                            size="sm",
+                                            clearable=False,
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    children=[
+                                        dmc.Text("Step", size="sm", fw=500, mb=3),
+                                        dmc.Group(
+                                            gap="xs",
+                                            wrap="nowrap",
+                                            children=[
+                                                dmc.NumberInput(
+                                                    id="at-conditional-step-input",
+                                                    value=conditional_step,
+                                                    min=1,
+                                                    step=1,
+                                                    w=90,
+                                                    size="sm",
+                                                ),
+                                                dmc.Select(
+                                                    id="at-conditional-step-unit-select",
+                                                    data=[
+                                                        {"value": "months", "label": "Months"},
+                                                        {"value": "periods", "label": "Periods"},
+                                                    ],
+                                                    value=conditional_step_unit,
+                                                    w=100,
+                                                    size="sm",
+                                                    clearable=False,
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        html.Div(id="at-conditional-conversion-note"),
+                        html.Div(id="at-conditional-returns-warning"),
+                        dcc.Loading(
+                            id="at-loading-conditional-returns",
+                            type="default",
+                            delay_show=300,
+                            delay_hide=150,
+                            style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+                            parent_style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "auto"},
+                            children=[
+                                html.Div(
+                                    id="at-conditional-returns-container",
+                                    style={"flex": "1", "overflow": "auto"},
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -3502,6 +4271,13 @@ layout = dmc.Container(
                 factor_series_options=[],
                 factor_series_value=None,
                 factor_qq_reference="normal",
+                conditional_view="forward",
+                conditional_comparator="le",
+                conditional_threshold=0,
+                conditional_window_conversion="compound",
+                conditional_step=1,
+                conditional_step_unit="months",
+                conditional_display_mode="summary",
             ),
             style={"display": "none"}
         ),
@@ -3530,6 +4306,13 @@ layout = dmc.Container(
         dcc.Store(id="at-factor-transform-store", data="raw", storage_type="session"),
         dcc.Store(id="at-factor-series-store", data=None, storage_type="session"),
         dcc.Store(id="at-factor-qq-reference-store", data="normal", storage_type="session"),
+        dcc.Store(id="at-conditional-view-store", data="forward", storage_type="session"),
+        dcc.Store(id="at-conditional-comparator-store", data="le", storage_type="session"),
+        dcc.Store(id="at-conditional-threshold-store", data=0, storage_type="session"),
+        dcc.Store(id="at-conditional-window-conversion-store", data="compound", storage_type="session"),
+        dcc.Store(id="at-conditional-step-store", data=1, storage_type="session"),
+        dcc.Store(id="at-conditional-step-unit-store", data="months", storage_type="session"),
+        dcc.Store(id="at-conditional-display-mode-store", data="summary", storage_type="session"),
         dcc.Store(id="at-factor-definitions-db-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-def-modal-draft-store", data=None, storage_type="session"),
@@ -3669,6 +4452,13 @@ def _at_restore_defaults():
         "factor_quantiles": 5,
         "factor_transform": "raw",
         "factor_qq_reference": "normal",
+        "conditional_view": "forward",
+        "conditional_comparator": "le",
+        "conditional_threshold": 0,
+        "conditional_window_conversion": "compound",
+        "conditional_step": 1,
+        "conditional_step_unit": "months",
+        "conditional_display_mode": "summary",
         "monthly_view": "annual",
         "valid_selection": [],
         "updated_order": [],
@@ -3692,6 +4482,13 @@ def _at_resolve_restore_state(
     stored_factor_quantiles,
     stored_factor_transform,
     stored_factor_qq_reference,
+    stored_conditional_view,
+    stored_conditional_comparator,
+    stored_conditional_threshold,
+    stored_conditional_window_conversion,
+    stored_conditional_step,
+    stored_conditional_step_unit,
+    stored_conditional_display_mode,
     stored_monthly_view,
     stored_order,
     po_origin_series,
@@ -3753,6 +4550,21 @@ def _at_resolve_restore_state(
                 if stored_factor_qq_reference in {"normal", "reference"}
                 else "normal"
             ),
+            "conditional_view": stored_conditional_view if stored_conditional_view in {"coincident", "forward"} else "forward",
+            "conditional_comparator": stored_conditional_comparator if stored_conditional_comparator in {"le", "ge"} else "le",
+            "conditional_threshold": stored_conditional_threshold if stored_conditional_threshold is not None else 0,
+            "conditional_window_conversion": (
+                stored_conditional_window_conversion
+                if stored_conditional_window_conversion in {"compound", "end", "average", "sum"}
+                else "compound"
+            ),
+            "conditional_step": _coerce_positive_int(stored_conditional_step, default=1),
+            "conditional_step_unit": stored_conditional_step_unit if stored_conditional_step_unit in {"periods", "months"} else "months",
+            "conditional_display_mode": (
+                stored_conditional_display_mode
+                if stored_conditional_display_mode in {"summary", "detail"}
+                else "summary"
+            ),
             "monthly_view": stored_monthly_view if stored_monthly_view is not None else "annual",
             "valid_selection": valid_selection,
             "updated_order": updated_order,
@@ -3779,6 +4591,13 @@ def _at_resolve_restore_state(
     Output("at-factor-quantiles-input", "value"),
     Output("at-factor-transform-select", "value"),
     Output("at-factor-qq-reference-select", "value"),
+    Output("at-conditional-view-select", "value"),
+    Output("at-conditional-comparator-select", "value"),
+    Output("at-conditional-threshold-input", "value"),
+    Output("at-conditional-window-conversion-select", "value"),
+    Output("at-conditional-step-input", "value"),
+    Output("at-conditional-step-unit-select", "value"),
+    Output("at-conditional-display-mode-select", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
     Output("at-series-order-store", "data", allow_duplicate=True),
@@ -3800,6 +4619,13 @@ def _at_resolve_restore_state(
     State("at-factor-quantiles-store", "data"),
     State("at-factor-transform-store", "data"),
     State("at-factor-qq-reference-store", "data"),
+    State("at-conditional-view-store", "data"),
+    State("at-conditional-comparator-store", "data"),
+    State("at-conditional-threshold-store", "data"),
+    State("at-conditional-window-conversion-store", "data"),
+    State("at-conditional-step-store", "data"),
+    State("at-conditional-step-unit-store", "data"),
+    State("at-conditional-display-mode-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
     State("at-series-order-store", "data"),
@@ -3825,6 +4651,13 @@ def restore_application_state(
     stored_factor_quantiles,
     stored_factor_transform,
     stored_factor_qq_reference,
+    stored_conditional_view,
+    stored_conditional_comparator,
+    stored_conditional_threshold,
+    stored_conditional_window_conversion,
+    stored_conditional_step,
+    stored_conditional_step_unit,
+    stored_conditional_display_mode,
     stored_monthly_view,
     stored_monthly_series,
     stored_order,
@@ -3849,6 +4682,13 @@ def restore_application_state(
             stored_factor_quantiles,
             stored_factor_transform,
             stored_factor_qq_reference,
+            stored_conditional_view,
+            stored_conditional_comparator,
+            stored_conditional_threshold,
+            stored_conditional_window_conversion,
+            stored_conditional_step,
+            stored_conditional_step_unit,
+            stored_conditional_display_mode,
             stored_monthly_view,
             stored_order,
             po_origin_series,
@@ -3871,6 +4711,15 @@ def restore_application_state(
             resolved["factor_transform"],
             resolved["factor_qq_reference"],
         ) if active_tab == "factor_analysis" else (no_update, no_update, no_update, no_update)
+        conditional_outputs = (
+            resolved["conditional_view"],
+            resolved["conditional_comparator"],
+            resolved["conditional_threshold"],
+            resolved["conditional_window_conversion"],
+            resolved["conditional_step"],
+            resolved["conditional_step_unit"],
+            resolved["conditional_display_mode"],
+        ) if active_tab == "conditional_returns" else (no_update, no_update, no_update, no_update, no_update, no_update, no_update)
         monthly_output = resolved["monthly_view"] if active_tab == "calendar" else no_update
 
         return (
@@ -3883,6 +4732,7 @@ def restore_application_state(
             drawdown_output,
             growth_output,
             *factor_outputs,
+            *conditional_outputs,
             monthly_output,
             resolved["valid_selection"],
             resolved["updated_order"],
@@ -3893,7 +4743,8 @@ def restore_application_state(
         return (
             resolved["periodicity_options"], resolved["valid_periodicity"], resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
             no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
-            no_update, no_update, no_update, no_update, no_update, resolved["valid_selection"], resolved["updated_order"], False
+            no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
+            resolved["valid_selection"], resolved["updated_order"], False
         )
 
 
@@ -3904,6 +4755,7 @@ def restore_application_state(
     Input("at-returns-type-select-drawdown", "value"),
     Input("at-returns-type-select-correlogram", "value"),
     Input("at-returns-type-select-factor", "value"),
+    Input("at-returns-type-select-conditional", "value"),
     Input("at-returns-type-select-regime", "value"),
     State("at-returns-type-select", "value"),
     prevent_initial_call=True,
@@ -3914,6 +4766,7 @@ def sync_at_returns_type_from_mirrors(
     drawdown_value,
     correlogram_value,
     factor_value,
+    conditional_value,
     regime_value,
     current_value,
 ):
@@ -3923,6 +4776,7 @@ def sync_at_returns_type_from_mirrors(
         "at-returns-type-select-drawdown": drawdown_value,
         "at-returns-type-select-correlogram": correlogram_value,
         "at-returns-type-select-factor": factor_value,
+        "at-returns-type-select-conditional": conditional_value,
         "at-returns-type-select-regime": regime_value,
     }
     next_value = value_by_trigger.get(callback_context.triggered_id)
@@ -3940,6 +4794,7 @@ def sync_at_returns_type_from_mirrors(
     Output("at-returns-type-select-drawdown", "value"),
     Output("at-returns-type-select-correlogram", "value"),
     Output("at-returns-type-select-factor", "value"),
+    Output("at-returns-type-select-conditional", "value"),
     Output("at-returns-type-select-regime", "value"),
     Input("at-returns-type-select", "value"),
     State("at-returns-type-select-returns", "value"),
@@ -3947,6 +4802,7 @@ def sync_at_returns_type_from_mirrors(
     State("at-returns-type-select-drawdown", "value"),
     State("at-returns-type-select-correlogram", "value"),
     State("at-returns-type-select-factor", "value"),
+    State("at-returns-type-select-conditional", "value"),
     State("at-returns-type-select-regime", "value"),
     prevent_initial_call=False,
 )
@@ -3957,6 +4813,7 @@ def sync_at_returns_type_mirrors(
     drawdown_value,
     correlogram_value,
     factor_value,
+    conditional_value,
     regime_value,
 ):
     normalized = "excess" if current_value == "excess" else "total"
@@ -3970,6 +4827,7 @@ def sync_at_returns_type_mirrors(
         _sync(drawdown_value),
         _sync(correlogram_value),
         _sync(factor_value),
+        _sync(conditional_value),
         _sync(regime_value),
     )
 
@@ -3987,6 +4845,13 @@ def sync_at_returns_type_mirrors(
     Output("at-factor-quantiles-input", "value", allow_duplicate=True),
     Output("at-factor-transform-select", "value", allow_duplicate=True),
     Output("at-factor-qq-reference-select", "value", allow_duplicate=True),
+    Output("at-conditional-view-select", "value", allow_duplicate=True),
+    Output("at-conditional-comparator-select", "value", allow_duplicate=True),
+    Output("at-conditional-threshold-input", "value", allow_duplicate=True),
+    Output("at-conditional-window-conversion-select", "value", allow_duplicate=True),
+    Output("at-conditional-step-input", "value", allow_duplicate=True),
+    Output("at-conditional-step-unit-select", "value", allow_duplicate=True),
+    Output("at-conditional-display-mode-select", "value", allow_duplicate=True),
     Output("at-monthly-view-checkbox", "value", allow_duplicate=True),
     Input("at-secondary-restore-ready-store", "data"),
     State("dashmat-raw-data-meta-store", "data"),
@@ -4005,6 +4870,13 @@ def sync_at_returns_type_mirrors(
     State("at-factor-quantiles-store", "data"),
     State("at-factor-transform-store", "data"),
     State("at-factor-qq-reference-store", "data"),
+    State("at-conditional-view-store", "data"),
+    State("at-conditional-comparator-store", "data"),
+    State("at-conditional-threshold-store", "data"),
+    State("at-conditional-window-conversion-store", "data"),
+    State("at-conditional-step-store", "data"),
+    State("at-conditional-step-unit-store", "data"),
+    State("at-conditional-display-mode-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-series-order-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
@@ -4029,6 +4901,13 @@ def at_restore_secondary_controls(
     stored_factor_quantiles,
     stored_factor_transform,
     stored_factor_qq_reference,
+    stored_conditional_view,
+    stored_conditional_comparator,
+    stored_conditional_threshold,
+    stored_conditional_window_conversion,
+    stored_conditional_step,
+    stored_conditional_step_unit,
+    stored_conditional_display_mode,
     stored_monthly_view,
     stored_order,
     po_origin_series,
@@ -4054,6 +4933,13 @@ def at_restore_secondary_controls(
         stored_factor_quantiles,
         stored_factor_transform,
         stored_factor_qq_reference,
+        stored_conditional_view,
+        stored_conditional_comparator,
+        stored_conditional_threshold,
+        stored_conditional_window_conversion,
+        stored_conditional_step,
+        stored_conditional_step_unit,
+        stored_conditional_display_mode,
         stored_monthly_view,
         stored_order,
         po_origin_series,
@@ -4073,6 +4959,13 @@ def at_restore_secondary_controls(
         no_update if active_tab == "factor_analysis" else resolved["factor_quantiles"],
         no_update if active_tab == "factor_analysis" else resolved["factor_transform"],
         no_update if active_tab == "factor_analysis" else resolved["factor_qq_reference"],
+        no_update if active_tab == "conditional_returns" else resolved["conditional_view"],
+        no_update if active_tab == "conditional_returns" else resolved["conditional_comparator"],
+        no_update if active_tab == "conditional_returns" else resolved["conditional_threshold"],
+        no_update if active_tab == "conditional_returns" else resolved["conditional_window_conversion"],
+        no_update if active_tab == "conditional_returns" else resolved["conditional_step"],
+        no_update if active_tab == "conditional_returns" else resolved["conditional_step_unit"],
+        no_update if active_tab == "conditional_returns" else resolved["conditional_display_mode"],
         no_update if active_tab == "calendar" else resolved["monthly_view"],
     )
 
@@ -4086,7 +4979,7 @@ def at_restore_secondary_controls(
     prevent_initial_call=True,
 )
 def at_lazy_load_factor_definitions(active_tab, loaded):
-    if active_tab != "factor_analysis" or loaded:
+    if active_tab not in {"factor_analysis", "conditional_returns"} or loaded:
         raise PreventUpdate
 
     factor_available = False
@@ -4292,6 +5185,44 @@ clientside_callback(
 )
 
 
+@callback(
+    Output("at-conditional-view-store", "data"),
+    Output("at-conditional-comparator-store", "data"),
+    Output("at-conditional-threshold-store", "data"),
+    Output("at-conditional-window-conversion-store", "data"),
+    Output("at-conditional-step-store", "data"),
+    Output("at-conditional-step-unit-store", "data"),
+    Output("at-conditional-display-mode-store", "data"),
+    Input("at-conditional-display-mode-select", "value"),
+    Input("at-conditional-view-select", "value"),
+    Input("at-conditional-comparator-select", "value"),
+    Input("at-conditional-threshold-input", "value"),
+    Input("at-conditional-window-conversion-select", "value"),
+    Input("at-conditional-step-input", "value"),
+    Input("at-conditional-step-unit-select", "value"),
+    prevent_initial_call=False,
+)
+def sync_conditional_returns_control_state(
+    display_mode_value,
+    view_value,
+    comparator_value,
+    threshold_value,
+    conversion_value,
+    step_value,
+    step_unit,
+):
+    normalized_step = _coerce_positive_int(step_value, default=1)
+    return (
+        view_value if view_value in {"coincident", "forward"} else "forward",
+        comparator_value if comparator_value in {"le", "ge"} else "le",
+        threshold_value if threshold_value is not None else 0,
+        conversion_value if conversion_value in {"compound", "end", "average", "sum"} else "compound",
+        normalized_step,
+        step_unit if step_unit in {"periods", "months"} else "months",
+        display_mode_value if display_mode_value in {"summary", "detail"} else "summary",
+    )
+
+
 # Sync periodicity to PortOpt only on raw-data load/update events.
 clientside_callback(
     """
@@ -4380,6 +5311,8 @@ clientside_callback(
 @callback(
     Output("at-factor-series-select", "data"),
     Output("at-factor-series-select", "value", allow_duplicate=True),
+    Output("at-factor-series-select-conditional", "data"),
+    Output("at-factor-series-select-conditional", "value", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("at-series-select", "data"),
     Input("at-factor-definitions-db-store", "data"),
@@ -4398,16 +5331,16 @@ def update_factor_series_select(
 ):
     """Expose raw and custom factor candidates, with selected raw series first."""
     if raw_data is None:
-        return [], None
+        return [], None, [], None
 
     try:
         df = json_to_df(raw_data)
     except Exception:
-        return [], None
+        return [], None, [], None
 
     all_series = list(df.columns)
     if not all_series:
-        return [], None
+        return [], None, [], None
 
     selected_order = [s for s in (selected_series or []) if s in all_series]
     remaining = [s for s in all_series if s not in selected_order]
@@ -4445,7 +5378,36 @@ def update_factor_series_select(
             break
     if not next_value and options:
         next_value = options[0]["value"]
-    return options, next_value
+    return options, next_value, options, next_value
+
+
+@callback(
+    Output("at-factor-series-select", "value", allow_duplicate=True),
+    Output("at-factor-series-select-conditional", "value", allow_duplicate=True),
+    Output("at-factor-transform-select", "value", allow_duplicate=True),
+    Output("at-factor-transform-select-conditional", "value", allow_duplicate=True),
+    Input("at-factor-series-select", "value"),
+    Input("at-factor-series-select-conditional", "value"),
+    Input("at-factor-transform-select", "value"),
+    Input("at-factor-transform-select-conditional", "value"),
+    prevent_initial_call=True,
+)
+def sync_factor_control_mirrors(
+    factor_series_value,
+    conditional_factor_series_value,
+    factor_transform_value,
+    conditional_factor_transform_value,
+):
+    trigger = callback_context.triggered_id
+    if trigger == "at-factor-series-select":
+        return no_update, factor_series_value, no_update, no_update
+    if trigger == "at-factor-series-select-conditional":
+        return conditional_factor_series_value, no_update, no_update, no_update
+    if trigger == "at-factor-transform-select":
+        return no_update, no_update, no_update, factor_transform_value
+    if trigger == "at-factor-transform-select-conditional":
+        return no_update, no_update, conditional_factor_transform_value, no_update
+    raise PreventUpdate
 
 
 @callback(
@@ -4453,10 +5415,11 @@ def update_factor_series_select(
     Output("at-factor-def-status-alert", "hide", allow_duplicate=True),
     Input("at-menu-add-factor", "n_clicks"),
     Input("at-factor-open-modal-btn", "n_clicks"),
+    Input("at-factor-open-modal-btn-conditional", "n_clicks"),
     prevent_initial_call=True,
 )
-def at_open_factor_definition_modal(menu_clicks, tab_clicks):
-    if not menu_clicks and not tab_clicks:
+def at_open_factor_definition_modal(menu_clicks, tab_clicks, conditional_tab_clicks):
+    if not menu_clicks and not tab_clicks and not conditional_tab_clicks:
         raise PreventUpdate
     return True, True
 
@@ -8484,6 +9447,523 @@ def update_factor_analysis(
     return warning_children, html.Div(charts, style={"height": "100%"})
 
 
+def _build_signed_gradient_cell_style(max_abs: float) -> dict:
+    if not np.isfinite(max_abs) or max_abs <= 0:
+        return {"textAlign": "center"}
+
+    style_conditions = []
+    n_bins = 10
+    for i in range(n_bins):
+        lo = max_abs * i / n_bins
+        hi = max_abs * (i + 1) / n_bins
+        alpha = round(0.1 + 0.6 * (i + 1) / n_bins, 2)
+        text_color = "#fff" if alpha > 0.4 else "inherit"
+        if i == n_bins - 1:
+            style_conditions.append(
+                {
+                    "condition": f"params.value >= {lo}",
+                    "style": {"backgroundColor": f"rgba(34, 139, 34, {alpha})", "color": text_color, "textAlign": "center"},
+                }
+            )
+            style_conditions.append(
+                {
+                    "condition": f"params.value <= {-lo}",
+                    "style": {"backgroundColor": f"rgba(220, 38, 38, {alpha})", "color": text_color, "textAlign": "center"},
+                }
+            )
+        else:
+            style_conditions.append(
+                {
+                    "condition": f"params.value >= {lo} && params.value < {hi}",
+                    "style": {"backgroundColor": f"rgba(34, 139, 34, {alpha})", "color": text_color, "textAlign": "center"},
+                }
+            )
+            style_conditions.append(
+                {
+                    "condition": f"params.value <= {-lo} && params.value > {-hi}",
+                    "style": {"backgroundColor": f"rgba(220, 38, 38, {alpha})", "color": text_color, "textAlign": "center"},
+                }
+            )
+    return {"styleConditions": style_conditions, "defaultStyle": {"textAlign": "center"}}
+
+
+def _build_conditional_returns_grid_component(
+    title: str,
+    mean_df: pd.DataFrame,
+    count_df: pd.DataFrame,
+    *,
+    row_label: str,
+    max_height: int = 320,
+):
+    if mean_df is None or mean_df.empty:
+        return dmc.Paper(
+            withBorder=True,
+            radius="md",
+            p="sm",
+            children=[
+                dmc.Text(title, fw=600, size="sm", mb=4),
+                dmc.Text("No qualifying observations.", size="sm", c="dimmed"),
+            ],
+        )
+
+    mean_frame = mean_df.copy()
+    mean_frame.index = [str(idx) for idx in mean_frame.index]
+    mean_frame.columns = [str(col) for col in mean_frame.columns]
+    count_frame = count_df.reindex(mean_frame.index, columns=mean_frame.columns).fillna(0)
+
+    values = mean_frame.to_numpy(dtype=float, copy=False)
+    finite_values = values[np.isfinite(values)]
+    max_abs = float(np.max(np.abs(finite_values))) if finite_values.size else 0.0
+    cell_style = _build_signed_gradient_cell_style(max_abs)
+
+    row_data = []
+    for idx_label in mean_frame.index:
+        row = {row_label: idx_label}
+        for col in mean_frame.columns:
+            value = mean_frame.loc[idx_label, col]
+            count = int(count_frame.loc[idx_label, col]) if pd.notna(count_frame.loc[idx_label, col]) else 0
+            row[col] = None if pd.isna(value) else float(value)
+            row[f"__tooltip_{col}"] = f"N: {count}"
+        row_data.append(row)
+
+    column_defs = [
+        {
+            "field": row_label,
+            "headerName": row_label,
+            "pinned": "left",
+            "width": 110,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "dashmat-center-header",
+        }
+    ]
+    for col in mean_frame.columns:
+        column_defs.append(
+            {
+                "field": col,
+                "headerName": col,
+                "width": 110,
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "tooltipValueGetter": {
+                    "function": "params.data && params.colDef && params.colDef.field ? params.data['__tooltip_' + params.colDef.field] : ''"
+                },
+                "cellStyle": cell_style,
+                "headerClass": "dashmat-center-header",
+            }
+        )
+
+    grid_height = min(max_height, max(140, 52 + (len(row_data) + 1) * 28))
+    return dmc.Paper(
+        withBorder=True,
+        radius="md",
+        p="sm",
+        children=[
+            dmc.Text(title, fw=600, size="sm", mb=4),
+            dag.AgGrid(
+                enableEnterpriseModules=True,
+                licenseKey=AG_GRID_LICENSE_KEY,
+                id=f"at-conditional-grid-{hashlib.md5(title.encode('utf-8')).hexdigest()[:10]}",
+                className="ag-theme-alpine",
+                columnDefs=column_defs,
+                rowData=row_data,
+                defaultColDef={
+                    "sortable": True,
+                    "resizable": True,
+                    "suppressHeaderMenuButton": True,
+                    "cellStyle": {"textAlign": "center"},
+                    "headerClass": "dashmat-center-header",
+                },
+                style={"height": f"{grid_height}px", "width": "100%"},
+                dashGridOptions=literal_field_dash_grid_options(
+                    {
+                        "animateRows": False,
+                        "pagination": False,
+                        "suppressExcelExport": True,
+                        "enableRangeSelection": True,
+                        "suppressCsvExport": True,
+                        "tooltipShowDelay": 100,
+                    }
+                ),
+            ),
+        ],
+    )
+
+
+def _build_conditional_detail_grid_component(
+    title: str,
+    detail_df: pd.DataFrame,
+    *,
+    series_names: tuple[str, ...],
+    include_forward: bool,
+    max_height: int = 560,
+):
+    if detail_df is None or detail_df.empty:
+        return dmc.Paper(
+            withBorder=True,
+            radius="md",
+            p="sm",
+            children=[
+                dmc.Text(title, fw=600, size="sm", mb=4),
+                dmc.Text("No evaluated windows available.", size="sm", c="dimmed"),
+            ],
+        )
+
+    frame = detail_df.copy()
+    for col in frame.columns:
+        if pd.api.types.is_datetime64_any_dtype(frame[col]):
+            frame[col] = pd.to_datetime(frame[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    column_defs = [
+        {
+            "field": "Lookback",
+            "headerName": "Lookback",
+            "pinned": "left",
+            "width": 100,
+            "headerClass": "dashmat-center-header",
+        },
+    ]
+    if include_forward:
+        column_defs.append(
+            {
+                "field": "Forward Period",
+                "headerName": "Forward Period",
+                "pinned": "left",
+                "width": 120,
+                "headerClass": "dashmat-center-header",
+            }
+        )
+    column_defs.append(
+        {
+            "field": "End Date",
+            "headerName": "End Date",
+            "pinned": "left",
+            "width": 130,
+            "headerClass": "dashmat-center-header",
+        }
+    )
+    column_defs.extend(
+        [
+            {
+                "field": "Factor Value",
+                "headerName": "Factor Value",
+                "width": 120,
+                "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"},
+                "headerClass": "dashmat-center-header",
+            },
+            {
+                "field": "Condition Met",
+                "headerName": "Condition Met",
+                "width": 120,
+                "filter": "agSetColumnFilter",
+                "valueFormatter": {"function": "params.value === true ? 'True' : (params.value === false ? 'False' : '')"},
+                "headerClass": "dashmat-center-header",
+            },
+        ]
+    )
+    for series_name in series_names:
+        if series_name not in frame.columns:
+            continue
+        column_defs.append(
+            {
+                "field": series_name,
+                "headerName": series_name,
+                "width": 120,
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "headerClass": "dashmat-center-header",
+            }
+        )
+
+    return dmc.Paper(
+        withBorder=True,
+        radius="md",
+        p="sm",
+        children=[
+            dmc.Text(title, fw=600, size="sm", mb=4),
+            dag.AgGrid(
+                enableEnterpriseModules=True,
+                licenseKey=AG_GRID_LICENSE_KEY,
+                id=f"at-conditional-detail-grid-{hashlib.md5(title.encode('utf-8')).hexdigest()[:10]}",
+                className="ag-theme-alpine",
+                columnDefs=column_defs,
+                rowData=frame.to_dict("records"),
+                defaultColDef={
+                    "sortable": True,
+                    "resizable": True,
+                    "filter": True,
+                    "suppressHeaderMenuButton": True,
+                    "cellStyle": {"textAlign": "center"},
+                    "headerClass": "dashmat-center-header",
+                },
+                style={"height": f"{max_height}px", "width": "100%"},
+                dashGridOptions=literal_field_dash_grid_options(
+                    {
+                        "animateRows": False,
+                        "pagination": False,
+                        "suppressExcelExport": True,
+                        "enableRangeSelection": True,
+                        "suppressCsvExport": True,
+                    }
+                ),
+            ),
+        ],
+    )
+
+
+def _conditional_export_block(title: str, df: pd.DataFrame, row_label: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame([{row_label: title}, {row_label: "No qualifying observations."}, {row_label: ""}])
+
+    block = df.copy()
+    block.index = [str(idx) for idx in block.index]
+    block.columns = [str(col) for col in block.columns]
+    block.insert(0, row_label, block.index)
+    block = block.reset_index(drop=True)
+    title_row = pd.DataFrame([{row_label: title}])
+    spacer_row = pd.DataFrame([{row_label: ""}])
+    return pd.concat([title_row, block, spacer_row], ignore_index=True, sort=False)
+
+
+def _build_conditional_export_frame(
+    payload: _ConditionalReturnsPayload,
+    view: str,
+    selected_series: list[str] | tuple[str, ...],
+) -> pd.DataFrame:
+    blocks = []
+    if view == "coincident":
+        blocks.append(_conditional_export_block("Mean Returns", payload.coincident_mean_df, "Window"))
+        blocks.append(_conditional_export_block("Observation Counts", payload.coincident_count_df, "Window"))
+    else:
+        for series_name in selected_series:
+            blocks.append(
+                _conditional_export_block(
+                    f"{series_name} - Mean Returns",
+                    payload.forward_mean_by_series.get(series_name, pd.DataFrame()),
+                    "Lookback",
+                )
+            )
+            blocks.append(
+                _conditional_export_block(
+                    f"{series_name} - Observation Counts",
+                    payload.forward_count_by_series.get(series_name, pd.DataFrame()),
+                    "Lookback",
+                )
+            )
+    if not blocks:
+        return pd.DataFrame([{"Note": "No qualifying observations."}])
+    return pd.concat(blocks, ignore_index=True, sort=False)
+
+
+def _build_conditional_detail_export_frame(detail_df: pd.DataFrame, include_forward: bool) -> pd.DataFrame:
+    if detail_df is None or detail_df.empty:
+        note = "No evaluated windows available."
+        if include_forward:
+            return pd.DataFrame([{"End Date": note}])
+        return pd.DataFrame([{"End Date": note}])
+    return detail_df.copy()
+
+
+@callback(
+    Output("at-conditional-conversion-note", "children"),
+    Output("at-conditional-returns-warning", "children"),
+    Output("at-conditional-returns-container", "children"),
+    Input("at-main-tabs", "value"),
+    Input("at-conditional-display-mode-select", "value"),
+    Input("at-conditional-view-select", "value"),
+    Input("at-conditional-comparator-select", "value"),
+    Input("at-conditional-threshold-input", "value"),
+    Input("at-conditional-window-conversion-select", "value"),
+    Input("at-conditional-step-input", "value"),
+    Input("at-conditional-step-unit-select", "value"),
+    Input("at-factor-series-select-conditional", "value"),
+    Input("at-factor-transform-select-conditional", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    State("at-factor-definitions-db-store", "data"),
+    State("at-factor-definitions-local-store", "data"),
+    prevent_initial_call=True,
+)
+def update_conditional_returns(
+    active_tab,
+    conditional_display_mode,
+    conditional_view,
+    conditional_comparator,
+    conditional_threshold,
+    conditional_window_conversion,
+    conditional_step,
+    conditional_step_unit,
+    factor_series,
+    factor_transform,
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    state_ready,
+    vol_scaler,
+    vol_scaling_assignments,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
+):
+    if (
+        active_tab != "conditional_returns"
+        or not state_ready
+        or not _has_complete_date_range(date_range)
+    ):
+        raise PreventUpdate
+
+    note_text = _factor_conversion_warning_text(conditional_window_conversion or "compound")
+    note_children = (
+        dmc.Alert(note_text, color="yellow", variant="light", mb="sm")
+        if note_text
+        else None
+    )
+
+    if raw_data is None or not selected_series:
+        return note_children, None, dmc.Text("Select series to view conditional returns.", size="sm", c="dimmed")
+    if not factor_series:
+        return note_children, None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
+
+    definition_payload = ""
+    factor_prefix, factor_name = _split_factor_select_key(factor_series)
+    if factor_prefix == "def":
+        definition = _lookup_factor_definition(factor_name, factor_definitions_db, factor_definitions_local)
+        if not definition:
+            return note_children, None, dmc.Text("Selected factor definition is unavailable.", size="sm", c="dimmed")
+        definition_payload = _definition_payload_for_compute(definition)
+
+    display_mode = conditional_display_mode if conditional_display_mode in {"summary", "detail"} else "summary"
+    normalized_periodicity = periodicity or "daily"
+    normalized_returns_type = returns_type or "total"
+    benchmark_payload = _mapping_payload(benchmark_assignments)
+    long_short_payload = _mapping_payload(long_short_assignments)
+    date_payload = _date_range_payload(date_range)
+    normalized_vol_scaler = vol_scaler or 0
+    vol_scaling_payload = _mapping_payload(vol_scaling_assignments)
+    normalized_transform = factor_transform if factor_transform in {"raw", "zscore"} else "raw"
+    normalized_comparator = conditional_comparator if conditional_comparator in {"le", "ge"} else "le"
+    normalized_threshold = float(pd.to_numeric(pd.Series([conditional_threshold]), errors="coerce").iloc[0] or 0.0)
+    normalized_conversion = conditional_window_conversion if conditional_window_conversion in {"compound", "end", "average", "sum"} else "compound"
+    normalized_step = _coerce_positive_int(conditional_step, default=1)
+    normalized_step_unit = conditional_step_unit if conditional_step_unit in {"periods", "months"} else "months"
+    selected_series_tuple = tuple(selected_series or ())
+
+    warning_children = None
+    if display_mode == "detail":
+        coincident_rows, forward_rows = _estimate_conditional_detail_rows_cached(
+            raw_data,
+            normalized_periodicity,
+            selected_series_tuple,
+            normalized_returns_type,
+            benchmark_payload,
+            long_short_payload,
+            date_payload,
+            normalized_vol_scaler,
+            vol_scaling_payload,
+            factor_series,
+            definition_payload,
+            normalized_step,
+            normalized_step_unit,
+        )
+        detail_row_count = coincident_rows if (conditional_view or "forward") == "coincident" else forward_rows
+        if detail_row_count > CONDITIONAL_DETAIL_RENDER_ROW_LIMIT:
+            warning_children = dmc.Alert(
+                f"Detail view would render about {detail_row_count:,} rows. Narrow filters or use Excel export for the full table.",
+                color="yellow",
+                variant="light",
+                mb="sm",
+            )
+            return note_children, warning_children, dmc.Text("Detail view is capped for large outputs. Excel export still includes the full detail table.", size="sm", c="dimmed")
+
+    payload = _compute_conditional_returns_cached(
+        raw_data,
+        normalized_periodicity,
+        selected_series_tuple,
+        normalized_returns_type,
+        benchmark_payload,
+        long_short_payload,
+        date_payload,
+        normalized_vol_scaler,
+        vol_scaling_payload,
+        factor_series,
+        normalized_transform,
+        definition_payload,
+        normalized_comparator,
+        normalized_threshold,
+        normalized_conversion,
+        normalized_step,
+        normalized_step_unit,
+        display_mode == "detail",
+    )
+
+    if display_mode == "detail":
+        detail_frame = payload.coincident_detail_df if (conditional_view or "forward") == "coincident" else payload.forward_detail_df
+        if detail_frame.empty:
+            return note_children, None, dmc.Text("No evaluated windows available for current settings.", size="sm", c="dimmed")
+        if (conditional_view or "forward") == "coincident":
+            grid = _build_conditional_detail_grid_component(
+                f"Coincident Conditional Returns Detail vs {payload.factor_label}",
+                payload.coincident_detail_df,
+                series_names=selected_series_tuple,
+                include_forward=False,
+            )
+            return note_children, warning_children, grid
+
+        grid = _build_conditional_detail_grid_component(
+            f"Forward Conditional Returns Detail vs {payload.factor_label}",
+            payload.forward_detail_df,
+            series_names=selected_series_tuple,
+            include_forward=True,
+        )
+        return note_children, warning_children, grid
+
+    if payload.coincident_mean_df.empty and not payload.forward_mean_by_series:
+        return note_children, None, dmc.Text("No qualifying data available for current settings.", size="sm", c="dimmed")
+
+    if (conditional_view or "forward") == "forward" and len(payload.forward_mean_by_series) > 10:
+        warning_children = dmc.Alert(
+            "Large Conditional Returns render. Consider narrowing the selected series for faster interaction.",
+            color="yellow",
+            variant="light",
+            mb="sm",
+        )
+
+    if (conditional_view or "forward") == "coincident":
+        grid = _build_conditional_returns_grid_component(
+            f"Coincident Conditional Returns vs {payload.factor_label}",
+            payload.coincident_mean_df,
+            payload.coincident_count_df,
+            row_label="Window",
+        )
+        return note_children, warning_children, grid
+
+    stack_children = []
+    for series_name in selected_series:
+        if series_name not in payload.forward_mean_by_series:
+            continue
+        stack_children.append(
+            _build_conditional_returns_grid_component(
+                f"{series_name} Forward Conditional Returns vs {payload.factor_label}",
+                payload.forward_mean_by_series[series_name],
+                payload.forward_count_by_series[series_name],
+                row_label="Lookback",
+            )
+        )
+
+    if not stack_children:
+        return note_children, warning_children, dmc.Text("No qualifying forward observations available.", size="sm", c="dimmed")
+
+    return note_children, warning_children, dmc.Stack(gap="sm", children=stack_children)
+
+
 def _build_regime_grid_component(
     title: str,
     df: pd.DataFrame,
@@ -9212,6 +10692,12 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-factor-series-select", "value"),
     State("at-factor-quantiles-input", "value"),
     State("at-factor-transform-select", "value"),
+    State("at-conditional-view-store", "data"),
+    State("at-conditional-comparator-store", "data"),
+    State("at-conditional-threshold-store", "data"),
+    State("at-conditional-window-conversion-store", "data"),
+    State("at-conditional-step-store", "data"),
+    State("at-conditional-step-unit-store", "data"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
     State("at-regime-definition-select", "value"),
@@ -9245,6 +10731,12 @@ def download_excel(
     factor_series,
     factor_quantiles,
     factor_transform,
+    conditional_view,
+    conditional_comparator,
+    conditional_threshold,
+    conditional_window_conversion,
+    conditional_step,
+    conditional_step_unit,
     factor_definitions_db=None,
     factor_definitions_local=None,
     regime_definition_key=None,
@@ -9591,6 +11083,87 @@ def download_excel(
                                 writer,
                                 format_excel_dates(scatter_df),
                                 "Factor Analysis - Scatter",
+                                index=False,
+                            )
+                except Exception:
+                    pass
+
+                # Conditional Returns summaries
+                try:
+                    with timed_block("analyticstool.download_excel.conditional_returns"):
+                        conditional_definition_payload = ""
+                        if factor_series:
+                            factor_prefix, factor_name = _split_factor_select_key(factor_series)
+                            if factor_prefix == "def":
+                                definition = _lookup_factor_definition(
+                                    factor_name,
+                                    factor_definitions_db,
+                                    factor_definitions_local,
+                                )
+                                if definition:
+                                    conditional_definition_payload = _definition_payload_for_compute(definition)
+
+                            conditional_payload = _compute_conditional_returns_cached(
+                                bundle.raw_data,
+                                bundle.periodicity,
+                                bundle.selected_series,
+                                returns_type or "total",
+                                bundle.benchmark_payload,
+                                bundle.long_short_payload,
+                                bundle.date_range_payload,
+                                bundle.vol_scaler,
+                                bundle.vol_scaling_payload,
+                                factor_series,
+                                factor_transform if factor_transform in {"raw", "zscore"} else "raw",
+                                conditional_definition_payload,
+                                conditional_comparator if conditional_comparator in {"le", "ge"} else "le",
+                                float(pd.to_numeric(pd.Series([conditional_threshold]), errors="coerce").iloc[0] or 0.0),
+                                conditional_window_conversion if conditional_window_conversion in {"compound", "end", "average", "sum"} else "compound",
+                                _coerce_positive_int(conditional_step, default=1),
+                                conditional_step_unit if conditional_step_unit in {"periods", "months"} else "months",
+                                True,
+                            )
+
+                            coincident_export_df = _build_conditional_export_frame(
+                                conditional_payload,
+                                "coincident",
+                                bundle.selected_series,
+                            )
+                            forward_export_df = _build_conditional_export_frame(
+                                conditional_payload,
+                                "forward",
+                                bundle.selected_series,
+                            )
+                            coincident_detail_export_df = _build_conditional_detail_export_frame(
+                                conditional_payload.coincident_detail_df,
+                                False,
+                            )
+                            forward_detail_export_df = _build_conditional_detail_export_frame(
+                                conditional_payload.forward_detail_df,
+                                True,
+                            )
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(coincident_export_df),
+                                "Conditional Coincident",
+                                index=False,
+                            )
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(forward_export_df),
+                                "Conditional Forward",
+                                index=False,
+                            )
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(coincident_detail_export_df),
+                                "Cond Coincident Detail",
+                                index=False,
+                            )
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(forward_detail_export_df),
+                                "Cond Forward Detail",
                                 index=False,
                             )
                 except Exception:
