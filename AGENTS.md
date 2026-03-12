@@ -41,6 +41,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Preserve callback IDs and store schemas unless a migration is intentional and updated everywhere.
 - Keep shared JSON/store payloads compatible across pages.
 - Avoid broad refactors in large callback files; patch the smallest safe section.
+- Preserve imported series names exactly as loaded from source data or DB-backed account names. Do not sanitize or alias series names just to satisfy a grid or chart component.
 - Do not add dependencies unless necessary.
 - Add comments only when logic is not obvious.
 - Do not mutate or delete database table data from runtime callback code.
@@ -69,6 +70,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` or full pytest.
 - If you change upload, parsing, or statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
 - Before finishing, check for obvious regressions in tab rendering and series selection behavior.
+- On targeted pytest runs, this repo's global coverage gate can fail even when the touched module tests pass. If you need a focused verification pass, use `--cov-fail-under=0` and say so explicitly in the handoff.
 
 ## Performance Guidance
 
@@ -156,3 +158,4 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Fresh git worktrees may have missing or zero-byte SQLite files under `data/`. Validate or rebuild the local seed DBs before starting DB-backed browser runs.
 - For side-by-side A/B comparisons, be explicit about which repo root owns the app process, DB files, and output artifacts. Launch the app after that repo root's seed DBs are valid.
 - The warm-switch harness currently accepts runs that may include browser console callback errors. Treat single-run results cautiously and prefer repeated A/B runs before concluding that a small regression is real.
+- AG Grid treats dotted column `field` names as nested object paths by default. For result grids that use literal series names as fields, set `dashGridOptions.suppressFieldDotNotation = True` instead of renaming the series.
