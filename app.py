@@ -18,7 +18,7 @@ app = Dash(
 # Initialize cache for performance optimization (after app creation)
 cache = init_cache(app.server)
 
-USERINFO_DATA = {"role": "Admin"}
+USERINFO_DATA = {"role": "Admin", "username": "Admin User"}
 dmc.pre_render_color_scheme()
 
 
