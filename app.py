@@ -55,6 +55,7 @@ REGRESSION_PATH = _registry_path("pages.regression", "/regression")
 # Layout wraps page content with MantineProvider
 # Shared stores are defined here so they are accessible across all pages
 _provider_kwargs = {"id": "mantine-provider", "children": [
+    dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
@@ -71,7 +72,6 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-account-list-load-state-store", data={"status": "idle", "token": None}),
     dcc.Store(id="dashmat-account-list-enter-submit-dummy", data=None),
     dcc.Store(id="dashmat-account-list-focus-dummy", data=None),
-    dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     *build_account_list_modal_components(),
     dmc.AppShell(
         header={"height": 45},
