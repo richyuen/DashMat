@@ -144,6 +144,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 
 - Prefer narrower PO-only experiments, one hidden subtree at a time, with remeasurement against the committed baseline before keeping a change.
 - Recent blocker tuning: page-local startup blockers can help perceived first-switch timing, but release conditions must stay aligned with modal/grid hydration. If the blocker misbehaves, check the modal-open path and `virtualRowData` release signal before adding more blocker layers.
+- For shared or app-shell loading overlays, do not leave a full-screen fixed wrapper mounted while the overlay is "hidden". If the wrapper covers the viewport, gate the wrapper itself with `display:none` or equivalent when inactive, otherwise it can block clicks across the app even with `visible=False`.
 
 ## Windows and Tooling Learnings
 
