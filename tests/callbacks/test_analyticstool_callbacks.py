@@ -468,6 +468,12 @@ def test_analyticstool_file_menu_includes_account_list_actions():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     assert 'id="at-menu-load-account-list"' in page_text
     assert 'id="at-menu-save-account-list"' in page_text
+
+
+def test_analyticstool_layout_drops_dead_focus_artifacts():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'id="at-edit-box-focus-trigger"' not in page_text
+    assert 'id="at-dummy-focus-output"' not in page_text
     assert "welcome_switch_buttons=()," in page_text
     assert page_text.index('id="at-menu-save-session"') < page_text.index('id="at-menu-load-account-list"')
     assert 'Input("dashmat-raw-data-store", "data")' in page_text

@@ -3590,11 +3590,6 @@ layout = dmc.Container(
         dcc.Store(id="at-series-select", data=[], storage_type="session"),
         dcc.Store(id="at-series-edit-mode", data=None),
 
-        # Store to trigger clientside focus on edit input
-        dcc.Store(id="at-edit-box-focus-trigger", data=None),
-        # Dummy div for clientside callback output
-        html.Div(id="at-dummy-focus-output"),
-        
         # Correlogram metadata for client-side sizing
         dcc.Store(id="at-correlogram-meta-store", data={}),
         dcc.Store(id="at-correlogram-target-key-store", data=None),

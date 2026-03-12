@@ -425,15 +425,23 @@ def test_po_render_statistics_transposes_stats(monkeypatch, page_modules):
         ]
 
     monkeypatch.setattr(portopt, "calculate_statistics_cached", _fake_stats)
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({"P1": [0.01, 0.02], "P2": [0.0, 0.01]}, index=idx),
+            "total_df": pd.DataFrame({"P1": [0.01, 0.02], "P2": [0.0, 0.01]}, index=idx),
+            "excess_df": pd.DataFrame({"P1": [0.01, 0.02], "P2": [0.0, 0.01]}, index=idx),
+            "display_cols": ["P1", "P2"],
+            "benchmark_map": {},
+            "periodicity": "daily",
+        },
+    )
 
-    s1 = pd.Series([0.01, 0.02], index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
-    s2 = pd.Series([0.00, 0.01], index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
-    results = {
-        "P1": {"returns_json": s1.to_json(date_format="iso")},
-        "P2": {"returns_json": s2.to_json(date_format="iso")},
-    }
+    results = {"P1": {"risk_free_meta": {"enabled": True}}}
 
-    grid = portopt.po_render_statistics(results, "statistics", ["P1", "P2"], None, True, "daily")
+    grid = portopt.po_render_statistics(results, "statistics", "P1", None, True, "daily")
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Statistic"
     assert {c["field"] for c in getattr(grid, "columnDefs", [])[1:]} == {"P1", "P2"}
@@ -472,7 +480,7 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     s1 = pd.Series([0.01, 0.02], index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
     results = {"P1": {"returns_json": s1.to_json(date_format="iso")}}
 
-    grid = portopt.po_render_returns(results, "returns", ["P1"])
+    grid = portopt.po_render_returns(results, "returns", "P1")
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[1]["field"] == "P1"
     assert getattr(grid, "rowData", [])[0]["Date"] == "2024-01-01"

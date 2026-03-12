@@ -9917,74 +9917,35 @@ def po_render_statistics(
 
     try:
         with timed_block("portopt.render_statistics", portfolio_count=1):
-            legacy_compare = isinstance(selected_portfolio, (list, tuple, set))
-            if legacy_compare:
-                ordered_cols = list(selected_portfolio)
-            else:
-                perf = _po_get_performance_frames(
-                    results,
-                    selected_portfolio,
-                    raw_data,
-                    periodicity,
-                    bench,
-                    ls,
-                    date_range,
-                    vol_scaler,
-                    vol_scaling,
-                )
-                ordered_cols = perf["display_cols"]
+            perf = _po_get_performance_frames(
+                results,
+                selected_portfolio,
+                raw_data,
+                periodicity,
+                bench,
+                ls,
+                date_range,
+                vol_scaler,
+                vol_scaling,
+            )
+            ordered_cols = perf["display_cols"]
             if not ordered_cols:
                 return html.Div()
 
             series_names = list(ordered_cols)
-            if legacy_compare:
-                stats = []
-                for series_name in series_names:
-                    if series_name not in results:
-                        continue
-                    series_perf = _po_get_performance_frames(
-                        results,
-                        series_name,
-                        raw_data,
-                        periodicity,
-                        bench,
-                        ls,
-                        date_range,
-                        vol_scaler,
-                        vol_scaling,
-                    )
-                    source_df = series_perf["source_df"]
-                    bench_map = series_perf["benchmark_map"]
-                    if source_df.empty:
-                        continue
-                    series_stats = calculate_statistics_cached(
-                        df_to_json(source_df),
-                        series_perf["periodicity"],
-                        (series_name,),
-                        _mapping_payload(bench_map),
-                        "{}",
-                        "null",
-                        0,
-                        "{}",
-                        _risk_free_json_from_store(saved_series_store),
-                        _spx_json_from_store(saved_series_store),
-                        _po_result_use_risk_free(results.get(series_name)),
-                    )
-                    stats.extend(series_stats or [])
-            else:
-                stats = calculate_statistics_cached(
-                    df_to_json(perf["source_df"]),
-                    perf["periodicity"],
-                    tuple(series_names),
-                    _mapping_payload(perf["benchmark_map"]),
-                    "{}",
-                    "null",
-                    0,
-                    "{}",
-                    _risk_free_json_from_store(saved_series_store),
-                    _spx_json_from_store(saved_series_store),
-                    _po_result_use_risk_free(results.get(selected_portfolio)),
-                )
+            stats = calculate_statistics_cached(
+                df_to_json(perf["source_df"]),
+                perf["periodicity"],
+                tuple(series_names),
+                _mapping_payload(perf["benchmark_map"]),
+                "{}",
+                "null",
+                0,
+                "{}",
+                _risk_free_json_from_store(saved_series_store),
+                _spx_json_from_store(saved_series_store),
+                _po_result_use_risk_free(results.get(selected_portfolio)),
+            )
 
             if not stats:
                 return html.Div()
@@ -10057,27 +10018,19 @@ def po_render_returns(
         return html.Div()
 
     try:
-        legacy_compare = isinstance(selected_portfolio, (list, tuple, set))
-        if legacy_compare:
-            if returns_basis == "excess":
-                display_df = _po_collect_portfolio_excess_returns(results, list(selected_portfolio))
-            else:
-                display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
-            ordered_cols = list(display_df.columns)
-        else:
-            perf = _po_get_performance_frames(
-                results,
-                selected_portfolio,
-                raw_data,
-                periodicity,
-                bench,
-                ls,
-                date_range,
-                vol_scaler,
-                vol_scaling,
-            )
-            display_df = perf["excess_df"] if returns_basis == "excess" else perf["total_df"]
-            ordered_cols = perf["display_cols"]
+        perf = _po_get_performance_frames(
+            results,
+            selected_portfolio,
+            raw_data,
+            periodicity,
+            bench,
+            ls,
+            date_range,
+            vol_scaler,
+            vol_scaling,
+        )
+        display_df = perf["excess_df"] if returns_basis == "excess" else perf["total_df"]
+        ordered_cols = perf["display_cols"]
         if display_df.empty or not ordered_cols:
             return html.Div()
 

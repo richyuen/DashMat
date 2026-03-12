@@ -23,8 +23,8 @@ ACCOUNT_LIST_MODAL_BASE_CLASS = "dashmat-modal dashmat-account-list-modal"
 ACCOUNT_LIST_MODAL_LOAD_CLASS = f"{ACCOUNT_LIST_MODAL_BASE_CLASS} dashmat-account-list-modal-load"
 
 
-def build_account_list_load_state(status: str, token: int | None = None) -> dict[str, object]:
-    return {"status": str(status or "idle").strip().lower() or "idle", "token": token}
+def build_account_list_load_state(status: str) -> dict[str, object]:
+    return {"status": str(status or "idle").strip().lower() or "idle"}
 
 
 def account_list_loader_visible(load_state) -> bool:
@@ -53,10 +53,10 @@ def load_selected_account_list_session(
     if not n_clicks:
         raise PreventUpdate
     if selected_id is None:
-        return no_update, {"message": "Select an account list to load.", "color": "orange"}, build_account_list_load_state("error", n_clicks)
+        return no_update, {"message": "Select an account list to load.", "color": "orange"}, build_account_list_load_state("error")
     row = load_account_list_by_id(db_engine, selected_id, _account_list_username(userinfo))
     if row is None:
-        return no_update, {"message": "Saved account list no longer exists.", "color": "red"}, build_account_list_load_state("error", n_clicks)
+        return no_update, {"message": "Saved account list no longer exists.", "color": "red"}, build_account_list_load_state("error")
     try:
         session_payload, _stats = build_account_list_session_payload(
             payload=row.get("ConfigJson"),
@@ -72,9 +72,9 @@ def load_selected_account_list_session(
         return (
             no_update,
             {"message": f"Unable to load account list: {exc}", "color": "red"},
-            build_account_list_load_state("error", n_clicks),
+            build_account_list_load_state("error"),
         )
-    return session_payload, no_update, build_account_list_load_state("success", n_clicks)
+    return session_payload, no_update, build_account_list_load_state("success")
 
 
 def build_account_list_modal_components() -> list:
@@ -531,10 +531,10 @@ def register_account_list_callbacks(
             const ctx = window.dash_clientside.callback_context;
             const triggered = (ctx && ctx.triggered && ctx.triggered.length) ? ctx.triggered[0].prop_id.split(".")[0] : null;
             if (triggered === "dashmat-account-list-modal") {
-                return {status: "idle", token: null};
+                return {status: "idle"};
             }
             if (triggered === "dashmat-account-list-load-button" && loadClicks) {
-                return {status: "loading", token: loadClicks};
+                return {status: "loading"};
             }
             return window.dash_clientside.no_update;
         }

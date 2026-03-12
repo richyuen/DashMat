@@ -69,7 +69,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-account-list-session-snapshot-store", data={}),
     dcc.Store(id="dashmat-account-list-refresh-store", data=0),
     dcc.Store(id="dashmat-account-list-session-apply-store", data=None),
-    dcc.Store(id="dashmat-account-list-load-state-store", data={"status": "idle", "token": None}),
+    dcc.Store(id="dashmat-account-list-load-state-store", data={"status": "idle"}),
     dcc.Store(id="dashmat-account-list-enter-submit-dummy", data=None),
     dcc.Store(id="dashmat-account-list-focus-dummy", data=None),
     *build_account_list_modal_components(),

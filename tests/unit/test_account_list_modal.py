@@ -8,12 +8,12 @@ import utils.account_list_modal as modal_module
 
 
 def test_account_list_loader_visible_only_for_loading_status():
-    assert modal_module.build_account_list_load_state("loading", 3) == {"status": "loading", "token": 3}
-    assert modal_module.account_list_loader_visible({"status": "loading", "token": 3}) is True
-    assert modal_module.account_list_loader_visible({"status": "error", "token": 3}) is False
+    assert modal_module.build_account_list_load_state("loading") == {"status": "loading"}
+    assert modal_module.account_list_loader_visible({"status": "loading"}) is True
+    assert modal_module.account_list_loader_visible({"status": "error"}) is False
     assert modal_module.account_list_loader_visible(None) is False
-    assert modal_module.account_list_loader_wrapper_style({"status": "idle", "token": None}) == {"display": "none"}
-    assert modal_module.account_list_loader_wrapper_style({"status": "loading", "token": 3}) == {
+    assert modal_module.account_list_loader_wrapper_style({"status": "idle"}) == {"display": "none"}
+    assert modal_module.account_list_loader_wrapper_style({"status": "loading"}) == {
         "position": "fixed",
         "inset": 0,
         "zIndex": 4100,
@@ -52,7 +52,7 @@ def test_load_selected_account_list_session_handles_missing_selection():
 
     assert payload is no_update
     assert notice == {"message": "Select an account list to load.", "color": "orange"}
-    assert load_state == {"status": "error", "token": 2}
+    assert load_state == {"status": "error"}
 
 
 def test_load_selected_account_list_session_handles_missing_row(monkeypatch):
@@ -73,7 +73,7 @@ def test_load_selected_account_list_session_handles_missing_row(monkeypatch):
 
     assert payload is no_update
     assert notice == {"message": "Saved account list no longer exists.", "color": "red"}
-    assert load_state == {"status": "error", "token": 4}
+    assert load_state == {"status": "error"}
 
 
 def test_load_selected_account_list_session_handles_loader_error(monkeypatch):
@@ -103,7 +103,7 @@ def test_load_selected_account_list_session_handles_loader_error(monkeypatch):
 
     assert payload is no_update
     assert notice == {"message": "Unable to load account list: boom", "color": "red"}
-    assert load_state == {"status": "error", "token": 5}
+    assert load_state == {"status": "error"}
 
 
 def test_load_selected_account_list_session_reports_success(monkeypatch):
@@ -133,4 +133,37 @@ def test_load_selected_account_list_session_reports_success(monkeypatch):
 
     assert payload == {"dashmat-raw-data-store": "json"}
     assert notice is no_update
-    assert load_state == {"status": "success", "token": 6}
+    assert load_state == {"status": "success"}
+
+
+def test_load_selected_account_list_session_repeated_failures_return_same_error_state(monkeypatch):
+    monkeypatch.setattr(modal_module, "load_account_list_by_id", lambda *_args, **_kwargs: None)
+
+    first = modal_module.load_selected_account_list_session(
+        n_clicks=7,
+        selected_id=11,
+        raw_data=None,
+        original_periodicity="daily",
+        provenance_store={},
+        session_snapshot={},
+        userinfo={"username": "tester"},
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+    second = modal_module.load_selected_account_list_session(
+        n_clicks=8,
+        selected_id=11,
+        raw_data=None,
+        original_periodicity="daily",
+        provenance_store={},
+        session_snapshot={},
+        userinfo={"username": "tester"},
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert first[2] == {"status": "error"}
+    assert second[2] == {"status": "error"}
+    assert first[1] == second[1] == {"message": "Saved account list no longer exists.", "color": "red"}
