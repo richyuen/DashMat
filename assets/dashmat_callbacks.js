@@ -290,6 +290,148 @@
     return [];
   }
 
+  function latestGridEvent(payload) {
+    let evt = payload;
+    if (Array.isArray(evt)) {
+      for (let i = evt.length - 1; i >= 0; i -= 1) {
+        if (evt[i] && typeof evt[i] === "object") {
+          evt = evt[i];
+          break;
+        }
+      }
+    }
+    return evt && typeof evt === "object" ? evt : null;
+  }
+
+  async function captureGridSnapshot(gridId, modalOpened) {
+    if (modalOpened === false) {
+      return noUpdate();
+    }
+    if (!window.dash_ag_grid || !window.dash_ag_grid.getApiAsync) {
+      return noUpdate();
+    }
+    try {
+      const api = await window.dash_ag_grid.getApiAsync(gridId);
+      if (!api) {
+        return noUpdate();
+      }
+      try {
+        api.stopEditing();
+      } catch (_err) {
+      }
+      const rows = [];
+      api.forEachNodeAfterFilterAndSort(function (node) {
+        if (node && node.data) {
+          rows.push(Object.assign({}, node.data));
+        }
+      });
+      return {
+        rows: rows,
+        capturedAt: Date.now()
+      };
+    } catch (_err) {
+      return noUpdate();
+    }
+  }
+
+  async function captureAnalyticsSeriesSnapshot(nClicks, modalOpened) {
+    if (!nClicks) {
+      return noUpdate();
+    }
+    return captureGridSnapshot("at-series-selection-grid", modalOpened);
+  }
+
+  async function capturePortoptSeriesSnapshot(nClicks, modalOpened) {
+    if (!nClicks) {
+      return noUpdate();
+    }
+    return captureGridSnapshot("po-series-selection-grid", modalOpened);
+  }
+
+  async function captureRegressionSeriesSnapshot(nClicks, modalOpened) {
+    if (!nClicks) {
+      return noUpdate();
+    }
+    return captureGridSnapshot("reg-series-selection-grid", modalOpened);
+  }
+
+  async function enforceRegressionSingleY(cellClick, modalOpened) {
+    const evt = latestGridEvent(cellClick);
+    if (!evt || modalOpened === false) {
+      return noUpdate();
+    }
+    const colId = evt.colId || (evt.column && evt.column.colId);
+    if (colId !== "YDisplay" && colId !== "Y") {
+      return noUpdate();
+    }
+    if (!window.dash_ag_grid || !window.dash_ag_grid.getApiAsync) {
+      return noUpdate();
+    }
+    try {
+      const api = await window.dash_ag_grid.getApiAsync("reg-series-selection-grid");
+      if (!api) {
+        return noUpdate();
+      }
+      try {
+        api.stopEditing();
+      } catch (_err) {
+      }
+      const targetKey = evt.rowId || (evt.data && (evt.data.__row_key || evt.data.Series));
+      if (!targetKey) {
+        return noUpdate();
+      }
+
+      let targetNode = null;
+      if (api.getRowNode) {
+        targetNode = api.getRowNode(String(targetKey));
+      }
+      if (!targetNode) {
+        api.forEachNode(function (node) {
+          if (node && node.data) {
+            const rowKey = node.data.__row_key || node.data.Series;
+            if (String(rowKey) === String(targetKey)) {
+              targetNode = node;
+            }
+          }
+        });
+      }
+
+      if (!targetNode || !targetNode.data) {
+        return noUpdate();
+      }
+
+      api.forEachNode(function (node) {
+        if (!node || !node.data) {
+          return;
+        }
+        const rowKey = node.data.__row_key || node.data.Series;
+        const shouldBeSelected = String(rowKey) === String(targetKey);
+        const nextDisplay = shouldBeSelected ? "●" : "○";
+        const nextDelete = shouldBeSelected ? false : !!node.data.Delete;
+        if (
+          !!node.data.Y !== shouldBeSelected ||
+          (node.data.YDisplay || "") !== nextDisplay ||
+          !!node.data.Delete !== nextDelete
+        ) {
+          node.setData(
+            Object.assign({}, node.data, {
+              Y: shouldBeSelected,
+              YDisplay: nextDisplay,
+              Delete: nextDelete
+            })
+          );
+        }
+      });
+      try {
+        api.refreshCells({ columns: ["Y", "YDisplay", "Delete"], force: true });
+      } catch (_err) {
+      }
+      return Date.now();
+    } catch (_err) {
+      return noUpdate();
+    }
+  }
+
   function storeNames(store) {
     if (!store) {
       return [];
@@ -1044,6 +1186,10 @@
   window.dash_clientside = Object.assign({}, window.dash_clientside, {
     dashmat_callbacks: {
       analyticsControlSync: analyticsControlSync,
+      captureAnalyticsSeriesSnapshot: captureAnalyticsSeriesSnapshot,
+      capturePortoptSeriesSnapshot: capturePortoptSeriesSnapshot,
+      captureRegressionSeriesSnapshot: captureRegressionSeriesSnapshot,
+      enforceRegressionSingleY: enforceRegressionSingleY,
       openAnalyticsSeriesModal: openAnalyticsSeriesModal,
       analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,

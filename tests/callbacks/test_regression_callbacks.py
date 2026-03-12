@@ -95,6 +95,10 @@ def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
     return build_raw_data_metadata(raw_json, original_periodicity)
 
 
+def _series_snapshot(rows: list[dict]) -> dict:
+    return {"rows": rows, "capturedAt": 1}
+
+
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
     idx = pd.date_range("2020-01-01", periods=6, freq="B")
     working_df = pd.DataFrame(
@@ -798,19 +802,25 @@ def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
 
 def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page, raw_json):
     result = regression_page.reg_on_modal_ok(
-        1,
-        ["Asset_A"],
-        {"Asset_A": "None"},
-        {"Asset_A": False},
-        ["Asset_A"],
-        [],
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Series": "Asset_A",
+                    "Y": True,
+                    "X": True,
+                    "Benchmark": "None",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "Lag": 0,
+                    "MinBeta": -999.0,
+                    "MaxBeta": 999.0,
+                    "Enable": False,
+                    "Delete": False,
+                }
+            ]
+        ),
         raw_json,
-        {"Asset_A": True},
-        "Asset_A",
-        {"Asset_A": 0},
-        {"Asset_A": -999.0},
-        {"Asset_A": 999.0},
-        {"Asset_A": False},
         ["Asset_A"],
         {"Asset_A": "None"},
         {"Asset_A": False},
@@ -837,18 +847,16 @@ def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page
     assert result[12] is no_update
 
 
-def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):
-    row_data = [
-        {"Series": "A", "Y": True, "X": True},
-        {"Series": "B", "Y": True, "X": True},
-    ]
-    cell_change = [{"colId": "Y", "rowIndex": 1}]
-
-    out = regression_page.reg_sync_grid_to_temp(cell_change, None, row_data, None)
-    new_x, new_dep = out[0], out[1]
-
-    assert new_dep == "B"
-    assert new_x == ["A", "B"]
+def test_reg_series_modal_uses_clientside_single_y_enforcer():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="enforceRegressionSingleY")' in page_text
+    assert 'Output("reg-y-sync-dummy", "data")' in page_text
+    assert 'Input("reg-series-selection-grid", "cellClicked", allow_optional=True)' in page_text
+    assert 'Input("reg-series-selection-grid", "cellValueChanged", allow_optional=True)' not in page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="enforceRegressionSingleY")', 1)[1].split("clientside_callback(", 1)[0]
+    assert "function enforceRegressionSingleY(cellClick, modalOpened)" in js_text
+    assert 'colId !== "YDisplay" && colId !== "Y"' in js_text
+    assert 'const targetKey = evt.rowId' in js_text
 
 
 def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_page):
@@ -857,6 +865,7 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
 
     children, _order, blocker = regression_page.reg_update_series_grid(
         raw,
+        _raw_meta(raw),
         ["A"],
         ["A", "B"],
         [],
@@ -878,12 +887,24 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
     assert opts.get("singleClickEdit") is True
 
     cols = getattr(grid, "columnDefs", []) or []
+    y_col = next((c for c in cols if c.get("field") == "YDisplay"), None)
     x_col = next((c for c in cols if c.get("field") == "X"), None)
     scale_col = next((c for c in cols if c.get("field") == "ScaleVol"), None)
+    delete_col = next((c for c in cols if c.get("field") == "Delete"), None)
+    assert y_col is not None
     assert x_col is not None
     assert scale_col is not None
+    assert delete_col is not None
+    assert cols[0].get("colId") == "__drag"
+    assert cols[0].get("lockPosition") == "left"
+    assert y_col.get("editable") is False
+    assert y_col.get("lockPosition") == "left"
+    assert y_col.get("cellDataType") is False
+    assert y_col.get("cellEditor") is None
     assert x_col.get("cellRenderer") == "agCheckboxCellRenderer"
+    assert x_col.get("lockPosition") == "left"
     assert scale_col.get("cellRenderer") == "agCheckboxCellRenderer"
+    assert delete_col.get("editable", {}).get("function") == "!params.data.Y"
 
 
 def _collect_component_text(node):

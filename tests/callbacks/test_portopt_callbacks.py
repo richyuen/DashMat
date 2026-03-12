@@ -65,6 +65,10 @@ def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
     return build_raw_data_metadata(raw_json, original_periodicity)
 
 
+def _series_snapshot(rows: list[dict]) -> dict:
+    return {"rows": rows, "capturedAt": 1}
+
+
 def _find_component_by_id(node, target_id):
     if node is None:
         return None
@@ -2471,7 +2475,7 @@ def test_po_load_cmabench_option_values_is_lazy(monkeypatch, page_modules):
 def test_po_series_selection_grid_no_longer_fetches_cmabench_values_inline():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     callback_block = page_text.split("@callback(", 1)[1].split("def po_update_series_selectors", 1)[0]
-    render_block = page_text.split("def po_update_series_selectors", 1)[1].split("def _po_latest_series_grid_change", 1)[0]
+    render_block = page_text.split("def po_update_series_selectors", 1)[1].split("clientside_callback(", 1)[0]
     assert 'Input("po-cmabench-option-values-store", "data")' in callback_block
     assert "get_unique_cmabench_values_cached(DB_ENGINE)" not in render_block
     assert '"cellEditor": "agSelectCellEditor"' in render_block
@@ -2484,28 +2488,47 @@ def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monke
     monkeypatch.setattr(portopt, "_po_cached_cmabench_defaults", lambda key: calls.append(key) or {"Asset_A": "Bench_A"})
 
     result = portopt.po_on_modal_ok(
-        1,
-        ["Asset_A"],
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+                {
+                    "__row_key": "Asset_B",
+                    "Selected": False,
+                    "Series": "Asset_B",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+            ]
+        ),
+        raw_json,
+        {},
+        [],
         {},
         {},
         {},
         ["Asset_A", "Asset_B"],
-        [],
-        raw_json,
         {},
-        {},
-        {},
-        {},
-        {},
-        [],
-        {},
-        {},
-        {},
-        [],
-        {},
-        {},
-        {},
-        {},
+        {"Asset_A": 0.0, "Asset_B": 0.0},
+        {"Asset_A": 100.0, "Asset_B": 100.0},
+        {"Asset_A": False, "Asset_B": False},
     )
 
     assert calls == [("Asset_A",)]
@@ -2516,28 +2539,34 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
     _, portopt = page_modules
 
     result = portopt.po_on_modal_ok(
-        1,
-        ["Asset_A"],
-        {},
-        {"Asset_A": "Bench_A"},
-        {},
-        ["Asset_A"],
-        [],
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "CMABench": "Bench_A",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                }
+            ]
+        ),
         raw_json,
         {},
-        {},
-        {},
-        {},
-        {},
         ["Asset_A"],
-        {},
+        {"Asset_A": "None"},
         {"Asset_A": "Bench_A"},
-        {},
+        {"Asset_A": False},
         ["Asset_A"],
-        {},
-        {},
-        {},
-        {},
+        {"Asset_A": True},
+        {"Asset_A": 0.0},
+        {"Asset_A": 100.0},
+        {"Asset_A": False},
     )
 
     assert result[0] is no_update
@@ -2561,18 +2590,37 @@ def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
     raw_df.index.name = "Date"
 
     result = portopt.po_on_modal_ok(
-        1,
-        ["Asset_A"],
-        {},
-        {},
-        {},
-        ["Asset_A"],
-        ["Port_1"],
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+                {
+                    "__row_key": "Port_1",
+                    "Selected": False,
+                    "Series": "Port_1",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": True,
+                },
+            ]
+        ),
         df_to_json(raw_df),
-        {},
-        {},
-        {},
-        {},
         {"Port_1": {"weights": []}},
         ["Asset_A", "Port_1"],
         {},

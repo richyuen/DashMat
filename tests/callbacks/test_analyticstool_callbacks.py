@@ -69,6 +69,10 @@ def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
     return build_raw_data_metadata(raw_json, original_periodicity)
 
 
+def _series_snapshot(rows: list[dict]) -> dict:
+    return {"rows": rows, "capturedAt": 1}
+
+
 def _stack_section_titles(stack_component):
     def _graph_title(node):
         fig = getattr(node, "figure", None)
@@ -260,6 +264,7 @@ def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules,
 
     children, _order, blocker = analyticstool.update_series_selectors(
         raw_json,
+        _raw_meta(raw_json),
         ["Asset_A"],
         ["Asset_A", "Asset_B"],
         [],
@@ -1031,14 +1036,20 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
     analyticstool, _ = page_modules
 
     result = analyticstool.on_modal_ok(
-        1,
-        ["Asset_A"],
-        {},
-        {},
-        ["Asset_A"],
-        [],
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "Delete": False,
+                }
+            ]
+        ),
         raw_json,
-        {},
         ["Asset_A"],
         {},
         {},
@@ -1054,14 +1065,20 @@ def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modu
     analyticstool, _ = page_modules
 
     result = analyticstool.on_modal_ok(
-        1,
-        ["Asset_A"],
-        {"Asset_A": "None"},
-        {"Asset_A": False},
-        ["Asset_A"],
-        [],
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "Delete": False,
+                }
+            ]
+        ),
         raw_json,
-        {"Asset_A": True},
         ["Asset_A"],
         {"Asset_A": "None"},
         {"Asset_A": False},

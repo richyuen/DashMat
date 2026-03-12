@@ -1639,6 +1639,8 @@ layout = dmc.Container(
         dcc.Store(id="reg-temp-min-beta-store", data={}),
         dcc.Store(id="reg-temp-max-beta-store", data={}),
         dcc.Store(id="reg-temp-enable-constraint-store", data={}),
+        dcc.Store(id="reg-series-grid-snapshot-store", data=None),
+        dcc.Store(id="reg-y-sync-dummy", data=None),
         dcc.Store(id="reg-portfolio-add-mode-store", data=None),
         dcc.Store(id="reg-portfolio-add-rows-store", data=[]),
         dcc.Store(id="reg-underlying-add-rows-store", data=[]),
@@ -3418,6 +3420,7 @@ clientside_callback(
     Output("reg-temp-series-order-store", "data", allow_duplicate=True),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("reg-temp-series-select", "data"),
     Input("reg-temp-series-order-store", "data"),
     Input("reg-temp-deleted-series-store", "data"),
@@ -3431,13 +3434,15 @@ clientside_callback(
     Input("reg-temp-enable-constraint-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
+def reg_update_series_grid(raw_data, raw_meta, selected_x, series_order, deleted_series,
                             bench_assign, ls_assign, vol_assign,
                             dep_var, lag_assign, min_b_assign, max_b_assign, enable_assign):
     if raw_data is None:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
-    df = json_to_df(raw_data)
-    all_series = list(df.columns)
+    all_series = list((raw_meta or {}).get("columns") or [])
+    if not all_series:
+        df = json_to_df(raw_data)
+        all_series = list(df.columns)
     if not all_series:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
     if not series_order:
@@ -3463,8 +3468,10 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
         if bench_val not in all_series and bench_val != "None":
             bench_val = "None"
         row_data.append({
+            "__row_key": series,
             "Series": series,
             "Y": bool(series == dep_var),
+            "YDisplay": "●" if series == dep_var else "○",
             "X": bool(series in x_set),
             "Benchmark": bench_val,
             "LongShort": bool(ls_assign.get(series, False)),
@@ -3478,15 +3485,15 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
     grid = dag.AgGrid(
         id="reg-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
-        getRowId="params.data.Series",
+        getRowId="params.data.__row_key",
         columnDefs=[
-            {"headerName": "", "rowDrag": True, "editable": False, "sortable": False, "filter": False,
-             "resizable": False, "width": 36, "pinned": "left", "valueGetter": {"function": "''"},
+            {"colId": "__drag", "headerName": "", "rowDrag": True, "editable": False, "sortable": False, "filter": False,
+             "resizable": False, "width": 36, "pinned": "left", "lockPosition": "left", "valueGetter": {"function": "''"},
              "cellClass": "dashmat-series-center-cell"},
-            {"field": "Y", "headerName": "Y", "editable": True, "cellRenderer": "agCheckboxCellRenderer",
-             "cellEditor": "agCheckboxCellEditor", "width": 54, "pinned": "left",
+            {"field": "YDisplay", "headerName": "Y", "editable": False, "cellDataType": False, "width": 54, "pinned": "left", "lockPosition": "left",
+             "cellStyle": {"textAlign": "center", "cursor": "pointer", "fontSize": "16px", "lineHeight": "1"},
              "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
-            {"field": "X", "headerName": "X", "editable": True, "cellRenderer": "agCheckboxCellRenderer",
+            {"field": "X", "headerName": "X", "editable": True, "cellRenderer": "agCheckboxCellRenderer", "lockPosition": "left",
              "cellEditor": "agCheckboxCellEditor", "width": 54, "pinned": "left",
              "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
             {"field": "Series", "editable": True, "minWidth": 150,
@@ -3515,7 +3522,7 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
             {"field": "Enable", "headerName": "Enable", "editable": True,
              "cellRenderer": "agCheckboxCellRenderer", "cellEditor": "agCheckboxCellEditor",
              "width": 80, "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
-            {"field": "Delete", "headerName": "Del", "editable": True,
+            {"field": "Delete", "headerName": "Del", "editable": {"function": "!params.data.Y"},
              "cellRenderer": "agCheckboxCellRenderer", "cellEditor": "agCheckboxCellEditor",
              "width": 60, "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
         ],
@@ -3543,132 +3550,22 @@ def reg_update_series_grid(raw_data, selected_x, series_order, deleted_series,
     return [grid], series_order, no_update
 
 
-# ---------------------------------------------------------------------------
-# Sync grid cell changes to temp stores
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("reg-temp-series-select", "data", allow_duplicate=True),
-    Output("reg-temp-dependent-var-store", "data", allow_duplicate=True),
-    Output("reg-temp-lag-store", "data", allow_duplicate=True),
-    Output("reg-temp-min-beta-store", "data", allow_duplicate=True),
-    Output("reg-temp-max-beta-store", "data", allow_duplicate=True),
-    Output("reg-temp-enable-constraint-store", "data", allow_duplicate=True),
-    Output("reg-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("reg-temp-long-short-store", "data", allow_duplicate=True),
-    Output("reg-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("reg-temp-deleted-series-store", "data", allow_duplicate=True),
-    Output("reg-temp-series-order-store", "data", allow_duplicate=True),
-    Input("reg-series-selection-grid", "cellValueChanged"),
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="enforceRegressionSingleY"),
+    Output("reg-y-sync-dummy", "data"),
     Input("reg-series-selection-grid", "cellClicked", allow_optional=True),
-    Input("reg-series-selection-grid", "rowData"),
-    State("reg-temp-dependent-var-store", "data"),
+    State("reg-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
-def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
-    if not row_data:
-        raise PreventUpdate
-    rows = [dict(r) for r in row_data if isinstance(r, dict)]
-    if not rows:
-        raise PreventUpdate
-
-    def _latest_event(payload):
-        evt = payload
-        if isinstance(evt, list):
-            evt = next((item for item in reversed(evt) if isinstance(item, dict)), None)
-        return evt if isinstance(evt, dict) else None
-
-    def _event_col(evt):
-        if not evt:
-            return None
-        col = evt.get("colId")
-        if col is None:
-            col = (evt.get("column") or {}).get("colId")
-        return col
-
-    def _event_series(evt):
-        if not evt:
-            return None
-        data = evt.get("data")
-        if isinstance(data, dict):
-            series = data.get("Series")
-            if series:
-                return series
-        idx = evt.get("rowIndex")
-        if isinstance(idx, int) and 0 <= idx < len(rows):
-            return rows[idx].get("Series")
-        return None
-
-    trigger_props = []
-    try:
-        trigger_props = [item.get("prop_id", "") for item in callback_context.triggered]
-    except Exception:
-        trigger_props = []
-    triggered_by_value_change = any(prop.endswith(".cellValueChanged") for prop in trigger_props)
-    triggered_by_click_only = (
-        any(prop.endswith(".cellClicked") for prop in trigger_props)
-        and not triggered_by_value_change
-    )
-
-    value_event = _latest_event(cell_change)
-    click_event = _latest_event(cell_click)
-    changed_field = _event_col(value_event) if triggered_by_value_change else None
-    changed_series = _event_series(value_event) if triggered_by_value_change else None
-
-    checkbox_fields = {"Y", "X", "LongShort", "ScaleVol", "Enable", "Delete"}
-    if triggered_by_click_only and click_event:
-        click_field = _event_col(click_event)
-        click_series = _event_series(click_event)
-        if click_field in checkbox_fields and click_series:
-            for row in rows:
-                if row.get("Series") == click_series:
-                    row[click_field] = not bool(row.get(click_field, False))
-                    break
-            changed_field = click_field
-            changed_series = click_series
-
-    new_x, new_dep, new_lag, new_min, new_max = [], None, {}, {}, {}
-    new_enable, new_bench, new_ls, new_vol, new_deleted, new_order = {}, {}, {}, {}, [], []
-    for row in rows:
-        series = row.get("Series", "")
-        new_order.append(series)
-        y_val = bool(row.get("Y", False))
-        # Enforce single-select for Y
-        if changed_field == "Y":
-            if series == changed_series and y_val:
-                new_dep = series
-            elif series != changed_series and y_val:
-                y_val = False  # clear others (will be re-set on next grid rebuild)
-        elif y_val:
-            new_dep = series
-        if bool(row.get("X", False)):
-            new_x.append(series)
-        new_bench[series] = row.get("Benchmark") or "None"
-        new_ls[series] = bool(row.get("LongShort", False))
-        new_vol[series] = bool(row.get("ScaleVol", True))
-        try:
-            new_lag[series] = int(row.get("Lag", 0) or 0)
-        except (ValueError, TypeError):
-            new_lag[series] = 0
-        try:
-            new_min[series] = float(row.get("MinBeta", -999.0) or -999.0)
-        except (ValueError, TypeError):
-            new_min[series] = -999.0
-        try:
-            new_max[series] = float(row.get("MaxBeta", 999.0) or 999.0)
-        except (ValueError, TypeError):
-            new_max[series] = 999.0
-        new_enable[series] = bool(row.get("Enable", False))
-        if bool(row.get("Delete", False)):
-            new_deleted.append(series)
-    return (new_x, new_dep, new_lag, new_min, new_max, new_enable,
-            new_bench, new_ls, new_vol, new_deleted, new_order)
 
 
-# ---------------------------------------------------------------------------
-# Modal OK
-# ---------------------------------------------------------------------------
-
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="captureRegressionSeriesSnapshot"),
+    Output("reg-series-grid-snapshot-store", "data"),
+    Input("reg-modal-ok-button", "n_clicks"),
+    State("reg-series-selection-modal", "opened"),
+    prevent_initial_call=True,
+)
 @callback(
     Output("reg-series-select", "data"),
     Output("reg-benchmark-assignments-store", "data"),
@@ -3683,19 +3580,8 @@ def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
     Output("reg-min-beta-store", "data"),
     Output("reg-max-beta-store", "data"),
     Output("reg-enable-constraint-store", "data"),
-    Input("reg-modal-ok-button", "n_clicks"),
-    State("reg-temp-series-select", "data"),
-    State("reg-temp-benchmark-assignments-store", "data"),
-    State("reg-temp-long-short-store", "data"),
-    State("reg-temp-series-order-store", "data"),
-    State("reg-temp-deleted-series-store", "data"),
+    Input("reg-series-grid-snapshot-store", "data"),
     State("dashmat-raw-data-store", "data"),
-    State("reg-temp-vol-scaling-assignments-store", "data"),
-    State("reg-temp-dependent-var-store", "data"),
-    State("reg-temp-lag-store", "data"),
-    State("reg-temp-min-beta-store", "data"),
-    State("reg-temp-max-beta-store", "data"),
-    State("reg-temp-enable-constraint-store", "data"),
     State("reg-series-select", "data"),
     State("reg-benchmark-assignments-store", "data"),
     State("reg-long-short-store", "data"),
@@ -3708,24 +3594,90 @@ def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
     State("reg-enable-constraint-store", "data"),
     prevent_initial_call=True,
 )
-def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_deleted,
-                    raw_data, temp_vol, temp_dep, temp_lag, temp_min, temp_max, temp_enable,
+def reg_on_modal_ok(snapshot_data, raw_data,
                     current_x, current_bench, current_ls, current_order, current_vol, current_dep,
                     current_lag, current_min, current_max, current_enable):
-    if not n_clicks:
+    rows = []
+    if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
+        rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
+    if not rows or not raw_data:
         raise PreventUpdate
-    temp_x = list(temp_x or [])
-    if temp_order:
-        x_set = set(temp_x)
-        temp_x = [s for s in temp_order if s in x_set]
-    temp_bench = dict(temp_bench or {})
-    temp_ls = dict(temp_ls or {})
-    temp_order = list(temp_order or [])
-    temp_vol = dict(temp_vol or {})
-    temp_lag = dict(temp_lag or {})
-    temp_min = dict(temp_min or {})
-    temp_max = dict(temp_max or {})
-    temp_enable = dict(temp_enable or {})
+
+    df = json_to_df(raw_data)
+    existing_cols = list(df.columns)
+    existing_set = set(existing_cols)
+
+    active_rows = []
+    final_names = []
+    rename_map = {}
+    for row in rows:
+        original = str(row.get("__row_key") or "").strip()
+        if not original or original not in existing_set:
+            continue
+        final_name = str(row.get("Series") or "").strip()
+        if not final_name or final_name in final_names:
+            raise PreventUpdate
+        final_names.append(final_name)
+        if final_name != original:
+            rename_map[original] = final_name
+        active_rows.append((original, final_name, row))
+
+    if not active_rows:
+        raise PreventUpdate
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    deleted_names = [
+        final_name
+        for _, final_name, row in active_rows
+        if bool(row.get("Delete", False))
+    ]
+    if deleted_names:
+        df = df.drop(columns=[name for name in deleted_names if name in df.columns], errors="ignore")
+
+    remaining_cols = set(df.columns)
+    next_x = []
+    next_bench = {}
+    next_ls = {}
+    next_order = []
+    next_vol = {}
+    next_dep = None
+    next_lag = {}
+    next_min = {}
+    next_max = {}
+    next_enable = {}
+
+    for _, final_name, row in active_rows:
+        if final_name not in remaining_cols:
+            continue
+        next_order.append(final_name)
+        if bool(row.get("X", False)):
+            next_x.append(final_name)
+        if next_dep is None and bool(row.get("Y", False)):
+            next_dep = final_name
+
+        benchmark_value = str(row.get("Benchmark") or "None").strip() or "None"
+        benchmark_value = rename_map.get(benchmark_value, benchmark_value)
+        if benchmark_value != "None" and benchmark_value not in remaining_cols:
+            benchmark_value = "None"
+        next_bench[final_name] = benchmark_value
+        next_ls[final_name] = bool(row.get("LongShort", False))
+        next_vol[final_name] = bool(row.get("ScaleVol", True))
+
+        try:
+            next_lag[final_name] = int(row.get("Lag", 0) or 0)
+        except (TypeError, ValueError):
+            next_lag[final_name] = 0
+        try:
+            next_min[final_name] = float(row.get("MinBeta", -999.0) or -999.0)
+        except (TypeError, ValueError):
+            next_min[final_name] = -999.0
+        try:
+            next_max[final_name] = float(row.get("MaxBeta", 999.0) or 999.0)
+        except (TypeError, ValueError):
+            next_max[final_name] = 999.0
+        next_enable[final_name] = bool(row.get("Enable", False))
 
     current_x = list(current_x or [])
     current_bench = dict(current_bench or {})
@@ -3737,50 +3689,33 @@ def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_dele
     current_max = dict(current_max or {})
     current_enable = dict(current_enable or {})
 
-    updated_raw = no_update
-    if temp_deleted and raw_data:
-        df = json_to_df(raw_data)
-        to_drop = [s for s in temp_deleted if s in df.columns]
-        if to_drop:
-            df = df.drop(columns=to_drop)
-            updated_raw = df_to_json(df)
-            drop_set = set(to_drop)
-            temp_x = [s for s in temp_x if s not in drop_set]
-            if temp_dep in drop_set:
-                temp_dep = None
-            if temp_order:
-                temp_order = [s for s in temp_order if s not in drop_set]
-            for store in [temp_bench, temp_ls, temp_vol, temp_lag, temp_min, temp_max, temp_enable]:
-                if store:
-                    for s in to_drop:
-                        store.pop(s, None)
-
-    next_x = no_update if temp_x == current_x else temp_x
-    next_bench = no_update if temp_bench == current_bench else temp_bench
-    next_ls = no_update if temp_ls == current_ls else temp_ls
-    next_order = no_update if temp_order == current_order else temp_order
-    next_x_value = no_update if temp_x == current_x else temp_x
-    next_vol = no_update if temp_vol == current_vol else temp_vol
-    next_dep = no_update if temp_dep == current_dep else temp_dep
-    next_lag = no_update if temp_lag == current_lag else temp_lag
-    next_min = no_update if temp_min == current_min else temp_min
-    next_max = no_update if temp_max == current_max else temp_max
-    next_enable = no_update if temp_enable == current_enable else temp_enable
+    updated_raw = no_update if list(df.columns) == existing_cols else df_to_json(df)
+    next_x_output = no_update if next_x == current_x else next_x
+    next_bench_output = no_update if next_bench == current_bench else next_bench
+    next_ls_output = no_update if next_ls == current_ls else next_ls
+    next_order_output = no_update if next_order == current_order else next_order
+    next_x_value = no_update if next_x == current_x else next_x
+    next_vol_output = no_update if next_vol == current_vol else next_vol
+    next_dep_output = no_update if next_dep == current_dep else next_dep
+    next_lag_output = no_update if next_lag == current_lag else next_lag
+    next_min_output = no_update if next_min == current_min else next_min
+    next_max_output = no_update if next_max == current_max else next_max
+    next_enable_output = no_update if next_enable == current_enable else next_enable
 
     return (
-        next_x,
-        next_bench,
-        next_ls,
-        next_order,
+        next_x_output,
+        next_bench_output,
+        next_ls_output,
+        next_order_output,
         False,
         next_x_value,
         updated_raw,
-        next_vol,
-        next_dep,
-        next_lag,
-        next_min,
-        next_max,
-        next_enable,
+        next_vol_output,
+        next_dep_output,
+        next_lag_output,
+        next_min_output,
+        next_max_output,
+        next_enable_output,
     )
 
 

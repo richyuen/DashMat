@@ -3544,6 +3544,7 @@ layout = dmc.Container(
         dcc.Store(id="at-temp-vol-scaling-assignments-store", data={}),
         dcc.Store(id="at-temp-series-order-store", data=[]),
         dcc.Store(id="at-temp-deleted-series-store", data=[]),
+        dcc.Store(id="at-series-grid-snapshot-store", data=None),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
         dcc.Store(id="at-underlying-add-rows-store", data=[]),
@@ -4245,178 +4246,6 @@ clientside_callback(
 )
 
 
-@callback(
-    Output("at-series-select", "data", allow_duplicate=True),
-    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-long-short-store", "data", allow_duplicate=True),
-    Output("at-series-order-store", "data", allow_duplicate=True),
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Output("at-series-select-value-store", "data", allow_duplicate=True), # Sync persistence
-    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
-    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Input("at-modal-ok-button", "n_clicks"),
-    State("at-temp-series-select", "data"),
-    State("at-temp-benchmark-assignments-store", "data"),
-    State("at-temp-long-short-store", "data"),
-    State("at-temp-series-order-store", "data"),
-    State("at-temp-deleted-series-store", "data"),
-    State("dashmat-raw-data-store", "data"),
-    State("at-temp-vol-scaling-assignments-store", "data"),
-    State("at-series-select", "data"),
-    State("at-benchmark-assignments-store", "data"),
-    State("at-long-short-store", "data"),
-    State("at-series-order-store", "data"),
-    State("at-vol-scaling-assignments-store", "data"),
-    prevent_initial_call=True,
-)
-def on_modal_ok(
-    n_clicks,
-    temp_select,
-    temp_bench,
-    temp_ls,
-    temp_order,
-    temp_deleted,
-    raw_data,
-    temp_vol_scaling,
-    current_select,
-    current_bench,
-    current_ls,
-    current_order,
-    current_vol_scaling,
-):
-    if not n_clicks:
-        raise PreventUpdate
-
-    temp_select = list(temp_select or [])
-    if temp_order:
-        selected_set = set(temp_select)
-        temp_select = [series for series in temp_order if series in selected_set]
-
-    temp_bench = dict(temp_bench or {})
-    temp_ls = dict(temp_ls or {})
-    temp_order = list(temp_order or [])
-    temp_vol_scaling = dict(temp_vol_scaling or {})
-
-    current_select = list(current_select or [])
-    current_bench = dict(current_bench or {})
-    current_ls = dict(current_ls or {})
-    current_order = list(current_order or [])
-    current_vol_scaling = dict(current_vol_scaling or {})
-
-    updated_raw_data = no_update
-    if temp_deleted and raw_data:
-        df = json_to_df(raw_data)
-        # Filter out series that are actually in the columns
-        series_to_drop = [s for s in temp_deleted if s in df.columns]
-        if series_to_drop:
-            df = df.drop(columns=series_to_drop)
-            updated_raw_data = df_to_json(df)
-            
-            # Clean up assignments and order
-            if temp_bench:
-                temp_bench = {k: v for k, v in temp_bench.items() if k not in series_to_drop}
-                remaining_cols = set(df.columns)
-                cleaned_bench = {}
-                for series, bench in temp_bench.items():
-                    if series not in remaining_cols:
-                        continue
-                    bench_value = bench if isinstance(bench, str) else "None"
-                    if bench_value != "None" and bench_value not in remaining_cols:
-                        bench_value = "None"
-                    cleaned_bench[series] = bench_value
-                temp_bench = cleaned_bench
-            if temp_ls:
-                temp_ls = {k: v for k, v in temp_ls.items() if k not in series_to_drop}
-            if temp_order:
-                temp_order = [s for s in temp_order if s not in series_to_drop]
-            if temp_vol_scaling:
-                temp_vol_scaling = {k: v for k, v in temp_vol_scaling.items() if k not in series_to_drop}
-            
-            # Also remove from temp_select if present
-            temp_select = [s for s in temp_select if s not in series_to_drop]
-
-    next_series_select = no_update if temp_select == current_select else temp_select
-    next_bench = no_update if temp_bench == current_bench else temp_bench
-    next_ls = no_update if temp_ls == current_ls else temp_ls
-    next_order = no_update if temp_order == current_order else temp_order
-    next_series_value = no_update if temp_select == current_select else temp_select
-    next_vol_scaling = no_update if temp_vol_scaling == current_vol_scaling else temp_vol_scaling
-
-    return (
-        next_series_select,
-        next_bench,
-        next_ls,
-        next_order,
-        False,
-        next_series_value,
-        updated_raw_data,
-        next_vol_scaling,
-    )
-
-
-@callback(
-    Output("at-series-selection-modal", "opened", allow_duplicate=True),
-    Input("at-modal-cancel-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def on_modal_cancel(n_clicks):
-    if not n_clicks:
-        raise PreventUpdate
-    return False
-
-
-@callback(
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
-    Input("at-series-selection-grid", "virtualRowData", allow_optional=True),
-    Input("at-series-selection-grid", "selectedRows", allow_optional=True),
-    State("at-temp-series-order-store", "data"),
-    State("at-temp-series-select", "data"),
-    prevent_initial_call=True,
-)
-def reorder_series(virtual_rows, selected_rows, current_order, current_selected):
-    """Keep temp order and selection aligned with AG Grid state."""
-    ordered_series = []
-    if isinstance(virtual_rows, (list, tuple)):
-        ordered_series = [
-            row.get("Series")
-            for row in virtual_rows
-            if isinstance(row, dict) and row.get("Series")
-        ]
-    elif current_order:
-        ordered_series = list(current_order)
-    if not ordered_series:
-        raise PreventUpdate
-
-    triggered_props = []
-    try:
-        if callback_context and callback_context.triggered:
-            triggered_props = [t.get("prop_id", "") for t in callback_context.triggered]
-    except Exception:
-        triggered_props = []
-
-    if isinstance(selected_rows, (list, tuple)):
-        selected_set = {
-            row.get("Series")
-            for row in selected_rows
-            if isinstance(row, dict) and row.get("Series")
-        }
-        selected_series = [series for series in ordered_series if series in selected_set]
-        # Guard against transient empty selectedRows payloads during grid hydration.
-        selected_rows_triggered = any(
-            prop.startswith("series-selection-grid.selectedRows")
-            for prop in triggered_props
-        )
-        if not selected_series and (current_selected or []) and not selected_rows_triggered:
-            selected_fallback = set(current_selected or [])
-            selected_series = [series for series in ordered_series if series in selected_fallback]
-    else:
-        selected_fallback = set(current_selected or [])
-        selected_series = [series for series in ordered_series if series in selected_fallback]
-
-    if ordered_series == (current_order or []) and selected_series == (current_selected or []):
-        raise PreventUpdate
-    return ordered_series, selected_series
 
 
 
@@ -6706,6 +6535,7 @@ clientside_callback(
     Output("at-temp-series-order-store", "data", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("at-temp-series-select", "data"),
     Input("at-temp-series-order-store", "data"),
     Input("at-temp-deleted-series-store", "data"),
@@ -6716,6 +6546,7 @@ clientside_callback(
 )
 def update_series_selectors(
     raw_data,
+    raw_meta,
     selected_series,
     series_order,
     deleted_series,
@@ -6727,8 +6558,10 @@ def update_series_selectors(
     if raw_data is None:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
-    df = json_to_df(raw_data)
-    all_series = list(df.columns)
+    all_series = list((raw_meta or {}).get("columns") or [])
+    if not all_series:
+        df = json_to_df(raw_data)
+        all_series = list(df.columns)
     if not all_series:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
@@ -6754,6 +6587,8 @@ def update_series_selectors(
             benchmark_value = "None"
         row_data.append(
             {
+                "__row_key": series,
+                "Selected": series in selected_set and series not in deleted_set,
                 "Series": series,
                 "Benchmark": benchmark_value,
                 "LongShort": bool(long_short_assignments.get(series, False)),
@@ -6762,16 +6597,10 @@ def update_series_selectors(
             }
         )
 
-    selected_rows = [
-        row
-        for row in row_data
-        if row["Series"] in selected_set and not row["Delete"]
-    ]
-
     grid = dag.AgGrid(
         id="at-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
-        getRowId="params.data.Series",
+        getRowId="params.data.__row_key",
         columnDefs=[
             {
                 "headerName": "",
@@ -6786,14 +6615,12 @@ def update_series_selectors(
                 "cellClass": "dashmat-series-center-cell",
             },
             {
-                "headerName": "",
-                "checkboxSelection": True,
-                "headerCheckboxSelection": True,
-                "editable": False,
-                "sortable": False,
-                "filter": False,
-                "resizable": False,
-                "width": 56,
+                "field": "Selected",
+                "headerName": "Use",
+                "editable": True,
+                "cellRenderer": "agCheckboxCellRenderer",
+                "cellEditor": "agCheckboxCellEditor",
+                "width": 72,
                 "pinned": "left",
                 "cellClass": "dashmat-series-center-cell",
             },
@@ -6841,7 +6668,6 @@ def update_series_selectors(
             },
         ],
         rowData=row_data,
-        selectedRows=selected_rows,
         defaultColDef={
             "resizable": True,
             "sortable": False,
@@ -6853,10 +6679,6 @@ def update_series_selectors(
         },
         style={"height": "46vh", "width": "100%"},
         dashGridOptions={
-            "rowSelection": "multiple",
-            "rowMultiSelectWithClick": False,
-            "suppressRowClickSelection": True,
-            "suppressRowDeselection": True,
             "suppressMovableColumns": True,
             "rowDragManaged": True,
             "animateRows": False,
@@ -6871,195 +6693,136 @@ def update_series_selectors(
     return [grid], series_order, no_update
 
 
-@callback(
-    Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
-    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("at-series-selection-grid", "rowData", allow_optional=True),
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="captureAnalyticsSeriesSnapshot"),
+    Output("at-series-grid-snapshot-store", "data"),
+    Input("at-modal-ok-button", "n_clicks"),
+    State("at-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
-def delete_series(cell_change, row_data):
-    """Sync staged deletions from the grid Delete checkbox column."""
-    change = cell_change
-    if isinstance(change, list):
-        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
-    if not isinstance(change, dict) or change.get("colId") != "Delete":
-        raise PreventUpdate
-
-    rows = row_data or []
-    deleted = [
-        row.get("Series")
-        for row in rows
-        if isinstance(row, dict) and row.get("Series") and bool(row.get("Delete"))
-    ]
-    return deleted
 
 
 @callback(
-    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
-    Output("at-temp-benchmark-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-long-short-store", "data", allow_duplicate=True),
-    Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("at-temp-series-select", "data", allow_duplicate=True),
-    Output("at-temp-series-order-store", "data", allow_duplicate=True),
-    Output("at-series-edit-mode", "data", allow_duplicate=True),
+    Output("at-series-select", "data", allow_duplicate=True),
+    Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("at-long-short-store", "data", allow_duplicate=True),
+    Output("at-series-order-store", "data", allow_duplicate=True),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
     Output("at-series-select-value-store", "data", allow_duplicate=True),
-    Output("at-edit-box-focus-trigger", "data", allow_duplicate=True),
-    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Input("at-series-grid-snapshot-store", "data"),
     State("dashmat-raw-data-store", "data"),
-    State("at-temp-benchmark-assignments-store", "data"),
-    State("at-temp-long-short-store", "data"),
-    State("at-temp-vol-scaling-assignments-store", "data"),
-    State("at-temp-series-select", "data"),
-    State("at-temp-series-order-store", "data"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-series-order-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def save_edit(
-    cell_change,
+def on_modal_ok(
+    snapshot_data,
     raw_data,
-    benchmark_assignments,
-    long_short_assignments,
-    vol_scaling_assignments,
-    selected_series,
-    series_order,
+    current_select,
+    current_bench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
 ):
-    """Save an in-grid Series rename and cascade key updates across stores."""
-    change = cell_change
-    if isinstance(change, list):
-        change = next((item for item in reversed(change) if isinstance(item, dict)), None)
-    if not isinstance(change, dict) or change.get("colId") != "Series":
+    rows = []
+    if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
+        rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
+    if not rows or not raw_data:
         raise PreventUpdate
 
-    old_name = str(change.get("oldValue", "")).strip()
-    new_name = str(change.get("newValue", "")).strip()
-    if not old_name or not new_name or new_name == old_name:
-        raise PreventUpdate
-
-    # Check if new name already exists
     df = json_to_df(raw_data)
-    if old_name not in df.columns or new_name in df.columns:
+    existing_cols = list(df.columns)
+    existing_set = set(existing_cols)
+
+    active_rows = []
+    final_names = []
+    rename_map = {}
+    for row in rows:
+        original = str(row.get("__row_key") or "").strip()
+        if not original or original not in existing_set:
+            continue
+        final_name = str(row.get("Series") or "").strip()
+        if not final_name or final_name in final_names:
+            raise PreventUpdate
+        final_names.append(final_name)
+        if final_name != original:
+            rename_map[original] = final_name
+        active_rows.append((original, final_name, row))
+
+    if not active_rows:
         raise PreventUpdate
 
-    # Rename column in DataFrame
-    df = df.rename(columns={old_name: new_name})
-    new_raw_data = df_to_json(df)
+    if rename_map:
+        df = df.rename(columns=rename_map)
 
-    # Update benchmark assignments
-    new_benchmark_assignments = {}
-    for series, benchmark in benchmark_assignments.items():
-        series_key = new_name if series == old_name else series
-        benchmark_value = new_name if benchmark == old_name else benchmark
-        new_benchmark_assignments[series_key] = benchmark_value
+    deleted_names = [
+        final_name
+        for original, final_name, row in active_rows
+        if bool(row.get("Delete", False))
+    ]
+    if deleted_names:
+        df = df.drop(columns=[name for name in deleted_names if name in df.columns], errors="ignore")
 
-    # Update long-short assignments
-    new_long_short_assignments = {}
-    for series, is_long_short in long_short_assignments.items():
-        series_key = new_name if series == old_name else series
-        new_long_short_assignments[series_key] = is_long_short
+    remaining_cols = set(df.columns)
+    next_select = []
+    next_bench = {}
+    next_ls = {}
+    next_order = []
+    next_vol_scaling = {}
+    for original, final_name, row in active_rows:
+        if final_name not in remaining_cols:
+            continue
+        next_order.append(final_name)
+        if bool(row.get("Selected", False)):
+            next_select.append(final_name)
+        benchmark_value = str(row.get("Benchmark") or "None").strip() or "None"
+        benchmark_value = rename_map.get(benchmark_value, benchmark_value)
+        if benchmark_value != "None" and benchmark_value not in remaining_cols:
+            benchmark_value = "None"
+        next_bench[final_name] = benchmark_value
+        next_ls[final_name] = bool(row.get("LongShort", False))
+        next_vol_scaling[final_name] = bool(row.get("ScaleVol", True))
 
-    # Update vol scaling assignments
-    new_vol_scaling_assignments = {}
-    if vol_scaling_assignments:
-        for series, is_scaled in vol_scaling_assignments.items():
-            series_key = new_name if series == old_name else series
-            new_vol_scaling_assignments[series_key] = is_scaled
+    current_select = list(current_select or [])
+    current_bench = dict(current_bench or {})
+    current_ls = dict(current_ls or {})
+    current_order = list(current_order or [])
+    current_vol_scaling = dict(current_vol_scaling or {})
 
-    # Update series selection (handling the rename)
-    selected_series = selected_series or []
-    new_series_select = [new_name if s == old_name else s for s in selected_series]
+    next_series_select = no_update if next_select == current_select else next_select
+    next_bench_output = no_update if next_bench == current_bench else next_bench
+    next_ls_output = no_update if next_ls == current_ls else next_ls
+    next_order_output = no_update if next_order == current_order else next_order
+    next_series_value = no_update if next_select == current_select else next_select
+    next_vol_output = no_update if next_vol_scaling == current_vol_scaling else next_vol_scaling
+    updated_raw_data = no_update if list(df.columns) == existing_cols else df_to_json(df)
 
-    # Update series order
-    series_order = series_order or list(df.columns)
-    new_series_order = [new_name if s == old_name else s for s in series_order]
-
-    # Return updated data and exit edit mode
-    return new_raw_data, new_benchmark_assignments, new_long_short_assignments, new_vol_scaling_assignments, new_series_select, new_series_order, None, new_series_select, None
+    return (
+        next_series_select,
+        next_bench_output,
+        next_ls_output,
+        next_order_output,
+        False,
+        next_series_value,
+        updated_raw_data,
+        next_vol_output,
+    )
 
 
 @callback(
-    Output("at-temp-benchmark-assignments-store", "data"),
-    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("at-series-selection-grid", "rowData", allow_optional=True),
-    State("dashmat-raw-data-store", "data"),
-    State("dashmat-raw-data-meta-store", "data"),
+    Output("at-series-selection-modal", "opened", allow_duplicate=True),
+    Input("at-modal-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def update_benchmark_assignments(cell_change, row_data, raw_data, raw_meta):
-    """Store benchmark assignments for all series."""
-    if raw_data is None or not row_data:
-        return {}
-
-    valid_series = set((raw_meta or {}).get("columns") or [])
-    if not valid_series:
-        valid_series = set(json_to_df(raw_data).columns)
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        benchmark = row.get("Benchmark", "None")
-        if not series or series not in valid_series:
-            continue
-        if benchmark not in valid_series and benchmark != "None":
-            benchmark = "None"
-        assignments[series] = benchmark
-
-    return assignments
-
-
-@callback(
-    Output("at-temp-long-short-store", "data"),
-    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("at-series-selection-grid", "rowData", allow_optional=True),
-    State("dashmat-raw-data-store", "data"),
-    State("dashmat-raw-data-meta-store", "data"),
-    prevent_initial_call=True,
-)
-def update_long_short_assignments(cell_change, row_data, raw_data, raw_meta):
-    """Store long-short checkbox assignments for all series."""
-    if raw_data is None or not row_data:
-        return {}
-
-    valid_series = set((raw_meta or {}).get("columns") or [])
-    if not valid_series:
-        valid_series = set(json_to_df(raw_data).columns)
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        if not series or series not in valid_series:
-            continue
-        assignments[series] = bool(row.get("LongShort", False))
-
-    return assignments
-
-
-@callback(
-    Output("at-temp-vol-scaling-assignments-store", "data"),
-    Input("at-series-selection-grid", "cellValueChanged", allow_optional=True),
-    State("at-series-selection-grid", "rowData", allow_optional=True),
-    State("dashmat-raw-data-store", "data"),
-    State("dashmat-raw-data-meta-store", "data"),
-    prevent_initial_call=True,
-)
-def update_vol_scaling_assignments(cell_change, row_data, raw_data, raw_meta):
-    """Store vol-scaling checkbox assignments for all series."""
-    if raw_data is None or not row_data:
-        return {}
-
-    valid_series = set((raw_meta or {}).get("columns") or [])
-    if not valid_series:
-        valid_series = set(json_to_df(raw_data).columns)
-    assignments = {}
-    for row in row_data:
-        if not isinstance(row, dict):
-            continue
-        series = row.get("Series")
-        if not series or series not in valid_series:
-            continue
-        assignments[series] = bool(row.get("ScaleVol", True))
-
-    return assignments
+def on_modal_cancel(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return False
 
 
 @callback(
