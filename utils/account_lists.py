@@ -351,6 +351,10 @@ def account_list_tables_available(db_engine: Engine) -> bool:
     return _table_exists(db_engine, "DMAccountLists") and _table_exists(db_engine, "DMAccountListsArchive")
 
 
+def users_table_available(db_engine: Engine) -> bool:
+    return _table_exists(db_engine, "Users")
+
+
 def _normalize_snapshot_list(value: Any, allowed: set[str]) -> list[str]:
     return [item for item in _dedupe_strings(value) if item in allowed]
 
@@ -555,6 +559,32 @@ def save_account_list(
         return True, f"Saved account list `{clean_name}`.", _account_list_summary_row(saved)
 
 
+def list_account_list_users(db_engine: Engine, current_username: str) -> list[dict[str, str]]:
+    if not users_table_available(db_engine):
+        return []
+    clean_username = str(current_username or "").strip()
+    table_name = _table_name(db_engine, "Users")
+    query_sql = (
+        f"SELECT Username, Role FROM {table_name} "
+        "WHERE Username IS NOT NULL AND LTRIM(RTRIM(Username)) <> '' "
+    )
+    params: dict[str, Any] = {}
+    if clean_username:
+        query_sql += "AND LOWER(LTRIM(RTRIM(Username))) <> LOWER(LTRIM(RTRIM(:current_username))) "
+        params["current_username"] = clean_username
+    query_sql += "ORDER BY Username"
+    with db_engine.connect() as conn:
+        rows = conn.execute(text(query_sql), params).mappings().all()
+    return [
+        {
+            "Username": str(row.get("Username") or "").strip(),
+            "Role": str(row.get("Role") or "").strip(),
+        }
+        for row in rows
+        if str(row.get("Username") or "").strip()
+    ]
+
+
 def list_account_lists(db_engine: Engine, username: str) -> list[dict[str, Any]]:
     if not account_list_tables_available(db_engine):
         return []
@@ -644,6 +674,89 @@ def delete_account_list(
             if refreshed is not None:
                 return False, "Account list changed in another session. Reload before deleting."
         return True, f"Deleted account list `{current.get('ListName')}`."
+
+
+def send_account_list(
+    db_engine: Engine,
+    *,
+    account_list_id: Any,
+    sender_username: str,
+    recipient_username: str,
+    expected_update_date: str | None = None,
+) -> tuple[bool, str]:
+    if not account_list_tables_available(db_engine):
+        return False, "Account-list tables are unavailable."
+    if not users_table_available(db_engine):
+        return False, "Users table is unavailable."
+
+    clean_sender = str(sender_username or "").strip()
+    clean_recipient = str(recipient_username or "").strip()
+    if not clean_sender:
+        return False, "Username is required."
+    if not clean_recipient:
+        return False, "Select a user to send to."
+    if clean_sender.lower() == clean_recipient.lower():
+        return False, "Choose a different user."
+
+    users_table = _table_name(db_engine, "Users")
+    account_lists_table = _table_name(db_engine, "DMAccountLists")
+    now_val = _now_utc()
+
+    with db_engine.begin() as conn:
+        current = _load_account_list_row_by_id(conn, db_engine, account_list_id, clean_sender)
+        if current is None:
+            return False, "Account list no longer exists."
+        if expected_update_date and not _timestamps_equal(current.get("UPDATE_DATE"), expected_update_date):
+            return False, "Account list changed in another session. Reload before sending."
+
+        recipient_exists = conn.execute(
+            text(
+                f"SELECT 1 FROM {users_table} "
+                "WHERE LOWER(LTRIM(RTRIM(Username))) = LOWER(LTRIM(RTRIM(:recipient_username)))"
+            ),
+            {"recipient_username": clean_recipient},
+        ).scalar()
+        if recipient_exists is None:
+            return False, "Selected user no longer exists."
+
+        result = conn.execute(
+            text(
+                f"INSERT INTO {account_lists_table} (Username, ListName, ConfigJson, UPDATE_DATE, UPDATE_BY) "
+                f"SELECT :recipient_username, ListName, ConfigJson, :update_date, :update_by "
+                f"FROM {account_lists_table} "
+                "WHERE AccountListID = :account_list_id "
+                "AND LOWER(LTRIM(RTRIM(Username))) = LOWER(LTRIM(RTRIM(:sender_username))) "
+                "AND UPDATE_DATE = :source_update_date"
+            ),
+            {
+                "recipient_username": clean_recipient,
+                "update_date": now_val,
+                "update_by": clean_sender,
+                "account_list_id": account_list_id,
+                "sender_username": clean_sender,
+                "source_update_date": current.get("UPDATE_DATE"),
+            },
+        )
+        if _rowcount_is_known_miss(result.rowcount):
+            return False, "Account list changed in another session. Reload before sending."
+        if _rowcount_is_unknown(result.rowcount):
+            copied = conn.execute(
+                text(
+                    f"SELECT 1 FROM {account_lists_table} "
+                    "WHERE LOWER(LTRIM(RTRIM(Username))) = LOWER(LTRIM(RTRIM(:recipient_username))) "
+                    "AND ListName = :list_name AND UPDATE_DATE = :update_date AND UPDATE_BY = :update_by"
+                ),
+                {
+                    "recipient_username": clean_recipient,
+                    "list_name": current.get("ListName"),
+                    "update_date": now_val,
+                    "update_by": clean_sender,
+                },
+            ).scalar()
+            if copied is None:
+                return False, "Account list changed in another session. Reload before sending."
+
+        return True, f"Sent account list `{current.get('ListName')}` to `{clean_recipient}`."
 
 
 def _normalize_monthly_df_if_needed(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:

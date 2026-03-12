@@ -174,3 +174,27 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
     assert first[2] == {"status": "error"}
     assert second[2] == {"status": "error"}
     assert first[1] == second[1] == {"message": "Saved account list no longer exists.", "color": "red"}
+
+
+def test_account_list_update_by_uses_username_only():
+    assert modal_module._account_list_update_by({"role": "Admin", "username": "tester"}) == "tester"
+    assert modal_module._account_list_update_by({"role": "Admin"}) == "unknown"
+
+
+def test_account_list_send_user_options_and_control_state():
+    options = modal_module.account_list_send_user_options(
+        [{"Username": "alice", "Role": "Analyst"}, {"Username": "bob", "Role": "Viewer"}]
+    )
+
+    assert options == [
+        {"label": "alice", "value": "alice"},
+        {"label": "bob", "value": "bob"},
+    ]
+
+    hidden_state = modal_module.account_list_send_controls_state("save", None, options, None)
+    empty_state = modal_module.account_list_send_controls_state("load", None, [], None)
+    ready_state = modal_module.account_list_send_controls_state("load", 1, options, "alice")
+
+    assert hidden_state[0] == {"display": "none"}
+    assert empty_state == ({}, True, True, "No other users available")
+    assert ready_state == ({}, False, False, "Select a user")

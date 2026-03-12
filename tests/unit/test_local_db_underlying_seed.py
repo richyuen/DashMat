@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, text
 
 from tools.db.backfill_underlying_category_peerts import backfill_underlying_category_peerts
 from tools.db.init_local_cma_db import (
+    LOCAL_USER_SEED_ROWS,
     UNDERLYING_CATEGORY_ITEM,
     UNDERLYING_CATEGORY_PORTFOLIO_DESCS,
     _build_account_list_seed_rows,
@@ -103,3 +104,10 @@ def test_account_list_seed_rows_use_control_values_schema():
         assert '"at-series-select"' in payload
         assert '"po-series-select"' in payload
         assert '"reg-series-select"' in payload
+
+
+def test_local_user_seed_rows_include_admin_user():
+    usernames = {row["Username"] for row in LOCAL_USER_SEED_ROWS}
+
+    assert "Admin User" in usernames
+    assert len(usernames) == len(LOCAL_USER_SEED_ROWS)

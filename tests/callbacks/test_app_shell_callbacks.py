@@ -76,6 +76,8 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'id="dashmat-account-list-load-overlay-shell"' in account_list_text
     assert 'id="dashmat-account-list-grid"' in account_list_text
     assert 'id="dashmat-account-list-preview-grid"' in account_list_text
+    assert 'id="dashmat-account-list-send-user-select"' in account_list_text
+    assert 'id="dashmat-account-list-send-button"' in account_list_text
     assert 'dashmat-series-modal-grid' in account_list_text
     assert 'ACCOUNT_LIST_MODAL_LOAD_CLASS' in account_list_text
     assert 'Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True)' in account_list_text

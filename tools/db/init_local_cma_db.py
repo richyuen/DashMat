@@ -24,6 +24,7 @@ from dbengine import (
 )
 from tools.db.migrate_account_lists import ensure_account_list_tables
 from tools.db.migrate_factor_definitions import ensure_factor_definition_tables_and_seed
+from tools.db.migrate_users import ensure_users_table
 from utils.sample_data import get_sample_file_path
 from utils.serialization import canonical_json_dumps
 
@@ -37,6 +38,11 @@ MTH_TO_DLY_DAILY_START = pd.Timestamp("2022-01-03")
 FRED_DGS3MO_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS3MO"
 LOCAL_ACCOUNT_LIST_SEED_USERNAME = "Admin User"
 LOCAL_ACCOUNT_LIST_SEED_UPDATE_BY = "init_local_cma_db.py"
+LOCAL_USER_SEED_ROWS = [
+    {"Username": "Admin User", "Role": "Admin"},
+    {"Username": "Analyst One", "Role": "Analyst"},
+    {"Username": "Analyst Two", "Role": "Analyst"},
+]
 
 CORE_CATEGORY_MAP: dict[str, dict[str, str]] = {
     "SPX": {
@@ -1012,6 +1018,12 @@ def _build_tables(
         Column("UPDATE_BY", String(128), nullable=False),
         Column("ARCHIVE_DATE", DateTime, nullable=False),
     )
+    users = Table(
+        "Users",
+        metadata,
+        Column("Username", String(128), primary_key=True),
+        Column("Role", String(128), nullable=False),
+    )
     return (
         cma_corr,
         cma_ret,
@@ -1028,6 +1040,7 @@ def _build_tables(
         regime_defs_archive,
         account_lists,
         account_lists_archive,
+        users,
     )
 
 
@@ -1620,6 +1633,7 @@ def main() -> None:
         regime_defs_archive,
         account_lists,
         account_lists_archive,
+        users,
     ) = _build_tables(metadata)
     mrd_metadata = MetaData()
     mrd_account, mrd_factor_data, mrd_account_returns, mrd_account_returns_m = _build_mrd_tables(mrd_metadata)
@@ -1763,6 +1777,8 @@ def main() -> None:
             conn.execute(alt_ts.insert(), alt_ts_rows)
         if account_list_seed_rows:
             conn.execute(account_lists.insert(), account_list_seed_rows)
+        if LOCAL_USER_SEED_ROWS:
+            conn.execute(users.insert(), LOCAL_USER_SEED_ROWS)
 
     with engine_MRD.begin() as conn:
         if mrd_account_rows:
@@ -1790,6 +1806,7 @@ def main() -> None:
         update_by="init_local_cma_db.py",
     )
     ensure_account_list_tables(engine)
+    ensure_users_table(engine)
     with engine.connect() as conn:
         factor_def_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitions")).scalar_one())
         factor_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM FactorDefinitionsArchive")).scalar_one())
@@ -1797,6 +1814,7 @@ def main() -> None:
         regime_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM RegimeDefinitionsArchive")).scalar_one())
         account_list_count = int(conn.execute(text("SELECT COUNT(*) FROM DMAccountLists")).scalar_one())
         account_list_archive_count = int(conn.execute(text("SELECT COUNT(*) FROM DMAccountListsArchive")).scalar_one())
+        users_count = int(conn.execute(text("SELECT COUNT(*) FROM Users")).scalar_one())
 
     print(f"Initialized CMA database at {DATABASE_URL}")
     print(f"CMACorrelation rows: {len(corr_rows)}")
@@ -1815,6 +1833,7 @@ def main() -> None:
     print(f"DMAccountLists rows: {account_list_count}")
     print(f"DMAccountListsArchive rows: {account_list_archive_count}")
     print(f"DMAccountLists seed rows: {len(account_list_seed_rows)}")
+    print(f"Users rows: {users_count}")
     print(
         "FactorDefinitions seed stats: "
         f"inserted={factor_seed_stats['inserted']}, "

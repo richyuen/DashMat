@@ -15,10 +15,13 @@ from utils.account_lists import (
     build_account_list_session_payload,
     delete_account_list,
     list_account_lists,
+    list_account_list_users,
     load_account_list_by_id,
     normalize_db_import_provenance_store,
     prune_db_import_provenance,
     save_account_list,
+    send_account_list,
+    users_table_available,
 )
 
 
@@ -227,6 +230,28 @@ def build_account_list_modal_components() -> list:
                                             checked=True,
                                             size="sm",
                                         ),
+                                        dmc.Group(
+                                            id="dashmat-account-list-send-controls",
+                                            gap="sm",
+                                            align="flex-end",
+                                            children=[
+                                                dmc.Select(
+                                                    id="dashmat-account-list-send-user-select",
+                                                    label="Send to User",
+                                                    placeholder="Select a user",
+                                                    data=[],
+                                                    value=None,
+                                                    searchable=True,
+                                                    clearable=True,
+                                                    style={"flex": "1 1 0"},
+                                                ),
+                                                dmc.Button(
+                                                    "Send",
+                                                    id="dashmat-account-list-send-button",
+                                                    variant="light",
+                                                ),
+                                            ],
+                                        ),
                                     ],
                                 ),
                             ],
@@ -276,9 +301,7 @@ def _account_list_username(userinfo: dict | None) -> str:
 
 
 def _account_list_update_by(userinfo: dict | None) -> str:
-    role = str((userinfo or {}).get("role", "") or "").strip() or "Unknown"
-    username = _account_list_username(userinfo)
-    return f"{role}:{username}" if username else role
+    return _account_list_username(userinfo) or "unknown"
 
 
 def _account_list_row_data(rows: list[dict[str, object]] | None) -> list[dict[str, object]]:
@@ -380,6 +403,27 @@ def sync_account_list_selected_id(selected_rows):
     if not isinstance(row, dict):
         return None
     return row.get("AccountListID")
+
+
+def account_list_send_user_options(users: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    for row in users or []:
+        username = str((row or {}).get("Username") or "").strip()
+        if not username:
+            continue
+        options.append({"label": username, "value": username})
+    return options
+
+
+def account_list_send_controls_state(mode, selected_id, recipient_options, recipient_value):
+    hidden = {"display": "none"}
+    visible = {}
+    if str(mode or "load") != "load":
+        return hidden, True, True, "Select a user"
+    options = recipient_options if isinstance(recipient_options, list) else []
+    if not options:
+        return visible, True, True, "No other users available"
+    return visible, False, selected_id is None or not str(recipient_value or "").strip(), "Select a user"
 
 
 def render_account_list_modal_view(opened, mode, rows, selected_id):
@@ -730,12 +774,52 @@ def register_account_list_callbacks(
         return list_account_lists(db_engine, _account_list_username(userinfo))
 
     @app.callback(
+        Output("dashmat-account-list-send-user-select", "data"),
+        Input("dashmat-account-list-modal", "opened"),
+        Input("dashmat-account-list-modal-mode-store", "data"),
+        State("userinfo", "data"),
+        prevent_initial_call=False,
+    )
+    def _refresh_account_list_send_users(opened, mode, userinfo):
+        if not opened or str(mode or "load") != "load":
+            return []
+        if not users_table_available(db_engine):
+            return []
+        users = list_account_list_users(db_engine, _account_list_username(userinfo))
+        return account_list_send_user_options(users)
+
+    @app.callback(
         Output("dashmat-account-list-selected-id-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-grid", "selectedRows"),
         prevent_initial_call=True,
     )
     def _sync_account_list_selected_id(selected_rows):
         return sync_account_list_selected_id(selected_rows)
+
+    @app.callback(
+        Output("dashmat-account-list-send-user-select", "value"),
+        Input("dashmat-account-list-modal", "opened"),
+        Input("dashmat-account-list-selected-id-store", "data"),
+        prevent_initial_call=False,
+    )
+    def _reset_account_list_send_user(opened, selected_id):
+        if not opened:
+            return None
+        return None
+
+    @app.callback(
+        Output("dashmat-account-list-send-controls", "style"),
+        Output("dashmat-account-list-send-user-select", "disabled"),
+        Output("dashmat-account-list-send-button", "disabled"),
+        Output("dashmat-account-list-send-user-select", "placeholder"),
+        Input("dashmat-account-list-modal-mode-store", "data"),
+        Input("dashmat-account-list-selected-id-store", "data"),
+        Input("dashmat-account-list-send-user-select", "data"),
+        Input("dashmat-account-list-send-user-select", "value"),
+        prevent_initial_call=False,
+    )
+    def _sync_account_list_send_controls(mode, selected_id, recipient_options, recipient_value):
+        return account_list_send_controls_state(mode, selected_id, recipient_options, recipient_value)
 
     @app.callback(
         Output("dashmat-account-list-modal", "title"),
@@ -824,6 +908,36 @@ def register_account_list_callbacks(
         return (
             int(refresh_counter or 0) + (1 if ok else 0),
             None if ok else selected_id,
+            {"message": message, "color": "green" if ok else "red"},
+        )
+
+    @app.callback(
+        Output("dashmat-account-list-send-user-select", "value", allow_duplicate=True),
+        Output("dashmat-account-list-notice-store", "data", allow_duplicate=True),
+        Input("dashmat-account-list-send-button", "n_clicks"),
+        State("dashmat-account-list-selected-id-store", "data"),
+        State("dashmat-account-list-rows-store", "data"),
+        State("dashmat-account-list-send-user-select", "value"),
+        State("userinfo", "data"),
+        prevent_initial_call=True,
+    )
+    def _send_selected_account_list(n_clicks, selected_id, rows, recipient_username, userinfo):
+        if not n_clicks:
+            raise PreventUpdate
+        selected_row = next((row for row in (rows or []) if row.get("AccountListID") == selected_id), None)
+        if selected_row is None:
+            return no_update, {"message": "Select an account list to send.", "color": "orange"}
+        if not str(recipient_username or "").strip():
+            return no_update, {"message": "Select a user to send to.", "color": "orange"}
+        ok, message = send_account_list(
+            db_engine,
+            account_list_id=selected_id,
+            sender_username=_account_list_username(userinfo),
+            recipient_username=str(recipient_username or "").strip(),
+            expected_update_date=selected_row.get("UPDATE_DATE"),
+        )
+        return (
+            None if ok else no_update,
             {"message": message, "color": "green" if ok else "red"},
         )
 

@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 
 import utils.account_lists as account_lists
 from tools.db.migrate_account_lists import ensure_account_list_tables
+from tools.db.migrate_users import ensure_users_table
 from utils.account_lists import (
     AT_STORE_IDS,
     REG_STORE_IDS,
@@ -13,10 +14,12 @@ from utils.account_lists import (
     build_account_list_session_payload,
     delete_account_list,
     list_account_lists,
+    list_account_list_users,
     load_account_list_by_id,
     normalize_account_list_payload,
     normalize_db_import_provenance_store,
     save_account_list,
+    send_account_list,
 )
 from utils.returns import df_to_json, json_to_df
 
@@ -24,7 +27,18 @@ from utils.returns import df_to_json, json_to_df
 def _seed_db_engine():
     engine = create_engine("sqlite:///:memory:", future=True)
     ensure_account_list_tables(engine)
+    ensure_users_table(engine)
     return engine
+
+
+def test_ensure_users_table_is_idempotent():
+    engine = create_engine("sqlite:///:memory:", future=True)
+
+    first = ensure_users_table(engine)
+    second = ensure_users_table(engine)
+
+    assert first == {"created_users": True}
+    assert second == {"created_users": False}
 
 
 def test_build_account_list_payload_filters_to_db_backed_series():
@@ -51,6 +65,10 @@ def test_build_account_list_payload_filters_to_db_backed_series():
 
 def test_save_list_load_and_delete_account_list_support_duplicate_names():
     db_engine = _seed_db_engine()
+    with db_engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO Users (Username, Role) VALUES ('tester', 'Admin'), ('recipient', 'Analyst')"
+        )
     provenance = add_db_import_provenance_entry(
         {},
         loader_type="cma_bench",
@@ -62,14 +80,14 @@ def test_save_list_load_and_delete_account_list_support_duplicate_names():
     ok1, _msg1, saved1 = save_account_list(
         db_engine,
         username="tester",
-        update_by="Admin:tester",
+        update_by="tester",
         list_name="My List",
         payload=payload,
     )
     ok2, _msg2, saved2 = save_account_list(
         db_engine,
         username="tester",
-        update_by="Admin:tester",
+        update_by="tester",
         list_name="My List",
         payload=payload,
     )
@@ -86,6 +104,7 @@ def test_save_list_load_and_delete_account_list_support_duplicate_names():
     loaded = load_account_list_by_id(db_engine, saved1["AccountListID"], "tester")
     assert loaded is not None
     assert loaded["SeriesCount"] == 1
+    assert loaded["UPDATE_BY"] == "tester"
 
     delete_ok, _delete_msg = delete_account_list(
         db_engine,
@@ -95,6 +114,104 @@ def test_save_list_load_and_delete_account_list_support_duplicate_names():
     )
     assert delete_ok is True
     assert len(list_account_lists(db_engine, "tester")) == 1
+
+
+def test_list_account_list_users_excludes_current_username():
+    db_engine = _seed_db_engine()
+    with db_engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO Users (Username, Role) VALUES ('tester', 'Admin'), ('alice', 'Analyst'), ('bob', 'Viewer')"
+        )
+
+    assert list_account_list_users(db_engine, "tester") == [
+        {"Username": "alice", "Role": "Analyst"},
+        {"Username": "bob", "Role": "Viewer"},
+    ]
+
+
+def test_send_account_list_copies_record_to_recipient():
+    db_engine = _seed_db_engine()
+    with db_engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO Users (Username, Role) VALUES ('tester', 'Admin'), ('recipient', 'Analyst')"
+        )
+    provenance = add_db_import_provenance_entry(
+        {},
+        loader_type="cma_bench",
+        loader_args={"selected_benches": ["SPX_TRIndex"]},
+        emitted_series=["SPX_TRIndex"],
+    )
+    payload = build_account_list_payload(provenance, {AT_STORE_IDS["selected"]: ["SPX_TRIndex"]})
+    ok, _message, saved = save_account_list(
+        db_engine,
+        username="tester",
+        update_by="tester",
+        list_name="Send Me",
+        payload=payload,
+    )
+
+    assert ok is True
+    assert saved is not None
+
+    sent_ok, sent_message = send_account_list(
+        db_engine,
+        account_list_id=saved["AccountListID"],
+        sender_username="tester",
+        recipient_username="recipient",
+        expected_update_date=saved["UPDATE_DATE"],
+    )
+
+    assert sent_ok is True
+    assert "recipient" in sent_message
+    recipient_rows = list_account_lists(db_engine, "recipient")
+    assert len(recipient_rows) == 1
+    assert recipient_rows[0]["ListName"] == "Send Me"
+    assert recipient_rows[0]["ConfigJson"] == saved["ConfigJson"]
+    assert recipient_rows[0]["UPDATE_BY"] == "tester"
+    assert len(list_account_lists(db_engine, "tester")) == 1
+
+
+def test_send_account_list_rejects_self_and_unknown_recipient():
+    db_engine = _seed_db_engine()
+    with db_engine.begin() as conn:
+        conn.exec_driver_sql("INSERT INTO Users (Username, Role) VALUES ('tester', 'Admin')")
+    provenance = add_db_import_provenance_entry(
+        {},
+        loader_type="cma_bench",
+        loader_args={"selected_benches": ["SPX_TRIndex"]},
+        emitted_series=["SPX_TRIndex"],
+    )
+    payload = build_account_list_payload(provenance, {AT_STORE_IDS["selected"]: ["SPX_TRIndex"]})
+    ok, _message, saved = save_account_list(
+        db_engine,
+        username="tester",
+        update_by="tester",
+        list_name="Mine",
+        payload=payload,
+    )
+
+    assert ok is True
+    assert saved is not None
+
+    self_ok, self_message = send_account_list(
+        db_engine,
+        account_list_id=saved["AccountListID"],
+        sender_username="tester",
+        recipient_username="tester",
+        expected_update_date=saved["UPDATE_DATE"],
+    )
+    missing_ok, missing_message = send_account_list(
+        db_engine,
+        account_list_id=saved["AccountListID"],
+        sender_username="tester",
+        recipient_username="missing",
+        expected_update_date=saved["UPDATE_DATE"],
+    )
+
+    assert self_ok is False
+    assert self_message == "Choose a different user."
+    assert missing_ok is False
+    assert missing_message == "Selected user no longer exists."
 
 
 def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_benchmark(monkeypatch):
