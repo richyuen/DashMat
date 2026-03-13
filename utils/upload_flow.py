@@ -10,10 +10,10 @@ from utils.parsing import detect_periodicity, get_sheet_names, parse_uploaded_fi
 from utils.returns import (
     align_monthly_index_to_month_end,
     get_available_periodicities,
-    json_to_df,
     merge_returns,
     resample_returns,
 )
+from utils.raw_dataset import get_dataset_key, get_raw_dataset_df
 
 
 def import_selected_workbook_sheets(contents, filename, selected_sheets, workbook_sheets=None):
@@ -98,7 +98,8 @@ def merge_uploaded_with_existing(existing_data, existing_periodicity, new_df) ->
     effective_new_df = new_df
 
     if existing_data is not None:
-        existing_df = json_to_df(existing_data)
+        dataset_key = get_dataset_key(existing_data)
+        existing_df = get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
 
         if existing_periodicity == "monthly" and new_periodicity == "daily":
             effective_new_df = resample_returns(new_df, "monthly")

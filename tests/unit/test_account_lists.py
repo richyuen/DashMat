@@ -381,5 +381,5 @@ def test_build_account_list_session_payload_skips_redundant_fetch_for_saved_benc
     assert calls == ["asset-with-bench"]
     assert stats["added_series"] == ["Asset", "BM"]
     assert stats["skipped_conflicts"] == ["BM"]
-    loaded_df = json_to_df(session_payload["dashmat-raw-data-store"])
+    loaded_df = json_to_df(session_payload["dashmat-raw-data-store"]["raw_data_json"])
     assert list(loaded_df.columns) == ["Asset", "BM"]

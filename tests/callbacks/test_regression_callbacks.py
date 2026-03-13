@@ -95,6 +95,12 @@ def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
     return build_raw_data_metadata(raw_json, original_periodicity)
 
 
+def _raw_json_value(value):
+    if isinstance(value, dict):
+        return value.get("raw_data_json", "")
+    return value
+
+
 def _series_snapshot(rows: list[dict]) -> dict:
     return {"rows": rows, "capturedAt": 1}
 
@@ -399,7 +405,7 @@ def test_reg_save_series_to_shared_data_saves_predicted_and_updates_result(regre
         {},
     )
 
-    raw_after = pd.read_json(StringIO(new_raw), orient="split")
+    raw_after = pd.read_json(StringIO(_raw_json_value(new_raw)), orient="split")
     assert "R1" in raw_after.columns
     assert new_results["R1"]["saved_series_name"] == "R1"
     assert saved_store["R1"]["origin_page"] == "regression"
@@ -427,7 +433,7 @@ def test_reg_save_series_to_shared_data_overwrites_existing_saved_name(regressio
         {"R1": {"origin_page": "regression", "origin_result": "R1", "series_type": "predicted"}},
     )
 
-    raw_after = pd.read_json(StringIO(new_raw), orient="split")
+    raw_after = pd.read_json(StringIO(_raw_json_value(new_raw)), orient="split")
     assert raw_after["R1"].tolist() == pytest.approx([0.001, 0.002, 0.003])
     assert saved_store["R1"]["series_type"] == "predicted"
     assert status == "Overwrote shared series R1."
@@ -497,7 +503,7 @@ def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, re
         regression_page.reg_add_series_from_database(1, ["IDX_A"], None, None, {})
     )
 
-    assert isinstance(raw, str)
+    assert isinstance(raw, dict)
     assert orig_p == "daily"
     assert p_value == "daily"
     assert p_sync == "daily"
@@ -724,7 +730,7 @@ def test_reg_handle_sheet_select_import_all_releases_blocker_and_clears_stash(mo
         None,
     )
 
-    assert isinstance(result[0], str)
+    assert isinstance(result[0], dict)
     assert result[1] == "daily"
     assert result[4] is False
     assert result[5] is None

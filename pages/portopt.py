@@ -41,11 +41,11 @@ from utils.returns import (
     create_monthly_view,
     df_to_json,
     get_available_periodicities,
-    get_working_returns,
+    get_working_returns_by_key,
     json_to_df,
     merge_returns,
     resample_returns,
-    resample_returns_cached,
+    resample_returns_by_key,
     annualization_factor,
     is_daily,
 )
@@ -147,6 +147,11 @@ from utils.raw_data_imports import (
     load_factor_series,
     load_fund_series,
     load_performance_series,
+)
+from utils.raw_dataset import (
+    build_raw_data_store_payload,
+    get_raw_dataset_df,
+    resolve_dataset_key,
 )
 
 register_page(__name__, path="/portopt", name="Portfolio Optimization", title="Portfolio Optimization")
@@ -268,9 +273,22 @@ def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
 
 
+def _dataset_key(raw_data_store) -> str | None:
+    return resolve_dataset_key(raw_data_store) if raw_data_store else None
+
+
+def _raw_df(raw_data_store) -> pd.DataFrame:
+    dataset_key = _dataset_key(raw_data_store)
+    return get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
+
+
+def _frame_dataset_key(df: pd.DataFrame) -> str:
+    return str(build_raw_data_store_payload(df)["dataset_key"])
+
+
 @dataclass(frozen=True)
 class _PoWorkingReturnsBundle:
-    raw_data: str
+    dataset_key: str
     periodicity: str
     benchmark_payload: str
     long_short_payload: str
@@ -290,7 +308,7 @@ def _build_po_working_bundle(
 ) -> _PoWorkingReturnsBundle:
     """Build canonicalized working-return inputs once per callback."""
     return _PoWorkingReturnsBundle(
-        raw_data=raw_data,
+        dataset_key=_dataset_key(raw_data) or "",
         periodicity=periodicity or "daily",
         benchmark_payload=_mapping_payload(benchmark_assignments),
         long_short_payload=_mapping_payload(long_short_assignments),
@@ -302,10 +320,10 @@ def _build_po_working_bundle(
 
 def _po_get_working_returns(bundle: _PoWorkingReturnsBundle, selected_series) -> pd.DataFrame:
     series_tuple = tuple(selected_series or ())
-    if not series_tuple or not bundle.raw_data:
+    if not series_tuple or not bundle.dataset_key:
         return pd.DataFrame()
-    return get_working_returns(
-        bundle.raw_data,
+    return get_working_returns_by_key(
+        bundle.dataset_key,
         bundle.periodicity,
         series_tuple,
         bundle.benchmark_payload,
@@ -864,7 +882,7 @@ def _po_missing_source_series(results, selected_portfolio, raw_data) -> list[str
         return source_series
 
     try:
-        columns = set(json_to_df(raw_data).columns)
+        columns = set(_raw_df(raw_data).columns)
     except Exception:
         return source_series
     return [name for name in source_series if name not in columns]
@@ -1036,7 +1054,7 @@ def _compute_window_risk_contributions(
 
 @cache_config.cache.memoize(timeout=0)
 def _po_compute_monthly_attribution_cached(
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple[str, ...],
     benchmark_payload: str,
@@ -1046,14 +1064,14 @@ def _po_compute_monthly_attribution_cached(
     vol_scaling_payload: str,
     window_weights_payload: str,
 ) -> str | None:
-    if not raw_data or not selected_series or not window_weights_payload:
+    if not dataset_key or not selected_series or not window_weights_payload:
         return None
     try:
         window_weights = json.loads(window_weights_payload)
     except Exception:
         return None
-    working_df = get_working_returns(
-        raw_data,
+    working_df = get_working_returns_by_key(
+        dataset_key,
         periodicity or "daily",
         tuple(selected_series),
         benchmark_payload,
@@ -1075,7 +1093,7 @@ def _po_get_monthly_attribution(
 ) -> pd.DataFrame:
     series_tuple = tuple(selected_series or ())
     payload = _po_compute_monthly_attribution_cached(
-        bundle.raw_data,
+        bundle.dataset_key,
         bundle.periodicity,
         series_tuple,
         bundle.benchmark_payload,
@@ -1127,7 +1145,7 @@ def _deserialize_risk_rows(payload: str):
 
 @cache_config.cache.memoize(timeout=0)
 def _po_compute_window_risk_contributions_cached(
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple[str, ...],
     benchmark_payload: str,
@@ -1138,15 +1156,15 @@ def _po_compute_window_risk_contributions_cached(
     window_weights_payload: str,
     config_payload: str,
 ) -> str:
-    if not raw_data or not selected_series or not window_weights_payload:
+    if not dataset_key or not selected_series or not window_weights_payload:
         return "[]"
     try:
         window_weights = json.loads(window_weights_payload)
         config = json.loads(config_payload) if config_payload else {}
     except Exception:
         return "[]"
-    working_df = get_working_returns(
-        raw_data,
+    working_df = get_working_returns_by_key(
+        dataset_key,
         periodicity or "daily",
         tuple(selected_series),
         benchmark_payload,
@@ -1166,7 +1184,7 @@ def _po_get_window_risk_contributions(
     config=None,
 ):
     payload = _po_compute_window_risk_contributions_cached(
-        bundle.raw_data,
+        bundle.dataset_key,
         bundle.periodicity,
         tuple(selected_series or ()),
         bundle.benchmark_payload,
@@ -5497,7 +5515,7 @@ def po_estimate_matrix_store(
     is_corr = (mode == "ret_vol_corr")
     
     try:
-        df = resample_returns_cached(data, periodicity or "daily")
+        df = resample_returns_by_key(_dataset_key(data) or "", periodicity or "daily")
         
         # Calculate Returns
         valid_series = [s for s in selected_series if s in df.columns]
@@ -5579,7 +5597,7 @@ def po_estimate_returns_from_data(n_clicks, data, selected_series, periodicity, 
         raise PreventUpdate
 
     try:
-        df = resample_returns_cached(data, periodicity or "daily")
+        df = resample_returns_by_key(_dataset_key(data) or "", periodicity or "daily")
         valid_series = [s for s in selected_series if s in df.columns]
         if not valid_series:
             raise PreventUpdate
@@ -6663,7 +6681,7 @@ def po_add_series_from_database(
 
     try:
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in selected_benches if s in existing_cols]
             if duplicates:
                 return (
@@ -6706,7 +6724,7 @@ def po_add_series_from_database(
             new_periodicity = "monthly"
 
         if existing_data is not None:
-            existing_df = json_to_df(existing_data)
+            existing_df = _raw_df(existing_data)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -6746,7 +6764,7 @@ def po_add_series_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -6877,7 +6895,7 @@ def po_add_raw_series_from_database(
             raise ValueError("No rows returned for staged raw-data requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -6896,7 +6914,7 @@ def po_add_raw_series_from_database(
 
         new_periodicity = load_result.periodicity
         if existing_data is not None:
-            existing_df = json_to_df(existing_data)
+            existing_df = _raw_df(existing_data)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -6930,7 +6948,7 @@ def po_add_raw_series_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7059,7 +7077,7 @@ def po_add_underlying_categories_from_database(
             raise ValueError("No rows returned for staged underlying category requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [series_name for series_name in new_df.columns if series_name in existing_cols]
             if duplicates:
                 duplicate_text = f"Cannot add duplicate series: {', '.join(duplicates)}"
@@ -7094,7 +7112,7 @@ def po_add_underlying_categories_from_database(
             primary_series=list(imported_df.columns)[0] if list(imported_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7231,7 +7249,7 @@ def po_add_portfolios_from_database(
             raise ValueError("No rows returned for staged portfolio requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -7251,7 +7269,7 @@ def po_add_portfolios_from_database(
 
         new_periodicity = load_result.periodicity or "monthly"
         if existing_data is not None:
-            existing_df = json_to_df(existing_data)
+            existing_df = _raw_df(existing_data)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -7283,7 +7301,7 @@ def po_add_portfolios_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7411,7 +7429,7 @@ def po_handle_upload(contents, filename, existing_data, existing_periodicity,
         alert_msg = f"Loaded {len(imported_df.columns)} series with {len(imported_df)} rows from {filename}"
 
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7545,7 +7563,7 @@ def po_on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stas
         )
 
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7743,7 +7761,7 @@ def po_update_series_selectors(
 
     all_series = list((raw_meta or {}).get("columns") or [])
     if not all_series:
-        df = json_to_df(raw_data)
+        df = _raw_df(raw_data)
         all_series = list(df.columns)
 
     if not all_series:
@@ -8010,7 +8028,7 @@ def po_on_modal_ok(
     if not rows or not raw_data:
         raise PreventUpdate
 
-    df = json_to_df(raw_data)
+    df = _raw_df(raw_data)
     existing_cols = list(df.columns)
     existing_set = set(existing_cols)
 
@@ -8102,7 +8120,7 @@ def po_on_modal_ok(
             if mapped:
                 next_cmabench[series] = mapped
 
-    updated_raw_data = no_update if list(df.columns) == existing_cols else df_to_json(df)
+    updated_raw_data = no_update if list(df.columns) == existing_cols else build_raw_data_store_payload(df)
     updated_results = no_update
     current_results = dict(current_results or {})
     deleted_result_names = {
@@ -8174,7 +8192,7 @@ def po_on_modal_cancel(n_clicks):
 )
 def po_update_range_candidates(raw_data, periodicity, selected_series):
     return compute_date_range_candidates(
-        raw_data or "",
+        _dataset_key(raw_data),
         periodicity or "daily",
         tuple(selected_series or ()),
     )
@@ -8188,7 +8206,7 @@ def po_update_range_candidates(raw_data, periodicity, selected_series):
 )
 def po_update_common_daily_candidates(raw_data, selected_series):
     return compute_common_daily_candidates(
-        raw_data or "",
+        _dataset_key(raw_data),
         tuple(selected_series or ()),
     )
 
@@ -8701,7 +8719,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
         # Determine unique portfolio name
         current_results = current_results or {}
         final_name = portfolio_name.strip() or _po_default_name_for_model(model_value)
-        existing_df = json_to_df(raw_data)
+        existing_df = _raw_df(raw_data)
 
         # Avoid collisions with existing columns and existing results
         base_name = final_name
@@ -9275,7 +9293,7 @@ def po_render_rolling(
 
     metric = metric or "total_return"
     rolling_df = calculate_rolling_returns(
-        df_to_json(source_df),
+        _frame_dataset_key(source_df),
         calc_periodicity,
         tuple(ordered_cols),
         "total",
@@ -9433,7 +9451,7 @@ def po_render_calendar(
     if (view_mode or "annual") == "monthly":
         target_series = monthly_series if monthly_series in ordered_cols else ordered_cols[0]
         monthly_col_defs, monthly_rows = create_monthly_view(
-            df_to_json(source_df),
+            _frame_dataset_key(source_df),
             target_series,
             calc_periodicity,
             calc_periodicity,
@@ -9465,7 +9483,7 @@ def po_render_calendar(
         )
 
     cal_df = calculate_calendar_year_returns(
-        df_to_json(source_df),
+        _frame_dataset_key(source_df),
         calc_periodicity,
         calc_periodicity,
         tuple(ordered_cols),
@@ -9564,7 +9582,7 @@ def po_render_drawdown(
         return dmc.Text("No drawdown data available.", c="dimmed")
 
     drawdown_df = calculate_drawdown(
-        df_to_json(source_df),
+        _frame_dataset_key(source_df),
         calc_periodicity,
         tuple(ordered_cols),
         "excess" if returns_basis == "excess" else "total",
@@ -9934,7 +9952,7 @@ def po_render_statistics(
 
             series_names = list(ordered_cols)
             stats = calculate_statistics_cached(
-                df_to_json(perf["source_df"]),
+                _frame_dataset_key(perf["source_df"]),
                 perf["periodicity"],
                 tuple(series_names),
                 _mapping_payload(perf["benchmark_map"]),
@@ -10303,7 +10321,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         try:
             with timed_block("portopt.download_excel.statistics"):
                 stats = calculate_statistics_cached(
-                    df_to_json(source_df),
+                    _frame_dataset_key(source_df),
                     perf["periodicity"],
                     tuple(portfolio_names),
                     _mapping_payload(perf["benchmark_map"]),
@@ -10336,7 +10354,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         # Growth tab
         # ------------------------------------------------------------------
         growth_df = calculate_growth_of_dollar(
-            df_to_json(source_df),
+            _frame_dataset_key(source_df),
             perf["periodicity"],
             tuple(portfolio_names),
             _mapping_payload(perf["benchmark_map"]),
@@ -10359,7 +10377,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         drawdown_df = pd.DataFrame()
         try:
             rolling_df = calculate_rolling_returns(
-                df_to_json(source_df),
+                _frame_dataset_key(source_df),
                 perf["periodicity"],
                 tuple(portfolio_names),
                 "total",
@@ -10379,7 +10397,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         try:
             calendar_df = calculate_calendar_year_returns(
-                df_to_json(source_df),
+                _frame_dataset_key(source_df),
                 perf["periodicity"],
                 perf["periodicity"],
                 tuple(portfolio_names),
@@ -10395,7 +10413,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
         try:
             drawdown_df = calculate_drawdown(
-                df_to_json(source_df),
+                _frame_dataset_key(source_df),
                 perf["periodicity"],
                 tuple(portfolio_names),
                 "excess" if returns_basis == "excess" else "total",

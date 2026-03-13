@@ -12,10 +12,9 @@ from sqlalchemy.engine import Engine
 from utils.core_categories import load_cma_returns_for_benches_with_meta
 from utils.portfolio_series import load_portfolio_series
 from utils.raw_data_imports import load_factor_series, load_fund_series, load_performance_series
+from utils.raw_dataset import build_raw_data_store_payload, get_dataset_key, get_raw_dataset_df
 from utils.returns import (
     align_monthly_index_to_month_end,
-    df_to_json,
-    json_to_df,
     merge_returns,
     resample_returns,
 )
@@ -909,7 +908,7 @@ def _filtered_extra_control_value(store_id: str, saved_value: Any, available_ser
 def build_account_list_session_payload(
     *,
     payload: Any,
-    current_raw_data: str | None,
+    current_raw_data: dict[str, Any] | None,
     current_original_periodicity: str | None,
     current_provenance: Any,
     current_session_snapshot: Any,
@@ -922,7 +921,8 @@ def build_account_list_session_payload(
     if not normalized_payload.get("series_entries"):
         raise ValueError("Saved account list has no DB-backed series.")
 
-    existing_df = json_to_df(current_raw_data) if current_raw_data else pd.DataFrame()
+    dataset_key = get_dataset_key(current_raw_data) if current_raw_data else None
+    existing_df = get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
     existing_set = set(existing_df.columns)
     merged_df = existing_df.copy()
     combined_periodicity = str(current_original_periodicity or "daily")
@@ -1042,7 +1042,7 @@ def build_account_list_session_payload(
     }
 
     session_payload = {
-        "dashmat-raw-data-store": df_to_json(merged_df),
+        "dashmat-raw-data-store": build_raw_data_store_payload(merged_df),
         "dashmat-original-periodicity-store": combined_periodicity,
         "dashmat-db-import-provenance-store": updated_provenance,
         "dashmat-account-list-notice-store": notice,

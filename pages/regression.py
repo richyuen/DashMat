@@ -38,7 +38,7 @@ from utils.returns import (
     create_monthly_view,
     df_to_json,
     get_available_periodicities,
-    get_working_returns,
+    get_working_returns_by_key,
     json_to_df,
     annualization_factor,
 )
@@ -107,6 +107,11 @@ from utils.underlying_category_imports import (
     expand_underlying_category_rows,
     get_underlying_category_desc_options,
     load_underlying_category_series,
+)
+from utils.raw_dataset import (
+    build_raw_data_store_payload,
+    get_raw_dataset_df,
+    resolve_dataset_key,
 )
 
 register_page(__name__, path="/regression", name="Regression", title="Regression")
@@ -191,14 +196,28 @@ def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
 
 
+def _dataset_key(raw_data_store) -> str | None:
+    return resolve_dataset_key(raw_data_store) if raw_data_store else None
+
+
+def _raw_df(raw_data_store) -> pd.DataFrame:
+    dataset_key = _dataset_key(raw_data_store)
+    return get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
+
+
+def _frame_dataset_key(df: pd.DataFrame) -> str:
+    return str(build_raw_data_store_payload(df)["dataset_key"])
+
+
 def _reg_get_working_returns(raw_data, periodicity, selected_series,
                               benchmark_assignments, long_short_assignments,
                               date_range, vol_scaler, vol_scaling_assignments):
     series_tuple = tuple(selected_series or ())
-    if not series_tuple or not raw_data:
+    dataset_key = _dataset_key(raw_data)
+    if not series_tuple or not dataset_key:
         return pd.DataFrame()
-    return get_working_returns(
-        raw_data,
+    return get_working_returns_by_key(
+        dataset_key,
         periodicity or "daily",
         series_tuple,
         _mapping_payload(benchmark_assignments),
@@ -2142,7 +2161,7 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
 
     try:
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in selected_benches if s in existing_cols]
             if duplicates:
                 return (
@@ -2182,7 +2201,7 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             merged_periodicity,
             default_periodicity,
             default_periodicity,
@@ -2917,7 +2936,7 @@ def reg_add_raw_series_from_database(
             raise ValueError("No rows returned for staged raw-data requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -2942,7 +2961,7 @@ def reg_add_raw_series_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3014,7 +3033,7 @@ def reg_add_underlying_categories_from_database(
             raise ValueError("No rows returned for staged underlying category requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [series_name for series_name in new_df.columns if series_name in existing_cols]
             if duplicates:
                 return (
@@ -3038,7 +3057,7 @@ def reg_add_underlying_categories_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3115,7 +3134,7 @@ def reg_add_portfolios_from_database(
             raise ValueError("No rows returned for staged portfolio requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -3139,7 +3158,7 @@ def reg_add_portfolios_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3215,7 +3234,7 @@ def reg_handle_upload(contents, filename, existing_raw, existing_periodicity):
         merged_periodicity = merge_result.combined_periodicity
         return (
             *sheet_no,
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3291,7 +3310,7 @@ def reg_handle_sheet_select_ok(
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             merged_periodicity,
             merged_periodicity,
             merged_periodicity,
@@ -3505,7 +3524,7 @@ def reg_update_series_grid(raw_data, raw_meta, selected_x, series_order, deleted
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
     all_series = list((raw_meta or {}).get("columns") or [])
     if not all_series:
-        df = json_to_df(raw_data)
+        df = _raw_df(raw_data)
         all_series = list(df.columns)
     if not all_series:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
@@ -3669,7 +3688,7 @@ def reg_on_modal_ok(snapshot_data, raw_data,
     if not rows or not raw_data:
         raise PreventUpdate
 
-    df = json_to_df(raw_data)
+    df = _raw_df(raw_data)
     existing_cols = list(df.columns)
     existing_set = set(existing_cols)
 
@@ -3755,7 +3774,7 @@ def reg_on_modal_ok(snapshot_data, raw_data,
     current_max = dict(current_max or {})
     current_enable = dict(current_enable or {})
 
-    updated_raw = no_update if list(df.columns) == existing_cols else df_to_json(df)
+    updated_raw = no_update if list(df.columns) == existing_cols else build_raw_data_store_payload(df)
     next_x_output = no_update if next_x == current_x else next_x
     next_bench_output = no_update if next_bench == current_bench else next_bench
     next_ls_output = no_update if next_ls == current_ls else next_ls
@@ -3816,7 +3835,7 @@ def reg_on_modal_cancel(n_clicks):
 def reg_update_range_candidates(raw_data, periodicity, x_series, dep_var):
     all_series = tuple(sorted(dict.fromkeys((x_series or []) + ([dep_var] if dep_var else []))))
     return compute_date_range_candidates(
-        raw_data or "",
+        _dataset_key(raw_data),
         periodicity or "daily",
         all_series,
     )
@@ -3832,7 +3851,7 @@ def reg_update_range_candidates(raw_data, periodicity, x_series, dep_var):
 def reg_update_common_daily_candidates(raw_data, x_series, dep_var):
     all_series = tuple(sorted(dict.fromkeys((x_series or []) + ([dep_var] if dep_var else []))))
     return compute_common_daily_candidates(
-        raw_data or "",
+        _dataset_key(raw_data),
         all_series,
     )
 
@@ -4215,7 +4234,7 @@ def reg_download_excel(
         if not stats_input.empty:
             try:
                 stats_payload = calculate_statistics_cached(
-                    df_to_json(stats_input),
+                    _frame_dataset_key(stats_input),
                     periodicity,
                     tuple(ordered_cols),
                     "{}",
@@ -4289,7 +4308,7 @@ def reg_download_excel(
         return_type = rolling_return_type or "annualized"
         try:
             rolling_calc = calculate_rolling_returns(
-                df_to_json(display_df[ordered_cols]),
+                _frame_dataset_key(display_df[ordered_cols]),
                 periodicity,
                 tuple(ordered_cols),
                 "total",
@@ -4320,7 +4339,7 @@ def reg_download_excel(
             target_series = calendar_series if calendar_series in ordered_cols else ordered_cols[0]
             try:
                 _monthly_col_defs, monthly_rows = create_monthly_view(
-                    df_to_json(display_df[ordered_cols]),
+                    _frame_dataset_key(display_df[ordered_cols]),
                     target_series,
                     periodicity,
                     periodicity,
@@ -4339,7 +4358,7 @@ def reg_download_excel(
         else:
             try:
                 cal_calc = calculate_calendar_year_returns(
-                    df_to_json(display_df[ordered_cols]),
+                    _frame_dataset_key(display_df[ordered_cols]),
                     periodicity,
                     periodicity,
                     tuple(ordered_cols),
@@ -4374,7 +4393,7 @@ def reg_download_excel(
     if not display_df.empty and ordered_cols:
         try:
             drawdown_calc = calculate_drawdown(
-                df_to_json(display_df[ordered_cols]),
+                _frame_dataset_key(display_df[ordered_cols]),
                 periodicity,
                 tuple(ordered_cols),
                 "total",
@@ -5130,7 +5149,7 @@ def reg_render_rolling_returns(
     series_df = display_df[ordered_cols]
     with timed_block("regression.render_rolling_returns", result=selected, series_count=len(ordered_cols)):
         rolling_df = calculate_rolling_returns(
-            df_to_json(series_df),
+            _frame_dataset_key(series_df),
             periodicity,
             tuple(ordered_cols),
             "total",
@@ -5486,7 +5505,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
     if (calendar_view or "annual") == "monthly":
         target_series = calendar_series if calendar_series in ordered_cols else ordered_cols[0]
         monthly_col_defs, monthly_rows = create_monthly_view(
-            df_to_json(display_df[ordered_cols]),
+            _frame_dataset_key(display_df[ordered_cols]),
             target_series,
             periodicity,
             periodicity,
@@ -5510,7 +5529,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
         )
 
     cal_df = calculate_calendar_year_returns(
-        df_to_json(display_df[ordered_cols]),
+        _frame_dataset_key(display_df[ordered_cols]),
         periodicity,
         periodicity,
         tuple(ordered_cols),
@@ -5572,7 +5591,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
 
     periodicity = entry.get("periodicity", "daily")
     drawdown_df = calculate_drawdown(
-        df_to_json(display_df[ordered_cols]),
+        _frame_dataset_key(display_df[ordered_cols]),
         periodicity,
         tuple(ordered_cols),
         "total",
@@ -5796,7 +5815,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
     try:
         with timed_block("regression.render_statistics", result=selected, series_count=len(display_order)):
             stats_payload = calculate_statistics_cached(
-                df_to_json(stats_input),
+                _frame_dataset_key(stats_input),
                 periodicity,
                 tuple(display_order),
                 "{}",

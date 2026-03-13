@@ -7,10 +7,9 @@ import pandas as pd
 from utils.returns import (
     align_monthly_index_to_month_end,
     align_monthly_series_to_month_end,
-    df_to_json,
-    json_to_df,
     merge_returns,
 )
+from utils.raw_dataset import build_raw_data_store_payload, get_dataset_key, get_raw_dataset_df
 
 
 def normalize_saved_series_store(store: Any) -> dict[str, dict[str, Any]]:
@@ -47,7 +46,7 @@ def saved_series_store_names(store: Any) -> list[str]:
 
 def save_series_to_raw_data(
     *,
-    raw_data: str | None,
+    raw_data: dict[str, Any] | None,
     periodicity: str,
     series: pd.Series,
     base_name: str,
@@ -62,7 +61,8 @@ def save_series_to_raw_data(
     if clean_series.empty:
         raise ValueError("No series data available to save.")
 
-    existing_df = json_to_df(raw_data) if raw_data else pd.DataFrame()
+    dataset_key = get_dataset_key(raw_data) if raw_data else None
+    existing_df = get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
     resolved_periodicity = str(periodicity or "daily")
     normalized_store = normalize_saved_series_store(saved_series_store)
 
@@ -97,7 +97,7 @@ def save_series_to_raw_data(
     }
 
     return {
-        "raw_data": df_to_json(merged_df),
+        "raw_data": build_raw_data_store_payload(merged_df),
         "saved_series_store": normalized_store,
         "saved_name": target_name,
         "action": action,

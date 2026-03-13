@@ -40,6 +40,7 @@ from utils.returns import (
     df_to_json,
     get_available_periodicities,
     get_working_returns,
+    get_working_returns_by_key,
     is_daily,
     json_to_df,
     merge_returns,
@@ -131,6 +132,13 @@ from utils.raw_data_imports import (
     load_factor_series,
     load_fund_series,
     load_performance_series,
+)
+from utils.raw_dataset import (
+    build_raw_data_store_payload,
+    get_raw_data_json_from_store,
+    get_raw_dataset_df,
+    get_raw_dataset_json,
+    resolve_dataset_key,
 )
 from utils.factor_definitions import (
     FACTOR_AGG_TYPE_OPTIONS,
@@ -248,6 +256,26 @@ def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
 
 
+def _dataset_key(raw_data_store) -> str | None:
+    return resolve_dataset_key(raw_data_store) if raw_data_store else None
+
+
+def _raw_json(raw_data_store) -> str | None:
+    if not raw_data_store:
+        return None
+    if isinstance(raw_data_store, str):
+        try:
+            return get_raw_data_json_from_store(raw_data_store)
+        except Exception:
+            return raw_data_store
+    return get_raw_data_json_from_store(raw_data_store)
+
+
+def _raw_df(raw_data_store) -> pd.DataFrame:
+    dataset_key = _dataset_key(raw_data_store)
+    return get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
+
+
 def _has_complete_date_range(value) -> bool:
     return (
         isinstance(value, dict)
@@ -282,7 +310,7 @@ def _correlogram_request_key(
 ):
     payload = "|".join(
         [
-            hashlib.md5((raw_data or "").encode("utf-8")).hexdigest(),
+            str(_dataset_key(raw_data) or ""),
             str(periodicity or "daily"),
             ",".join(selected_series or ()),
             str(returns_type or "total"),
@@ -304,7 +332,7 @@ def _correlogram_request_key(
 
 @dataclass(frozen=True)
 class _AnalyticsComputeBundle:
-    raw_data: str
+    dataset_key: str
     periodicity: str
     selected_series: tuple
     benchmark_payload: str
@@ -399,7 +427,7 @@ def _build_analytics_compute_bundle(
 ) -> _AnalyticsComputeBundle:
     """Build canonicalized compute inputs once per callback."""
     return _AnalyticsComputeBundle(
-        raw_data=raw_data,
+        dataset_key=_dataset_key(raw_data) or "",
         periodicity=periodicity or "daily",
         selected_series=tuple(selected_series or ()),
         benchmark_payload=_mapping_payload(benchmark_assignments),
@@ -412,7 +440,7 @@ def _build_analytics_compute_bundle(
 
 @cache_config.cache.memoize(timeout=0)
 def _compute_selected_returns_cached(
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple,
     returns_type: str,
@@ -423,14 +451,14 @@ def _compute_selected_returns_cached(
     vol_scaling_payload: str,
 ) -> pd.DataFrame:
     selected_tuple = tuple(selected_series or ())
-    if not raw_data or not selected_tuple:
+    if not dataset_key or not selected_tuple:
         return pd.DataFrame()
 
     periodicity_value = periodicity or "daily"
     returns_basis = returns_type or "total"
     if returns_basis == "excess":
         selected_returns_df = calculate_excess_returns(
-            raw_data,
+            dataset_key,
             periodicity_value,
             selected_tuple,
             benchmark_payload,
@@ -441,8 +469,8 @@ def _compute_selected_returns_cached(
             vol_scaling_payload,
         )
     else:
-        selected_returns_df = get_working_returns(
-            raw_data,
+        selected_returns_df = get_working_returns_by_key(
+            dataset_key,
             periodicity_value,
             selected_tuple,
             benchmark_payload,
@@ -474,7 +502,7 @@ def _compute_selected_returns(
     vol_scaling_assignments,
 ) -> pd.DataFrame:
     return _compute_selected_returns_cached(
-        raw_data or "",
+        _dataset_key(raw_data) or "",
         periodicity or "daily",
         tuple(selected_series or ()),
         returns_type or "total",
@@ -543,8 +571,13 @@ def _compute_regime_analysis_outputs_cached(
         }
 
     selected_tuple = tuple(selected_series or ())
+    regime_dataset_key = (
+        build_raw_data_store_payload(raw_data).get("dataset_key")
+        if raw_data
+        else ""
+    )
     selected_returns_df = _compute_selected_returns_cached(
-        raw_data,
+        regime_dataset_key,
         periodicity or "daily",
         selected_tuple,
         returns_type or "total",
@@ -640,7 +673,7 @@ def _build_regime_analysis_payload(
         )
 
     bundle = _build_analytics_compute_bundle(
-        combined_raw_data,
+        build_raw_data_store_payload(combined_raw_data),
         periodicity,
         selected_series,
         benchmark_assignments,
@@ -1188,7 +1221,7 @@ def _build_regime_series_options(raw_data, selected_series, regime_series_store,
     raw_series_order = []
     if raw_data:
         try:
-            df = json_to_df(raw_data)
+            df = _raw_df(raw_data)
             all_series = list(df.columns)
             selected_order = [s for s in (selected_series or []) if s in all_series]
             remaining = [s for s in all_series if s not in selected_order]
@@ -1238,7 +1271,7 @@ def _build_regime_series_options(raw_data, selected_series, regime_series_store,
 
 
 def _prepare_factor_base_frames(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     factor_series,
@@ -1252,7 +1285,7 @@ def _prepare_factor_base_frames(
     factor_definitions_local=None,
 ):
     """Prepare dependent-series returns and raw factor values for factor workflows."""
-    if not raw_data or not selected_series or not factor_series:
+    if not dataset_key or not selected_series or not factor_series:
         return pd.DataFrame(), pd.Series(dtype=float)
 
     periodicity_value = periodicity or "daily"
@@ -1264,7 +1297,7 @@ def _prepare_factor_base_frames(
     vol_payload = _mapping_payload(vol_scaling_assignments)
 
     dependent_df = _compute_selected_returns_cached(
-        raw_data,
+        dataset_key,
         periodicity_value,
         selected_tuple,
         returns_type or "total",
@@ -1302,8 +1335,8 @@ def _prepare_factor_base_frames(
     else:
         raw_factor_name = factor_name if factor_prefix == "raw" else str(factor_series or "")
         # Factor always comes from total-basis stream (with optional L/S if configured).
-        factor_df = get_working_returns(
-            raw_data,
+        factor_df = get_working_returns_by_key(
+            dataset_key,
             periodicity_value,
             (raw_factor_name,),
             bench_payload,
@@ -1334,7 +1367,7 @@ def _empty_factor_artifacts() -> _FactorArtifacts:
 
 @cache_config.cache.memoize(timeout=0)
 def _compute_factor_artifacts_cached(
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple,
     factor_series: str,
@@ -1355,7 +1388,7 @@ def _compute_factor_artifacts_cached(
             factor_definitions_local = None
 
     dependent_df, factor_raw = _prepare_factor_base_frames(
-        raw_data,
+        dataset_key,
         periodicity,
         selected_series,
         factor_series,
@@ -1413,7 +1446,7 @@ def _compute_factor_artifacts(
         if definition:
             definition_payload = _definition_payload_for_compute(definition)
     return _compute_factor_artifacts_cached(
-        raw_data or "",
+        _dataset_key(raw_data) or "",
         periodicity or "daily",
         tuple(selected_series or ()),
         str(factor_series or ""),
@@ -1730,7 +1763,7 @@ def _estimate_conditional_detail_row_counts(
 
 @cache_config.cache.memoize(timeout=0)
 def _estimate_conditional_detail_rows_cached(
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple,
     returns_type: str,
@@ -1752,7 +1785,7 @@ def _estimate_conditional_detail_rows_cached(
             factor_definitions_local = None
 
     dependent_df, factor_values = _prepare_factor_base_frames(
-        raw_data,
+        dataset_key,
         periodicity,
         selected_series,
         factor_series,
@@ -1931,7 +1964,7 @@ def _order_conditional_detail_frame(
 
 @cache_config.cache.memoize(timeout=0)
 def _compute_conditional_core_cached(
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple,
     returns_type: str,
@@ -1957,7 +1990,7 @@ def _compute_conditional_core_cached(
             factor_definitions_local = None
 
     dependent_df, factor_values = _prepare_factor_base_frames(
-        raw_data,
+        dataset_key,
         periodicity,
         selected_series,
         factor_series,
@@ -2052,7 +2085,7 @@ def _compute_conditional_core_cached(
 
 @cache_config.cache.memoize(timeout=0)
 def _compute_conditional_returns_cached(
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple,
     returns_type: str,
@@ -2072,7 +2105,7 @@ def _compute_conditional_returns_cached(
     include_detail: bool = False,
 ) -> _ConditionalReturnsPayload:
     core = _compute_conditional_core_cached(
-        raw_data,
+        dataset_key,
         periodicity,
         selected_series,
         returns_type,
@@ -2650,7 +2683,7 @@ def refresh_saved_series_cache(raw_data, cache_data):
         raise PreventUpdate
 
     try:
-        raw_df = json_to_df(raw_data)
+        raw_df = _raw_df(raw_data)
     except Exception:
         raise PreventUpdate
 
@@ -5766,7 +5799,7 @@ def update_factor_series_select(
         return [], None, [], None
 
     try:
-        df = json_to_df(raw_data)
+        df = _raw_df(raw_data)
     except Exception:
         return [], None, [], None
 
@@ -6997,7 +7030,7 @@ def add_series_from_database(
 
     try:
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in selected_benches if s in existing_cols]
             if duplicates:
                 return (
@@ -7041,7 +7074,7 @@ def add_series_from_database(
             new_periodicity = "monthly"
 
         if existing_data is not None:
-            existing_df = json_to_df(existing_data)
+            existing_df = _raw_df(existing_data)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -7086,7 +7119,7 @@ def add_series_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7206,7 +7239,7 @@ def at_add_raw_series_from_database(
             raise ValueError("No rows returned for staged raw-data requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -7225,7 +7258,7 @@ def at_add_raw_series_from_database(
 
         new_periodicity = load_result.periodicity
         if existing_data is not None:
-            existing_df = json_to_df(existing_data)
+            existing_df = _raw_df(existing_data)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -7259,7 +7292,7 @@ def at_add_raw_series_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7379,7 +7412,7 @@ def at_add_underlying_categories_from_database(
             raise ValueError("No rows returned for staged underlying category requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [series_name for series_name in new_df.columns if series_name in existing_cols]
             if duplicates:
                 duplicate_text = f"Cannot add duplicate series: {', '.join(duplicates)}"
@@ -7417,7 +7450,7 @@ def at_add_underlying_categories_from_database(
             primary_series=list(imported_df.columns)[0] if list(imported_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7546,7 +7579,7 @@ def at_add_portfolios_from_database(
             raise ValueError("No rows returned for staged portfolio requests.")
 
         if existing_data:
-            existing_cols = set(json_to_df(existing_data).columns)
+            existing_cols = set(_raw_df(existing_data).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -7567,7 +7600,7 @@ def at_add_portfolios_from_database(
 
         new_periodicity = load_result.periodicity or "monthly"
         if existing_data is not None:
-            existing_df = json_to_df(existing_data)
+            existing_df = _raw_df(existing_data)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -7599,7 +7632,7 @@ def at_add_portfolios_from_database(
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7729,7 +7762,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
             new_first_load = True
 
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -7875,7 +7908,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             new_first_load = True
 
         return (
-            df_to_json(merged_df),
+            build_raw_data_store_payload(merged_df),
             combined_periodicity,
             periodicity_options,
             default_periodicity,
@@ -8018,7 +8051,7 @@ def update_series_selectors(
 
     all_series = list((raw_meta or {}).get("columns") or [])
     if not all_series:
-        df = json_to_df(raw_data)
+        df = _raw_df(raw_data)
         all_series = list(df.columns)
     if not all_series:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
@@ -8196,7 +8229,7 @@ def on_modal_ok(
     if not rows or not raw_data:
         raise PreventUpdate
 
-    df = json_to_df(raw_data)
+    df = _raw_df(raw_data)
     existing_cols = list(df.columns)
     existing_set = set(existing_cols)
 
@@ -8261,7 +8294,7 @@ def on_modal_ok(
     next_order_output = no_update if next_order == current_order else next_order
     next_series_value = no_update if next_select == current_select else next_select
     next_vol_output = no_update if next_vol_scaling == current_vol_scaling else next_vol_scaling
-    updated_raw_data = no_update if list(df.columns) == existing_cols else df_to_json(df)
+    updated_raw_data = no_update if list(df.columns) == existing_cols else build_raw_data_store_payload(df)
     updated_provenance = rename_db_import_provenance_series(current_provenance, rename_map) if rename_map else current_provenance
     updated_provenance = remove_db_import_provenance_series(updated_provenance, deleted_names) if deleted_names else updated_provenance
     updated_provenance = prune_db_import_provenance(updated_provenance, list(df.columns))
@@ -8300,7 +8333,7 @@ def on_modal_cancel(n_clicks):
 )
 def update_at_range_candidates(raw_data, periodicity, selected_series):
     return compute_date_range_candidates(
-        raw_data or "",
+        _dataset_key(raw_data),
         periodicity or "daily",
         tuple(selected_series or ()),
     )
@@ -8314,7 +8347,7 @@ def update_at_range_candidates(raw_data, periodicity, selected_series):
 )
 def update_at_common_daily_candidates(raw_data, selected_series):
     return compute_common_daily_candidates(
-        raw_data or "",
+        _dataset_key(raw_data),
         tuple(selected_series or ()),
     )
 
@@ -8599,7 +8632,7 @@ def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, select
         # Use shared calculate_rolling_returns function
         # We pass "total" for returns_type as it's ignored by the new logic in favor of rolling_metric
         rolling_df = calculate_rolling_returns(
-            raw_data,
+            _dataset_key(raw_data),
             periodicity,
             tuple(selected_series),
             "total",
@@ -8697,7 +8730,7 @@ def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selec
     try:
         # Use shared calculate_rolling_returns function
         rolling_df = calculate_rolling_returns(
-            raw_data,
+            _dataset_key(raw_data),
             periodicity,
             tuple(selected_series),
             "total",
@@ -8877,7 +8910,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
             # Handle monthly view if selected
             return create_monthly_view(
-                raw_data,
+                _dataset_key(raw_data),
                 monthly_series,
                 original_periodicity,
                 selected_periodicity,
@@ -8893,7 +8926,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         else:
             # Calculate calendar returns for the selected periodicity
             calendar_returns = calculate_calendar_year_returns(
-                raw_data,
+                _dataset_key(raw_data),
                 original_periodicity,
                 selected_periodicity,
                 selected_series,
@@ -9025,7 +9058,7 @@ def update_statistics(raw_data=None, periodicity=None, selected_series=None, ben
         with timed_block("analyticstool.render_statistics_grid", series_count=len(selected_series)):
             # Use cached function to avoid repeated computation
             stats = calculate_statistics_cached(
-                raw_data,
+                _dataset_key(raw_data),
                 periodicity or "daily",
                 tuple(selected_series),
                 _mapping_payload(benchmark_assignments),
@@ -9328,7 +9361,7 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
         effective_shrinkage, effective_target = "none", "scaled_identity"
     try:
         result = generate_correlogram_cached(
-            raw_data,
+            _dataset_key(raw_data),
             periodicity or "daily",
             tuple(selected_series),
             returns_type,
@@ -10237,7 +10270,7 @@ def _compute_analytics_export_artifacts(
 ) -> _AnalyticsExportArtifacts:
     with timed_block("analyticstool.download_excel.returns"):
         returns_df = _compute_selected_returns_cached(
-            bundle.raw_data,
+            bundle.dataset_key,
             bundle.periodicity,
             bundle.selected_series,
             returns_type or "total",
@@ -10258,7 +10291,7 @@ def _compute_analytics_export_artifacts(
 
     with timed_block("analyticstool.download_excel.statistics"):
         stats = calculate_statistics_cached(
-            bundle.raw_data,
+            bundle.dataset_key,
             bundle.periodicity,
             bundle.selected_series,
             bundle.benchmark_payload,
@@ -10279,7 +10312,7 @@ def _compute_analytics_export_artifacts(
     )
     try:
         matrix_result = generate_correlogram_cached(
-            bundle.raw_data,
+            bundle.dataset_key,
             bundle.periodicity,
             bundle.selected_series,
             returns_type,
@@ -10325,7 +10358,7 @@ def _build_rolling_export_sheet(
             return_type = rolling_return_type if rolling_return_type else "annualized"
 
             rolling_df = calculate_rolling_returns(
-                bundle.raw_data,
+                bundle.dataset_key,
                 bundle.periodicity,
                 bundle.selected_series,
                 returns_type,
@@ -10376,7 +10409,7 @@ def _build_calendar_export_sheet(
         with timed_block("analyticstool.download_excel.calendar"):
             if monthly_view == "monthly" and monthly_series and monthly_series in bundle.selected_series:
                 _, row_data = create_monthly_view(
-                    bundle.raw_data,
+                    bundle.dataset_key,
                     monthly_series,
                     original_periodicity,
                     bundle.periodicity,
@@ -10396,7 +10429,7 @@ def _build_calendar_export_sheet(
                 calendar_df.index.name = "Year"
             else:
                 calendar_df = calculate_calendar_year_returns(
-                    bundle.raw_data,
+                    bundle.dataset_key,
                     original_periodicity,
                     bundle.periodicity,
                     bundle.selected_series,
@@ -10424,7 +10457,7 @@ def _build_growth_export_sheet(bundle: _AnalyticsComputeBundle) -> _ExcelSheetSp
     try:
         with timed_block("analyticstool.download_excel.growth"):
             growth_df = calculate_growth_of_dollar(
-                bundle.raw_data,
+                bundle.dataset_key,
                 bundle.periodicity,
                 bundle.selected_series,
                 bundle.benchmark_payload,
@@ -10449,7 +10482,7 @@ def _build_drawdown_export_sheet(bundle: _AnalyticsComputeBundle, returns_type) 
     try:
         with timed_block("analyticstool.download_excel.drawdown"):
             drawdown_df = calculate_drawdown(
-                bundle.raw_data,
+                bundle.dataset_key,
                 bundle.periodicity,
                 bundle.selected_series,
                 returns_type,
@@ -10541,7 +10574,7 @@ def _build_factor_export_sheets(
     factor_transform_value = factor_transform if factor_transform in {"raw", "zscore"} else "raw"
     quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
     factor_artifacts = _compute_factor_artifacts(
-        bundle.raw_data,
+        bundle.dataset_key,
         bundle.periodicity,
         bundle.selected_series,
         factor_series,
@@ -10628,7 +10661,7 @@ def _build_conditional_export_sheets(
             conditional_definition_payload = _definition_payload_for_compute(definition)
 
     conditional_payload = _compute_conditional_returns_cached(
-        bundle.raw_data,
+        bundle.dataset_key,
         bundle.periodicity,
         bundle.selected_series,
         returns_type or "total",
@@ -10690,8 +10723,13 @@ def _build_regime_export_sheets(
     if not regime_definition_key:
         return []
 
+    try:
+        regime_raw_data = get_raw_dataset_json(bundle.dataset_key)
+    except Exception:
+        regime_raw_data = str(bundle.dataset_key or "")
+
     regime_result = _build_regime_analysis_payload(
-        bundle.raw_data,
+        regime_raw_data,
         bundle.periodicity,
         bundle.selected_series,
         returns_type,
@@ -10965,7 +11003,7 @@ def update_conditional_returns(
     warning_children = None
     if display_mode == "detail":
         coincident_rows, forward_rows = _estimate_conditional_detail_rows_cached(
-            raw_data,
+            _dataset_key(raw_data) or "",
             normalized_periodicity,
             selected_series_tuple,
             normalized_returns_type,
@@ -10990,7 +11028,7 @@ def update_conditional_returns(
             return note_children, warning_children, dmc.Text("Detail view is capped for large outputs. Excel export still includes the full detail table.", size="sm", c="dimmed")
 
     payload = _compute_conditional_returns_cached(
-        raw_data,
+        _dataset_key(raw_data) or "",
         normalized_periodicity,
         selected_series_tuple,
         normalized_returns_type,
@@ -11261,7 +11299,7 @@ def update_regime_analysis(
         return None, dmc.Text("Select a regime definition.", size="sm", c="dimmed")
 
     build_result = _build_regime_analysis_payload(
-        raw_data,
+        _raw_json(raw_data),
         periodicity,
         selected_series,
         returns_type,
@@ -11423,8 +11461,8 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
 
     try:
         # Use get_working_returns to get aligned data + benchmarks
-        df = get_working_returns(
-            raw_data, periodicity or "daily", tuple(selected_series),
+        df = get_working_returns_by_key(
+            _dataset_key(raw_data) or "", periodicity or "daily", tuple(selected_series),
             _mapping_payload(benchmark_assignments), _mapping_payload(long_short_assignments), _date_range_payload(date_range),
             vol_scaler or 0, _mapping_payload(vol_scaling_assignments)
         )
@@ -11455,7 +11493,7 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
         # Use shared calculate_growth_of_dollar function for the main chart
         # (It calls get_working_returns internally, but it's cached)
         growth_df = calculate_growth_of_dollar(
-            raw_data,
+            _dataset_key(raw_data),
             periodicity,
             tuple(selected_series),
             _mapping_payload(benchmark_assignments),
@@ -11616,7 +11654,7 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
     try:
         # Use shared calculate_growth_of_dollar function
         growth_df = calculate_growth_of_dollar(
-            raw_data,
+            _dataset_key(raw_data),
             periodicity,
             tuple(selected_series),
             _mapping_payload(benchmark_assignments),
@@ -11693,7 +11731,7 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
     try:
         # Use shared calculate_drawdown function
         drawdown_df = calculate_drawdown(
-            raw_data,
+            _dataset_key(raw_data),
             periodicity,
             tuple(selected_series),
             returns_type,
@@ -11774,7 +11812,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     try:
         # Use shared calculate_drawdown function
         drawdown_df = calculate_drawdown(
-            raw_data,
+            _dataset_key(raw_data),
             periodicity,
             tuple(selected_series),
             returns_type,

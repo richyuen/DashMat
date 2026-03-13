@@ -14,6 +14,7 @@ from utils.serialization import (
     normalize_date_range_payload,
     parse_mapping_payload,
 )
+from utils.raw_dataset import get_dataset_key, get_raw_dataset_df
 import cache_config
 
 logger = logging.getLogger(__name__)
@@ -369,7 +370,7 @@ def get_available_periodicities(original_periodicity: str) -> list[dict]:
 
 
 @cache_config.cache.memoize(timeout=0)
-def build_raw_data_metadata(json_str: str | None, original_periodicity: str | None) -> dict:
+def build_raw_data_metadata(raw_data_store: dict | None, original_periodicity: str | None) -> dict:
     """Build compact shared metadata for the current raw-data payload."""
     resolved_periodicity = original_periodicity or "daily"
     periodicity_options = get_available_periodicities(resolved_periodicity)
@@ -380,10 +381,12 @@ def build_raw_data_metadata(json_str: str | None, original_periodicity: str | No
         else (valid_values[0] if valid_values else "daily_trading")
     )
 
-    if not json_str:
+    dataset_key = get_dataset_key(raw_data_store) if raw_data_store else None
+    if not dataset_key:
         return {
             "has_data": False,
             "columns": [],
+            "dataset_key": None,
             "original_periodicity": resolved_periodicity,
             "periodicity_options": periodicity_options,
             "default_periodicity": default_periodicity,
@@ -391,11 +394,12 @@ def build_raw_data_metadata(json_str: str | None, original_periodicity: str | No
             "max_date": None,
         }
 
-    df = json_to_df(json_str)
+    df = get_raw_dataset_df(dataset_key)
     if df.empty:
         return {
             "has_data": False,
             "columns": [],
+            "dataset_key": dataset_key,
             "original_periodicity": resolved_periodicity,
             "periodicity_options": periodicity_options,
             "default_periodicity": default_periodicity,
@@ -406,6 +410,7 @@ def build_raw_data_metadata(json_str: str | None, original_periodicity: str | No
     return {
         "has_data": bool(df.columns.size),
         "columns": list(df.columns),
+        "dataset_key": dataset_key,
         "original_periodicity": resolved_periodicity,
         "periodicity_options": periodicity_options,
         "default_periodicity": default_periodicity,
@@ -462,6 +467,17 @@ def json_to_df(json_str: str) -> pd.DataFrame:
 def resample_returns_cached(json_str: str, periodicity: str) -> pd.DataFrame:
     """Resample returns with caching to avoid repeated computation."""
     df = json_to_df(json_str)
+    if periodicity == "daily":
+        return fill_calendar_gaps(df)
+    if periodicity == "daily_trading":
+        return filter_to_trading_days(df)
+    return resample_returns(df, periodicity)
+
+
+@cache_config.cache.memoize(timeout=0)
+def resample_returns_by_key(dataset_key: str, periodicity: str) -> pd.DataFrame:
+    """Resample raw-dataset returns using dataset-key lookup."""
+    df = get_raw_dataset_df(dataset_key)
     if periodicity == "daily":
         return fill_calendar_gaps(df)
     if periodicity == "daily_trading":
@@ -582,13 +598,86 @@ def get_working_returns(json_str: str, periodicity: str, selected_series: tuple,
 
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_excess_returns(json_str: str, periodicity: str, selected_series: tuple,
+def get_working_returns_by_key(dataset_key: str, periodicity: str, selected_series: tuple,
+                               benchmark_assignments: str, long_short_assignments: str,
+                               date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "") -> pd.DataFrame:
+    """Calculate working returns using the shared raw-dataset cache."""
+    df = resample_returns_by_key(dataset_key, periodicity)
+
+    bench_dict = parse_mapping_payload(benchmark_assignments)
+    ls_dict = parse_mapping_payload(long_short_assignments)
+    date_range = normalize_date_range_payload(date_range_str)
+    vol_scaling_dict = parse_mapping_payload(vol_scaling_assignments)
+
+    if date_range:
+        start_date = pd.to_datetime(date_range["start"])
+        end_date = pd.to_datetime(date_range["end"])
+        df = df[(df.index >= start_date) & (df.index <= end_date)]
+
+    result_df = pd.DataFrame(index=df.index)
+    series_list = list(selected_series) if selected_series else []
+
+    unselected_benchmarks = set()
+    for series in series_list:
+        benchmark = bench_dict.get(series, "None")
+        if benchmark != "None" and benchmark in df.columns and benchmark not in series_list:
+            unselected_benchmarks.add(benchmark)
+
+    for series in series_list:
+        if series not in df.columns:
+            continue
+
+        s_data = df[series]
+        benchmark = bench_dict.get(series, "None")
+        is_ls = ls_dict.get(series, False)
+
+        bench_data = None
+        if benchmark != "None" and benchmark in df.columns and benchmark != series:
+            bench_data = df[benchmark]
+
+        if bench_data is not None:
+            common_idx = s_data.dropna().index.intersection(bench_data.dropna().index)
+            s_aligned = s_data.reindex(common_idx)
+            bench_aligned = bench_data.reindex(common_idx)
+            s_data = s_aligned.reindex(df.index)
+            bench_data = bench_aligned.reindex(df.index)
+
+        if is_ls and bench_data is not None:
+            final_series = s_data - bench_data
+        else:
+            final_series = s_data
+
+        result_df[series] = final_series
+
+        if bench_data is not None and benchmark in unselected_benchmarks:
+            result_df[benchmark] = bench_data
+
+    if vol_scaler > 0:
+        periods_per_year = annualization_factor(periodicity or "daily")
+        target_vol = vol_scaler / 100.0
+
+        for col in result_df.columns:
+            should_scale = vol_scaling_dict.get(col, True)
+            if should_scale:
+                series_data = result_df[col]
+                valid_data = series_data.dropna()
+                if len(valid_data) > 1:
+                    current_vol = valid_data.std() * np.sqrt(periods_per_year)
+                    if current_vol > 0:
+                        factor = target_vol / current_vol
+                        result_df[col] = result_df[col] * factor
+
+    return result_df.dropna(how="all")
+
+
+@cache_config.cache.memoize(timeout=0)
+def calculate_excess_returns(dataset_key: str, periodicity: str, selected_series: tuple,
                              benchmark_assignments: str, returns_type: str, long_short_assignments: str,
                              date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "") -> pd.DataFrame:
     """Calculate excess returns with caching."""
     # Get base working returns (Series aligned to Bench, or L/S diff)
-    display_df = get_working_returns(
-        json_str, periodicity, selected_series,
+    display_df = get_working_returns_by_key(
+        dataset_key, periodicity, selected_series,
         benchmark_assignments, long_short_assignments,
         date_range_str, vol_scaler, vol_scaling_assignments
     )
@@ -689,7 +778,7 @@ def _fast_rolling_return_series(
 
 @cache_config.cache.memoize(timeout=0)
 def calculate_rolling_returns(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -716,8 +805,8 @@ def calculate_rolling_returns(
         # Get working returns (forces alignment and filtering)
         # working_df contains Series (aligned) OR (Series - Bench) if L/S
         # NOW also contains unselected benchmarks
-        working_df = get_working_returns(
-            raw_data, periodicity or "daily", tuple(selected_series),
+        working_df = get_working_returns_by_key(
+            dataset_key, periodicity or "daily", tuple(selected_series),
             mapping_payload_for_cache(benchmark_assignments),
             mapping_payload_for_cache(long_short_assignments),
             date_range_payload_for_cache(date_range),
@@ -930,12 +1019,12 @@ def calculate_rolling_returns(
 
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_calendar_year_returns(raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+def calculate_calendar_year_returns(dataset_key, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate calendar year returns for Excel export."""
     try:
         # Use get_working_returns for data prep
-        working_df = get_working_returns(
-            raw_data, selected_periodicity or "daily", tuple(selected_series),
+        working_df = get_working_returns_by_key(
+            dataset_key, selected_periodicity or "daily", tuple(selected_series),
             mapping_payload_for_cache(benchmark_assignments),
             mapping_payload_for_cache(long_short_assignments),
             date_range_payload_for_cache(date_range),
@@ -1053,11 +1142,11 @@ def calculate_calendar_year_returns(raw_data, original_periodicity, selected_per
 
 # Monthly view creation
 
-def create_monthly_view(raw_data, series_name, original_periodicity, selected_periodicity, returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+def create_monthly_view(dataset_key, series_name, original_periodicity, selected_periodicity, returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Create monthly view with Jan-Dec columns plus Year column."""
     # Use get_working_returns for data prep
-    working_df = get_working_returns(
-        raw_data, selected_periodicity or "daily", (series_name,),
+    working_df = get_working_returns_by_key(
+        dataset_key, selected_periodicity or "daily", (series_name,),
         mapping_payload_for_cache(benchmark_assignments),
         mapping_payload_for_cache(long_short_assignments),
         date_range_payload_for_cache(date_range),

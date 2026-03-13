@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from utils.returns import json_to_df
+from utils.raw_dataset import get_dataset_key, get_raw_dataset_df
 
 
 def get_existing_columns(raw_data) -> set[str]:
-    """Return existing series names from raw-data JSON payload."""
+    """Return existing series names from the shared raw-data store payload."""
     if not raw_data:
         return set()
     try:
-        return set(json_to_df(raw_data).columns)
+        dataset_key = get_dataset_key(raw_data)
+        if not dataset_key:
+            return set()
+        return set(get_raw_dataset_df(dataset_key).columns)
     except Exception:
         return set()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import cache_config
 from utils.core_categories import get_common_daily_range
-from utils.returns import resample_returns_cached
+from utils.returns import resample_returns_by_key
 
 
 _EMPTY_CANDIDATES = {
@@ -34,7 +34,7 @@ def _normalize_selected_series(selected_series) -> tuple[str, ...]:
 
 @cache_config.cache.memoize(timeout=0)
 def _compute_date_range_candidates_cached(
-    raw_data: str,
+    dataset_key: str | None,
     periodicity: str,
     selected_series: tuple[str, ...],
 ) -> dict:
@@ -43,10 +43,10 @@ def _compute_date_range_candidates_cached(
     This function is memoized so repeat callbacks with identical inputs reuse
     computed bounds instead of repeatedly slicing/resampling dataframes.
     """
-    if not raw_data or not selected_series:
+    if not dataset_key or not selected_series:
         return dict(_EMPTY_CANDIDATES)
 
-    df = resample_returns_cached(raw_data, periodicity or "daily")
+    df = resample_returns_by_key(dataset_key, periodicity or "daily")
     available_series = tuple(series for series in selected_series if series in df.columns)
     if not available_series or df.empty:
         return dict(_EMPTY_CANDIDATES)
@@ -66,14 +66,14 @@ def _compute_date_range_candidates_cached(
 
 @cache_config.cache.memoize(timeout=0)
 def _compute_common_daily_candidates_cached(
-    raw_data: str,
+    dataset_key: str | None,
     selected_series: tuple[str, ...],
 ) -> dict:
     """Compute reusable common-daily bounds separately from base range candidates."""
-    if not raw_data or not selected_series:
+    if not dataset_key or not selected_series:
         return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
 
-    daily_df = resample_returns_cached(raw_data, "daily_trading")
+    daily_df = resample_returns_by_key(dataset_key, "daily_trading")
     if daily_df.empty:
         return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
 
@@ -92,24 +92,24 @@ def _compute_common_daily_candidates_cached(
 
 
 def compute_date_range_candidates(
-    raw_data: str,
+    dataset_key: str | None,
     periodicity: str,
     selected_series: tuple[str, ...],
 ) -> dict:
     normalized_series = _normalize_selected_series(selected_series)
     return _compute_date_range_candidates_cached(
-        raw_data,
+        dataset_key,
         periodicity,
         normalized_series,
     )
 
 
 def compute_common_daily_candidates(
-    raw_data: str,
+    dataset_key: str | None,
     selected_series: tuple[str, ...],
 ) -> dict:
     normalized_series = _normalize_selected_series(selected_series)
-    return _compute_common_daily_candidates_cached(raw_data, normalized_series)
+    return _compute_common_daily_candidates_cached(dataset_key, normalized_series)
 
 
 def resolve_initial_range(candidates: dict, stored_range) -> tuple[str | None, str | None]:

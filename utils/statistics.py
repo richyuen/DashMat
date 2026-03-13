@@ -8,7 +8,13 @@ from scipy import stats
 
 import cache_config
 from utils.covariance import covariance_to_correlation, estimate_covariance_matrix
-from utils.returns import resample_returns_cached, get_working_returns, calculate_excess_returns, annualization_factor, is_daily
+from utils.returns import (
+    resample_returns_cached,
+    get_working_returns_by_key,
+    calculate_excess_returns,
+    annualization_factor,
+    is_daily,
+)
 from utils.serialization import (
     date_range_payload_for_cache,
     mapping_payload_for_cache,
@@ -532,7 +538,7 @@ def calculate_statistics(
 
 @cache_config.cache.memoize(timeout=0)
 def calculate_statistics_cached(
-    json_str: str,
+    dataset_key: str,
     periodicity: str,
     selected_series: tuple,
     benchmark_assignments: str,
@@ -546,8 +552,8 @@ def calculate_statistics_cached(
 ) -> list:
     """Calculate statistics for all selected series with caching."""
     # Use get_working_returns to get aligned data + benchmarks
-    df = get_working_returns(
-        json_str, periodicity, selected_series,
+    df = get_working_returns_by_key(
+        dataset_key, periodicity, selected_series,
         benchmark_assignments, long_short_assignments,
         date_range_str, vol_scaler, vol_scaling_assignments
     )
@@ -620,12 +626,12 @@ def calculate_statistics_cached(
 # Growth of $1 calculation
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+def calculate_growth_of_dollar(dataset_key, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate growth of $1 for Excel export with starting value of 1.0."""
     try:
         # Use get_working_returns
-        working_df = get_working_returns(
-            raw_data, periodicity or "daily", tuple(selected_series),
+        working_df = get_working_returns_by_key(
+            dataset_key, periodicity or "daily", tuple(selected_series),
             mapping_payload_for_cache(benchmark_assignments),
             mapping_payload_for_cache(long_short_assignments),
             date_range_payload_for_cache(date_range),
@@ -694,12 +700,12 @@ def calculate_growth_of_dollar(raw_data, periodicity, selected_series, benchmark
 # Drawdown calculation
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+def calculate_drawdown(dataset_key, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
     """Calculate drawdown for Excel export."""
     try:
         # Use get_working_returns
-        working_df = get_working_returns(
-            raw_data, periodicity or "daily", tuple(selected_series),
+        working_df = get_working_returns_by_key(
+            dataset_key, periodicity or "daily", tuple(selected_series),
             mapping_payload_for_cache(benchmark_assignments),
             mapping_payload_for_cache(long_short_assignments),
             date_range_payload_for_cache(date_range),
@@ -805,14 +811,14 @@ def calculate_drawdown(raw_data, periodicity, selected_series, returns_type, ben
 
 
 @cache_config.cache.memoize(timeout=0)
-def generate_correlogram_cached(json_str: str, periodicity: str, selected_series: tuple,
+def generate_correlogram_cached(dataset_key: str, periodicity: str, selected_series: tuple,
                                 returns_type: str, benchmark_assignments: str, long_short_assignments: str,
                                 date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "",
                                 exp_weighted: bool = False, decay_value: float = 63.0,
                                 shrinkage: str = "none", shrinkage_target: str = "scaled_identity"):
     """Generate correlogram with caching."""
     display_df = calculate_excess_returns(
-        json_str, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str,
+        dataset_key, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments, date_range_str,
         vol_scaler, vol_scaling_assignments
     )
 

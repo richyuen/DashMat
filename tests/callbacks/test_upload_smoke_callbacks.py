@@ -7,6 +7,12 @@ from types import SimpleNamespace
 import pandas as pd
 
 
+def _raw_json_value(value):
+    if isinstance(value, dict):
+        return value.get("raw_data_json", "")
+    return value
+
+
 def _as_multi_sheet_upload_payload() -> tuple[str, str]:
     s1 = pd.DataFrame(
         {
@@ -56,7 +62,7 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
         False,
         {},
     )
-    selected_df = pd.read_json(StringIO(selected_result[0]), orient="split")
+    selected_df = pd.read_json(StringIO(_raw_json_value(selected_result[0])), orient="split")
     selected_df.index = pd.to_datetime(selected_df.index)
     assert selected_result[1] == "daily"
     assert selected_result[7] == "green"
@@ -84,7 +90,7 @@ def test_analyticstool_sheet_callback_smoke_selected_and_all(monkeypatch, page_m
         False,
         {},
     )
-    all_df = pd.read_json(StringIO(all_result[0]), orient="split")
+    all_df = pd.read_json(StringIO(_raw_json_value(all_result[0])), orient="split")
     all_df.index = pd.to_datetime(all_df.index)
     assert all_result[1] == "daily"
     assert all_df.shape == (3, 1)
@@ -119,7 +125,7 @@ def test_portopt_sheet_callback_smoke_selected_and_all(monkeypatch, page_modules
         {},
         {},
     )
-    selected_df = pd.read_json(StringIO(selected_result[0]), orient="split")
+    selected_df = pd.read_json(StringIO(_raw_json_value(selected_result[0])), orient="split")
     selected_df.index = pd.to_datetime(selected_df.index)
     assert selected_result[1] == "daily"
     assert selected_result[7] == "green"
@@ -149,7 +155,7 @@ def test_portopt_sheet_callback_smoke_selected_and_all(monkeypatch, page_modules
         {},
         {},
     )
-    all_df = pd.read_json(StringIO(all_result[0]), orient="split")
+    all_df = pd.read_json(StringIO(_raw_json_value(all_result[0])), orient="split")
     all_df.index = pd.to_datetime(all_df.index)
     assert all_result[1] == "daily"
     assert all_df.shape == (3, 1)

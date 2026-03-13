@@ -11,6 +11,7 @@ import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
 
+from utils.raw_dataset import get_raw_dataset_df, resolve_dataset_key
 from utils.returns import build_raw_data_metadata, df_to_json
 
 
@@ -63,6 +64,12 @@ def _collect_component_text(node):
 
 def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
     return build_raw_data_metadata(raw_json, original_periodicity)
+
+
+def _raw_json_value(value):
+    if isinstance(value, dict):
+        return value.get("raw_data_json", "")
+    return value
 
 
 def _series_snapshot(rows: list[dict]) -> dict:
@@ -368,7 +375,7 @@ def test_po_get_monthly_attribution_uses_cached_working_return_path(monkeypatch,
     working_df.index = pd.to_datetime(working_df.index)
 
     bundle = portopt._build_po_working_bundle(raw_json, "daily", {}, {}, None, 0, {})
-    monkeypatch.setattr(portopt, "get_working_returns", lambda *_args, **_kwargs: working_df)
+    monkeypatch.setattr(portopt, "get_working_returns_by_key", lambda *_args, **_kwargs: working_df)
 
     monthly = portopt._po_get_monthly_attribution(
         bundle,
@@ -1757,7 +1764,11 @@ def test_po_render_statistics_uses_stored_portfolio_benchmark(monkeypatch, page_
     captured = {}
 
     def _fake_calculate_statistics_cached(raw_json, periodicity, selected_series, benchmark_assignments, *_args, **_kwargs):
-        captured["df"] = pd.read_json(StringIO(raw_json), orient="split")
+        dataset_key = resolve_dataset_key(raw_json)
+        if dataset_key and not str(raw_json).startswith("{"):
+            captured["df"] = get_raw_dataset_df(dataset_key)
+        else:
+            captured["df"] = pd.read_json(StringIO(raw_json), orient="split")
         captured["periodicity"] = periodicity
         captured["selected_series"] = selected_series
         captured["benchmark_assignments"] = benchmark_assignments
@@ -2036,7 +2047,7 @@ def test_po_save_series_aligns_month_end_and_updates_result(page_modules):
         {},
     )
 
-    df_after = pd.read_json(StringIO(new_raw), orient="split")
+    df_after = pd.read_json(StringIO(_raw_json_value(new_raw)), orient="split")
     df_after.index = pd.to_datetime(df_after.index)
     assert pd.Timestamp("1976-07-30") not in df_after.index
     assert pd.Timestamp("1976-07-31") in df_after.index
@@ -2167,7 +2178,7 @@ def test_po_get_window_risk_contributions_uses_cached_working_return_path(monkey
     working_df.index = pd.to_datetime(working_df.index)
 
     bundle = portopt._build_po_working_bundle(raw_json, "daily", {}, {}, None, 0, {})
-    monkeypatch.setattr(portopt, "get_working_returns", lambda *_args, **_kwargs: working_df)
+    monkeypatch.setattr(portopt, "get_working_returns_by_key", lambda *_args, **_kwargs: working_df)
     monkeypatch.setattr(
         portopt,
         "_compute_window_risk_contributions",
@@ -2691,7 +2702,7 @@ def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
         {},
     )
 
-    updated_df = pd.read_json(StringIO(result[7]), orient="split")
+    updated_df = pd.read_json(StringIO(_raw_json_value(result[7])), orient="split")
     assert list(updated_df.columns) == ["Asset_A"]
     assert result[12] == {}
 

@@ -6,7 +6,9 @@ import pytest
 from _pytest import pathlib as _pytest_pathlib
 
 import cache_config
+from utils.raw_dataset import clear_raw_dataset_cache
 from utils.returns import df_to_json
+from utils.raw_dataset import build_raw_data_store_payload
 
 
 # Sandbox environments can deny directory enumeration during tmpdir cleanup.
@@ -27,8 +29,10 @@ _pytest_pathlib.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
 @pytest.fixture(autouse=True)
 def _clear_cache_between_tests():
     cache_config.cache.clear()
+    clear_raw_dataset_cache()
     yield
     cache_config.cache.clear()
+    clear_raw_dataset_cache()
 
 
 @pytest.fixture(scope="session")
@@ -54,6 +58,11 @@ def sample_returns_df() -> pd.DataFrame:
 @pytest.fixture
 def raw_json(sample_returns_df: pd.DataFrame) -> str:
     return df_to_json(sample_returns_df)
+
+
+@pytest.fixture
+def raw_data_store(sample_returns_df: pd.DataFrame) -> dict:
+    return build_raw_data_store_payload(sample_returns_df)
 
 
 @pytest.fixture(scope="session")

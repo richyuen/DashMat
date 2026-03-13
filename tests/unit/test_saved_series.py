@@ -31,7 +31,7 @@ def test_save_series_to_raw_data_uses_base_name_on_first_save():
         series_type="portfolio",
     )
 
-    merged = json_to_df(out["raw_data"])
+    merged = json_to_df(out["raw_data"]["raw_data_json"])
     assert out["saved_name"] == "P1"
     assert out["action"] == "saved"
     assert "P1" in merged.columns
@@ -54,7 +54,7 @@ def test_save_series_to_raw_data_suffixes_on_first_collision():
         series_type="predicted",
     )
 
-    merged = json_to_df(out["raw_data"])
+    merged = json_to_df(out["raw_data"]["raw_data_json"])
     assert out["saved_name"] == "P1_1"
     assert out["action"] == "saved"
     assert "P1_1" in merged.columns
@@ -77,7 +77,7 @@ def test_save_series_to_raw_data_overwrites_prior_saved_name_idempotently():
         prior_saved_name="P1",
     )
 
-    merged = json_to_df(out["raw_data"])
+    merged = json_to_df(out["raw_data"]["raw_data_json"])
     assert out["saved_name"] == "P1"
     assert out["action"] == "overwritten"
     assert merged["P1"].tolist() == pytest.approx([0.1, 0.2, 0.3])
@@ -104,7 +104,7 @@ def test_save_series_to_raw_data_aligns_monthly_series_to_month_end():
         series_type="portfolio",
     )
 
-    merged = json_to_df(out["raw_data"])
+    merged = json_to_df(out["raw_data"]["raw_data_json"])
     assert pd.Timestamp("1976-07-31") in merged.index
     assert pd.Timestamp("1976-07-30") not in merged.index
     assert merged.index.is_month_end.all()

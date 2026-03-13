@@ -69,6 +69,12 @@ def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
     return build_raw_data_metadata(raw_json, original_periodicity)
 
 
+def _raw_json_value(value):
+    if isinstance(value, dict):
+        return value.get("raw_data_json", "")
+    return value
+
+
 def _series_snapshot(rows: list[dict]) -> dict:
     return {"rows": rows, "capturedAt": 1}
 
@@ -1228,7 +1234,7 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
     out_periodicity = result[1]
     out_default_periodicity = result[3]
 
-    out_df = pd.read_json(StringIO(out_json), orient="split")
+    out_df = pd.read_json(StringIO(_raw_json_value(out_json)), orient="split")
     out_df.index = pd.to_datetime(out_df.index)
 
     assert out_periodicity == "monthly"
@@ -1452,6 +1458,7 @@ def test_prepare_factor_analysis_frames_uses_factor_total_basis(monkeypatch, pag
 
     monkeypatch.setattr(analyticstool, "calculate_excess_returns", _fake_excess)
     monkeypatch.setattr(analyticstool, "get_working_returns", _fake_working)
+    monkeypatch.setattr(analyticstool, "get_working_returns_by_key", _fake_working)
 
     dep_out, factor_out = analyticstool._prepare_factor_analysis_frames(
         "raw-json",
@@ -1480,6 +1487,18 @@ def test_compute_selected_returns_preserves_selected_order_for_total_basis(monke
     monkeypatch.setattr(
         analyticstool,
         "get_working_returns",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {
+                "Bench_X": [0.0, 0.0, 0.0],
+                "Asset_B": [0.03, 0.02, 0.01],
+                "Asset_A": [0.01, 0.00, -0.01],
+            },
+            index=idx,
+        ),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "get_working_returns_by_key",
         lambda *_args, **_kwargs: pd.DataFrame(
             {
                 "Bench_X": [0.0, 0.0, 0.0],
@@ -1885,8 +1904,7 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
 
     monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
-    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
-    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "get_working_returns_by_key", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(
         analyticstool,
         "calculate_statistics_cached",
@@ -2019,6 +2037,7 @@ def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeyp
 
     monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "get_working_returns_by_key", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(
         analyticstool,
         "calculate_statistics_cached",
