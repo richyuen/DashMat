@@ -1810,6 +1810,39 @@ def test_compute_conditional_returns_cached_builds_coincident_and_forward_frames
     assert payload.factor_label.endswith("(Z-Score)")
 
 
+def test_compute_conditional_core_cached_builds_window_artifacts(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    core = analyticstool._compute_conditional_core_cached(
+        raw_json,
+        "daily_trading",
+        ("Asset_B", "Asset_C"),
+        "total",
+        analyticstool._mapping_payload({}),
+        analyticstool._mapping_payload({}),
+        analyticstool._date_range_payload({"start": "2023-01-02", "end": "2024-03-31"}),
+        0,
+        analyticstool._mapping_payload({}),
+        "raw::Asset_A",
+        "zscore",
+        "",
+        "le",
+        0.0,
+        "compound",
+        1,
+        "months",
+    )
+
+    assert core.window_labels == ("1W", "1M", "3M", "6M", "9M", "12M")
+    assert core.factor_label.endswith("(Z-Score)")
+    assert len(core.anchor_index) > 0
+    assert "1W" in core.factor_windows
+    assert "1W" in core.qualified_masks
+    assert {"Asset_B", "Asset_C"}.issubset(core.coincident_series_windows["1W"])
+    assert {"1W", "1M"}.issubset(core.forward_series_windows["Asset_B"])
+    assert core.forward_row_count > core.coincident_row_count > 0
+
+
 def test_compute_conditional_returns_cached_builds_detail_frames_when_requested(page_modules, raw_json):
     analyticstool, _ = page_modules
 

@@ -357,6 +357,20 @@ class _ConditionalReturnsPayload:
 
 
 @dataclass(frozen=True)
+class _ConditionalCoreArtifacts:
+    factor_label: str
+    factor_display_name: str
+    window_labels: tuple[str, ...]
+    anchor_index: pd.DatetimeIndex
+    factor_windows: dict[str, pd.Series]
+    qualified_masks: dict[str, pd.Series]
+    coincident_series_windows: dict[str, dict[str, pd.Series]]
+    forward_series_windows: dict[str, dict[str, pd.Series]]
+    coincident_row_count: int
+    forward_row_count: int
+
+
+@dataclass(frozen=True)
 class _ExcelSheetSpec:
     name: str
     frame: pd.DataFrame
@@ -1693,6 +1707,21 @@ def _empty_conditional_returns_payload() -> _ConditionalReturnsPayload:
     )
 
 
+def _empty_conditional_core_artifacts() -> _ConditionalCoreArtifacts:
+    return _ConditionalCoreArtifacts(
+        factor_label="",
+        factor_display_name="",
+        window_labels=(),
+        anchor_index=pd.DatetimeIndex([]),
+        factor_windows={},
+        qualified_masks={},
+        coincident_series_windows={},
+        forward_series_windows={},
+        coincident_row_count=0,
+        forward_row_count=0,
+    )
+
+
 def _estimate_conditional_detail_row_counts(
     index: pd.DatetimeIndex,
     periodicity: str,
@@ -1753,53 +1782,110 @@ def _estimate_conditional_detail_rows_cached(
     return _estimate_conditional_detail_row_counts(master_index, periodicity, step_value, step_unit)
 
 
-def _build_conditional_summary_frames_from_detail(
-    detail_df: pd.DataFrame,
-    window_labels: list[str],
+def _build_conditional_summary_frames_from_core(
+    core: _ConditionalCoreArtifacts,
     series_names: tuple[str, ...],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    window_labels = list(core.window_labels)
     mean_df = pd.DataFrame(index=window_labels, columns=list(series_names), dtype=float)
     count_df = pd.DataFrame(index=window_labels, columns=list(series_names), dtype=float)
-    if detail_df is None or detail_df.empty:
+    if not window_labels:
         return mean_df, count_df.fillna(0.0)
 
-    qualified = detail_df.loc[detail_df["Condition Met"] == True]
-    if qualified.empty:
-        return mean_df, count_df.fillna(0.0)
+    for label in window_labels:
+        qualified = core.qualified_masks.get(label)
+        if qualified is None or qualified.empty:
+            continue
+        for series_name in series_names:
+            series_window = core.coincident_series_windows.get(label, {}).get(series_name)
+            if series_window is None or series_window.empty:
+                continue
+            selected_mask = qualified & series_window.notna()
+            mean_df.loc[label, series_name] = series_window[selected_mask].mean() if selected_mask.any() else np.nan
+            count_df.loc[label, series_name] = int(selected_mask.sum())
 
-    for series_name in series_names:
-        if series_name not in qualified.columns:
-            continue
-        grouped = qualified.groupby("Lookback", observed=False)[series_name].agg(["mean", "count"])
-        if grouped.empty:
-            continue
-        mean_df.loc[grouped.index, series_name] = grouped["mean"].astype(float)
-        count_df.loc[grouped.index, series_name] = grouped["count"].astype(float)
     return mean_df, count_df.fillna(0.0)
 
 
-def _build_conditional_forward_summary_from_detail(
-    detail_df: pd.DataFrame,
-    window_labels: list[str],
+def _build_conditional_forward_summary_from_core(
+    core: _ConditionalCoreArtifacts,
     series_names: tuple[str, ...],
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    window_labels = list(core.window_labels)
     mean_by_series: dict[str, pd.DataFrame] = {}
     count_by_series: dict[str, pd.DataFrame] = {}
-    qualified = detail_df.loc[detail_df["Condition Met"] == True] if detail_df is not None and not detail_df.empty else pd.DataFrame()
 
     for series_name in series_names:
         mean_df = pd.DataFrame(index=window_labels, columns=window_labels, dtype=float)
         count_df = pd.DataFrame(index=window_labels, columns=window_labels, dtype=float)
-        if not qualified.empty and series_name in qualified.columns:
-            grouped = qualified.groupby(["Lookback", "Forward Period"], observed=False)[series_name].agg(["mean", "count"])
-            if not grouped.empty:
-                mean_pivot = grouped["mean"].unstack("Forward Period")
-                count_pivot = grouped["count"].unstack("Forward Period")
-                mean_df.loc[mean_pivot.index, mean_pivot.columns] = mean_pivot.astype(float)
-                count_df.loc[count_pivot.index, count_pivot.columns] = count_pivot.astype(float)
+        forward_windows = core.forward_series_windows.get(series_name, {})
+        for back_label in window_labels:
+            qualified = core.qualified_masks.get(back_label)
+            if qualified is None or qualified.empty:
+                continue
+            for horizon_label in window_labels:
+                forward_window = forward_windows.get(horizon_label)
+                if forward_window is None or forward_window.empty:
+                    continue
+                selected_mask = qualified & forward_window.notna()
+                mean_df.loc[back_label, horizon_label] = (
+                    forward_window[selected_mask].mean() if selected_mask.any() else np.nan
+                )
+                count_df.loc[back_label, horizon_label] = int(selected_mask.sum())
         mean_by_series[series_name] = mean_df
         count_by_series[series_name] = count_df.fillna(0.0)
+
     return mean_by_series, count_by_series
+
+
+def _build_conditional_detail_frames_from_core(
+    core: _ConditionalCoreArtifacts,
+    series_names: tuple[str, ...],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not core.window_labels or core.anchor_index.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    anchor_index = core.anchor_index
+    coincident_detail_frames: list[pd.DataFrame] = []
+    forward_detail_frames: list[pd.DataFrame] = []
+
+    for label in core.window_labels:
+        factor_window = core.factor_windows.get(label, pd.Series(dtype=float))
+        qualified = core.qualified_masks.get(label, pd.Series(dtype=bool))
+        base_frame = pd.DataFrame(
+            {
+                "End Date": anchor_index,
+                "Lookback": label,
+                "Factor Value": factor_window.reindex(anchor_index).to_numpy(dtype=float, copy=False),
+                "Condition Met": qualified.reindex(anchor_index).fillna(False).to_numpy(dtype=bool, copy=False),
+            }
+        )
+        for series_name in series_names:
+            series_window = core.coincident_series_windows.get(label, {}).get(series_name)
+            if series_window is not None:
+                base_frame[series_name] = series_window.reindex(anchor_index).to_numpy(dtype=float, copy=False)
+        coincident_detail_frames.append(base_frame)
+
+        for horizon_label in core.window_labels:
+            forward_frame = base_frame.copy()
+            forward_frame.insert(2, "Forward Period", horizon_label)
+            for series_name in series_names:
+                forward_window = core.forward_series_windows.get(series_name, {}).get(horizon_label)
+                if forward_window is not None:
+                    forward_frame[series_name] = forward_window.reindex(anchor_index).to_numpy(dtype=float, copy=False)
+            forward_detail_frames.append(forward_frame)
+
+    coincident_detail_df = _order_conditional_detail_frame(
+        pd.concat(coincident_detail_frames, ignore_index=True, sort=False) if coincident_detail_frames else pd.DataFrame(),
+        list(core.window_labels),
+        include_forward=False,
+    )
+    forward_detail_df = _order_conditional_detail_frame(
+        pd.concat(forward_detail_frames, ignore_index=True, sort=False) if forward_detail_frames else pd.DataFrame(),
+        list(core.window_labels),
+        include_forward=True,
+    )
+    return coincident_detail_df, forward_detail_df
 
 
 def _order_conditional_detail_frame(
@@ -1834,7 +1920,7 @@ def _order_conditional_detail_frame(
 
 
 @cache_config.cache.memoize(timeout=0)
-def _compute_conditional_returns_cached(
+def _compute_conditional_core_cached(
     raw_data: str,
     periodicity: str,
     selected_series: tuple,
@@ -1852,8 +1938,7 @@ def _compute_conditional_returns_cached(
     window_conversion: str,
     step_value: int,
     step_unit: str,
-    include_detail: bool = False,
-) -> _ConditionalReturnsPayload:
+) -> _ConditionalCoreArtifacts:
     factor_definitions_local = None
     if factor_definition_payload:
         try:
@@ -1878,7 +1963,7 @@ def _compute_conditional_returns_cached(
 
     factor_values = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
     if dependent_df.empty or factor_values.empty:
-        return _empty_conditional_returns_payload()
+        return _empty_conditional_core_artifacts()
 
     _factor_prefix, factor_name = _split_factor_select_key(factor_series)
     display_factor_name = factor_name if factor_name else str(factor_series or "")
@@ -1889,14 +1974,10 @@ def _compute_conditional_returns_cached(
     factor_aligned = factor_values.reindex(master_index)
 
     window_specs = _conditional_window_specs(periodicity or "daily")
-    window_labels = [str(spec["label"]) for spec in window_specs]
+    window_labels = tuple(str(spec["label"]) for spec in window_specs)
     anchor_positions = _resolve_conditional_anchor_positions(master_index, step_value, step_unit)
+    anchor_index = master_index[anchor_positions]
     threshold_value = float(pd.to_numeric(pd.Series([threshold]), errors="coerce").iloc[0] or 0.0)
-
-    coincident_mean = pd.DataFrame(index=window_labels, columns=list(selected_series), dtype=float)
-    coincident_count = pd.DataFrame(index=window_labels, columns=list(selected_series), dtype=float)
-    forward_mean_by_series: dict[str, pd.DataFrame] = {}
-    forward_count_by_series: dict[str, pd.DataFrame] = {}
 
     qualified_masks: dict[str, pd.Series] = {}
     factor_windows: dict[str, pd.Series] = {}
@@ -1928,16 +2009,9 @@ def _compute_conditional_returns_cached(
             series_window = _aggregate_window_values(series_values, start_pos, end_pos, valid_mask, "compound")
             coincident_series_windows[label][series_name] = series_window
 
-            if not include_detail:
-                selected_mask = qualified & series_window.notna()
-                coincident_mean.loc[label, series_name] = series_window[selected_mask].mean() if selected_mask.any() else np.nan
-                coincident_count.loc[label, series_name] = int(selected_mask.sum())
-
     for series_name in selected_series:
         if series_name not in dependent_aligned.columns:
             continue
-        mean_df = pd.DataFrame(index=window_labels, columns=window_labels, dtype=float)
-        count_df = pd.DataFrame(index=mean_df.index, columns=mean_df.columns, dtype=float)
         series_values = dependent_aligned[series_name]
 
         for horizon_spec in window_specs:
@@ -1945,99 +2019,90 @@ def _compute_conditional_returns_cached(
             series_window = _aggregate_window_values(series_values, start_pos, end_pos, valid_mask, "compound")
             forward_series_windows.setdefault(series_name, {})[str(horizon_spec["label"])] = series_window
 
-        if not include_detail:
-            for back_spec in window_specs:
-                qualified = qualified_masks[str(back_spec["label"])]
-                for horizon_spec in window_specs:
-                    forward_window = forward_series_windows[series_name][str(horizon_spec["label"])]
-                    selected_mask = qualified & forward_window.notna()
-                    mean_df.loc[str(back_spec["label"]), str(horizon_spec["label"])] = (
-                        forward_window[selected_mask].mean() if selected_mask.any() else np.nan
-                    )
-                    count_df.loc[str(back_spec["label"]), str(horizon_spec["label"])] = int(selected_mask.sum())
-
-        forward_mean_by_series[series_name] = mean_df
-        forward_count_by_series[series_name] = count_df
-
     coincident_rows, forward_rows = _estimate_conditional_detail_row_counts(
         master_index,
         periodicity,
         step_value,
         step_unit,
     )
-    if not include_detail:
-        return _ConditionalReturnsPayload(
-            factor_label=factor_label,
-            factor_display_name=display_factor_name,
-            coincident_mean_df=coincident_mean,
-            coincident_count_df=coincident_count.fillna(0.0),
-            forward_mean_by_series=forward_mean_by_series,
-            forward_count_by_series={k: v.fillna(0.0) for k, v in forward_count_by_series.items()},
-            coincident_detail_df=pd.DataFrame(),
-            forward_detail_df=pd.DataFrame(),
-            coincident_row_count=coincident_rows,
-            forward_row_count=forward_rows,
-        )
 
-    anchor_index = master_index[anchor_positions]
-    coincident_detail_frames: list[pd.DataFrame] = []
-    forward_detail_frames: list[pd.DataFrame] = []
-
-    for label in window_labels:
-        base_frame = pd.DataFrame(
-            {
-                "End Date": anchor_index,
-                "Lookback": label,
-                "Factor Value": factor_windows[label].iloc[anchor_positions].to_numpy(dtype=float, copy=False),
-                "Condition Met": qualified_masks[label].iloc[anchor_positions].fillna(False).to_numpy(dtype=bool, copy=False),
-            }
-        )
-        for series_name in selected_series:
-            if series_name in coincident_series_windows[label]:
-                base_frame[series_name] = coincident_series_windows[label][series_name].iloc[anchor_positions].to_numpy(dtype=float, copy=False)
-        coincident_detail_frames.append(base_frame)
-
-        for horizon_label in window_labels:
-            forward_frame = base_frame.copy()
-            forward_frame.insert(2, "Forward Period", horizon_label)
-            for series_name in selected_series:
-                forward_windows = forward_series_windows.get(series_name, {})
-                if horizon_label in forward_windows:
-                    forward_frame[series_name] = forward_windows[horizon_label].iloc[anchor_positions].to_numpy(dtype=float, copy=False)
-            forward_detail_frames.append(forward_frame)
-
-    coincident_detail_df = _order_conditional_detail_frame(
-        pd.concat(coincident_detail_frames, ignore_index=True, sort=False) if coincident_detail_frames else pd.DataFrame(),
-        window_labels,
-        include_forward=False,
-    )
-    forward_detail_df = _order_conditional_detail_frame(
-        pd.concat(forward_detail_frames, ignore_index=True, sort=False) if forward_detail_frames else pd.DataFrame(),
-        window_labels,
-        include_forward=True,
-    )
-    coincident_mean, coincident_count = _build_conditional_summary_frames_from_detail(
-        coincident_detail_df,
-        window_labels,
-        tuple(selected_series or ()),
-    )
-    forward_mean_by_series, forward_count_by_series = _build_conditional_forward_summary_from_detail(
-        forward_detail_df,
-        window_labels,
-        tuple(selected_series or ()),
-    )
-
-    return _ConditionalReturnsPayload(
+    return _ConditionalCoreArtifacts(
         factor_label=factor_label,
         factor_display_name=display_factor_name,
+        window_labels=window_labels,
+        anchor_index=anchor_index,
+        factor_windows=factor_windows,
+        qualified_masks=qualified_masks,
+        coincident_series_windows=coincident_series_windows,
+        forward_series_windows=forward_series_windows,
+        coincident_row_count=coincident_rows,
+        forward_row_count=forward_rows,
+    )
+
+
+@cache_config.cache.memoize(timeout=0)
+def _compute_conditional_returns_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple,
+    returns_type: str,
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    factor_series: str,
+    factor_transform: str,
+    factor_definition_payload: str,
+    comparator: str,
+    threshold: float,
+    window_conversion: str,
+    step_value: int,
+    step_unit: str,
+    include_detail: bool = False,
+) -> _ConditionalReturnsPayload:
+    core = _compute_conditional_core_cached(
+        raw_data,
+        periodicity,
+        selected_series,
+        returns_type,
+        benchmark_payload,
+        long_short_payload,
+        date_range_payload,
+        vol_scaler,
+        vol_scaling_payload,
+        factor_series,
+        factor_transform,
+        factor_definition_payload,
+        comparator,
+        threshold,
+        window_conversion,
+        step_value,
+        step_unit,
+    )
+    if not core.window_labels:
+        return _empty_conditional_returns_payload()
+
+    selected_tuple = tuple(selected_series or ())
+    coincident_mean, coincident_count = _build_conditional_summary_frames_from_core(core, selected_tuple)
+    forward_mean_by_series, forward_count_by_series = _build_conditional_forward_summary_from_core(core, selected_tuple)
+
+    coincident_detail_df = pd.DataFrame()
+    forward_detail_df = pd.DataFrame()
+    if include_detail:
+        coincident_detail_df, forward_detail_df = _build_conditional_detail_frames_from_core(core, selected_tuple)
+
+    return _ConditionalReturnsPayload(
+        factor_label=core.factor_label,
+        factor_display_name=core.factor_display_name,
         coincident_mean_df=coincident_mean,
         coincident_count_df=coincident_count,
         forward_mean_by_series=forward_mean_by_series,
         forward_count_by_series=forward_count_by_series,
         coincident_detail_df=coincident_detail_df,
         forward_detail_df=forward_detail_df,
-        coincident_row_count=coincident_rows,
-        forward_row_count=forward_rows,
+        coincident_row_count=core.coincident_row_count,
+        forward_row_count=core.forward_row_count,
     )
 
 
