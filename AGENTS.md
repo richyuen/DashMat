@@ -171,5 +171,6 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - If you need to compare two commits side by side, run the app on separate ports instead of editing `app.py`. A reliable pattern is `conda run -n dashmat python -c "import app; app.app.run(port=8051)"`.
 - Fresh git worktrees may have missing or zero-byte SQLite files under `data/`. Validate or rebuild the local seed DBs before starting DB-backed browser runs.
 - For side-by-side A/B comparisons, be explicit about which repo root owns the app process, DB files, and output artifacts. Launch the app after that repo root's seed DBs are valid.
+- If a baseline worktree is missing the same local DB contents as the target repo, browser A/B results are contaminated. Before comparing DB-backed flows, verify matching non-zero `data/` files in both worktrees or copy the local seed DBs explicitly.
 - The warm-switch harness currently accepts runs that may include browser console callback errors. Treat single-run results cautiously and prefer repeated A/B runs before concluding that a small regression is real.
 - AG Grid treats dotted column `field` names as nested object paths by default. For result grids that use literal series names as fields, set `dashGridOptions.suppressFieldDotNotation = True` instead of renaming the series.
