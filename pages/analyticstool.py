@@ -356,6 +356,22 @@ class _ConditionalReturnsPayload:
     forward_row_count: int
 
 
+@dataclass(frozen=True)
+class _ExcelSheetSpec:
+    name: str
+    frame: pd.DataFrame
+    write_index: bool = False
+    format_index: bool = False
+
+
+@dataclass(frozen=True)
+class _AnalyticsExportArtifacts:
+    returns_df: pd.DataFrame
+    stats_df: pd.DataFrame
+    corr_df: pd.DataFrame
+    cov_df: pd.DataFrame
+
+
 def _build_analytics_compute_bundle(
     raw_data,
     periodicity,
@@ -10126,6 +10142,311 @@ def _build_conditional_detail_export_frame(detail_df: pd.DataFrame, include_forw
     return detail_df.copy()
 
 
+def _build_statistics_export_frame(stats: list[dict]) -> pd.DataFrame:
+    stats_data = {"Statistic": [stat_name for stat_name, _ in STATS_CONFIG]}
+    for series_stats in stats:
+        series_name = series_stats["Series"]
+        stats_data[series_name] = [series_stats.get(stat_name) for stat_name, _ in STATS_CONFIG]
+    return pd.DataFrame(stats_data)
+
+
+def _compute_analytics_export_artifacts(
+    bundle: _AnalyticsComputeBundle,
+    returns_type,
+    use_risk_free,
+    saved_series_store,
+    correlation_exp_wt,
+    correlation_halflife,
+    correlation_shrinkage,
+    correlation_shrinkage_target,
+) -> _AnalyticsExportArtifacts:
+    with timed_block("analyticstool.download_excel.returns"):
+        returns_df = _compute_selected_returns_cached(
+            bundle.raw_data,
+            bundle.periodicity,
+            bundle.selected_series,
+            returns_type or "total",
+            bundle.benchmark_payload,
+            bundle.long_short_payload,
+            bundle.date_range_payload,
+            bundle.vol_scaler,
+            bundle.vol_scaling_payload,
+        )
+
+    if returns_df.empty:
+        return _AnalyticsExportArtifacts(
+            returns_df=pd.DataFrame(),
+            stats_df=pd.DataFrame(),
+            corr_df=pd.DataFrame(),
+            cov_df=pd.DataFrame(),
+        )
+
+    with timed_block("analyticstool.download_excel.statistics"):
+        stats = calculate_statistics_cached(
+            bundle.raw_data,
+            bundle.periodicity,
+            bundle.selected_series,
+            bundle.benchmark_payload,
+            bundle.long_short_payload,
+            bundle.date_range_payload,
+            bundle.vol_scaler,
+            bundle.vol_scaling_payload,
+            _risk_free_json_from_store(saved_series_store),
+            _spx_json_from_store(saved_series_store),
+            bool(use_risk_free),
+        )
+    stats_df = _build_statistics_export_frame(stats)
+
+    effective_corr_shrinkage, effective_corr_target = resolve_cov_shrinkage_spec(
+        correlation_shrinkage,
+        correlation_shrinkage_target,
+        exp_weighted=bool(correlation_exp_wt),
+    )
+    try:
+        matrix_result = generate_correlogram_cached(
+            bundle.raw_data,
+            bundle.periodicity,
+            bundle.selected_series,
+            returns_type,
+            bundle.benchmark_payload,
+            bundle.long_short_payload,
+            bundle.date_range_payload,
+            bundle.vol_scaler,
+            bundle.vol_scaling_payload,
+            bool(correlation_exp_wt),
+            normalize_decay_input(correlation_halflife, 63.0),
+            effective_corr_shrinkage,
+            effective_corr_target,
+        )
+    except ValueError:
+        matrix_result = None
+
+    if matrix_result is not None:
+        corr_df = matrix_result["corr_matrix"]
+        cov_df = matrix_result["cov_matrix"]
+    else:
+        corr_df = returns_df.corr()
+        cov_df = returns_df.cov()
+    corr_df.index.name = "Series"
+    cov_df.index.name = "Series"
+
+    return _AnalyticsExportArtifacts(
+        returns_df=returns_df,
+        stats_df=stats_df,
+        corr_df=corr_df,
+        cov_df=cov_df,
+    )
+
+
+def _build_rolling_export_sheet(
+    bundle: _AnalyticsComputeBundle,
+    returns_type,
+    rolling_window,
+    rolling_return_type,
+) -> _ExcelSheetSpec | None:
+    try:
+        with timed_block("analyticstool.download_excel.rolling"):
+            window = rolling_window if rolling_window else "1y"
+            return_type = rolling_return_type if rolling_return_type else "annualized"
+
+            rolling_df = calculate_rolling_returns(
+                bundle.raw_data,
+                bundle.periodicity,
+                bundle.selected_series,
+                returns_type,
+                bundle.benchmark_payload,
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                window,
+                return_type,
+                "total_return",
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
+            )
+            if rolling_df.empty:
+                return None
+
+            window_label_map = {
+                "3m": "3M",
+                "6m": "6M",
+                "1y": "1Y",
+                "3y": "3Y",
+                "5y": "5Y",
+                "10y": "10Y",
+            }
+            window_label = window_label_map.get(window, "1Y")
+            type_label = "Ann" if return_type == "annualized" else "Cum"
+            sheet_name = f"Rolling ({window_label} {type_label})"
+            return _ExcelSheetSpec(
+                name=sheet_name,
+                frame=rolling_df,
+                write_index=True,
+                format_index=True,
+            )
+    except Exception:
+        return None
+
+
+def _build_calendar_export_sheet(
+    bundle: _AnalyticsComputeBundle,
+    original_periodicity,
+    returns_type,
+    monthly_view,
+    monthly_series,
+) -> _ExcelSheetSpec | None:
+    if original_periodicity not in {"daily", "monthly"}:
+        return None
+
+    try:
+        with timed_block("analyticstool.download_excel.calendar"):
+            if monthly_view == "monthly" and monthly_series and monthly_series in bundle.selected_series:
+                _, row_data = create_monthly_view(
+                    bundle.raw_data,
+                    monthly_series,
+                    original_periodicity,
+                    bundle.periodicity,
+                    returns_type,
+                    bundle.benchmark_payload,
+                    bundle.long_short_payload,
+                    bundle.selected_series,
+                    bundle.date_range_payload,
+                    bundle.vol_scaler,
+                    bundle.vol_scaling_payload,
+                )
+
+                if not row_data:
+                    return None
+
+                calendar_df = pd.DataFrame(row_data).set_index("Year_Label")
+                calendar_df.index.name = "Year"
+            else:
+                calendar_df = calculate_calendar_year_returns(
+                    bundle.raw_data,
+                    original_periodicity,
+                    bundle.periodicity,
+                    bundle.selected_series,
+                    returns_type,
+                    bundle.benchmark_payload,
+                    bundle.long_short_payload,
+                    bundle.date_range_payload,
+                    bundle.vol_scaler,
+                    bundle.vol_scaling_payload,
+                )
+                if calendar_df.empty:
+                    return None
+
+            return _ExcelSheetSpec(
+                name="Calendar Year",
+                frame=calendar_df,
+                write_index=True,
+                format_index=True,
+            )
+    except Exception:
+        return None
+
+
+def _build_growth_export_sheet(bundle: _AnalyticsComputeBundle) -> _ExcelSheetSpec | None:
+    try:
+        with timed_block("analyticstool.download_excel.growth"):
+            growth_df = calculate_growth_of_dollar(
+                bundle.raw_data,
+                bundle.periodicity,
+                bundle.selected_series,
+                bundle.benchmark_payload,
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
+            )
+            if growth_df.empty:
+                return None
+            return _ExcelSheetSpec(
+                name="Growth of $1",
+                frame=growth_df,
+                write_index=True,
+                format_index=True,
+            )
+    except Exception:
+        return None
+
+
+def _build_drawdown_export_sheet(bundle: _AnalyticsComputeBundle, returns_type) -> _ExcelSheetSpec | None:
+    try:
+        with timed_block("analyticstool.download_excel.drawdown"):
+            drawdown_df = calculate_drawdown(
+                bundle.raw_data,
+                bundle.periodicity,
+                bundle.selected_series,
+                returns_type,
+                bundle.benchmark_payload,
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
+            )
+            if drawdown_df.empty:
+                return None
+            return _ExcelSheetSpec(
+                name="Drawdown",
+                frame=drawdown_df,
+                write_index=True,
+                format_index=True,
+            )
+    except Exception:
+        return None
+
+
+def _build_core_export_sheets(
+    bundle: _AnalyticsComputeBundle,
+    original_periodicity,
+    returns_type,
+    rolling_window,
+    rolling_return_type,
+    monthly_view,
+    monthly_series,
+    use_risk_free,
+    correlation_exp_wt,
+    correlation_halflife,
+    correlation_shrinkage,
+    correlation_shrinkage_target,
+    saved_series_store,
+) -> list[_ExcelSheetSpec]:
+    artifacts = _compute_analytics_export_artifacts(
+        bundle,
+        returns_type,
+        use_risk_free,
+        saved_series_store,
+        correlation_exp_wt,
+        correlation_halflife,
+        correlation_shrinkage,
+        correlation_shrinkage_target,
+    )
+    if artifacts.returns_df.empty:
+        return []
+
+    sheets = [
+        _ExcelSheetSpec(name="Statistics", frame=artifacts.stats_df, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Returns", frame=artifacts.returns_df, write_index=True, format_index=True),
+    ]
+
+    for optional_sheet in (
+        _build_rolling_export_sheet(bundle, returns_type, rolling_window, rolling_return_type),
+        _build_calendar_export_sheet(bundle, original_periodicity, returns_type, monthly_view, monthly_series),
+        _build_growth_export_sheet(bundle),
+        _build_drawdown_export_sheet(bundle, returns_type),
+    ):
+        if optional_sheet is not None:
+            sheets.append(optional_sheet)
+
+    sheets.extend(
+        [
+            _ExcelSheetSpec(name="Correlation", frame=artifacts.corr_df, write_index=True, format_index=True),
+            _ExcelSheetSpec(name="Covariance", frame=artifacts.cov_df, write_index=True, format_index=True),
+        ]
+    )
+    return sheets
+
+
 def _build_factor_export_sheets(
     bundle: _AnalyticsComputeBundle,
     returns_type,
@@ -10138,7 +10459,7 @@ def _build_factor_export_sheets(
     factor_transform,
     factor_definitions_db,
     factor_definitions_local,
-) -> list[tuple[str, pd.DataFrame, bool]]:
+) -> list[_ExcelSheetSpec]:
     if not factor_series:
         return []
 
@@ -10198,9 +10519,9 @@ def _build_factor_export_sheets(
         detail_df = pd.DataFrame([{"Note": "No overlapping observations for factor detail."}])
 
     return [
-        ("Factor Analysis - Box", box_df, False),
-        ("Factor Analysis - Scatter", scatter_df, False),
-        ("Factor Analysis - Detail", detail_df, False),
+        _ExcelSheetSpec(name="Factor Analysis - Box", frame=box_df, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Factor Analysis - Scatter", frame=scatter_df, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Factor Analysis - Detail", frame=detail_df, write_index=False, format_index=False),
     ]
 
 
@@ -10216,7 +10537,7 @@ def _build_conditional_export_sheets(
     conditional_step_unit,
     factor_definitions_db,
     factor_definitions_local,
-) -> list[tuple[str, pd.DataFrame, bool]]:
+) -> list[_ExcelSheetSpec]:
     if not factor_series:
         return []
 
@@ -10272,10 +10593,10 @@ def _build_conditional_export_sheets(
     )
 
     return [
-        ("Conditional Coincident", coincident_export_df, False),
-        ("Conditional Forward", forward_export_df, False),
-        ("Cond Coincident Detail", coincident_detail_export_df, False),
-        ("Cond Forward Detail", forward_detail_export_df, False),
+        _ExcelSheetSpec(name="Conditional Coincident", frame=coincident_export_df, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Conditional Forward", frame=forward_export_df, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Cond Coincident Detail", frame=coincident_detail_export_df, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Cond Forward Detail", frame=forward_detail_export_df, write_index=False, format_index=False),
     ]
 
 
@@ -10290,7 +10611,7 @@ def _build_regime_export_sheets(
     regime_definitions_db,
     regime_definitions_local,
     regime_series_store,
-) -> list[tuple[str, pd.DataFrame, bool]]:
+) -> list[_ExcelSheetSpec]:
     if not regime_definition_key:
         return []
 
@@ -10340,12 +10661,135 @@ def _build_regime_export_sheets(
         )
 
     return [
-        ("Regime - Settings", regime_payload.settings_df, False),
-        ("Regime - Statistics", stats_df_regime, False),
-        ("Regime - Detail", detail_out, False),
-        ("Regime - Transition", transition_out, False),
-        ("Regime - Duration", duration_out, False),
+        _ExcelSheetSpec(name="Regime - Settings", frame=regime_payload.settings_df, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Regime - Statistics", frame=stats_df_regime, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Regime - Detail", frame=detail_out, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Regime - Transition", frame=transition_out, write_index=False, format_index=False),
+        _ExcelSheetSpec(name="Regime - Duration", frame=duration_out, write_index=False, format_index=False),
     ]
+
+
+def _resolve_export_sheet_specs(
+    bundle: _AnalyticsComputeBundle,
+    original_periodicity,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    rolling_window,
+    rolling_return_type,
+    monthly_view,
+    monthly_series,
+    use_risk_free,
+    correlation_exp_wt,
+    correlation_halflife,
+    correlation_shrinkage,
+    correlation_shrinkage_target,
+    factor_series,
+    factor_quantiles,
+    factor_transform,
+    conditional_comparator,
+    conditional_threshold,
+    conditional_window_conversion,
+    conditional_step,
+    conditional_step_unit,
+    factor_definitions_db,
+    factor_definitions_local,
+    regime_definition_key,
+    regime_definitions_db,
+    regime_definitions_local,
+    regime_series_store,
+    vol_scaling_assignments,
+    saved_series_store,
+) -> list[_ExcelSheetSpec]:
+    sheet_specs = _build_core_export_sheets(
+        bundle,
+        original_periodicity,
+        returns_type,
+        rolling_window,
+        rolling_return_type,
+        monthly_view,
+        monthly_series,
+        use_risk_free,
+        correlation_exp_wt,
+        correlation_halflife,
+        correlation_shrinkage,
+        correlation_shrinkage_target,
+        saved_series_store,
+    )
+    if not sheet_specs:
+        return []
+
+    try:
+        with timed_block("analyticstool.download_excel.factor_analysis"):
+            sheet_specs.extend(
+                _build_factor_export_sheets(
+                    bundle,
+                    returns_type,
+                    benchmark_assignments,
+                    long_short_assignments,
+                    date_range,
+                    vol_scaling_assignments,
+                    factor_series,
+                    factor_quantiles,
+                    factor_transform,
+                    factor_definitions_db,
+                    factor_definitions_local,
+                )
+            )
+    except Exception:
+        pass
+
+    try:
+        with timed_block("analyticstool.download_excel.conditional_returns"):
+            sheet_specs.extend(
+                _build_conditional_export_sheets(
+                    bundle,
+                    returns_type,
+                    factor_series,
+                    factor_transform,
+                    conditional_comparator,
+                    conditional_threshold,
+                    conditional_window_conversion,
+                    conditional_step,
+                    conditional_step_unit,
+                    factor_definitions_db,
+                    factor_definitions_local,
+                )
+            )
+    except Exception:
+        pass
+
+    try:
+        with timed_block("analyticstool.download_excel.regime_analysis"):
+            sheet_specs.extend(
+                _build_regime_export_sheets(
+                    bundle,
+                    returns_type,
+                    benchmark_assignments,
+                    long_short_assignments,
+                    date_range,
+                    vol_scaling_assignments,
+                    regime_definition_key,
+                    regime_definitions_db,
+                    regime_definitions_local,
+                    regime_series_store,
+                )
+            )
+    except Exception:
+        pass
+
+    return sheet_specs
+
+
+def _write_export_sheet_specs(writer, sheet_specs: list[_ExcelSheetSpec]) -> None:
+    for sheet in sheet_specs:
+        write_excel_with_autofit(
+            writer,
+            format_excel_dates(sheet.frame, format_index=sheet.format_index),
+            sheet.name,
+            index=sheet.write_index,
+        )
 
 
 @callback(
@@ -11398,335 +11842,46 @@ def download_excel(
             vol_scaling_assignments,
         )
 
-        # Use cached functions to get data
-        with timed_block("analyticstool.download_excel.returns"):
-            returns_df = _compute_selected_returns_cached(
-                bundle.raw_data,
-                bundle.periodicity,
-                bundle.selected_series,
-                returns_type or "total",
-                bundle.benchmark_payload,
-                bundle.long_short_payload,
-                bundle.date_range_payload,
-                bundle.vol_scaler,
-                bundle.vol_scaling_payload,
-            )
-
-        if returns_df.empty:
-            raise PreventUpdate
-
-        # Get cached statistics
-        with timed_block("analyticstool.download_excel.statistics"):
-            stats = calculate_statistics_cached(
-                bundle.raw_data,
-                bundle.periodicity,
-                bundle.selected_series,
-                bundle.benchmark_payload,
-                bundle.long_short_payload,
-                bundle.date_range_payload,
-                bundle.vol_scaler,
-                bundle.vol_scaling_payload,
-                _risk_free_json_from_store(saved_series_store),
-                _spx_json_from_store(saved_series_store),
-                bool(use_risk_free),
-            )
-
-        # Build statistics DataFrame (transposed: statistics as rows, series as columns)
-        stats_data = {"Statistic": [stat_name for stat_name, _ in STATS_CONFIG]}
-        for series_stats in stats:
-            series_name = series_stats["Series"]
-            stats_data[series_name] = [series_stats.get(stat_name) for stat_name, _ in STATS_CONFIG]
-        stats_df = pd.DataFrame(stats_data)
-
-        # Prepare correlation/covariance data (supports optional exponential weighting)
-        effective_corr_shrinkage, effective_corr_target = resolve_cov_shrinkage_spec(
+        sheet_specs = _resolve_export_sheet_specs(
+            bundle,
+            original_periodicity,
+            returns_type,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            rolling_window,
+            rolling_return_type,
+            monthly_view,
+            monthly_series,
+            use_risk_free,
+            correlation_exp_wt,
+            correlation_halflife,
             correlation_shrinkage,
             correlation_shrinkage_target,
-            exp_weighted=bool(correlation_exp_wt),
+            factor_series,
+            factor_quantiles,
+            factor_transform,
+            conditional_comparator,
+            conditional_threshold,
+            conditional_window_conversion,
+            conditional_step,
+            conditional_step_unit,
+            factor_definitions_db,
+            factor_definitions_local,
+            regime_definition_key,
+            regime_definitions_db,
+            regime_definitions_local,
+            regime_series_store,
+            vol_scaling_assignments,
+            saved_series_store,
         )
-        try:
-            matrix_result = generate_correlogram_cached(
-                bundle.raw_data,
-                bundle.periodicity,
-                bundle.selected_series,
-                returns_type,
-                bundle.benchmark_payload,
-                bundle.long_short_payload,
-                bundle.date_range_payload,
-                bundle.vol_scaler,
-                bundle.vol_scaling_payload,
-                bool(correlation_exp_wt),
-                normalize_decay_input(correlation_halflife, 63.0),
-                effective_corr_shrinkage,
-                effective_corr_target,
-            )
-        except ValueError:
-            matrix_result = None
-        if matrix_result is not None:
-            corr_df = matrix_result["corr_matrix"]
-            cov_df = matrix_result["cov_matrix"]
-        else:
-            corr_df = returns_df.corr()
-            cov_df = returns_df.cov()
-        corr_df.index.name = "Series"
-        cov_df.index.name = "Series"
+        if not sheet_specs:
+            raise PreventUpdate
 
-        # Create Excel file in memory with multiple sheets
         output = BytesIO()
         with timed_block("analyticstool.download_excel.workbook"):
             with pd.ExcelWriter(output, engine="xlsxwriter", date_format="m/d/yyyy", datetime_format="m/d/yyyy") as writer:
-                # Sheet 1: Statistics (moved to first position)
-                write_excel_with_autofit(
-                    writer,
-                    format_excel_dates(stats_df),
-                    "Statistics",
-                    index=False,
-                )
-
-                # Sheet 2: Returns
-                write_excel_with_autofit(
-                    writer,
-                    format_excel_dates(returns_df, format_index=True),
-                    "Returns",
-                    index=True,
-                )
-
-                # Sheet 3: Rolling (use current settings)
-                try:
-                    with timed_block("analyticstool.download_excel.rolling"):
-                        # Use stored rolling options, default to 1y annualized if not set
-                        window = rolling_window if rolling_window else "1y"
-                        return_type = rolling_return_type if rolling_return_type else "annualized"
-
-                        rolling_df = calculate_rolling_returns(
-                            bundle.raw_data,
-                            bundle.periodicity,
-                            bundle.selected_series,
-                            returns_type,
-                            bundle.benchmark_payload,
-                            bundle.long_short_payload,
-                            bundle.date_range_payload,
-                            window,
-                            return_type,
-                            "total_return", # Default metric for excel
-                            bundle.vol_scaler,
-                            bundle.vol_scaling_payload,
-                        )
-                        if not rolling_df.empty:
-                            # Create sheet name based on window and type
-                            window_label_map = {
-                                "3m": "3M",
-                                "6m": "6M",
-                                "1y": "1Y",
-                                "3y": "3Y",
-                                "5y": "5Y",
-                                "10y": "10Y",
-                            }
-                            window_label = window_label_map.get(window, "1Y")
-                            type_label = "Ann" if return_type == "annualized" else "Cum"
-                            sheet_name = f"Rolling ({window_label} {type_label})"
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(rolling_df, format_index=True),
-                                sheet_name,
-                                index=True,
-                            )
-                except Exception:
-                    pass  # Skip if rolling calculation fails
-
-                # Sheet 4: Calendar Year Returns
-                if original_periodicity in ["daily", "monthly"]:
-                    try:
-                        with timed_block("analyticstool.download_excel.calendar"):
-                            # Check if monthly view is selected
-                            if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
-                                # Get monthly view data
-                                _, row_data = create_monthly_view(
-                                    bundle.raw_data,
-                                    monthly_series,
-                                    original_periodicity,
-                                    bundle.periodicity,
-                                    returns_type,
-                                    bundle.benchmark_payload,
-                                    bundle.long_short_payload,
-                                    bundle.selected_series,
-                                    bundle.date_range_payload,
-                                    bundle.vol_scaler,
-                                    bundle.vol_scaling_payload,
-                                )
-
-                                if row_data:
-                                    # Convert row data to DataFrame
-                                    calendar_df = pd.DataFrame(row_data)
-                                    calendar_df = calendar_df.set_index('Year_Label')
-                                    calendar_df.index.name = 'Year'
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(calendar_df, format_index=True),
-                                        "Calendar Year",
-                                        index=True,
-                                    )
-                            else:
-                                # Use standard calendar year returns (all series, one row per year)
-                                calendar_df = calculate_calendar_year_returns(
-                                    bundle.raw_data,
-                                    original_periodicity,
-                                    bundle.periodicity,
-                                    bundle.selected_series,
-                                    returns_type,
-                                    bundle.benchmark_payload,
-                                    bundle.long_short_payload,
-                                    bundle.date_range_payload,
-                                    bundle.vol_scaler,
-                                    bundle.vol_scaling_payload,
-                                )
-                                if not calendar_df.empty:
-                                    write_excel_with_autofit(
-                                        writer,
-                                        format_excel_dates(calendar_df, format_index=True),
-                                        "Calendar Year",
-                                        index=True,
-                                    )
-                    except Exception:
-                        pass  # Skip if calendar calculation fails
-
-                # Sheet 5: Growth of $1
-                try:
-                    with timed_block("analyticstool.download_excel.growth"):
-                        growth_df = calculate_growth_of_dollar(
-                            bundle.raw_data,
-                            bundle.periodicity,
-                            bundle.selected_series,
-                            bundle.benchmark_payload,
-                            bundle.long_short_payload,
-                            bundle.date_range_payload,
-                            bundle.vol_scaler,
-                            bundle.vol_scaling_payload,
-                        )
-                        if not growth_df.empty:
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(growth_df, format_index=True),
-                                "Growth of $1",
-                                index=True,
-                            )
-                except Exception:
-                    pass  # Skip if growth calculation fails
-
-                # Sheet 6: Drawdown
-                try:
-                    with timed_block("analyticstool.download_excel.drawdown"):
-                        drawdown_df = calculate_drawdown(
-                            bundle.raw_data,
-                            bundle.periodicity,
-                            bundle.selected_series,
-                            returns_type,
-                            bundle.benchmark_payload,
-                            bundle.long_short_payload,
-                            bundle.date_range_payload,
-                            bundle.vol_scaler,
-                            bundle.vol_scaling_payload,
-                        )
-                        if not drawdown_df.empty:
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(drawdown_df, format_index=True),
-                                "Drawdown",
-                                index=True,
-                            )
-                except Exception:
-                    pass  # Skip if drawdown calculation fails
-
-                # Sheet 7: Correlation
-                write_excel_with_autofit(
-                    writer,
-                    format_excel_dates(corr_df, format_index=True),
-                    "Correlation",
-                    index=True,
-                )
-                write_excel_with_autofit(
-                    writer,
-                    format_excel_dates(cov_df, format_index=True),
-                    "Covariance",
-                    index=True,
-                )
-
-                # Factor Analysis summaries
-                try:
-                    with timed_block("analyticstool.download_excel.factor_analysis"):
-                        factor_sheets = _build_factor_export_sheets(
-                            bundle,
-                            returns_type,
-                            benchmark_assignments,
-                            long_short_assignments,
-                            date_range,
-                            vol_scaling_assignments,
-                            factor_series,
-                            factor_quantiles,
-                            factor_transform,
-                            factor_definitions_db,
-                            factor_definitions_local,
-                        )
-                        for sheet_name, frame, write_index in factor_sheets:
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(frame),
-                                sheet_name,
-                                index=write_index,
-                            )
-                except Exception:
-                    pass
-
-                # Conditional Returns summaries
-                try:
-                    with timed_block("analyticstool.download_excel.conditional_returns"):
-                        conditional_sheets = _build_conditional_export_sheets(
-                            bundle,
-                            returns_type,
-                            factor_series,
-                            factor_transform,
-                            conditional_comparator,
-                            conditional_threshold,
-                            conditional_window_conversion,
-                            conditional_step,
-                            conditional_step_unit,
-                            factor_definitions_db,
-                            factor_definitions_local,
-                        )
-                        for sheet_name, frame, write_index in conditional_sheets:
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(frame),
-                                sheet_name,
-                                index=write_index,
-                            )
-                except Exception:
-                    pass
-
-                # Regime Analysis summaries
-                try:
-                    with timed_block("analyticstool.download_excel.regime_analysis"):
-                        regime_sheets = _build_regime_export_sheets(
-                            bundle,
-                            returns_type,
-                            benchmark_assignments,
-                            long_short_assignments,
-                            date_range,
-                            vol_scaling_assignments,
-                            regime_definition_key,
-                            regime_definitions_db,
-                            regime_definitions_local,
-                            regime_series_store,
-                        )
-                        for sheet_name, frame, write_index in regime_sheets:
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(frame),
-                                sheet_name,
-                                index=write_index,
-                            )
-                except Exception:
-                    pass
+                _write_export_sheet_specs(writer, sheet_specs)
 
         output.seek(0)
 
