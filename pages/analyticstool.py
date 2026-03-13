@@ -211,7 +211,6 @@ CONDITIONAL_FACTOR_CONVERSION_OPTIONS = [
     {"value": "sum", "label": "Sum"},
 ]
 
-CONDITIONAL_DETAIL_RENDER_ROW_LIMIT = 5000
 ANALYSIS_DETAIL_RENDER_CELL_WARNING_THRESHOLD = 200000
 
 AT_WELCOME_MODAL_CONFIG = PagePrefixConfig(
@@ -1759,51 +1758,6 @@ def _estimate_conditional_detail_row_counts(
     coincident_rows = anchor_count * len(window_specs)
     forward_rows = coincident_rows * len(window_specs)
     return coincident_rows, forward_rows
-
-
-@cache_config.cache.memoize(timeout=0)
-def _estimate_conditional_detail_rows_cached(
-    dataset_key: str,
-    periodicity: str,
-    selected_series: tuple,
-    returns_type: str,
-    benchmark_payload: str,
-    long_short_payload: str,
-    date_range_payload: str,
-    vol_scaler: float,
-    vol_scaling_payload: str,
-    factor_series: str,
-    factor_definition_payload: str,
-    step_value: int,
-    step_unit: str,
-) -> tuple[int, int]:
-    factor_definitions_local = None
-    if factor_definition_payload:
-        try:
-            factor_definitions_local = [json.loads(factor_definition_payload)]
-        except Exception:
-            factor_definitions_local = None
-
-    dependent_df, factor_values = _prepare_factor_base_frames(
-        dataset_key,
-        periodicity,
-        selected_series,
-        factor_series,
-        returns_type,
-        benchmark_payload,
-        long_short_payload,
-        date_range_payload,
-        vol_scaler,
-        vol_scaling_payload,
-        None,
-        factor_definitions_local,
-    )
-    factor_values = factor_values.replace([np.inf, -np.inf], np.nan).dropna()
-    if dependent_df.empty or factor_values.empty:
-        return 0, 0
-
-    master_index = pd.DatetimeIndex(dependent_df.index.union(factor_values.index).sort_values().unique())
-    return _estimate_conditional_detail_row_counts(master_index, periodicity, step_value, step_unit)
 
 
 def _build_conditional_summary_frames_from_core(
@@ -11018,31 +10972,6 @@ def update_conditional_returns(
     selected_series_tuple = tuple(selected_series or ())
 
     warning_children = None
-    if display_mode == "detail":
-        coincident_rows, forward_rows = _estimate_conditional_detail_rows_cached(
-            _dataset_key(raw_data) or "",
-            normalized_periodicity,
-            selected_series_tuple,
-            normalized_returns_type,
-            benchmark_payload,
-            long_short_payload,
-            date_payload,
-            normalized_vol_scaler,
-            vol_scaling_payload,
-            factor_series,
-            definition_payload,
-            normalized_step,
-            normalized_step_unit,
-        )
-        detail_row_count = coincident_rows if (conditional_view or "forward") == "coincident" else forward_rows
-        if detail_row_count > CONDITIONAL_DETAIL_RENDER_ROW_LIMIT:
-            warning_children = dmc.Alert(
-                f"Detail view would render about {detail_row_count:,} rows. Narrow filters or use Excel export for the full table.",
-                color="yellow",
-                variant="light",
-                mb="sm",
-            )
-            return warning_children, dmc.Text("Detail view is capped for large outputs. Excel export still includes the full detail table.", size="sm", c="dimmed")
 
     payload = _compute_conditional_returns_cached(
         _dataset_key(raw_data) or "",
