@@ -146,6 +146,7 @@ from utils.factor_definitions import (
     validate_factor_definition_payload,
 )
 from utils.regime_analysis import (
+    build_regime_detail_frame,
     build_regime_duration_table,
     regime_required_series,
     regime_series_store_names,
@@ -153,6 +154,7 @@ from utils.regime_analysis import (
     build_regime_statistics_table,
     build_regime_timeline_frame,
     build_regime_transition_matrix,
+    compute_regime_artifacts,
     compute_regime_assignments,
 )
 from utils.regime_definitions import (
@@ -183,6 +185,11 @@ CONDITIONAL_DISPLAY_MODE_OPTIONS = [
     {"value": "detail", "label": "Detail"},
 ]
 
+REGIME_DETAIL_DISPLAY_MODE_OPTIONS = [
+    {"value": "summary", "label": "Summary"},
+    {"value": "detail", "label": "Raw Detail"},
+]
+
 CONDITIONAL_COMPARATOR_OPTIONS = [
     {"value": "le", "label": "<="},
     {"value": "ge", "label": ">="},
@@ -196,6 +203,7 @@ CONDITIONAL_FACTOR_CONVERSION_OPTIONS = [
 ]
 
 CONDITIONAL_DETAIL_RENDER_ROW_LIMIT = 5000
+ANALYSIS_DETAIL_RENDER_CELL_WARNING_THRESHOLD = 200000
 
 AT_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     prefix="at",
@@ -306,6 +314,14 @@ class _AnalyticsComputeBundle:
 
 
 @dataclass(frozen=True)
+class _FactorArtifacts:
+    dependent_df: pd.DataFrame
+    factor_raw: pd.Series
+    factor_display: pd.Series
+    factor_display_name: str
+
+
+@dataclass(frozen=True)
 class _RegimeAnalysisPayload:
     definition: dict
     diagnostics: dict
@@ -315,6 +331,8 @@ class _RegimeAnalysisPayload:
     stats_df: pd.DataFrame
     transition_df: pd.DataFrame
     duration_df: pd.DataFrame
+    detail_df: pd.DataFrame
+    signal_label: str
 
 
 @dataclass(frozen=True)
@@ -370,10 +388,131 @@ def _build_regime_warning_text(diagnostics, unresolved: tuple[str, ...]) -> str:
     return warning_text
 
 
+@cache_config.cache.memoize(timeout=0)
+def _compute_regime_analysis_outputs_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple,
+    returns_type: str,
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    regime_definition_payload: str,
+) -> dict[str, object]:
+    try:
+        definition = json.loads(str(regime_definition_payload or "{}"))
+        if not isinstance(definition, dict):
+            definition = {}
+    except Exception:
+        definition = {}
+    try:
+        date_range = json.loads(str(date_range_payload or "null"))
+    except Exception:
+        date_range = date_range_payload
+
+    artifacts = compute_regime_artifacts(
+        raw_data=raw_data,
+        periodicity=periodicity or "daily",
+        definition=definition,
+        date_range=date_range,
+    )
+    states = artifacts.get("states", pd.Series(dtype="Int64", name="Regime"))
+    diagnostics = dict(artifacts.get("diagnostics", {}) or {})
+    signal = artifacts.get("signal", pd.Series(dtype=float))
+    signal_label = str(artifacts.get("signal_label") or getattr(signal, "name", None) or "Regime Signal")
+    if not isinstance(states, pd.Series) or states.empty:
+        return {
+            "status": "no_assignments",
+            "diagnostics": diagnostics,
+            "signal_label": signal_label,
+            "settings_df": pd.DataFrame(),
+            "timeline_df": pd.DataFrame(),
+            "stats_df": pd.DataFrame(),
+            "transition_df": pd.DataFrame(),
+            "duration_df": pd.DataFrame(),
+            "detail_df": pd.DataFrame(),
+        }
+
+    selected_tuple = tuple(selected_series or ())
+    if returns_type == "excess":
+        selected_returns_df = calculate_excess_returns(
+            raw_data,
+            periodicity or "daily",
+            selected_tuple,
+            benchmark_payload,
+            "excess",
+            long_short_payload,
+            date_range_payload,
+            vol_scaler,
+            vol_scaling_payload,
+        )
+    else:
+        selected_returns_df = get_working_returns(
+            raw_data,
+            periodicity or "daily",
+            selected_tuple,
+            benchmark_payload,
+            long_short_payload,
+            date_range_payload,
+            vol_scaler,
+            vol_scaling_payload,
+        )
+        selected_returns_df = selected_returns_df[[c for c in selected_tuple if c in selected_returns_df.columns]]
+
+    settings_df = pd.DataFrame(
+        [
+            {
+                "RegimeName": definition.get("RegimeName"),
+                "MethodType": diagnostics.get("method_type"),
+                "Signal Method": diagnostics.get("method"),
+                "Signal Label": signal_label,
+                "Signal Return Basis": (
+                    ((definition.get("Config") or {}) if isinstance(definition, dict) else {}).get("return_basis") or "total"
+                ),
+                "PC1 Standardized": (
+                    ((definition.get("Config") or {}) if isinstance(definition, dict) else {}).get("pca_standardize")
+                    if int(diagnostics.get("method_type") or 0) in {1, 2}
+                    else None
+                ),
+                "Series Return Basis": "excess" if returns_type == "excess" else "total",
+                "NumRegimes": diagnostics.get("num_regimes"),
+                "Observations": diagnostics.get("observations"),
+                "Warning": diagnostics.get("warning"),
+            }
+        ]
+    )
+    timeline_df = build_regime_timeline_frame(states)
+    stats_df = build_regime_statistics_table(
+        selected_returns_df,
+        states,
+        periodicity,
+        selected_series=selected_tuple,
+        benchmark_assignments=benchmark_payload,
+        long_short_assignments=long_short_payload,
+    )
+    transition_df = build_regime_transition_matrix(states)
+    duration_df = build_regime_duration_table(states)
+    detail_df = build_regime_detail_frame(selected_returns_df, states, signal, signal_label)
+    return {
+        "status": "ok",
+        "diagnostics": diagnostics,
+        "signal_label": signal_label,
+        "settings_df": settings_df,
+        "timeline_df": timeline_df,
+        "stats_df": stats_df,
+        "transition_df": transition_df,
+        "duration_df": duration_df,
+        "detail_df": detail_df,
+    }
+
+
 def _build_regime_analysis_payload(
     raw_data,
     periodicity,
     selected_series,
+    returns_type,
     benchmark_assignments,
     long_short_assignments,
     date_range,
@@ -416,58 +555,32 @@ def _build_regime_analysis_payload(
         vol_scaler,
         vol_scaling_assignments,
     )
-    states, diagnostics = compute_regime_assignments(
-        raw_data=combined_raw_data,
-        periodicity=bundle.periodicity,
-        definition=definition,
-        date_range=date_range,
-    )
-    unresolved_tuple = tuple(str(item) for item in (unresolved or []) if str(item).strip())
-    if states.empty:
-        warning = str((diagnostics or {}).get("warning") or "No regime assignments were produced.")
-        if unresolved_tuple:
-            warning = f"{warning} Missing source series: {', '.join(unresolved_tuple)}."
-        return _RegimeAnalysisBuildResult("no_assignments", warning)
-
-    working_returns_df = get_working_returns(
-        combined_raw_data,
+    regime_outputs = _compute_regime_analysis_outputs_cached(
+        combined_raw_data or "",
         bundle.periodicity,
         bundle.selected_series,
+        returns_type or "total",
         bundle.benchmark_payload,
         bundle.long_short_payload,
         bundle.date_range_payload,
         bundle.vol_scaler,
         bundle.vol_scaling_payload,
+        canonical_json_dumps(definition),
     )
-    if working_returns_df.empty:
-        return _RegimeAnalysisBuildResult("no_returns", "No series returns available for current settings.")
-
-    selected_columns = [col for col in bundle.selected_series if col in working_returns_df.columns]
-    if not selected_columns:
+    diagnostics = dict(regime_outputs.get("diagnostics", {}) or {})
+    unresolved_tuple = tuple(str(item) for item in (unresolved or []) if str(item).strip())
+    if regime_outputs.get("status") != "ok":
+        warning = str((diagnostics or {}).get("warning") or "No regime assignments were produced.")
+        if unresolved_tuple:
+            warning = f"{warning} Missing source series: {', '.join(unresolved_tuple)}."
+        return _RegimeAnalysisBuildResult("no_assignments", warning)
+    detail_df = regime_outputs.get("detail_df", pd.DataFrame())
+    if detail_df.empty:
         return _RegimeAnalysisBuildResult("no_selected_returns", "No selected series returns available for current settings.")
-
-    timeline_df = build_regime_timeline_frame(states)
-    stats_df = build_regime_statistics_table(
-        working_returns_df,
-        states,
-        bundle.periodicity,
-        selected_series=tuple(selected_columns),
-        benchmark_assignments=benchmark_assignments,
-        long_short_assignments=long_short_assignments,
-    )
-    transition_df = build_regime_transition_matrix(states)
-    duration_df = build_regime_duration_table(states)
-    settings_df = pd.DataFrame(
-        [
-            {
-                "RegimeName": definition.get("RegimeName"),
-                "MethodType": diagnostics.get("method_type"),
-                "NumRegimes": diagnostics.get("num_regimes"),
-                "Observations": diagnostics.get("observations"),
-                "Warning": _build_regime_warning_text(diagnostics, unresolved_tuple) or None,
-            }
-        ]
-    )
+    settings_df = regime_outputs.get("settings_df", pd.DataFrame()).copy()
+    if settings_df.empty:
+        settings_df = pd.DataFrame([{"RegimeName": definition.get("RegimeName")}])
+    settings_df["Warning"] = _build_regime_warning_text(diagnostics, unresolved_tuple) or None
     return _RegimeAnalysisBuildResult(
         "ok",
         payload=_RegimeAnalysisPayload(
@@ -475,10 +588,12 @@ def _build_regime_analysis_payload(
             diagnostics=dict(diagnostics or {}),
             unresolved=unresolved_tuple,
             settings_df=settings_df,
-            timeline_df=timeline_df,
-            stats_df=stats_df,
-            transition_df=transition_df,
-            duration_df=duration_df,
+            timeline_df=regime_outputs.get("timeline_df", pd.DataFrame()),
+            stats_df=regime_outputs.get("stats_df", pd.DataFrame()),
+            transition_df=regime_outputs.get("transition_df", pd.DataFrame()),
+            duration_df=regime_outputs.get("duration_df", pd.DataFrame()),
+            detail_df=detail_df,
+            signal_label=str(regime_outputs.get("signal_label") or "Regime Signal"),
         ),
     )
 
@@ -1114,6 +1229,111 @@ def _prepare_factor_base_frames(
     return dependent_df, factor_values
 
 
+def _empty_factor_artifacts() -> _FactorArtifacts:
+    return _FactorArtifacts(
+        dependent_df=pd.DataFrame(),
+        factor_raw=pd.Series(dtype=float),
+        factor_display=pd.Series(dtype=float),
+        factor_display_name="",
+    )
+
+
+@cache_config.cache.memoize(timeout=0)
+def _compute_factor_artifacts_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple,
+    factor_series: str,
+    returns_type: str,
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+    factor_transform: str,
+    factor_definition_payload: str,
+) -> _FactorArtifacts:
+    factor_definitions_local = None
+    if factor_definition_payload:
+        try:
+            factor_definitions_local = [json.loads(factor_definition_payload)]
+        except Exception:
+            factor_definitions_local = None
+
+    dependent_df, factor_raw = _prepare_factor_base_frames(
+        raw_data,
+        periodicity,
+        selected_series,
+        factor_series,
+        returns_type,
+        benchmark_payload,
+        long_short_payload,
+        date_range_payload,
+        vol_scaler,
+        vol_scaling_payload,
+        None,
+        factor_definitions_local,
+    )
+    if dependent_df.empty or factor_raw.empty:
+        return _empty_factor_artifacts()
+
+    factor_display = factor_raw.copy()
+    if factor_transform == "zscore":
+        std = factor_display.std(ddof=0)
+        if std and not np.isclose(std, 0.0):
+            factor_display = (factor_display - factor_display.mean()) / std
+        else:
+            factor_display = pd.Series(0.0, index=factor_display.index, name=factor_display.name)
+
+    factor_prefix, factor_name = _split_factor_select_key(factor_series)
+    display_factor_name = factor_name if factor_name else str(factor_series or "")
+    if factor_prefix == "raw" and not display_factor_name:
+        display_factor_name = str(factor_raw.name or "")
+    return _FactorArtifacts(
+        dependent_df=dependent_df,
+        factor_raw=factor_raw,
+        factor_display=factor_display,
+        factor_display_name=display_factor_name,
+    )
+
+
+def _compute_factor_artifacts(
+    raw_data,
+    periodicity,
+    selected_series,
+    factor_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    factor_transform,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
+) -> _FactorArtifacts:
+    definition_payload = ""
+    factor_prefix, factor_name = _split_factor_select_key(factor_series)
+    if factor_prefix == "def":
+        definition = _lookup_factor_definition(factor_name, factor_definitions_db, factor_definitions_local)
+        if definition:
+            definition_payload = _definition_payload_for_compute(definition)
+    return _compute_factor_artifacts_cached(
+        raw_data or "",
+        periodicity or "daily",
+        tuple(selected_series or ()),
+        str(factor_series or ""),
+        returns_type or "total",
+        _mapping_payload(benchmark_assignments),
+        _mapping_payload(long_short_assignments),
+        _date_range_payload(date_range),
+        vol_scaler or 0,
+        _mapping_payload(vol_scaling_assignments),
+        factor_transform if factor_transform in {"raw", "zscore"} else "raw",
+        definition_payload,
+    )
+
+
 def _prepare_factor_analysis_frames(
     raw_data,
     periodicity,
@@ -1130,7 +1350,7 @@ def _prepare_factor_analysis_frames(
     factor_definitions_local=None,
 ):
     """Prepare dependent-series returns and factor returns for factor analysis."""
-    dependent_df, factor_values = _prepare_factor_base_frames(
+    artifacts = _compute_factor_artifacts(
         raw_data,
         periodicity,
         selected_series,
@@ -1141,20 +1361,11 @@ def _prepare_factor_analysis_frames(
         date_range,
         vol_scaler,
         vol_scaling_assignments,
+        factor_transform,
         factor_definitions_db,
         factor_definitions_local,
     )
-    if factor_values.empty:
-        return dependent_df, factor_values
-
-    if (factor_transform or "raw") == "zscore":
-        std = factor_values.std(ddof=0)
-        if std and not np.isclose(std, 0.0):
-            factor_values = (factor_values - factor_values.mean()) / std
-        else:
-            factor_values = pd.Series(0.0, index=factor_values.index)
-
-    return dependent_df, factor_values
+    return artifacts.dependent_df, artifacts.factor_display
 
 
 def _build_factor_pair_df(factor_values: pd.Series, dependent_values: pd.Series) -> pd.DataFrame:
@@ -1170,6 +1381,34 @@ def _build_factor_pair_df(factor_values: pd.Series, dependent_values: pd.Series)
     )
     paired = paired.replace([np.inf, -np.inf], np.nan).dropna()
     return paired
+
+
+def _build_factor_detail_frame(artifacts: _FactorArtifacts, selected_series, quantiles: int) -> pd.DataFrame:
+    if artifacts.dependent_df.empty or artifacts.factor_display.empty:
+        return pd.DataFrame()
+
+    quantile_labels, _ordered_labels = _factor_quantile_labels(artifacts.factor_display, quantiles)
+    factor_name = "Factor Value"
+    detail_df = pd.concat(
+        [
+            quantile_labels.rename("Quantile"),
+            artifacts.factor_display.rename(factor_name),
+            artifacts.dependent_df,
+        ],
+        axis=1,
+    )
+    detail_df.index = pd.to_datetime(detail_df.index, errors="coerce")
+    detail_df = detail_df[~detail_df.index.isna()]
+    detail_df = detail_df[~detail_df.index.duplicated(keep="last")]
+    detail_df = detail_df.sort_index()
+    detail_df = detail_df.dropna(subset=[factor_name])
+    series_columns = [col for col in (selected_series or []) if col in detail_df.columns]
+    if series_columns:
+        detail_df = detail_df.dropna(subset=series_columns, how="all")
+    if detail_df.empty:
+        return pd.DataFrame()
+    detail_df = detail_df.reset_index().rename(columns={"index": "Date"})
+    return detail_df
 
 
 def _prepare_factor_analysis_selected_df(
@@ -2673,7 +2912,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                       factor_quantiles, factor_transform, factor_series_options,
                       factor_series_value, factor_qq_reference, conditional_view,
                       conditional_comparator, conditional_threshold, conditional_window_conversion,
-                      conditional_step, conditional_step_unit, conditional_display_mode):
+                      conditional_step, conditional_step_unit, conditional_display_mode,
+                      regime_display_mode):
     
     # Calculate visibility styles - use flex for full height
     flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
@@ -3240,6 +3480,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         data=[
                                             {"value": "box", "label": "Box Plot"},
                                             {"value": "scatter", "label": "Scatter"},
+                                            {"value": "detail", "label": "Raw Detail"},
                                             {"value": "qq", "label": "Q-Q Plot"},
                                         ],
                                         value=factor_mode,
@@ -3518,6 +3759,15 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         size="sm",
                                         variant="light",
                                         leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
+                                    ),
+                                ]),
+                                html.Div([
+                                    dmc.Text("View", size="sm", fw=500, mb=3),
+                                    dmc.SegmentedControl(
+                                        id="at-regime-detail-display-mode-select",
+                                        data=REGIME_DETAIL_DISPLAY_MODE_OPTIONS,
+                                        value=regime_display_mode,
+                                        size="sm",
                                     ),
                                 ]),
                             ],
@@ -4278,6 +4528,7 @@ layout = dmc.Container(
                 conditional_step=1,
                 conditional_step_unit="months",
                 conditional_display_mode="summary",
+                regime_display_mode="summary",
             ),
             style={"display": "none"}
         ),
@@ -4319,6 +4570,7 @@ layout = dmc.Container(
         dcc.Store(id="at-factor-def-db-available-store", data=False, storage_type="session"),
         dcc.Store(id="at-factor-def-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-regime-definition-store", data=None, storage_type="session"),
+        dcc.Store(id="at-regime-detail-display-mode-store", data="summary", storage_type="session"),
         dcc.Store(id="at-regime-definitions-db-store", data=[], storage_type="session"),
         dcc.Store(id="at-regime-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-regime-def-modal-draft-store", data=None, storage_type="session"),
@@ -4459,6 +4711,7 @@ def _at_restore_defaults():
         "conditional_step": 1,
         "conditional_step_unit": "months",
         "conditional_display_mode": "summary",
+        "regime_display_mode": "summary",
         "monthly_view": "annual",
         "valid_selection": [],
         "updated_order": [],
@@ -4489,6 +4742,7 @@ def _at_resolve_restore_state(
     stored_conditional_step,
     stored_conditional_step_unit,
     stored_conditional_display_mode,
+    stored_regime_display_mode,
     stored_monthly_view,
     stored_order,
     po_origin_series,
@@ -4542,7 +4796,7 @@ def _at_resolve_restore_state(
             "roll_chart": stored_roll_chart if stored_roll_chart is not None else "chart",
             "dd_chart": stored_dd_chart if stored_dd_chart is not None else "chart",
             "gr_chart": stored_gr_chart if stored_gr_chart is not None else "chart",
-            "factor_mode": stored_factor_mode if stored_factor_mode in {"box", "scatter", "qq"} else "box",
+            "factor_mode": stored_factor_mode if stored_factor_mode in {"box", "scatter", "detail", "qq"} else "box",
             "factor_quantiles": _coerce_factor_quantiles(stored_factor_quantiles, default=5),
             "factor_transform": stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw",
             "factor_qq_reference": (
@@ -4563,6 +4817,11 @@ def _at_resolve_restore_state(
             "conditional_display_mode": (
                 stored_conditional_display_mode
                 if stored_conditional_display_mode in {"summary", "detail"}
+                else "summary"
+            ),
+            "regime_display_mode": (
+                stored_regime_display_mode
+                if stored_regime_display_mode in {"summary", "detail"}
                 else "summary"
             ),
             "monthly_view": stored_monthly_view if stored_monthly_view is not None else "annual",
@@ -4598,6 +4857,7 @@ def _at_resolve_restore_state(
     Output("at-conditional-step-input", "value"),
     Output("at-conditional-step-unit-select", "value"),
     Output("at-conditional-display-mode-select", "value"),
+    Output("at-regime-detail-display-mode-select", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
     Output("at-series-order-store", "data", allow_duplicate=True),
@@ -4626,6 +4886,7 @@ def _at_resolve_restore_state(
     State("at-conditional-step-store", "data"),
     State("at-conditional-step-unit-store", "data"),
     State("at-conditional-display-mode-store", "data"),
+    State("at-regime-detail-display-mode-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
     State("at-series-order-store", "data"),
@@ -4658,6 +4919,7 @@ def restore_application_state(
     stored_conditional_step,
     stored_conditional_step_unit,
     stored_conditional_display_mode,
+    stored_regime_display_mode,
     stored_monthly_view,
     stored_monthly_series,
     stored_order,
@@ -4689,6 +4951,7 @@ def restore_application_state(
             stored_conditional_step,
             stored_conditional_step_unit,
             stored_conditional_display_mode,
+            stored_regime_display_mode,
             stored_monthly_view,
             stored_order,
             po_origin_series,
@@ -4720,6 +4983,7 @@ def restore_application_state(
             resolved["conditional_step_unit"],
             resolved["conditional_display_mode"],
         ) if active_tab == "conditional_returns" else (no_update, no_update, no_update, no_update, no_update, no_update, no_update)
+        regime_output = resolved["regime_display_mode"] if active_tab == "regime_analysis" else no_update
         monthly_output = resolved["monthly_view"] if active_tab == "calendar" else no_update
 
         return (
@@ -4733,6 +4997,7 @@ def restore_application_state(
             growth_output,
             *factor_outputs,
             *conditional_outputs,
+            regime_output,
             monthly_output,
             resolved["valid_selection"],
             resolved["updated_order"],
@@ -4743,7 +5008,8 @@ def restore_application_state(
         return (
             resolved["periodicity_options"], resolved["valid_periodicity"], resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
             no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
-            no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
+            no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
+            no_update,
             resolved["valid_selection"], resolved["updated_order"], False
         )
 
@@ -4852,6 +5118,7 @@ def sync_at_returns_type_mirrors(
     Output("at-conditional-step-input", "value", allow_duplicate=True),
     Output("at-conditional-step-unit-select", "value", allow_duplicate=True),
     Output("at-conditional-display-mode-select", "value", allow_duplicate=True),
+    Output("at-regime-detail-display-mode-select", "value", allow_duplicate=True),
     Output("at-monthly-view-checkbox", "value", allow_duplicate=True),
     Input("at-secondary-restore-ready-store", "data"),
     State("dashmat-raw-data-meta-store", "data"),
@@ -4877,6 +5144,7 @@ def sync_at_returns_type_mirrors(
     State("at-conditional-step-store", "data"),
     State("at-conditional-step-unit-store", "data"),
     State("at-conditional-display-mode-store", "data"),
+    State("at-regime-detail-display-mode-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-series-order-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
@@ -4908,6 +5176,7 @@ def at_restore_secondary_controls(
     stored_conditional_step,
     stored_conditional_step_unit,
     stored_conditional_display_mode,
+    stored_regime_display_mode,
     stored_monthly_view,
     stored_order,
     po_origin_series,
@@ -4940,6 +5209,7 @@ def at_restore_secondary_controls(
         stored_conditional_step,
         stored_conditional_step_unit,
         stored_conditional_display_mode,
+        stored_regime_display_mode,
         stored_monthly_view,
         stored_order,
         po_origin_series,
@@ -4966,6 +5236,7 @@ def at_restore_secondary_controls(
         no_update if active_tab == "conditional_returns" else resolved["conditional_step"],
         no_update if active_tab == "conditional_returns" else resolved["conditional_step_unit"],
         no_update if active_tab == "conditional_returns" else resolved["conditional_display_mode"],
+        no_update if active_tab == "regime_analysis" else resolved["regime_display_mode"],
         no_update if active_tab == "calendar" else resolved["monthly_view"],
     )
 
@@ -5221,6 +5492,15 @@ def sync_conditional_returns_control_state(
         step_unit if step_unit in {"periods", "months"} else "months",
         display_mode_value if display_mode_value in {"summary", "detail"} else "summary",
     )
+
+
+@callback(
+    Output("at-regime-detail-display-mode-store", "data"),
+    Input("at-regime-detail-display-mode-select", "value"),
+    prevent_initial_call=False,
+)
+def sync_regime_detail_display_mode(value):
+    return value if value in {"summary", "detail"} else "summary"
 
 
 # Sync periodicity to PortOpt only on raw-data load/update events.
@@ -9087,24 +9367,30 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
 
 
 def _factor_quantile_labels(factor_values: pd.Series, quantiles: int):
-    """Build ordered quantile labels for factor buckets."""
+    """Build aligned quantile labels for factor buckets."""
+    if factor_values is None:
+        return pd.Series(dtype="object", name="Quantile"), []
+
+    factor_work = pd.Series(factor_values).replace([np.inf, -np.inf], np.nan)
+    labels_out = pd.Series(index=factor_work.index, dtype="object", name="Quantile")
+    valid = factor_work.dropna()
+    if valid.empty:
+        return labels_out, []
+
     q = _coerce_factor_quantiles(quantiles)
     try:
-        buckets = pd.qcut(factor_values, q=q, duplicates="drop")
+        buckets = pd.qcut(valid, q=q, duplicates="drop")
     except Exception:
-        return None, []
-
-    if buckets is None:
-        return None, []
+        return labels_out, []
 
     categories = list(getattr(buckets.cat, "categories", []))
     if not categories:
-        return None, []
+        return labels_out, []
 
     label_map = {cat: f"Q{idx + 1}" for idx, cat in enumerate(categories)}
     ordered_labels = [label_map[cat] for cat in categories]
-    labels = buckets.map(label_map)
-    return labels, ordered_labels
+    labels_out.loc[buckets.index] = buckets.map(label_map).astype("object")
+    return labels_out, ordered_labels
 
 
 def _build_factor_box_summary_rows(selected_series, dependent_df, factor_series_name, factor_values, quantiles):
@@ -9118,10 +9404,9 @@ def _build_factor_box_summary_rows(selected_series, dependent_df, factor_series_
             continue
 
         labels, ordered_labels = _factor_quantile_labels(paired["Factor"], quantiles)
-        if labels is None:
+        if not ordered_labels:
             continue
-
-        paired = paired.assign(Quantile=labels.astype(str))
+        paired = paired.assign(Quantile=labels.fillna("").astype(str))
         for quantile_label in ordered_labels:
             bucket = paired[paired["Quantile"] == quantile_label]
             if bucket.empty:
@@ -9249,7 +9534,7 @@ def update_factor_analysis(
 
     if raw_data is None or not selected_series:
         return None, dmc.Text("Select series to view factor analysis.", size="sm", c="dimmed")
-    mode = factor_mode if factor_mode in {"box", "scatter", "qq"} else "box"
+    mode = factor_mode if factor_mode in {"box", "scatter", "detail", "qq"} else "box"
     qq_reference = factor_qq_reference if factor_qq_reference in {"normal", "reference"} else "normal"
     if mode != "qq" and not factor_series:
         return None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
@@ -9268,7 +9553,7 @@ def update_factor_analysis(
         )
         factor_values = pd.Series(dtype=float)
     else:
-        dependent_df, factor_values = _prepare_factor_analysis_frames(
+        factor_artifacts = _compute_factor_artifacts(
             raw_data,
             periodicity,
             selected_series,
@@ -9283,6 +9568,8 @@ def update_factor_analysis(
             factor_definitions_db,
             factor_definitions_local,
         )
+        dependent_df = factor_artifacts.dependent_df
+        factor_values = factor_artifacts.factor_display
     if dependent_df.empty:
         return None, dmc.Text("No dependent-series data available for current settings.", size="sm", c="dimmed")
     if mode != "qq" and factor_values.empty:
@@ -9290,12 +9577,30 @@ def update_factor_analysis(
 
     quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
     _factor_prefix, _factor_name = _split_factor_select_key(factor_series)
-    display_factor_name = _factor_name if _factor_name else str(factor_series)
+    display_factor_name = (
+        factor_artifacts.factor_display_name
+        if mode != "qq"
+        else (_factor_name if _factor_name else str(factor_series))
+    )
     factor_label = (
         f"{display_factor_name} (Z-Score)"
         if (factor_transform or "raw") == "zscore"
         else display_factor_name
     )
+    if mode == "detail":
+        detail_df = _build_factor_detail_frame(factor_artifacts, selected_series, quantiles)
+        if detail_df.empty:
+            return None, dmc.Text("No overlapping data available for factor detail.", size="sm", c="dimmed")
+        warning_children = _detail_render_warning(detail_df)
+        detail_grid = _build_regime_grid_component(
+            "Factor Detail",
+            detail_df,
+            theme,
+            percent_cols={str(col) for col in selected_series},
+            pinned_cols={"Date"},
+            max_height=560,
+        )
+        return warning_children, detail_grid
     qq_reference_series = pd.Series(dtype=float)
     qq_reference_name = None
     if mode == "qq" and qq_reference == "reference":
@@ -9397,9 +9702,9 @@ def update_factor_analysis(
                 )
             else:
                 labels, ordered_labels = _factor_quantile_labels(paired["Factor"], quantiles)
-                if labels is None:
+                if not ordered_labels:
                     continue
-                paired = paired.assign(Quantile=labels.astype(str))
+                paired = paired.assign(Quantile=labels.fillna("").astype(str))
                 fig.add_trace(
                     go.Box(
                         x=paired["Quantile"],
@@ -10047,6 +10352,20 @@ def _build_regime_grid_component(
     )
 
 
+def _detail_render_warning(df: pd.DataFrame) -> dmc.Alert | None:
+    if df is None or df.empty:
+        return None
+    cell_count = int(len(df.index) * max(1, len(df.columns)))
+    if cell_count <= ANALYSIS_DETAIL_RENDER_CELL_WARNING_THRESHOLD:
+        return None
+    return dmc.Alert(
+        "Large raw detail view. Excel export includes the same full detail if browser rendering feels slow.",
+        color="yellow",
+        variant="light",
+        mb="sm",
+    )
+
+
 def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     diagnostics = payload.diagnostics or {}
     regime_name = str(payload.definition.get("RegimeName") or "").strip() or "—"
@@ -10054,13 +10373,23 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     num_regimes = diagnostics.get("num_regimes")
     observations = diagnostics.get("observations")
     warning_text = _build_regime_warning_text(diagnostics, payload.unresolved)
+    settings_row = payload.settings_df.iloc[0].to_dict() if payload.settings_df is not None and not payload.settings_df.empty else {}
 
     lines = [
         dmc.Text(f"Regime: {regime_name}", size="sm"),
         dmc.Text(f"Method type: {method_type if method_type is not None else '—'}", size="sm"),
         dmc.Text(f"Regimes: {num_regimes if num_regimes is not None else '—'}", size="sm"),
         dmc.Text(f"Observations: {observations if observations is not None else '—'}", size="sm"),
+        dmc.Text(f"Signal: {settings_row.get('Signal Label') or payload.signal_label or '—'}", size="sm"),
+        dmc.Text(f"Signal basis: {settings_row.get('Signal Return Basis') or '—'}", size="sm"),
     ]
+    if settings_row.get("PC1 Standardized") is not None:
+        lines.append(
+            dmc.Text(
+                f"PC1 Standardized: {'Yes' if bool(settings_row.get('PC1 Standardized')) else 'No'}",
+                size="sm",
+            )
+        )
     if warning_text:
         lines.append(dmc.Text(f"Warning: {warning_text}", size="sm", c="orange"))
 
@@ -10080,6 +10409,7 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     Output("at-regime-analysis-container", "children"),
     Input("at-main-tabs", "value"),
     Input("at-regime-definition-select", "value"),
+    Input("at-regime-detail-display-mode-select", "value"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -10099,6 +10429,7 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
 def update_regime_analysis(
     active_tab,
     regime_definition_key,
+    regime_display_mode,
     raw_data,
     periodicity,
     selected_series,
@@ -10132,6 +10463,7 @@ def update_regime_analysis(
         raw_data,
         periodicity,
         selected_series,
+        returns_type,
         benchmark_assignments,
         long_short_assignments,
         date_range,
@@ -10151,6 +10483,39 @@ def update_regime_analysis(
         return None, dmc.Text(build_result.message or "Unable to build regime analysis.", size="sm", c="dimmed")
 
     payload = build_result.payload
+    warning_children = []
+    warning_text = str((payload.diagnostics or {}).get("warning") or "").strip()
+    if warning_text:
+        warning_children.append(dmc.Alert(warning_text, color="orange", variant="light", mb="sm"))
+    if payload.unresolved:
+        warning_children.append(
+            dmc.Alert(
+                f"Missing source series (not resolved from DB): {', '.join(payload.unresolved)}",
+                color="orange",
+                variant="light",
+                mb="sm",
+            )
+        )
+
+    display_mode = regime_display_mode if regime_display_mode in {"summary", "detail"} else "summary"
+    if display_mode == "detail":
+        detail_warning = _detail_render_warning(payload.detail_df)
+        if payload.detail_df.empty:
+            return None, dmc.Text("No regime raw detail is available for current settings.", size="sm", c="dimmed")
+        if detail_warning is not None:
+            warning_children.append(detail_warning)
+        return (
+            html.Div(warning_children),
+            _build_regime_grid_component(
+                "Regime Raw Detail",
+                payload.detail_df,
+                theme,
+                percent_cols={str(col) for col in selected_series},
+                integer_cols={"Regime"},
+                pinned_cols={"Date", "Regime"},
+                max_height=560,
+            ),
+        )
     timeline = payload.timeline_df
     if timeline.empty:
         return None, dmc.Text("No regime timeline available for current settings.", size="sm", c="dimmed")
@@ -10221,20 +10586,6 @@ def update_regime_analysis(
             max_height=260,
         ),
     ]
-
-    warning_children = []
-    warning_text = str((payload.diagnostics or {}).get("warning") or "").strip()
-    if warning_text:
-        warning_children.append(dmc.Alert(warning_text, color="orange", variant="light", mb="sm"))
-    if payload.unresolved:
-        warning_children.append(
-            dmc.Alert(
-                f"Missing source series (not resolved from DB): {', '.join(payload.unresolved)}",
-                color="orange",
-                variant="light",
-                mb="sm",
-            )
-        )
 
     return html.Div(warning_children), dmc.Stack(gap="sm", children=stack_children)
 
@@ -11022,13 +11373,11 @@ def download_excel(
                 try:
                     with timed_block("analyticstool.download_excel.factor_analysis"):
                         if factor_series:
-                            _factor_prefix, _factor_name = _split_factor_select_key(factor_series)
-                            display_factor_name = _factor_name if _factor_name else str(factor_series)
                             factor_transform_value = (
                                 factor_transform if factor_transform in {"raw", "zscore"} else "raw"
                             )
                             quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
-                            dependent_df, factor_values = _prepare_factor_analysis_frames(
+                            factor_artifacts = _compute_factor_artifacts(
                                 bundle.raw_data,
                                 bundle.periodicity,
                                 bundle.selected_series,
@@ -11043,6 +11392,9 @@ def download_excel(
                                 factor_definitions_db,
                                 factor_definitions_local,
                             )
+                            dependent_df = factor_artifacts.dependent_df
+                            factor_values = factor_artifacts.factor_display
+                            display_factor_name = factor_artifacts.factor_display_name or str(factor_series)
 
                             box_rows = _build_factor_box_summary_rows(
                                 bundle.selected_series,
@@ -11083,6 +11435,22 @@ def download_excel(
                                 writer,
                                 format_excel_dates(scatter_df),
                                 "Factor Analysis - Scatter",
+                                index=False,
+                            )
+
+                            detail_df = _build_factor_detail_frame(
+                                factor_artifacts,
+                                bundle.selected_series,
+                                quantiles,
+                            )
+                            if detail_df.empty:
+                                detail_df = pd.DataFrame(
+                                    [{"Note": "No overlapping observations for factor detail."}]
+                                )
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(detail_df),
+                                "Factor Analysis - Detail",
                                 index=False,
                             )
                 except Exception:
@@ -11177,6 +11545,7 @@ def download_excel(
                                 bundle.raw_data,
                                 bundle.periodicity,
                                 bundle.selected_series,
+                                returns_type,
                                 benchmark_assignments,
                                 long_short_assignments,
                                 date_range,
@@ -11209,13 +11578,13 @@ def download_excel(
                                     index=False,
                                 )
 
-                                timeline_out = regime_payload.timeline_df
-                                if timeline_out.empty:
-                                    timeline_out = pd.DataFrame([{"Note": "No timeline observations available."}])
+                                detail_out = regime_payload.detail_df
+                                if detail_out.empty:
+                                    detail_out = pd.DataFrame([{"Note": "No regime raw detail is available."}])
                                 write_excel_with_autofit(
                                     writer,
-                                    format_excel_dates(timeline_out),
-                                    "Regime - Timeline",
+                                    format_excel_dates(detail_out),
+                                    "Regime - Detail",
                                     index=False,
                                 )
 

@@ -69,6 +69,13 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Run targeted pytest modules for touched logic; run full pytest for broader workflow changes.
 - If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` or full pytest.
 - If you change upload, parsing, or statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
+- For AnalyticsTool factor/regime work, prefer a repeatable browser pass over ad hoc clicking:
+  - launch the app on a separate port
+  - upload `sample_data/benchmark_returns/benchmark_daily_returns_2020_2025.xlsx`
+  - accept the default series-selection modal with `OK`
+  - verify `Factor Analysis -> Raw Detail` renders `Factor Value`
+  - verify `Regime Analysis -> [DB] Test Quantiles -> Raw Detail` renders `Regime Signal`
+  - verify `File -> Download Excel` contains `Factor Analysis - Detail` and `Regime - Detail`
 - Before finishing, check for obvious regressions in tab rendering and series selection behavior.
 - On targeted pytest runs, this repo's global coverage gate can fail even when the touched module tests pass. If you need a focused verification pass, use `--cov-fail-under=0` and say so explicitly in the handoff.
 
@@ -150,6 +157,12 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 
 - On Windows, very large `apply_patch` payloads can fail with shell or path-length style errors. Split large doc rewrites or multi-file edits into smaller patches.
 - Prefer Python Playwright over `playwright-cli run-code` for nontrivial browser automation on Windows. The CLI JS path runs into command-line length and quoting limits quickly.
+- For consistent browser passes on AnalyticsTool, a short Python Playwright script is more reliable than interactive `playwright-cli` snapshots:
+  - use a fixed viewport and a dedicated `output/playwright/<run-name>/` artifact folder
+  - prefer `page.get_by_label("Factor Analysis")` / `page.get_by_label("Regime Analysis")` to scope duplicated controls like `Raw Detail`
+  - upload files with normalized forward-slash paths such as `C:/Git/DashMat/...`
+  - filter the known AG Grid invalid-license console banner before treating console output as a test failure
+  - save the downloaded workbook and inspect sheet names with `openpyxl` instead of assuming the menu click succeeded
 - Prefer real script files over `conda run ... python -c` for anything more than a short one-liner. Multiline or heavily quoted `-c` payloads are brittle.
 - In PowerShell, `Start-Process` with `python -c` is easy to misquote. Use a script file when possible, or pass the full `-c "..."` payload as one argument string.
 - If you must launch long-lived Dash apps from PowerShell for A/B testing, wrapping the Conda-env Python invocation in a short `pwsh -Command` string is more reliable than passing `python -c` directly through `Start-Process`.

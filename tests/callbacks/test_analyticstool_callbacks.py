@@ -313,6 +313,7 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
         stored_conditional_step=None,
         stored_conditional_step_unit=None,
         stored_conditional_display_mode=None,
+        stored_regime_display_mode=None,
         stored_monthly_view=None,
         stored_monthly_series=[],
         stored_order=[],
@@ -320,9 +321,9 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
         page_visited=False,
     )
 
-    assert restored[25] == []
     assert restored[26] == []
-    assert restored[27] is False
+    assert restored[27] == []
+    assert restored[28] is False
 
 
 def test_restore_application_state_silently_adds_po_series_after_first_visit(page_modules, raw_json):
@@ -353,6 +354,7 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
         stored_conditional_step=None,
         stored_conditional_step_unit=None,
         stored_conditional_display_mode=None,
+        stored_regime_display_mode=None,
         stored_monthly_view=None,
         stored_monthly_series=None,
         stored_order=["Asset_A", "Asset_B"],
@@ -360,9 +362,9 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
         page_visited=True,
     )
 
-    assert restored[25] == ["Asset_A", "Asset_C"]
-    assert restored[26] == ["Asset_A", "Asset_B", "Asset_C"]
-    assert restored[27] is False
+    assert restored[26] == ["Asset_A", "Asset_C"]
+    assert restored[27] == ["Asset_A", "Asset_B", "Asset_C"]
+    assert restored[28] is False
 
 
 def test_restore_application_state_defers_non_active_tab_controls(page_modules, raw_json):
@@ -393,6 +395,7 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
         stored_conditional_step=None,
         stored_conditional_step_unit=None,
         stored_conditional_display_mode=None,
+        stored_regime_display_mode="detail",
         stored_monthly_view="monthly",
         stored_monthly_series=None,
         stored_order=["Asset_A"],
@@ -419,7 +422,8 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
     assert restored[22] is no_update
     assert restored[23] is no_update
     assert restored[24] is no_update
-    assert restored[25] == ["Asset_A"]
+    assert restored[25] is no_update
+    assert restored[26] == ["Asset_A"]
 
 
 def test_at_restore_secondary_controls_restores_deferred_values(page_modules, raw_json):
@@ -450,6 +454,7 @@ def test_at_restore_secondary_controls_restores_deferred_values(page_modules, ra
         stored_conditional_step=None,
         stored_conditional_step_unit=None,
         stored_conditional_display_mode=None,
+        stored_regime_display_mode="detail",
         stored_monthly_view="monthly",
         stored_order=["Asset_A"],
         po_origin_series=[],
@@ -473,7 +478,8 @@ def test_at_restore_secondary_controls_restores_deferred_values(page_modules, ra
     assert restored[16] == 1
     assert restored[17] == "months"
     assert restored[18] == "summary"
-    assert restored[19] == "monthly"
+    assert restored[19] == "detail"
+    assert restored[20] == "monthly"
 
 
 def test_at_series_modal_open_is_clientside():
@@ -1470,18 +1476,22 @@ def test_prepare_factor_analysis_frames_uses_factor_total_basis(monkeypatch, pag
 def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     idx = pd.date_range("2024-01-01", periods=6, freq="D")
-    dependent_df = pd.DataFrame(
-        {
-            "Asset_A": [0.01, 0.02, 0.0, -0.01, 0.005, 0.008],
-            "Asset_B": [0.015, 0.01, -0.005, 0.0, 0.004, 0.006],
-        },
-        index=idx,
+    artifacts = analyticstool._FactorArtifacts(
+        dependent_df=pd.DataFrame(
+            {
+                "Asset_A": [0.01, 0.02, 0.0, -0.01, 0.005, 0.008],
+                "Asset_B": [0.015, 0.01, -0.005, 0.0, 0.004, 0.006],
+            },
+            index=idx,
+        ),
+        factor_raw=pd.Series([0.2, 0.1, -0.1, 0.0, 0.05, 0.08], index=idx, name="Factor_X"),
+        factor_display=pd.Series([0.2, 0.1, -0.1, 0.0, 0.05, 0.08], index=idx, name="Factor_X"),
+        factor_display_name="Factor_X",
     )
-    factor_vals = pd.Series([0.2, 0.1, -0.1, 0.0, 0.05, 0.08], index=idx, name="Factor_X")
     monkeypatch.setattr(
         analyticstool,
-        "_prepare_factor_analysis_frames",
-        lambda *_args, **_kwargs: (dependent_df, factor_vals),
+        "_compute_factor_artifacts",
+        lambda *_args, **_kwargs: artifacts,
     )
 
     warning, content = analyticstool.update_factor_analysis(
@@ -1508,6 +1518,58 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
     graphs = [child for child in (content.children or []) if getattr(child, "figure", None) is not None]
     assert len(graphs) == 2
     assert all("Factor Scatter" in graph.figure.layout.title.text for graph in graphs)
+
+
+def test_update_factor_analysis_renders_raw_detail_grid(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    artifacts = analyticstool._FactorArtifacts(
+        dependent_df=pd.DataFrame({"Asset_A": [0.01, 0.02, -0.01]}, index=idx),
+        factor_raw=pd.Series([0.3, 0.1, -0.2], index=idx, name="Factor_X"),
+        factor_display=pd.Series([1.0, 0.0, -1.0], index=idx, name="Factor_X"),
+        factor_display_name="Factor_X",
+    )
+    monkeypatch.setattr(analyticstool, "_compute_factor_artifacts", lambda *_args, **_kwargs: artifacts)
+
+    warning, content = analyticstool.update_factor_analysis(
+        "factor_analysis",
+        "detail",
+        "normal",
+        "raw::Factor_X",
+        5,
+        "zscore",
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        True,
+        0,
+        {},
+        "light",
+    )
+
+    assert warning is None
+    grid = content.children[1]
+    assert grid.rowData[0]["Factor Value"] == pytest.approx(1.0)
+    assert grid.rowData[0]["Quantile"] in {"Q1", "Q2", "Q3", "Q4", "Q5"}
+    assert grid.rowData[0]["Asset_A"] == pytest.approx(0.01)
+
+
+def test_factor_quantile_labels_handles_collapsed_buckets(page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+
+    labels, ordered = analyticstool._factor_quantile_labels(
+        pd.Series([1.0, 1.0, 1.0, 2.0, 2.0], index=idx),
+        5,
+    )
+
+    assert labels.index.equals(idx)
+    assert all(label in {"Q1", "Q2", None} or pd.isna(label) for label in labels.tolist())
+    assert len(ordered) <= 2
 
 
 def test_prepare_at_qq_reference_series_uses_current_returns_basis_for_raw_reference(monkeypatch, page_modules):
@@ -1654,6 +1716,7 @@ def test_restore_application_state_restores_factor_analysis_qq_controls(page_mod
         stored_conditional_step=None,
         stored_conditional_step_unit=None,
         stored_conditional_display_mode=None,
+        stored_regime_display_mode=None,
         stored_monthly_view="monthly",
         stored_monthly_series=None,
         stored_order=["Asset_A"],
@@ -1767,10 +1830,12 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(
         analyticstool,
-        "_prepare_factor_analysis_frames",
-        lambda *_args, **_kwargs: (
-            returns_df.copy(),
-            pd.Series([0.2, 0.1, 0.0, -0.1, 0.05], index=idx, name="Factor_X"),
+        "_compute_factor_artifacts",
+        lambda *_args, **_kwargs: analyticstool._FactorArtifacts(
+            dependent_df=returns_df.copy(),
+            factor_raw=pd.Series([0.2, 0.1, 0.0, -0.1, 0.05], index=idx, name="Factor_X"),
+            factor_display=pd.Series([0.2, 0.1, 0.0, -0.1, 0.05], index=idx, name="Factor_X"),
+            factor_display_name="Factor_X",
         ),
     )
     monkeypatch.setattr(
@@ -1783,47 +1848,28 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         "_build_factor_scatter_summary_rows",
         lambda *_args, **_kwargs: [{"Factor": "Factor_X", "Series": "Asset_A", "Observations": 5, "Slope": 1.1}],
     )
-    regime_states = pd.Series([1, 1, 2, 2, 3], index=idx, dtype="Int64", name="Regime")
-    monkeypatch.setattr(
-        analyticstool,
-        "compute_regime_assignments",
-        lambda *_args, **_kwargs: (
-            regime_states,
-            {"method_type": 2, "num_regimes": 3, "observations": 5, "warning": None},
+    regime_payload = analyticstool._RegimeAnalysisPayload(
+        definition={"RegimeName": "SavedRegime"},
+        diagnostics={"method_type": 2, "num_regimes": 3, "observations": 5, "warning": None},
+        unresolved=(),
+        settings_df=pd.DataFrame([{"RegimeName": "SavedRegime", "Signal Label": "PC1"}]),
+        timeline_df=pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3]}),
+        stats_df=pd.DataFrame(
+            [{"Regime": 1, "Series": "Asset_A", "Observations": 2, "Mean Return": 0.01}]
         ),
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_timeline_frame",
-        lambda *_args, **_kwargs: pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3]}),
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_statistics_table",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [
-                {
-                    "Regime": 1,
-                    "Series": "Asset_A",
-                    "Observations": 2,
-                    "Mean Return": 0.01,
-                }
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_transition_matrix",
-        lambda *_args, **_kwargs: pd.DataFrame(
+        transition_df=pd.DataFrame(
             [[0.5, 0.5], [0.2, 0.8]],
             index=pd.Index([1, 2], name="From Regime"),
             columns=[1, 2],
         ),
+        duration_df=pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
+        detail_df=pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3], "Regime Signal": [0.1, 0.2, 0.0, -0.1, 0.3], "Asset_A": returns_df["Asset_A"].tolist()}),
+        signal_label="PC1",
     )
     monkeypatch.setattr(
         analyticstool,
-        "build_regime_duration_table",
-        lambda *_args, **_kwargs: pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
+        "_build_regime_analysis_payload",
+        lambda *_args, **_kwargs: analyticstool._RegimeAnalysisBuildResult("ok", payload=regime_payload),
     )
     monkeypatch.setattr(analyticstool.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
 
@@ -1868,20 +1914,21 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     xl = pd.ExcelFile(BytesIO(payload["content"]))
     assert "Factor Analysis - Box" in xl.sheet_names
     assert "Factor Analysis - Scatter" in xl.sheet_names
+    assert "Factor Analysis - Detail" in xl.sheet_names
     assert "Conditional Coincident" in xl.sheet_names
     assert "Conditional Forward" in xl.sheet_names
     assert "Cond Coincident Detail" in xl.sheet_names
     assert "Cond Forward Detail" in xl.sheet_names
     assert "Regime - Settings" in xl.sheet_names
     assert "Regime - Statistics" in xl.sheet_names
-    assert "Regime - Timeline" in xl.sheet_names
+    assert "Regime - Detail" in xl.sheet_names
     assert "Regime - Transition" in xl.sheet_names
     assert "Regime - Duration" in xl.sheet_names
     assert "Regime - Conditioned" not in xl.sheet_names
     regime_sheet_positions = {name: xl.sheet_names.index(name) for name in xl.sheet_names if name.startswith("Regime - ")}
     assert regime_sheet_positions["Regime - Settings"] < regime_sheet_positions["Regime - Statistics"]
-    assert regime_sheet_positions["Regime - Statistics"] < regime_sheet_positions["Regime - Timeline"]
-    assert regime_sheet_positions["Regime - Timeline"] < regime_sheet_positions["Regime - Transition"]
+    assert regime_sheet_positions["Regime - Statistics"] < regime_sheet_positions["Regime - Detail"]
+    assert regime_sheet_positions["Regime - Detail"] < regime_sheet_positions["Regime - Transition"]
     assert regime_sheet_positions["Regime - Transition"] < regime_sheet_positions["Regime - Duration"]
 
 
@@ -2122,22 +2169,29 @@ def test_regime_definition_modal_hides_return_basis_control(page_modules):
 def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     idx = pd.date_range("2024-01-01", periods=6, freq="D")
-    states = pd.Series([1, 1, 2, 2, 3, 3], index=idx, dtype="Int64", name="Regime")
     returns_df = pd.DataFrame({"Asset_A": [0.01, -0.005, 0.02, 0.0, 0.01, -0.01]}, index=idx)
-
+    regime_payload = analyticstool._RegimeAnalysisPayload(
+        definition={"RegimeName": "SavedRegime"},
+        diagnostics={"method_type": 3, "num_regimes": 3, "observations": 6, "warning": None},
+        unresolved=(),
+        settings_df=pd.DataFrame([{"RegimeName": "SavedRegime", "Signal Label": "Asset_A", "Signal Return Basis": "total"}]),
+        timeline_df=pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3, 3]}),
+        stats_df=pd.DataFrame([{"Regime": 1, "Series": "Asset_A", "Observations": 2, "Mean Return": 0.01}]),
+        transition_df=pd.DataFrame([[0.5, 0.5], [0.2, 0.8]], index=pd.Index([1, 2], name="From Regime"), columns=[1, 2]),
+        duration_df=pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
+        detail_df=pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3, 3], "Regime Signal": returns_df["Asset_A"].tolist(), "Asset_A": returns_df["Asset_A"].tolist()}),
+        signal_label="Asset_A",
+    )
     monkeypatch.setattr(
         analyticstool,
-        "compute_regime_assignments",
-        lambda *_args, **_kwargs: (
-            states,
-            {"method_type": 3, "num_regimes": 3, "observations": 6, "warning": None},
-        ),
+        "_build_regime_analysis_payload",
+        lambda *_args, **_kwargs: analyticstool._RegimeAnalysisBuildResult("ok", payload=regime_payload),
     )
-    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
 
     warning, content = analyticstool.update_regime_analysis(
         "regime_analysis",
         "def::SavedRegime",
+        "summary",
         "raw-json",
         "daily",
         ["Asset_A"],
@@ -2165,6 +2219,52 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
     assert "regime settings" in text_blob
     assert "regime statistics" in text_blob
     assert "transition matrix" in text_blob
+
+
+def test_update_regime_analysis_renders_raw_detail_grid(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    regime_payload = analyticstool._RegimeAnalysisPayload(
+        definition={"RegimeName": "SavedRegime"},
+        diagnostics={"method_type": 3, "num_regimes": 3, "observations": 3, "warning": None},
+        unresolved=(),
+        settings_df=pd.DataFrame([{"RegimeName": "SavedRegime", "Signal Label": "Asset_A", "Signal Return Basis": "total"}]),
+        timeline_df=pd.DataFrame({"Date": idx, "Regime": [1, 2, 3]}),
+        stats_df=pd.DataFrame(),
+        transition_df=pd.DataFrame(),
+        duration_df=pd.DataFrame(),
+        detail_df=pd.DataFrame({"Date": idx, "Regime": [1, 2, 3], "Regime Signal": [0.1, 0.0, -0.1], "Asset_A": [0.01, 0.02, -0.03]}),
+        signal_label="Asset_A",
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "_build_regime_analysis_payload",
+        lambda *_args, **_kwargs: analyticstool._RegimeAnalysisBuildResult("ok", payload=regime_payload),
+    )
+
+    warning, content = analyticstool.update_regime_analysis(
+        "regime_analysis",
+        "def::SavedRegime",
+        "detail",
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        True,
+        0,
+        {},
+        "light",
+        [{"RegimeName": "SavedRegime", "MethodType": 3, "Config": {"num_regimes": 3}}],
+        [],
+    )
+
+    assert warning is not None
+    grid = content.children[1]
+    assert grid.rowData[0]["Regime"] == 1
+    assert grid.rowData[0]["Regime Signal"] == pytest.approx(0.1)
 
 
 def test_help_modal_mentions_factor_analysis(page_modules):

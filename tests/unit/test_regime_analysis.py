@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from utils.regime_analysis import (
+    build_regime_detail_frame,
     build_regime_duration_table,
     build_regime_statistics_table,
     build_regime_timeline_frame,
@@ -143,6 +144,33 @@ def test_regime_statistics_empty_when_no_common_overlap():
         selected_series=["Asset_A"],
     )
     assert stats_df.empty
+
+
+def test_build_regime_detail_frame_uses_common_overlap_and_signal_label():
+    idx_returns = pd.date_range("2024-01-01", periods=4, freq="D")
+    returns_df = pd.DataFrame({"Asset_A": [0.01, 0.02, -0.01, 0.0]}, index=idx_returns)
+    states = pd.Series([1, 2, 2], index=pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]), dtype="Int64", name="Regime")
+    signal = pd.Series([0.5, -0.1, 0.2], index=pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]), name="PC1")
+
+    detail_df = build_regime_detail_frame(returns_df, states, signal, "Regime Signal")
+
+    assert list(detail_df.columns[:3]) == ["Date", "Regime", "Regime Signal"]
+    assert len(detail_df) == 3
+    assert detail_df["Regime"].tolist() == [1, 2, 2]
+    assert detail_df["Asset_A"].tolist() == [0.02, -0.01, 0.0]
+
+
+def test_build_regime_detail_frame_avoids_signal_name_collision_with_series_column():
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    returns_df = pd.DataFrame({"SPX_TRIndex": [0.01, -0.02, 0.03]}, index=idx)
+    states = pd.Series([1, 2, 1], index=idx, dtype="Int64", name="Regime")
+    signal = pd.Series([100.0, 99.5, 100.5], index=idx, name="SPX_TRIndex")
+
+    detail_df = build_regime_detail_frame(returns_df, states, signal, "SPX_TRIndex")
+
+    assert list(detail_df.columns[:4]) == ["Date", "Regime", "Regime Signal", "SPX_TRIndex"]
+    assert detail_df["Regime Signal"].tolist() == [100.0, 99.5, 100.5]
+    assert detail_df["SPX_TRIndex"].tolist() == [0.01, -0.02, 0.03]
 
 
 def test_compute_regime_assignments_returns_warning_for_invalid_definition(raw_json):

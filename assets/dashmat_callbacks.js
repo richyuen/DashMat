@@ -1093,9 +1093,9 @@
     const mode = factorMode || "box";
     const qqReference = factorQqReference === "reference" ? "reference" : "normal";
     const method = String(regimeMethodType || "1");
-    const showFactorControls = mode === "box" || mode === "scatter" || (mode === "qq" && qqReference === "reference");
-    const quantileStyle = mode === "box" ? { display: "block" } : { display: "none" };
-    const transformStyle = mode === "box" || mode === "scatter" ? { display: "block" } : { display: "none" };
+    const showFactorControls = mode === "box" || mode === "scatter" || mode === "detail" || (mode === "qq" && qqReference === "reference");
+    const quantileStyle = mode === "box" || mode === "detail" ? { display: "block" } : { display: "none" };
+    const transformStyle = mode === "box" || mode === "scatter" || mode === "detail" ? { display: "block" } : { display: "none" };
     const qqReferenceStyle = mode === "qq" ? { display: "block" } : { display: "none" };
     const factorStyle = showFactorControls ? { display: "block" } : { display: "none" };
     return [

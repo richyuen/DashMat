@@ -570,34 +570,65 @@ def compute_regime_assignments_cached(
         definition=definition,
         date_range=date_range,
     )
-    states = result.get("states", pd.Series(dtype=int))
+    states = result.get("states", pd.Series(dtype="Int64", name="Regime"))
     diagnostics = result.get("diagnostics", {}) or {}
-    if states is None or states.empty:
-        states_json = None
+    analysis_df = result.get("analysis_df", pd.DataFrame())
+    signal = result.get("signal", pd.Series(dtype=float))
+
+    if states is None:
+        states = pd.Series(dtype="Int64", name="Regime")
+    if analysis_df is None:
+        analysis_df = pd.DataFrame()
+    if signal is None:
+        signal = pd.Series(dtype=float)
+
+    states = pd.Series(states.copy())
+    states.index = pd.to_datetime(states.index, errors="coerce")
+    states = states[~states.index.isna()]
+    states = states[~states.index.duplicated(keep="last")]
+    if states.empty:
+        states = pd.Series(dtype="Int64", name="Regime")
     else:
-        state_frame = pd.DataFrame(
-            {
-                "Date": pd.to_datetime(pd.Index(states.index), errors="coerce"),
-                "Regime": pd.to_numeric(states, errors="coerce").astype("Int64").to_numpy(),
-            }
-        )
-        state_frame["Date"] = pd.to_datetime(state_frame["Date"], errors="coerce")
-        state_frame = state_frame.dropna(subset=["Date"])
-        state_frame = state_frame.sort_values("Date")
-        state_frame["Date"] = state_frame["Date"].dt.strftime("%Y-%m-%d")
-        states_json = canonical_json_dumps(state_frame.to_dict("records"))
+        states = pd.to_numeric(states, errors="coerce").astype("Int64").dropna()
+        states.name = "Regime"
+
+    signal = pd.Series(signal.copy())
+    signal.index = pd.to_datetime(signal.index, errors="coerce")
+    signal = signal[~signal.index.isna()]
+    signal = signal[~signal.index.duplicated(keep="last")]
+    signal = pd.to_numeric(signal, errors="coerce").dropna()
+    method_type = diagnostics.get("method_type")
+    if int(method_type or 0) in {1, 2}:
+        signal_label = "PC1"
+    else:
+        config = definition.get("Config", {}) if isinstance(definition, dict) else {}
+        signal_label = str(config.get("single_series") or "Regime Signal").strip() or "Regime Signal"
+    signal.name = signal_label
+
+    if isinstance(analysis_df, pd.DataFrame) and not analysis_df.empty:
+        analysis_df = analysis_df.copy()
+        analysis_df.index = pd.to_datetime(analysis_df.index, errors="coerce")
+        analysis_df = analysis_df[~analysis_df.index.isna()]
+        analysis_df = analysis_df[~analysis_df.index.duplicated(keep="last")]
+        analysis_df = analysis_df.sort_index()
+    else:
+        analysis_df = pd.DataFrame()
+
     return {
-        "states_json": states_json,
+        "states": states,
         "diagnostics": diagnostics,
+        "analysis_df": analysis_df,
+        "signal": signal,
+        "signal_label": signal_label,
     }
 
 
-def compute_regime_assignments(
+def compute_regime_artifacts(
     raw_data: str,
     periodicity: str,
     definition: dict[str, Any],
     date_range: dict | str | None,
-) -> tuple[pd.Series, dict[str, Any]]:
+) -> dict[str, Any]:
     payload = canonical_json_dumps(definition or {})
     date_payload = date_range_payload_for_cache(date_range)
     result = compute_regime_assignments_cached(
@@ -606,24 +637,33 @@ def compute_regime_assignments(
         definition_payload_json=payload,
         date_range_payload_json=date_payload,
     )
-    diagnostics = result.get("diagnostics", {}) if isinstance(result, dict) else {}
-    states_json = result.get("states_json") if isinstance(result, dict) else None
-    if not states_json:
-        return pd.Series(dtype="Int64", name="Regime"), diagnostics
+    if not isinstance(result, dict):
+        return {
+            "states": pd.Series(dtype="Int64", name="Regime"),
+            "diagnostics": {},
+            "analysis_df": pd.DataFrame(),
+            "signal": pd.Series(dtype=float),
+            "signal_label": "Regime Signal",
+        }
+    return result
 
-    try:
-        records = json.loads(states_json)
-    except Exception:
-        return pd.Series(dtype="Int64", name="Regime"), diagnostics
-    if not isinstance(records, list) or not records:
-        return pd.Series(dtype="Int64", name="Regime"), diagnostics
-    frame = pd.DataFrame(records)
-    if frame.empty or "Date" not in frame.columns or "Regime" not in frame.columns:
-        return pd.Series(dtype="Int64", name="Regime"), diagnostics
-    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
-    frame["Regime"] = pd.to_numeric(frame["Regime"], errors="coerce").astype("Int64")
-    frame = frame.dropna(subset=["Date", "Regime"]).sort_values("Date")
-    states = pd.Series(frame["Regime"].to_numpy(), index=pd.DatetimeIndex(frame["Date"]), name="Regime", dtype="Int64")
+
+def compute_regime_assignments(
+    raw_data: str,
+    periodicity: str,
+    definition: dict[str, Any],
+    date_range: dict | str | None,
+) -> tuple[pd.Series, dict[str, Any]]:
+    result = compute_regime_artifacts(
+        raw_data=raw_data,
+        periodicity=periodicity,
+        definition=definition,
+        date_range=date_range,
+    )
+    states = result.get("states", pd.Series(dtype="Int64", name="Regime"))
+    diagnostics = result.get("diagnostics", {}) if isinstance(result, dict) else {}
+    if not isinstance(states, pd.Series):
+        states = pd.Series(dtype="Int64", name="Regime")
     return states, diagnostics
 
 
@@ -826,3 +866,56 @@ def build_regime_timeline_frame(states: pd.Series) -> pd.DataFrame:
     out["Regime"] = pd.to_numeric(out["Regime"], errors="coerce").astype("Int64")
     out = out.dropna(subset=["Date", "Regime"]).sort_values("Date")
     return out.reset_index(drop=True)
+
+
+def build_regime_detail_frame(
+    returns_df: pd.DataFrame,
+    states: pd.Series,
+    signal: pd.Series,
+    signal_label: str = "Regime Signal",
+) -> pd.DataFrame:
+    if returns_df is None or returns_df.empty or states is None or states.empty:
+        return pd.DataFrame()
+
+    signal_name = "Regime Signal"
+    returns_work = returns_df.copy()
+    returns_work.index = pd.to_datetime(returns_work.index, errors="coerce")
+    returns_work = returns_work[~returns_work.index.isna()]
+    returns_work = returns_work[~returns_work.index.duplicated(keep="last")]
+    returns_work = returns_work.sort_index()
+    if returns_work.empty:
+        return pd.DataFrame()
+
+    states_work = pd.Series(states.copy(), name="Regime")
+    states_work.index = pd.to_datetime(states_work.index, errors="coerce")
+    states_work = states_work[~states_work.index.isna()]
+    states_work = states_work[~states_work.index.duplicated(keep="last")]
+    states_work = pd.to_numeric(states_work, errors="coerce").astype("Int64").dropna()
+    if states_work.empty:
+        return pd.DataFrame()
+
+    signal_work = pd.Series(signal.copy(), name=signal_name)
+    signal_work.index = pd.to_datetime(signal_work.index, errors="coerce")
+    signal_work = signal_work[~signal_work.index.isna()]
+    signal_work = signal_work[~signal_work.index.duplicated(keep="last")]
+    signal_work = pd.to_numeric(signal_work, errors="coerce").dropna()
+    if signal_work.empty:
+        return pd.DataFrame()
+
+    common_idx = returns_work.index.intersection(states_work.index).intersection(signal_work.index)
+    if common_idx.empty:
+        return pd.DataFrame()
+
+    detail_df = returns_work.reindex(common_idx).copy()
+    if detail_df.empty:
+        return pd.DataFrame()
+    detail_df.insert(0, signal_name, signal_work.reindex(common_idx).to_numpy(dtype=float, copy=False))
+    detail_df.insert(0, "Regime", states_work.reindex(common_idx).to_numpy(dtype="int64", copy=False))
+    detail_df.insert(0, "Date", pd.to_datetime(common_idx, errors="coerce"))
+    series_columns = [col for col in detail_df.columns if col not in {"Date", "Regime", signal_name}]
+    if series_columns:
+        detail_df = detail_df.dropna(subset=series_columns, how="all")
+    if detail_df.empty:
+        return pd.DataFrame()
+    detail_df["Regime"] = pd.to_numeric(detail_df["Regime"], errors="coerce").astype("Int64")
+    return detail_df.reset_index(drop=True)
