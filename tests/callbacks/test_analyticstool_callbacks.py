@@ -1473,6 +1473,44 @@ def test_prepare_factor_analysis_frames_uses_factor_total_basis(monkeypatch, pag
     assert factor_out.name == "Asset_B"
 
 
+def test_compute_selected_returns_preserves_selected_order_for_total_basis(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+
+    monkeypatch.setattr(
+        analyticstool,
+        "get_working_returns",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            {
+                "Bench_X": [0.0, 0.0, 0.0],
+                "Asset_B": [0.03, 0.02, 0.01],
+                "Asset_A": [0.01, 0.00, -0.01],
+            },
+            index=idx,
+        ),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "calculate_excess_returns",
+        lambda *_args, **_kwargs: pytest.fail("total-basis selected returns should not use excess path"),
+    )
+
+    out = analyticstool._compute_selected_returns(
+        "raw-json-selected-order",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        0,
+        {},
+    )
+
+    assert list(out.columns) == ["Asset_A", "Asset_B"]
+    assert out.iloc[0].to_dict() == {"Asset_A": pytest.approx(0.01), "Asset_B": pytest.approx(0.03)}
+
+
 def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     idx = pd.date_range("2024-01-01", periods=6, freq="D")
@@ -1814,6 +1852,8 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
 
     monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(
         analyticstool,
         "calculate_statistics_cached",
@@ -1945,6 +1985,7 @@ def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeyp
     returns_df.index.name = "Date"
 
     monkeypatch.setattr(analyticstool, "calculate_excess_returns", lambda *_args, **_kwargs: returns_df.copy())
+    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
     monkeypatch.setattr(
         analyticstool,
         "calculate_statistics_cached",

@@ -379,6 +379,82 @@ def _build_analytics_compute_bundle(
     )
 
 
+@cache_config.cache.memoize(timeout=0)
+def _compute_selected_returns_cached(
+    raw_data: str,
+    periodicity: str,
+    selected_series: tuple,
+    returns_type: str,
+    benchmark_payload: str,
+    long_short_payload: str,
+    date_range_payload: str,
+    vol_scaler: float,
+    vol_scaling_payload: str,
+) -> pd.DataFrame:
+    selected_tuple = tuple(selected_series or ())
+    if not raw_data or not selected_tuple:
+        return pd.DataFrame()
+
+    periodicity_value = periodicity or "daily"
+    returns_basis = returns_type or "total"
+    if returns_basis == "excess":
+        selected_returns_df = calculate_excess_returns(
+            raw_data,
+            periodicity_value,
+            selected_tuple,
+            benchmark_payload,
+            "excess",
+            long_short_payload,
+            date_range_payload,
+            vol_scaler,
+            vol_scaling_payload,
+        )
+    else:
+        selected_returns_df = get_working_returns(
+            raw_data,
+            periodicity_value,
+            selected_tuple,
+            benchmark_payload,
+            long_short_payload,
+            date_range_payload,
+            vol_scaler,
+            vol_scaling_payload,
+        )
+        selected_returns_df = selected_returns_df[[c for c in selected_tuple if c in selected_returns_df.columns]]
+
+    if selected_returns_df.empty:
+        return pd.DataFrame()
+
+    ordered_cols = [c for c in selected_tuple if c in selected_returns_df.columns]
+    if not ordered_cols:
+        return pd.DataFrame(index=selected_returns_df.index)
+    return selected_returns_df.reindex(columns=ordered_cols).dropna(how="all")
+
+
+def _compute_selected_returns(
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+) -> pd.DataFrame:
+    return _compute_selected_returns_cached(
+        raw_data or "",
+        periodicity or "daily",
+        tuple(selected_series or ()),
+        returns_type or "total",
+        _mapping_payload(benchmark_assignments),
+        _mapping_payload(long_short_assignments),
+        _date_range_payload(date_range),
+        vol_scaler or 0,
+        _mapping_payload(vol_scaling_assignments),
+    )
+
+
 def _build_regime_warning_text(diagnostics, unresolved: tuple[str, ...]) -> str:
     warning_text = str((diagnostics or {}).get("warning") or "").strip()
     if warning_text and unresolved:
@@ -436,30 +512,17 @@ def _compute_regime_analysis_outputs_cached(
         }
 
     selected_tuple = tuple(selected_series or ())
-    if returns_type == "excess":
-        selected_returns_df = calculate_excess_returns(
-            raw_data,
-            periodicity or "daily",
-            selected_tuple,
-            benchmark_payload,
-            "excess",
-            long_short_payload,
-            date_range_payload,
-            vol_scaler,
-            vol_scaling_payload,
-        )
-    else:
-        selected_returns_df = get_working_returns(
-            raw_data,
-            periodicity or "daily",
-            selected_tuple,
-            benchmark_payload,
-            long_short_payload,
-            date_range_payload,
-            vol_scaler,
-            vol_scaling_payload,
-        )
-        selected_returns_df = selected_returns_df[[c for c in selected_tuple if c in selected_returns_df.columns]]
+    selected_returns_df = _compute_selected_returns_cached(
+        raw_data,
+        periodicity or "daily",
+        selected_tuple,
+        returns_type or "total",
+        benchmark_payload,
+        long_short_payload,
+        date_range_payload,
+        vol_scaler,
+        vol_scaling_payload,
+    )
 
     settings_df = pd.DataFrame(
         [
@@ -1169,12 +1232,12 @@ def _prepare_factor_base_frames(
     vol_scaler_value = vol_scaler or 0
     vol_payload = _mapping_payload(vol_scaling_assignments)
 
-    dependent_df = calculate_excess_returns(
+    dependent_df = _compute_selected_returns_cached(
         raw_data,
         periodicity_value,
         selected_tuple,
-        bench_payload,
         returns_type or "total",
+        bench_payload,
         ls_payload,
         date_payload,
         vol_scaler_value,
@@ -1422,18 +1485,16 @@ def _prepare_factor_analysis_selected_df(
     vol_scaler,
     vol_scaling_assignments,
 ):
-    if not raw_data or not selected_series:
-        return pd.DataFrame()
-    return calculate_excess_returns(
+    return _compute_selected_returns(
         raw_data,
-        periodicity or "daily",
-        tuple(selected_series or ()),
-        _mapping_payload(benchmark_assignments),
-        returns_type or "total",
-        _mapping_payload(long_short_assignments),
-        _date_range_payload(date_range),
-        vol_scaler or 0,
-        _mapping_payload(vol_scaling_assignments),
+        periodicity,
+        selected_series,
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
     )
 
 
@@ -2003,16 +2064,16 @@ def _prepare_at_qq_reference_series(
         return ref_values.replace([np.inf, -np.inf], np.nan).dropna()
 
     raw_reference = reference_name if reference_prefix == "raw" else str(reference_series or "")
-    ref_df = calculate_excess_returns(
+    ref_df = _compute_selected_returns(
         raw_data,
-        periodicity or "daily",
+        periodicity,
         (raw_reference,),
-        _mapping_payload(benchmark_assignments),
-        returns_type or "total",
-        _mapping_payload(long_short_assignments),
-        _date_range_payload(date_range),
-        vol_scaler or 0,
-        _mapping_payload(vol_scaling_assignments),
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
     )
     if ref_df.empty or raw_reference not in ref_df.columns:
         return pd.Series(dtype=float)
@@ -8329,17 +8390,16 @@ def update_grid(raw_data=None, periodicity=None, selected_series=None, returns_t
 
     try:
         with timed_block("analyticstool.render_returns_grid", series_count=len(selected_series)):
-            # Use cached function to avoid repeated deserialization and computation
-            display_df = calculate_excess_returns(
+            display_df = _compute_selected_returns(
                 raw_data,
-                periodicity or "daily",
-                tuple(selected_series),  # Convert to tuple for cache key
-                _mapping_payload(benchmark_assignments),  # Convert to string for cache key
+                periodicity,
+                selected_series,
                 returns_type,
-                _mapping_payload(long_short_assignments),  # Convert to string for cache key
-                _date_range_payload(date_range),  # Convert to string for cache key
-                vol_scaler or 0,
-                _mapping_payload(vol_scaling_assignments)
+                benchmark_assignments,
+                long_short_assignments,
+                date_range,
+                vol_scaler,
+                vol_scaling_assignments,
             )
 
         if display_df.empty:
@@ -10066,6 +10126,228 @@ def _build_conditional_detail_export_frame(detail_df: pd.DataFrame, include_forw
     return detail_df.copy()
 
 
+def _build_factor_export_sheets(
+    bundle: _AnalyticsComputeBundle,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaling_assignments,
+    factor_series,
+    factor_quantiles,
+    factor_transform,
+    factor_definitions_db,
+    factor_definitions_local,
+) -> list[tuple[str, pd.DataFrame, bool]]:
+    if not factor_series:
+        return []
+
+    factor_transform_value = factor_transform if factor_transform in {"raw", "zscore"} else "raw"
+    quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
+    factor_artifacts = _compute_factor_artifacts(
+        bundle.raw_data,
+        bundle.periodicity,
+        bundle.selected_series,
+        factor_series,
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        bundle.vol_scaler,
+        vol_scaling_assignments,
+        factor_transform_value,
+        factor_definitions_db,
+        factor_definitions_local,
+    )
+    dependent_df = factor_artifacts.dependent_df
+    factor_values = factor_artifacts.factor_display
+    display_factor_name = factor_artifacts.factor_display_name or str(factor_series)
+
+    box_rows = _build_factor_box_summary_rows(
+        bundle.selected_series,
+        dependent_df,
+        display_factor_name,
+        factor_values,
+        quantiles,
+    )
+    box_df = pd.DataFrame(box_rows)
+    if box_df.empty:
+        box_df = pd.DataFrame([{"Note": "No overlapping observations for factor box analysis."}])
+    else:
+        box_df.insert(1, "Transform", "Z-Score" if factor_transform_value == "zscore" else "Raw")
+        box_df.insert(2, "Quantiles", quantiles)
+
+    scatter_rows = _build_factor_scatter_summary_rows(
+        bundle.selected_series,
+        dependent_df,
+        display_factor_name,
+        factor_values,
+    )
+    scatter_df = pd.DataFrame(scatter_rows)
+    if scatter_df.empty:
+        scatter_df = pd.DataFrame([{"Note": "No overlapping observations for factor scatter analysis."}])
+    else:
+        scatter_df.insert(1, "Transform", "Z-Score" if factor_transform_value == "zscore" else "Raw")
+
+    detail_df = _build_factor_detail_frame(
+        factor_artifacts,
+        bundle.selected_series,
+        quantiles,
+    )
+    if detail_df.empty:
+        detail_df = pd.DataFrame([{"Note": "No overlapping observations for factor detail."}])
+
+    return [
+        ("Factor Analysis - Box", box_df, False),
+        ("Factor Analysis - Scatter", scatter_df, False),
+        ("Factor Analysis - Detail", detail_df, False),
+    ]
+
+
+def _build_conditional_export_sheets(
+    bundle: _AnalyticsComputeBundle,
+    returns_type,
+    factor_series,
+    factor_transform,
+    conditional_comparator,
+    conditional_threshold,
+    conditional_window_conversion,
+    conditional_step,
+    conditional_step_unit,
+    factor_definitions_db,
+    factor_definitions_local,
+) -> list[tuple[str, pd.DataFrame, bool]]:
+    if not factor_series:
+        return []
+
+    conditional_definition_payload = ""
+    factor_prefix, factor_name = _split_factor_select_key(factor_series)
+    if factor_prefix == "def":
+        definition = _lookup_factor_definition(
+            factor_name,
+            factor_definitions_db,
+            factor_definitions_local,
+        )
+        if definition:
+            conditional_definition_payload = _definition_payload_for_compute(definition)
+
+    conditional_payload = _compute_conditional_returns_cached(
+        bundle.raw_data,
+        bundle.periodicity,
+        bundle.selected_series,
+        returns_type or "total",
+        bundle.benchmark_payload,
+        bundle.long_short_payload,
+        bundle.date_range_payload,
+        bundle.vol_scaler,
+        bundle.vol_scaling_payload,
+        factor_series,
+        factor_transform if factor_transform in {"raw", "zscore"} else "raw",
+        conditional_definition_payload,
+        conditional_comparator if conditional_comparator in {"le", "ge"} else "le",
+        float(pd.to_numeric(pd.Series([conditional_threshold]), errors="coerce").iloc[0] or 0.0),
+        conditional_window_conversion if conditional_window_conversion in {"compound", "end", "average", "sum"} else "compound",
+        _coerce_positive_int(conditional_step, default=1),
+        conditional_step_unit if conditional_step_unit in {"periods", "months"} else "months",
+        True,
+    )
+
+    coincident_export_df = _build_conditional_export_frame(
+        conditional_payload,
+        "coincident",
+        bundle.selected_series,
+    )
+    forward_export_df = _build_conditional_export_frame(
+        conditional_payload,
+        "forward",
+        bundle.selected_series,
+    )
+    coincident_detail_export_df = _build_conditional_detail_export_frame(
+        conditional_payload.coincident_detail_df,
+        False,
+    )
+    forward_detail_export_df = _build_conditional_detail_export_frame(
+        conditional_payload.forward_detail_df,
+        True,
+    )
+
+    return [
+        ("Conditional Coincident", coincident_export_df, False),
+        ("Conditional Forward", forward_export_df, False),
+        ("Cond Coincident Detail", coincident_detail_export_df, False),
+        ("Cond Forward Detail", forward_detail_export_df, False),
+    ]
+
+
+def _build_regime_export_sheets(
+    bundle: _AnalyticsComputeBundle,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaling_assignments,
+    regime_definition_key,
+    regime_definitions_db,
+    regime_definitions_local,
+    regime_series_store,
+) -> list[tuple[str, pd.DataFrame, bool]]:
+    if not regime_definition_key:
+        return []
+
+    regime_result = _build_regime_analysis_payload(
+        bundle.raw_data,
+        bundle.periodicity,
+        bundle.selected_series,
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        bundle.vol_scaler,
+        vol_scaling_assignments,
+        regime_definition_key,
+        regime_definitions_db,
+        regime_definitions_local,
+        regime_series_store,
+    )
+    if regime_result.status != "ok" or regime_result.payload is None:
+        return []
+
+    regime_payload = regime_result.payload
+    stats_df_regime = regime_payload.stats_df
+    if stats_df_regime.empty:
+        stats_df_regime = pd.DataFrame(
+            [{"Note": "No overlapping observations for regime statistics."}]
+        )
+
+    detail_out = regime_payload.detail_df
+    if detail_out.empty:
+        detail_out = pd.DataFrame([{"Note": "No regime raw detail is available."}])
+
+    transition_out = (
+        regime_payload.transition_df.reset_index()
+        if regime_payload.transition_df is not None and not regime_payload.transition_df.empty
+        else pd.DataFrame()
+    )
+    if transition_out.empty:
+        transition_out = pd.DataFrame(
+            [{"Note": "No transition matrix available (requires at least two observations)."}]
+        )
+
+    duration_out = regime_payload.duration_df
+    if duration_out.empty:
+        duration_out = pd.DataFrame(
+            [{"Note": "No duration summary available."}]
+        )
+
+    return [
+        ("Regime - Settings", regime_payload.settings_df, False),
+        ("Regime - Statistics", stats_df_regime, False),
+        ("Regime - Detail", detail_out, False),
+        ("Regime - Transition", transition_out, False),
+        ("Regime - Duration", duration_out, False),
+    ]
+
+
 @callback(
     Output("at-conditional-conversion-note", "children"),
     Output("at-conditional-returns-warning", "children"),
@@ -11118,12 +11400,12 @@ def download_excel(
 
         # Use cached functions to get data
         with timed_block("analyticstool.download_excel.returns"):
-            returns_df = calculate_excess_returns(
+            returns_df = _compute_selected_returns_cached(
                 bundle.raw_data,
                 bundle.periodicity,
                 bundle.selected_series,
+                returns_type or "total",
                 bundle.benchmark_payload,
-                returns_type,
                 bundle.long_short_payload,
                 bundle.date_range_payload,
                 bundle.vol_scaler,
@@ -11372,86 +11654,25 @@ def download_excel(
                 # Factor Analysis summaries
                 try:
                     with timed_block("analyticstool.download_excel.factor_analysis"):
-                        if factor_series:
-                            factor_transform_value = (
-                                factor_transform if factor_transform in {"raw", "zscore"} else "raw"
-                            )
-                            quantiles = _coerce_factor_quantiles(factor_quantiles, default=5)
-                            factor_artifacts = _compute_factor_artifacts(
-                                bundle.raw_data,
-                                bundle.periodicity,
-                                bundle.selected_series,
-                                factor_series,
-                                returns_type,
-                                benchmark_assignments,
-                                long_short_assignments,
-                                date_range,
-                                bundle.vol_scaler,
-                                vol_scaling_assignments,
-                                factor_transform_value,
-                                factor_definitions_db,
-                                factor_definitions_local,
-                            )
-                            dependent_df = factor_artifacts.dependent_df
-                            factor_values = factor_artifacts.factor_display
-                            display_factor_name = factor_artifacts.factor_display_name or str(factor_series)
-
-                            box_rows = _build_factor_box_summary_rows(
-                                bundle.selected_series,
-                                dependent_df,
-                                display_factor_name,
-                                factor_values,
-                                quantiles,
-                            )
-                            box_df = pd.DataFrame(box_rows)
-                            if box_df.empty:
-                                box_df = pd.DataFrame(
-                                    [{"Note": "No overlapping observations for factor box analysis."}]
-                                )
-                            else:
-                                box_df.insert(1, "Transform", "Z-Score" if factor_transform_value == "zscore" else "Raw")
-                                box_df.insert(2, "Quantiles", quantiles)
+                        factor_sheets = _build_factor_export_sheets(
+                            bundle,
+                            returns_type,
+                            benchmark_assignments,
+                            long_short_assignments,
+                            date_range,
+                            vol_scaling_assignments,
+                            factor_series,
+                            factor_quantiles,
+                            factor_transform,
+                            factor_definitions_db,
+                            factor_definitions_local,
+                        )
+                        for sheet_name, frame, write_index in factor_sheets:
                             write_excel_with_autofit(
                                 writer,
-                                format_excel_dates(box_df),
-                                "Factor Analysis - Box",
-                                index=False,
-                            )
-
-                            scatter_rows = _build_factor_scatter_summary_rows(
-                                bundle.selected_series,
-                                dependent_df,
-                                display_factor_name,
-                                factor_values,
-                            )
-                            scatter_df = pd.DataFrame(scatter_rows)
-                            if scatter_df.empty:
-                                scatter_df = pd.DataFrame(
-                                    [{"Note": "No overlapping observations for factor scatter analysis."}]
-                                )
-                            else:
-                                scatter_df.insert(1, "Transform", "Z-Score" if factor_transform_value == "zscore" else "Raw")
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(scatter_df),
-                                "Factor Analysis - Scatter",
-                                index=False,
-                            )
-
-                            detail_df = _build_factor_detail_frame(
-                                factor_artifacts,
-                                bundle.selected_series,
-                                quantiles,
-                            )
-                            if detail_df.empty:
-                                detail_df = pd.DataFrame(
-                                    [{"Note": "No overlapping observations for factor detail."}]
-                                )
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(detail_df),
-                                "Factor Analysis - Detail",
-                                index=False,
+                                format_excel_dates(frame),
+                                sheet_name,
+                                index=write_index,
                             )
                 except Exception:
                     pass
@@ -11459,80 +11680,25 @@ def download_excel(
                 # Conditional Returns summaries
                 try:
                     with timed_block("analyticstool.download_excel.conditional_returns"):
-                        conditional_definition_payload = ""
-                        if factor_series:
-                            factor_prefix, factor_name = _split_factor_select_key(factor_series)
-                            if factor_prefix == "def":
-                                definition = _lookup_factor_definition(
-                                    factor_name,
-                                    factor_definitions_db,
-                                    factor_definitions_local,
-                                )
-                                if definition:
-                                    conditional_definition_payload = _definition_payload_for_compute(definition)
-
-                            conditional_payload = _compute_conditional_returns_cached(
-                                bundle.raw_data,
-                                bundle.periodicity,
-                                bundle.selected_series,
-                                returns_type or "total",
-                                bundle.benchmark_payload,
-                                bundle.long_short_payload,
-                                bundle.date_range_payload,
-                                bundle.vol_scaler,
-                                bundle.vol_scaling_payload,
-                                factor_series,
-                                factor_transform if factor_transform in {"raw", "zscore"} else "raw",
-                                conditional_definition_payload,
-                                conditional_comparator if conditional_comparator in {"le", "ge"} else "le",
-                                float(pd.to_numeric(pd.Series([conditional_threshold]), errors="coerce").iloc[0] or 0.0),
-                                conditional_window_conversion if conditional_window_conversion in {"compound", "end", "average", "sum"} else "compound",
-                                _coerce_positive_int(conditional_step, default=1),
-                                conditional_step_unit if conditional_step_unit in {"periods", "months"} else "months",
-                                True,
-                            )
-
-                            coincident_export_df = _build_conditional_export_frame(
-                                conditional_payload,
-                                "coincident",
-                                bundle.selected_series,
-                            )
-                            forward_export_df = _build_conditional_export_frame(
-                                conditional_payload,
-                                "forward",
-                                bundle.selected_series,
-                            )
-                            coincident_detail_export_df = _build_conditional_detail_export_frame(
-                                conditional_payload.coincident_detail_df,
-                                False,
-                            )
-                            forward_detail_export_df = _build_conditional_detail_export_frame(
-                                conditional_payload.forward_detail_df,
-                                True,
-                            )
+                        conditional_sheets = _build_conditional_export_sheets(
+                            bundle,
+                            returns_type,
+                            factor_series,
+                            factor_transform,
+                            conditional_comparator,
+                            conditional_threshold,
+                            conditional_window_conversion,
+                            conditional_step,
+                            conditional_step_unit,
+                            factor_definitions_db,
+                            factor_definitions_local,
+                        )
+                        for sheet_name, frame, write_index in conditional_sheets:
                             write_excel_with_autofit(
                                 writer,
-                                format_excel_dates(coincident_export_df),
-                                "Conditional Coincident",
-                                index=False,
-                            )
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(forward_export_df),
-                                "Conditional Forward",
-                                index=False,
-                            )
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(coincident_detail_export_df),
-                                "Cond Coincident Detail",
-                                index=False,
-                            )
-                            write_excel_with_autofit(
-                                writer,
-                                format_excel_dates(forward_detail_export_df),
-                                "Cond Forward Detail",
-                                index=False,
+                                format_excel_dates(frame),
+                                sheet_name,
+                                index=write_index,
                             )
                 except Exception:
                     pass
@@ -11540,81 +11706,25 @@ def download_excel(
                 # Regime Analysis summaries
                 try:
                     with timed_block("analyticstool.download_excel.regime_analysis"):
-                        if regime_definition_key:
-                            regime_result = _build_regime_analysis_payload(
-                                bundle.raw_data,
-                                bundle.periodicity,
-                                bundle.selected_series,
-                                returns_type,
-                                benchmark_assignments,
-                                long_short_assignments,
-                                date_range,
-                                bundle.vol_scaler,
-                                vol_scaling_assignments,
-                                regime_definition_key,
-                                regime_definitions_db,
-                                regime_definitions_local,
-                                regime_series_store,
+                        regime_sheets = _build_regime_export_sheets(
+                            bundle,
+                            returns_type,
+                            benchmark_assignments,
+                            long_short_assignments,
+                            date_range,
+                            vol_scaling_assignments,
+                            regime_definition_key,
+                            regime_definitions_db,
+                            regime_definitions_local,
+                            regime_series_store,
+                        )
+                        for sheet_name, frame, write_index in regime_sheets:
+                            write_excel_with_autofit(
+                                writer,
+                                format_excel_dates(frame),
+                                sheet_name,
+                                index=write_index,
                             )
-                            if regime_result.status == "ok" and regime_result.payload is not None:
-                                regime_payload = regime_result.payload
-
-                                write_excel_with_autofit(
-                                    writer,
-                                    format_excel_dates(regime_payload.settings_df),
-                                    "Regime - Settings",
-                                    index=False,
-                                )
-
-                                stats_df_regime = regime_payload.stats_df
-                                if stats_df_regime.empty:
-                                    stats_df_regime = pd.DataFrame(
-                                        [{"Note": "No overlapping observations for regime statistics."}]
-                                    )
-                                write_excel_with_autofit(
-                                    writer,
-                                    format_excel_dates(stats_df_regime),
-                                    "Regime - Statistics",
-                                    index=False,
-                                )
-
-                                detail_out = regime_payload.detail_df
-                                if detail_out.empty:
-                                    detail_out = pd.DataFrame([{"Note": "No regime raw detail is available."}])
-                                write_excel_with_autofit(
-                                    writer,
-                                    format_excel_dates(detail_out),
-                                    "Regime - Detail",
-                                    index=False,
-                                )
-
-                                transition_out = (
-                                    regime_payload.transition_df.reset_index()
-                                    if regime_payload.transition_df is not None and not regime_payload.transition_df.empty
-                                    else pd.DataFrame()
-                                )
-                                if transition_out.empty:
-                                    transition_out = pd.DataFrame(
-                                        [{"Note": "No transition matrix available (requires at least two observations)."}]
-                                    )
-                                write_excel_with_autofit(
-                                    writer,
-                                    format_excel_dates(transition_out),
-                                    "Regime - Transition",
-                                    index=False,
-                                )
-
-                                duration_out = regime_payload.duration_df
-                                if duration_out.empty:
-                                    duration_out = pd.DataFrame(
-                                        [{"Note": "No duration summary available."}]
-                                    )
-                                write_excel_with_autofit(
-                                    writer,
-                                    format_excel_dates(duration_out),
-                                    "Regime - Duration",
-                                    index=False,
-                                )
                 except Exception:
                     pass
 
