@@ -637,7 +637,22 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
 
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
 
-    column_defs, row_data, loaded = analyticstool.update_statistics(
+    target_key = analyticstool._statistics_tab_signature(
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        0,
+        {},
+        True,
+        {},
+    )
+
+    column_defs, row_data, loaded, rendered_key = analyticstool.update_statistics(
+        "statistics",
+        target_key,
         "raw-json",
         "daily",
         ["Asset_A", "Asset_B"],
@@ -647,6 +662,9 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         True,
         0,
         {},
+        True,
+        {},
+        True,
         None,
     )
 
@@ -656,6 +674,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     assert cum_row["Asset_A"] == pytest.approx(0.10)
     assert cum_row["Asset_B"] == pytest.approx(0.20)
     assert loaded is True
+    assert rendered_key == target_key
 
 
 def test_update_download_excel_disabled_uses_ready_state(page_modules):
@@ -678,6 +697,8 @@ def test_update_statistics_requires_ready_state(page_modules):
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            "statistics",
+            "sig",
             "raw-json",
             "daily",
             ["Asset_A"],
@@ -687,6 +708,9 @@ def test_update_statistics_requires_ready_state(page_modules):
             False,
             0,
             {},
+            True,
+            {},
+            True,
             None,
         )
 
@@ -696,6 +720,8 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            "returns",
+            "sig",
             "raw-json",
             "daily",
             ["Asset_A"],
@@ -705,13 +731,16 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
             True,
             0,
             {},
-            None,
-            "returns",
             True,
+            {},
+            True,
+            None,
         )
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            "statistics",
+            "sig",
             "raw-json",
             "daily",
             ["Asset_A"],
@@ -721,19 +750,91 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
             True,
             0,
             {},
-            None,
-            "statistics",
+            True,
+            {},
             False,
+            None,
+        )
+
+
+def test_update_returns_grid_skips_unchanged_tab_revisit(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    signature = analyticstool._returns_tab_signature(
+        raw_json,
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        0,
+        {},
+    )
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-main-tabs"})())
+    monkeypatch.setattr(analyticstool, "_compute_selected_returns", lambda *_args, **_kwargs: pytest.fail("should skip unchanged revisit"))
+
+    result = analyticstool.update_grid(
+        raw_json,
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        "returns",
+        True,
+        {"returns": signature},
+    )
+
+    assert result == (no_update, no_update, no_update)
+
+
+def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    signature = analyticstool._statistics_tab_signature(
+        raw_json,
+        "daily",
+        ["Asset_A"],
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        0,
+        {},
+        True,
+        {},
+    )
+    monkeypatch.setattr(analyticstool, "calculate_statistics_cached", lambda *_args, **_kwargs: pytest.fail("should skip unchanged revisit"))
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_statistics(
+            "statistics",
+            signature,
+            raw_json,
+            "daily",
+            ["Asset_A"],
+            {},
+            {},
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            True,
+            0,
+            {},
+            True,
+            {},
+            True,
+            signature,
         )
 
 
 def test_control_statistics_loading_display(page_modules):
     analyticstool, _ = page_modules
-    assert analyticstool.control_statistics_loading_display("statistics", False, False) == "show"
-    assert analyticstool.control_statistics_loading_display("statistics", True, False) == "show"
-    assert analyticstool.control_statistics_loading_display("statistics", True, True) == "auto"
-    assert analyticstool.control_statistics_loading_display("returns", False, False) == "auto"
-    assert analyticstool.control_statistics_loading_display("statistics", True, True, False) == "show"
+    assert analyticstool.control_statistics_loading_display("statistics", False, None, None) == "show"
+    assert analyticstool.control_statistics_loading_display("statistics", True, "sig", None) == "show"
+    assert analyticstool.control_statistics_loading_display("statistics", True, "sig", "sig") == "hide"
+    assert analyticstool.control_statistics_loading_display("returns", True, "sig", None) == "hide"
+    assert analyticstool.control_statistics_loading_display("statistics", True, "sig", "sig", False) == "show"
 
 
 def test_update_growth_grid_requires_growth_table_view(page_modules):
@@ -1920,6 +2021,68 @@ def test_compute_conditional_returns_cached_builds_detail_frames_when_requested(
     assert payload.forward_row_count > payload.coincident_row_count
     first_forward = payload.forward_detail_df[["Lookback", "Forward Period"]].drop_duplicates().iloc[0].to_dict()
     assert first_forward == {"Lookback": "1W", "Forward Period": "1W"}
+
+
+def test_update_conditional_returns_skips_when_target_already_rendered(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    signature = analyticstool._conditional_tab_signature(
+        raw_json,
+        "daily_trading",
+        ("Asset_B", "Asset_C"),
+        "total",
+        {},
+        {},
+        {"start": "2023-01-02", "end": "2024-03-31"},
+        0,
+        {},
+        "summary",
+        "forward",
+        "le",
+        0.0,
+        "compound",
+        1,
+        "months",
+        "raw::Asset_A",
+        "zscore",
+        "",
+    )
+    monkeypatch.setattr(analyticstool, "_compute_conditional_returns_cached", lambda *_args, **_kwargs: pytest.fail("should skip unchanged revisit"))
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_conditional_returns(
+            "conditional_returns",
+            signature,
+            None,
+            None,
+            "raw::Asset_A",
+            "zscore",
+            raw_json,
+            "daily_trading",
+            ["Asset_B", "Asset_C"],
+            "total",
+            {},
+            {},
+            {"start": "2023-01-02", "end": "2024-03-31"},
+            True,
+            0,
+            {},
+            "summary",
+            "forward",
+            "le",
+            0.0,
+            "compound",
+            1,
+            "months",
+            signature,
+        )
+
+
+def test_control_conditional_returns_loading_display(page_modules):
+    analyticstool, _ = page_modules
+    assert analyticstool.control_conditional_returns_loading_display("conditional_returns", False, False, None, None) == "show"
+    assert analyticstool.control_conditional_returns_loading_display("conditional_returns", True, True, "sig", None) == "show"
+    assert analyticstool.control_conditional_returns_loading_display("conditional_returns", True, True, "sig", "sig") == "hide"
+    assert analyticstool.control_conditional_returns_loading_display("statistics", True, True, "sig", None) == "hide"
 
 
 def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_modules):

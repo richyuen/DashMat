@@ -1715,6 +1715,138 @@ def _conditional_conversion_tooltip_text() -> str:
     )
 
 
+def _current_triggered_id():
+    try:
+        return callback_context.triggered_id
+    except Exception:
+        return None
+
+
+def _tab_render_signature(payload: dict) -> str:
+    return hashlib.md5(canonical_json_dumps(payload).encode("utf-8")).hexdigest()
+
+
+def _tab_render_signatures(current) -> dict:
+    return dict(current) if isinstance(current, dict) else {}
+
+
+def _should_skip_tab_revisit(tab_key: str, next_signature: str, current_signatures) -> bool:
+    if _current_triggered_id() != "at-main-tabs":
+        return False
+    return _tab_render_signatures(current_signatures).get(tab_key) == next_signature
+
+
+def _update_tab_render_signatures(current_signatures, tab_key: str, next_signature: str) -> dict:
+    updated = _tab_render_signatures(current_signatures)
+    updated[tab_key] = next_signature
+    return updated
+
+
+def _returns_tab_signature(
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+) -> str:
+    return _tab_render_signature(
+        {
+            "dataset_key": _dataset_key(raw_data) or "",
+            "periodicity": periodicity or "daily",
+            "selected_series": tuple(selected_series or ()),
+            "returns_type": returns_type or "total",
+            "benchmark_payload": _mapping_payload(benchmark_assignments),
+            "long_short_payload": _mapping_payload(long_short_assignments),
+            "date_range_payload": _date_range_payload(date_range),
+            "vol_scaler": vol_scaler or 0,
+            "vol_scaling_payload": _mapping_payload(vol_scaling_assignments),
+        }
+    )
+
+
+def _statistics_tab_signature(
+    raw_data,
+    periodicity,
+    selected_series,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    use_risk_free,
+    saved_series_store,
+) -> str:
+    return _tab_render_signature(
+        {
+            "dataset_key": _dataset_key(raw_data) or "",
+            "periodicity": periodicity or "daily",
+            "selected_series": tuple(selected_series or ()),
+            "benchmark_payload": _mapping_payload(benchmark_assignments),
+            "long_short_payload": _mapping_payload(long_short_assignments),
+            "date_range_payload": _date_range_payload(date_range),
+            "vol_scaler": vol_scaler or 0,
+            "vol_scaling_payload": _mapping_payload(vol_scaling_assignments),
+            "use_risk_free": bool(use_risk_free),
+            "risk_free_json": _risk_free_json_from_store(saved_series_store),
+            "spx_json": _spx_json_from_store(saved_series_store),
+        }
+    )
+
+
+def _conditional_tab_signature(
+    raw_data,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    conditional_display_mode,
+    conditional_view,
+    conditional_comparator,
+    conditional_threshold,
+    conditional_window_conversion,
+    conditional_step,
+    conditional_step_unit,
+    factor_series,
+    factor_transform,
+    factor_definition_payload,
+) -> str:
+    return _tab_render_signature(
+        {
+            "dataset_key": _dataset_key(raw_data) or "",
+            "periodicity": periodicity or "daily",
+            "selected_series": tuple(selected_series or ()),
+            "returns_type": returns_type or "total",
+            "benchmark_payload": _mapping_payload(benchmark_assignments),
+            "long_short_payload": _mapping_payload(long_short_assignments),
+            "date_range_payload": _date_range_payload(date_range),
+            "vol_scaler": vol_scaler or 0,
+            "vol_scaling_payload": _mapping_payload(vol_scaling_assignments),
+            "display_mode": conditional_display_mode if conditional_display_mode in {"summary", "detail"} else "summary",
+            "view": conditional_view if conditional_view in {"coincident", "forward"} else "forward",
+            "comparator": conditional_comparator if conditional_comparator in {"le", "ge"} else "le",
+            "threshold": float(pd.to_numeric(pd.Series([conditional_threshold]), errors="coerce").iloc[0] or 0.0),
+            "window_conversion": (
+                conditional_window_conversion
+                if conditional_window_conversion in {"compound", "end", "average", "sum"}
+                else "compound"
+            ),
+            "step": _coerce_positive_int(conditional_step, default=1),
+            "step_unit": conditional_step_unit if conditional_step_unit in {"periods", "months"} else "months",
+            "factor_series": str(factor_series or ""),
+            "factor_transform": factor_transform if factor_transform in {"raw", "zscore"} else "raw",
+            "factor_definition_payload": factor_definition_payload or "",
+        }
+    )
+
+
 def _empty_conditional_returns_payload() -> _ConditionalReturnsPayload:
     return _ConditionalReturnsPayload(
         factor_label="",
@@ -4746,8 +4878,11 @@ layout = dmc.Container(
         dcc.Store(id="at-common-daily-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
+        dcc.Store(id="at-statistics-target-key-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-statistics-rendered-key-store", data=None, storage_type="memory"),
         dcc.Store(id="at-initial-tab-render-ready-store", data=False, storage_type="memory"),
         dcc.Store(id="at-secondary-restore-ready-store", data=False, storage_type="memory"),
+        dcc.Store(id="at-tab-render-signatures-store", data={}, storage_type="memory"),
         dcc.Store(id="at-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="at-download-enabled-store", data=False),
@@ -4793,6 +4928,8 @@ layout = dmc.Container(
         dcc.Store(id="at-correlogram-meta-store", data={}),
         dcc.Store(id="at-correlogram-target-key-store", data=None),
         dcc.Store(id="at-correlogram-rendered-key-store", data=None),
+        dcc.Store(id="at-conditional-returns-target-key-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-conditional-returns-rendered-key-store", data=None, storage_type="memory"),
 
         # UI Blocker for file dialog (Overlay)
         dcc.Store(id="at-ui-blocker-store", data=True),
@@ -8469,6 +8606,7 @@ def update_date_range_store(start_date, end_date, existing_range):
 @callback(
     Output("at-returns-grid", "columnDefs"),
     Output("at-returns-grid", "rowData"),
+    Output("at-tab-render-signatures-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -8481,15 +8619,30 @@ def update_date_range_store(start_date, end_date, existing_range):
     Input("at-vol-scaling-assignments-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-initial-tab-render-ready-store", "data"),
+    State("at-tab-render-signatures-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True):
+def update_grid(raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True, tab_render_signatures=None):
     """Update the AG Grid based on selections (optimized with caching)."""
     if active_tab != "returns" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
-        return [], []
+        return [], [], no_update
+
+    next_signature = _returns_tab_signature(
+        raw_data,
+        periodicity,
+        selected_series,
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+    )
+    if _should_skip_tab_revisit("returns", next_signature, tab_render_signatures):
+        return no_update, no_update, no_update
 
     try:
         with timed_block("analyticstool.render_returns_grid", series_count=len(selected_series)):
@@ -8506,7 +8659,7 @@ def update_grid(raw_data=None, periodicity=None, selected_series=None, returns_t
             )
 
         if display_df.empty:
-            return [], []
+            return [], [], _update_tab_render_signatures(tab_render_signatures, "returns", next_signature)
 
         # Create column definitions
         column_defs = [
@@ -8530,10 +8683,10 @@ def update_grid(raw_data=None, periodicity=None, selected_series=None, returns_t
         df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
         row_data = df_reset.to_dict("records")
 
-        return column_defs, row_data
+        return column_defs, row_data, _update_tab_render_signatures(tab_render_signatures, "returns", next_signature)
 
     except Exception:
-        return [], []
+        return [], [], no_update
 
 
 @callback(
@@ -8555,26 +8708,87 @@ def update_download_excel_disabled(raw_data, selected_series, date_range, state_
 
 @callback(
     Output("at-statistics-loaded-store", "data"),
+    Output("at-statistics-target-key-store", "data", allow_duplicate=True),
+    Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
     Input("at-state-ready-store", "data"),
     prevent_initial_call=True,
 )
 def reset_statistics_loaded_on_hydration(state_ready):
     if state_ready:
         raise PreventUpdate
-    return False
+    return False, None, None
+
+
+@callback(
+    Output("at-statistics-target-key-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-use-risk-free-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    State("at-statistics-target-key-store", "data"),
+    prevent_initial_call=True,
+)
+def update_statistics_target_key(
+    raw_data,
+    periodicity,
+    selected_series,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    state_ready,
+    vol_scaler,
+    vol_scaling_assignments,
+    use_risk_free,
+    saved_series_store,
+    initial_tab_ready,
+    current_target_key,
+):
+    if not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
+        return None
+    if raw_data is None or not selected_series:
+        return None
+
+    next_key = _statistics_tab_signature(
+        raw_data,
+        periodicity,
+        selected_series,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+        use_risk_free,
+        saved_series_store,
+    )
+    if next_key == current_target_key:
+        return no_update
+    return next_key
 
 
 @callback(
     Output("at-loading-statistics", "display"),
     Input("at-main-tabs", "value"),
     Input("at-state-ready-store", "data"),
-    Input("at-statistics-loaded-store", "data"),
+    Input("at-statistics-target-key-store", "data"),
+    Input("at-statistics-rendered-key-store", "data"),
     Input("at-initial-tab-render-ready-store", "data"),
 )
-def control_statistics_loading_display(active_tab, state_ready, statistics_loaded, initial_tab_ready=True):
-    if active_tab == "statistics" and (not initial_tab_ready or not state_ready or not statistics_loaded):
+def control_statistics_loading_display(active_tab, state_ready, target_key, rendered_key, initial_tab_ready=True):
+    if active_tab != "statistics":
+        return "hide"
+    if not initial_tab_ready or not state_ready:
         return "show"
-    return "auto"
+    if target_key and target_key != rendered_key:
+        return "show"
+    return "hide"
 
 
 @callback(
@@ -9010,28 +9224,33 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
     Output("at-statistics-grid", "columnDefs"),
     Output("at-statistics-grid", "rowData"),
     Output("at-statistics-loaded-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-use-risk-free-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
     Input("at-main-tabs", "value"),
-    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-statistics-target-key-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-use-risk-free-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("at-initial-tab-render-ready-store", "data"),
+    State("at-statistics-rendered-key-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(raw_data=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, active_tab="statistics", initial_tab_ready=True):
+def update_statistics(active_tab="statistics", target_key=None, raw_data=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if active_tab != "statistics" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     if raw_data is None or not selected_series:
-        return [], [], True
+        return [], [], True, None
+    if not target_key or target_key == rendered_key:
+        raise PreventUpdate
 
     try:
         with timed_block("analyticstool.render_statistics_grid", series_count=len(selected_series)):
@@ -9051,7 +9270,7 @@ def update_statistics(raw_data=None, periodicity=None, selected_series=None, ben
             )
 
         if not stats:
-            return [], [], True
+            return [], [], True, target_key
 
         # Transpose: rows become statistics, columns become series
         # First column is "Statistic" (pinned), then one column per series
@@ -9085,10 +9304,10 @@ def update_statistics(raw_data=None, periodicity=None, selected_series=None, ben
 
             row_data.append(row)
             
-        return column_defs, row_data, True
+        return column_defs, row_data, True, target_key
 
     except Exception:
-        return [], [], True
+        return [], [], True, no_update
 
 
 clientside_callback(
@@ -10885,18 +11104,7 @@ def _write_export_sheet_specs(writer, sheet_specs: list[_ExcelSheetSpec]) -> Non
 
 
 @callback(
-    Output("at-conditional-returns-warning", "children"),
-    Output("at-conditional-returns-container", "children"),
-    Input("at-main-tabs", "value"),
-    Input("at-conditional-display-mode-select", "value"),
-    Input("at-conditional-view-select", "value"),
-    Input("at-conditional-comparator-select", "value"),
-    Input("at-conditional-threshold-input", "value"),
-    Input("at-conditional-window-conversion-select", "value"),
-    Input("at-conditional-step-input", "value"),
-    Input("at-conditional-step-unit-select", "value"),
-    Input("at-factor-series-select-conditional", "value"),
-    Input("at-factor-transform-select-conditional", "value"),
+    Output("at-conditional-returns-target-key-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -10907,21 +11115,22 @@ def _write_export_sheet_specs(writer, sheet_specs: list[_ExcelSheetSpec]) -> Non
     Input("at-state-ready-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-conditional-display-mode-select", "value"),
+    Input("at-conditional-view-select", "value"),
+    Input("at-conditional-comparator-select", "value"),
+    Input("at-conditional-threshold-input", "value"),
+    Input("at-conditional-window-conversion-select", "value"),
+    Input("at-conditional-step-input", "value"),
+    Input("at-conditional-step-unit-select", "value"),
+    Input("at-factor-series-select-conditional", "value"),
+    Input("at-factor-transform-select-conditional", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
+    State("at-conditional-returns-target-key-store", "data"),
     prevent_initial_call=True,
 )
-def update_conditional_returns(
-    active_tab,
-    conditional_display_mode,
-    conditional_view,
-    conditional_comparator,
-    conditional_threshold,
-    conditional_window_conversion,
-    conditional_step,
-    conditional_step_unit,
-    factor_series,
-    factor_transform,
+def update_conditional_returns_target_key(
     raw_data,
     periodicity,
     selected_series,
@@ -10932,8 +11141,132 @@ def update_conditional_returns(
     state_ready,
     vol_scaler,
     vol_scaling_assignments,
+    conditional_display_mode,
+    conditional_view,
+    conditional_comparator,
+    conditional_threshold,
+    conditional_window_conversion,
+    conditional_step,
+    conditional_step_unit,
+    factor_series,
+    factor_transform,
+    initial_tab_ready,
     factor_definitions_db=None,
     factor_definitions_local=None,
+    current_target_key=None,
+):
+    if not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
+        return None
+    if raw_data is None or not selected_series or not factor_series:
+        return None
+
+    definition_payload = ""
+    factor_prefix, factor_name = _split_factor_select_key(factor_series)
+    if factor_prefix == "def":
+        definition = _lookup_factor_definition(factor_name, factor_definitions_db, factor_definitions_local)
+        if not definition:
+            return None
+        definition_payload = _definition_payload_for_compute(definition)
+
+    next_key = _conditional_tab_signature(
+        raw_data,
+        periodicity,
+        tuple(selected_series or ()),
+        returns_type,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+        conditional_display_mode,
+        conditional_view,
+        conditional_comparator,
+        conditional_threshold,
+        conditional_window_conversion,
+        conditional_step,
+        conditional_step_unit,
+        factor_series,
+        factor_transform,
+        definition_payload,
+    )
+    if next_key == current_target_key:
+        return no_update
+    return next_key
+
+
+@callback(
+    Output("at-loading-conditional-returns", "display"),
+    Input("at-main-tabs", "value"),
+    Input("at-state-ready-store", "data"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-conditional-returns-target-key-store", "data"),
+    Input("at-conditional-returns-rendered-key-store", "data"),
+)
+def control_conditional_returns_loading_display(active_tab, state_ready, initial_tab_ready, target_key, rendered_key):
+    if active_tab != "conditional_returns":
+        return "hide"
+    if not initial_tab_ready or not state_ready:
+        return "show"
+    if target_key and target_key != rendered_key:
+        return "show"
+    return "hide"
+
+
+@callback(
+    Output("at-conditional-returns-warning", "children"),
+    Output("at-conditional-returns-container", "children"),
+    Output("at-conditional-returns-rendered-key-store", "data", allow_duplicate=True),
+    Input("at-main-tabs", "value"),
+    Input("at-conditional-returns-target-key-store", "data"),
+    State("at-factor-definitions-db-store", "data"),
+    State("at-factor-definitions-local-store", "data"),
+    State("at-factor-series-select-conditional", "value"),
+    State("at-factor-transform-select-conditional", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-conditional-display-mode-select", "value"),
+    State("at-conditional-view-select", "value"),
+    State("at-conditional-comparator-select", "value"),
+    State("at-conditional-threshold-input", "value"),
+    State("at-conditional-window-conversion-select", "value"),
+    State("at-conditional-step-input", "value"),
+    State("at-conditional-step-unit-select", "value"),
+    State("at-conditional-returns-rendered-key-store", "data"),
+    prevent_initial_call=True,
+)
+def update_conditional_returns(
+    active_tab,
+    target_key,
+    factor_definitions_db=None,
+    factor_definitions_local=None,
+    factor_series=None,
+    factor_transform=None,
+    raw_data=None,
+    periodicity=None,
+    selected_series=None,
+    returns_type=None,
+    benchmark_assignments=None,
+    long_short_assignments=None,
+    date_range=None,
+    state_ready=None,
+    vol_scaler=None,
+    vol_scaling_assignments=None,
+    conditional_display_mode=None,
+    conditional_view=None,
+    conditional_comparator=None,
+    conditional_threshold=None,
+    conditional_window_conversion=None,
+    conditional_step=None,
+    conditional_step_unit=None,
+    rendered_key=None,
 ):
     if (
         active_tab != "conditional_returns"
@@ -10941,18 +11274,20 @@ def update_conditional_returns(
         or not _has_complete_date_range(date_range)
     ):
         raise PreventUpdate
+    if not target_key or target_key == rendered_key:
+        raise PreventUpdate
 
     if raw_data is None or not selected_series:
-        return None, dmc.Text("Select series to view conditional returns.", size="sm", c="dimmed")
+        return None, dmc.Text("Select series to view conditional returns.", size="sm", c="dimmed"), None
     if not factor_series:
-        return None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
+        return None, dmc.Text("Select a factor series.", size="sm", c="dimmed"), None
 
     definition_payload = ""
     factor_prefix, factor_name = _split_factor_select_key(factor_series)
     if factor_prefix == "def":
         definition = _lookup_factor_definition(factor_name, factor_definitions_db, factor_definitions_local)
         if not definition:
-            return None, dmc.Text("Selected factor definition is unavailable.", size="sm", c="dimmed")
+            return None, dmc.Text("Selected factor definition is unavailable.", size="sm", c="dimmed"), None
         definition_payload = _definition_payload_for_compute(definition)
 
     display_mode = conditional_display_mode if conditional_display_mode in {"summary", "detail"} else "summary"
@@ -10970,7 +11305,6 @@ def update_conditional_returns(
     normalized_step = _coerce_positive_int(conditional_step, default=1)
     normalized_step_unit = conditional_step_unit if conditional_step_unit in {"periods", "months"} else "months"
     selected_series_tuple = tuple(selected_series or ())
-
     warning_children = None
 
     payload = _compute_conditional_returns_cached(
@@ -10997,7 +11331,7 @@ def update_conditional_returns(
     if display_mode == "detail":
         detail_frame = payload.coincident_detail_df if (conditional_view or "forward") == "coincident" else payload.forward_detail_df
         if detail_frame.empty:
-            return None, dmc.Text("No evaluated windows available for current settings.", size="sm", c="dimmed")
+            return None, dmc.Text("No evaluated windows available for current settings.", size="sm", c="dimmed"), target_key
         if (conditional_view or "forward") == "coincident":
             grid = _build_conditional_detail_grid_component(
                 f"Coincident Conditional Returns Detail vs {payload.factor_label}",
@@ -11005,7 +11339,7 @@ def update_conditional_returns(
                 series_names=selected_series_tuple,
                 include_forward=False,
             )
-            return warning_children, grid
+            return warning_children, grid, target_key
 
         grid = _build_conditional_detail_grid_component(
             f"Forward Conditional Returns Detail vs {payload.factor_label}",
@@ -11013,10 +11347,10 @@ def update_conditional_returns(
             series_names=selected_series_tuple,
             include_forward=True,
         )
-        return warning_children, grid
+        return warning_children, grid, target_key
 
     if payload.coincident_mean_df.empty and not payload.forward_mean_by_series:
-        return None, dmc.Text("No qualifying data available for current settings.", size="sm", c="dimmed")
+        return None, dmc.Text("No qualifying data available for current settings.", size="sm", c="dimmed"), target_key
 
     if (conditional_view or "forward") == "forward" and len(payload.forward_mean_by_series) > 10:
         warning_children = dmc.Alert(
@@ -11033,7 +11367,7 @@ def update_conditional_returns(
             payload.coincident_count_df,
             row_label="Window",
         )
-        return warning_children, grid
+        return warning_children, grid, target_key
 
     stack_children = []
     for series_name in selected_series:
@@ -11049,9 +11383,9 @@ def update_conditional_returns(
         )
 
     if not stack_children:
-        return warning_children, dmc.Text("No qualifying forward observations available.", size="sm", c="dimmed")
+        return warning_children, dmc.Text("No qualifying forward observations available.", size="sm", c="dimmed"), target_key
 
-    return warning_children, dmc.Stack(gap="sm", children=stack_children)
+    return warning_children, dmc.Stack(gap="sm", children=stack_children), target_key
 
 
 def _build_regime_grid_component(
