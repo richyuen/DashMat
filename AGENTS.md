@@ -48,6 +48,10 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 
 - Judge warm-switch performance with a browser timing pass, not only unit tests.
 - PortOpt startup and PortOpt warm-switch are different problems. Measure them separately.
+- PortOpt warm-switch baseline on March 13, 2026 was about `1970 ms` ready and `2870 ms` weight-chart ready in non-debug mode; treat that as the rollback reference when testing new warm-switch ideas.
+- Do not assume PortOpt warm-switch is server-bound. The weight-chart callback was only about `15-18 ms` in timing runs, so callback math and result projection are not the first place to optimize.
+- Do not repeat the broad selected-result/store-splitting refactor for PortOpt warm switch. It reduced payload sizes but still lost to the reverted baseline on `readyMedian` and `weightsReadyMedian`.
+- Do not repeat the `dmc.Tabs(keepMounted=False)` active-tab bootstrap experiment for PortOpt warm switch. In March 2026 it regressed warm-switch readiness badly and broke restore-order assumptions.
 - Do not leave a full-screen fixed overlay mounted while “hidden”; gate the wrapper itself with `display:none`.
 - Keep module-switch blockers separate from page-local upload/modal blockers.
 - For shared route callbacks, use the always-mounted `_pages_location.pathname` instead of page-local `dcc.Location` ids.
@@ -60,6 +64,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Prefer short Python Playwright scripts over long CLI one-liners for browser automation.
 - For side-by-side comparisons, run the app on separate ports instead of editing `app.py`.
 - Validate local SQLite files under `data/` before DB-backed browser runs or A/B comparisons.
+- For timing runs that rely on copied stdout logs, launch the app with unbuffered Python (`python -u app.py`); buffered stdout can hide timing lines until process exit.
 - Keep Playwright runtime artifacts out of commits unless explicitly needed.
 - AG Grid treats dotted `field` names as nested paths by default; use `dashGridOptions.suppressFieldDotNotation = True` for literal series names.
 - If upward-opening modal dropdowns clip at the top of the viewport, fix the shared builders in `utils/dashmat_welcome_modal.py` instead of patching page-specific modal instances.
