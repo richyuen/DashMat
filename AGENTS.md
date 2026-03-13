@@ -4,17 +4,17 @@ Repo instructions for coding agents working in `C:\Git\DashMat`.
 
 ## Purpose
 
-DashMat is a Dash app for market returns workflows with three primary pages:
+DashMat is a Dash app centered on three main pages:
 - `pages/analyticstool.py`
 - `pages/portopt.py`
 - `pages/regression.py`
 
-Default to small, targeted changes unless the requested behavior change clearly requires something broader.
+Prefer small, targeted changes unless the behavior change clearly requires something broader.
 
 ## Environment
 
 - Python 3.11
-- Always run commands in the `dashmat` Conda environment.
+- Always use the `dashmat` Conda environment.
 - In non-interactive shells, use `conda run -n dashmat ...`.
 
 Common commands:
@@ -25,175 +25,41 @@ conda run -n dashmat python -m pytest -q tests
 conda run -n dashmat python tools/db/init_local_cma_db.py
 ```
 
-## Code Map
-
-- `app.py`: app entry point, shared stores, Mantine provider
-- `pages/analyticstool.py`: analytics workflows
-- `pages/portopt.py`: portfolio optimization workflows
-- `pages/regression.py`: regression workflows
-- `utils/parsing.py`: file parsing and periodicity detection
-- `utils/returns.py`: return conversions and compounding
-- `utils/statistics.py`: metrics calculations
-- `utils/optimization.py`: optimization engine
-
 ## Core Rules
 
 - Preserve callback IDs and store schemas unless a migration is intentional and updated everywhere.
 - Keep shared JSON/store payloads compatible across pages.
-- Avoid broad refactors in large callback files; patch the smallest safe section.
-- For app-shell features shared across pages, prefer a helper module with `build_*_components()` and `register_*_callbacks()` rather than growing `app.py` callback logic directly.
-- Preserve imported series names exactly as loaded from source data or DB-backed account names. Do not sanitize or alias series names just to satisfy a grid or chart component.
-- Do not add dependencies unless necessary.
-- Add comments only when logic is not obvious.
-- Do not mutate or delete database table data from runtime callback code.
-- Database setup, backfills, truncates, deletes, reseeds, and migrations belong in explicit scripts under `tools/db`.
-- Exception: AnalyticsTool factor-definition CRUD is allowed at runtime for `FactorDefinitions` and `FactorDefinitionsArchive` only. Archive the prior row first and use optimistic concurrency via `UPDATE_DATE`.
-
-## Production `app.py` Guide
-
-When porting shared app-shell changes into a production variant of `app.py`, keep the file as composition-only glue and move behavior into helper modules.
-
-- For the shared module-switch blocker added in this repo:
-  - import `build_module_route_blocker_components` and `register_module_route_blocker_callbacks` from `utils.module_route_blocker`
-  - add `*build_module_route_blocker_components()` alongside the other shared stores/components in the root provider layout
-  - call `register_module_route_blocker_callbacks(app)` after app creation, similar to `register_account_list_callbacks(...)`
-- Keep the blocker scoped to the DashMat module routes only:
-  - `/analyticstool`
-  - `/portopt`
-  - `/regression`
-  - do not enable it for `/`, `/restricted`, or unrelated production pages
-- Do not move page-local modal/upload blocker logic into `app.py`
-- Do not add app-level callbacks that write page-local outputs from `app.py`; shared app-shell callbacks should only write always-mounted shared stores/components
-
-## Data Expectations
-
-- Inputs are date-indexed return series in CSV/XLS/XLSX.
-- Values may be decimals or percent-formatted.
-- Daily data may be resampled to weekly or monthly.
-- Monthly data must not be upsampled.
-- Appends must preserve existing dataset periodicity rules.
-
-## Portfolio Import Rules
-
-- `peer` reads `PeerTS` using `PortRet` plus `MeanRet`.
-- `index` reads `IndexTS` using `PortRet` plus `Benchmark`.
-- `other` currently supports `PortfolioVintage='AltTS'` only and reads `AltTS`.
-- In `other` + `AltTS`, benchmark lookup uses `Portfolio=<Portfolio>` and `Item='BenchRet'`, and benchmark series are named `<Portfolio>_BM`.
+- Preserve imported series names exactly as loaded. Do not sanitize or alias series names just to satisfy a grid or chart.
+- In large callback files, patch the smallest safe section.
+- For shared app-shell features, prefer a helper module with `build_*_components()` and `register_*_callbacks()` instead of growing `app.py`.
+- Do not mutate or delete database table data from runtime callbacks.
+- DB setup, backfills, truncates, deletes, reseeds, and migrations belong in explicit scripts under `tools/db`.
+- Exception: AnalyticsTool factor-definition CRUD is allowed at runtime for `FactorDefinitions` and `FactorDefinitionsArchive`, with archive-first behavior and optimistic concurrency via `UPDATE_DATE`.
 
 ## Validation
 
-- Start the app if routing or layout behavior changed.
-- Run targeted pytest modules for touched logic; run full pytest for broader workflow changes.
-- If you change optimization logic, run `tests/scripts/test_optimization_scripts.py` or full pytest.
-- If you change upload, parsing, or statistics flows, run full pytest and do a quick manual pass in `/analyticstool`.
-- For AnalyticsTool factor/regime work, prefer a repeatable browser pass over ad hoc clicking:
-  - launch the app on a separate port
-  - upload `sample_data/benchmark_returns/benchmark_daily_returns_2020_2025.xlsx`
-  - accept the default series-selection modal with `OK`
-  - verify `Factor Analysis -> Raw Detail` renders `Factor Value`
-  - verify `Regime Analysis -> [DB] Test Quantiles -> Raw Detail` renders `Regime Signal`
-  - verify `File -> Download Excel` contains `Factor Analysis - Detail` and `Regime - Detail`
-- Before finishing, check for obvious regressions in tab rendering and series selection behavior.
-- On targeted pytest runs, this repo's global coverage gate can fail even when the touched module tests pass. If you need a focused verification pass, use `--cov-fail-under=0` and say so explicitly in the handoff.
+- Routing or layout changes: start the app.
+- Upload, parsing, or statistics changes: run full pytest and do a quick `/analyticstool` pass.
+- Optimization changes: run `tests/scripts/test_optimization_scripts.py` or full pytest.
+- Otherwise, run targeted pytest for touched logic.
+- If a focused pytest run would trip the global coverage gate, use `--cov-fail-under=0` and say so explicitly.
 
-## Performance Guidance
+## Performance
 
-### General
+- Judge warm-switch performance with a browser timing pass, not only unit tests.
+- PortOpt startup and PortOpt warm-switch are different problems. Measure them separately.
+- Do not leave a full-screen fixed overlay mounted while “hidden”; gate the wrapper itself with `display:none`.
+- Keep module-switch blockers separate from page-local upload/modal blockers.
+- For shared route callbacks, use the always-mounted `_pages_location.pathname` instead of page-local `dcc.Location` ids.
+- Do not mix always-mounted outputs with page-local outputs in the same shared callback.
+- If a shared callback reads page-local inputs/states while other pages may be active, mark them `allow_optional=True`.
 
-- Judge warm-switch performance with a browser timing pass, not just unit tests or callback-level reasoning.
-- Current practical harness: load `/analyticstool`, import AA Tool database series, confirm the series-selection modal, warm `/portopt` and `/regression`, then measure warm revisits.
-- Default warm-up series should use actual DB option keys such as `SPX_TRIndex`, `R2000_TRIndex`, `EAFE_TRIndex`, and `BCTBill13_TRIndex`, not display shorthand like `SPX`.
-- Track at least:
-  - `shellMs`: main container visible
-  - `readyMs`: periodicity control visible and enabled
-- Regression is the warm-switch reference. PortOpt is the main bottleneck; AnalyticsTool is secondary.
+## Tooling
 
-### Startup Measurement
-
-- For PortOpt startup work, add a direct startup benchmark instead of relying only on the broad warm-switch harness.
-- Useful PortOpt startup checkpoints:
-  - shell visible
-  - periodicity enabled
-  - series-selection modal visible
-  - series-selection grid hydrated
-  - modal `OK` to hidden
-  - run button enabled
-- For targeted PortOpt startup benchmarking, prefer direct session seeding or direct store seeding over replaying the AnalyticsTool DB-import flow.
-- For AnalyticsTool startup benchmarking, direct seeded routes can be flaky. Prefer a real-flow browser benchmark if the seeded route does not reproduce the same bootstrap path reliably.
-- Treat browser A/B startup runs as contaminated if `shellMs` and `readyMs` both jump broadly along with later modal timings. That usually indicates environment or bootstrap noise, not a real regression in the change under test.
-- A narrow render micro-benchmark can help for callback-specific experiments, but it does not replace browser A/B when deciding whether to keep a user-visible startup change.
-
-### Date / Shell Initialization
-
-- Keep `Common Daily` candidate computation off the date-range initialization path. Compute candidates separately and use a small shared clientside disabled-state helper so button availability does not retrigger picker/store initialization.
-- For cold-load shell visibility, keep the page-load interval as a trigger even if welcome/main visibility is determined only from raw-data presence. Removing the trigger entirely can leave both containers at their initial `display:none` state on first load.
-- PortOpt warm-switch and PortOpt first-visit startup are different problems. Warm-switch mostly targets restore and validation latency. First-visit startup is dominated by the series-selection modal render/apply path.
-
-### Keep These Wins
-
-- PortOpt startup:
-  - show `po-main-container` / `po-welcome-screen` directly from `dashmat-raw-data-store` instead of delaying shell paint on `po-page-load-trigger`
-  - use `po-restore-complete-store` to gate validation instead of treating `po-secondary-restore-ready-store` as restore completion
-  - narrow first-visit series-selection work by using `dashmat-raw-data-meta-store.columns` before parsing full raw JSON
-  - cache CMA default lookup by stable missing-series tuple and only resolve CMA defaults for selected missing series
-- PortOpt tab/render:
-  - lazy-mount heavy result subtrees for `Attribution`, `Frontier`, and `Risk`
-  - cache the default Frontier snapshot at solve time and reuse one shared snapshot resolver across chart, table, and export
-- Optimization engine:
-  - native `minimize_variance` is materially faster and worth keeping
-  - hybrid `risk_parity` is worth keeping only for unconstrained or box-bounded classical RP; keep Riskfolio for RP cases with UI linear constraints
-- AnalyticsTool / Regression startup:
-  - move AT and REG series-selection modal open/seed to one clientside callback
-  - make AT and REG modal `OK` paths diff-aware so unchanged persisted outputs return `no_update`
-  - use `agSelectCellEditor` for AT `Benchmark` and disable modal-grid row animation
-
-### Guidance From Measurement
-
-- AnalyticsTool benefited across shell, open, grid, `OK`, and content timings from the startup pass.
-- Regression benefited mainly on shell, open, and grid timing; `OK` close was effectively flat, so future REG work should prioritize open-path latency before more `OK`-path tuning.
-- For list-constrained fields, lighter editors are worth trying before deeper grid refactors.
-- `agSelectCellEditor` was a keep for PortOpt `Benchmark` / `CMABench` and AnalyticsTool `Benchmark`.
-- Do not assume editor simplification will help if the measured bottleneck is still before grid hydration.
-
-### Avoid These Non-Wins
-
-- Native `maximize_sharpe` was slower than the Riskfolio path and should stay on Riskfolio.
-- Broad PortOpt post-solve artifact-family reuse for statistics, growth, rolling, calendar, and drawdown did not produce a real win and slightly regressed targeted benchmarks.
-- Clientside PortOpt restore plus clientside/common/specialized run-button gating regressed warm-switch `runReady`.
-- Converting intra-app module switch to true Dash in-app routing improved some UX aspects but regressed warm-switch timing enough on AnalyticsTool and Regression that it was not kept.
-- Optimistic clientside restore/reconciliation for AT/PO did not improve warm-switch timing enough to justify the added complexity.
-- Lazy-mounting the whole PO ex-ante grid subtree regressed timing materially.
-
-### Preferred Direction
-
-- Prefer narrower PO-only experiments, one hidden subtree at a time, with remeasurement against the committed baseline before keeping a change.
-- Recent blocker tuning: page-local startup blockers can help perceived first-switch timing, but release conditions must stay aligned with modal/grid hydration. If the blocker misbehaves, check the modal-open path and `virtualRowData` release signal before adding more blocker layers.
-- For shared or app-shell loading overlays, do not leave a full-screen fixed wrapper mounted while the overlay is "hidden". If the wrapper covers the viewport, gate the wrapper itself with `display:none` or equivalent when inactive, otherwise it can block clicks across the app even with `visible=False`.
-- For module-switch blockers, keep route-transition blocking separate from page-local upload/modal blockers. Use a shared app-level blocker only for switches among the DashMat module routes, and keep page-local blockers hidden by default unless a local operation actually needs them.
-- For shared route/path callbacks, use the always-mounted `_pages_location.pathname` instead of page-local `dcc.Location` ids if the callback must exist while other pages are active.
-- Do not mix always-mounted outputs with page-local outputs in the same shared callback. If an output only exists on one page, keep it on a page-local callback and write shared app-level stores from a separate callback.
-- If a shared callback must read page-local inputs or states while other pages may be mounted, mark those inputs/states with `allow_optional=True`.
-
-## Windows and Tooling Learnings
-
-- On Windows, very large `apply_patch` payloads can fail with shell or path-length style errors. Split large doc rewrites or multi-file edits into smaller patches.
-- Prefer Python Playwright over `playwright-cli run-code` for nontrivial browser automation on Windows. The CLI JS path runs into command-line length and quoting limits quickly.
-- For consistent browser passes on AnalyticsTool, a short Python Playwright script is more reliable than interactive `playwright-cli` snapshots:
-  - use a fixed viewport and a dedicated `output/playwright/<run-name>/` artifact folder
-  - prefer `page.get_by_label("Factor Analysis")` / `page.get_by_label("Regime Analysis")` to scope duplicated controls like `Raw Detail`
-  - upload files with normalized forward-slash paths such as `C:/Git/DashMat/...`
-  - filter the known AG Grid invalid-license console banner before treating console output as a test failure
-  - save the downloaded workbook and inspect sheet names with `openpyxl` instead of assuming the menu click succeeded
-- Prefer real script files over `conda run ... python -c` for anything more than a short one-liner. Multiline or heavily quoted `-c` payloads are brittle.
-- In PowerShell, `Start-Process` with `python -c` is easy to misquote. Use a script file when possible, or pass the full `-c "..."` payload as one argument string.
-- If you must launch long-lived Dash apps from PowerShell for A/B testing, wrapping the Conda-env Python invocation in a short `pwsh -Command` string is more reliable than passing `python -c` directly through `Start-Process`.
-- For browser file uploads in Playwright, prefer normalized forward-slash paths such as `C:/Git/DashMat/...` when passing paths into browser-side code.
-- Keep Playwright runtime artifacts out of commits. `.playwright-cli/` and `output/` are local runtime outputs unless a specific artifact is intentionally being checked in.
-- If you need to compare two commits side by side, run the app on separate ports instead of editing `app.py`. A reliable pattern is `conda run -n dashmat python -c "import app; app.app.run(port=8051)"`.
-- For temporary local app launches used by browser checks, a short script that prepends the repo root to `sys.path` is more reliable than running a helper script from a nested `output/` folder and assuming `import app` will resolve.
-- Fresh git worktrees may have missing or zero-byte SQLite files under `data/`. Validate or rebuild the local seed DBs before starting DB-backed browser runs.
-- For side-by-side A/B comparisons, be explicit about which repo root owns the app process, DB files, and output artifacts. Launch the app after that repo root's seed DBs are valid.
-- If a baseline worktree is missing the same local DB contents as the target repo, browser A/B results are contaminated. Before comparing DB-backed flows, verify matching non-zero `data/` files in both worktrees or copy the local seed DBs explicitly.
-- The warm-switch harness currently accepts runs that may include browser console callback errors. Treat single-run results cautiously and prefer repeated A/B runs before concluding that a small regression is real.
-- AG Grid treats dotted column `field` names as nested object paths by default. For result grids that use literal series names as fields, set `dashGridOptions.suppressFieldDotNotation = True` instead of renaming the series.
-- Mantine upward-opening dropdowns inside anchored add/import modals can clip against the top of a 1080p viewport. Prefer changing the shared builders in `utils/dashmat_welcome_modal.py` by lowering the modal `yOffset` and reducing `maxDropdownHeight`, rather than patching page-specific modal instances one by one.
+- On Windows, split very large `apply_patch` payloads into smaller patches.
+- Prefer short Python Playwright scripts over long CLI one-liners for browser automation.
+- For side-by-side comparisons, run the app on separate ports instead of editing `app.py`.
+- Validate local SQLite files under `data/` before DB-backed browser runs or A/B comparisons.
+- Keep Playwright runtime artifacts out of commits unless explicitly needed.
+- AG Grid treats dotted `field` names as nested paths by default; use `dashGridOptions.suppressFieldDotNotation = True` for literal series names.
+- If upward-opening modal dropdowns clip at the top of the viewport, fix the shared builders in `utils/dashmat_welcome_modal.py` instead of patching page-specific modal instances.
