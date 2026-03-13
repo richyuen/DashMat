@@ -171,7 +171,7 @@ def test_po_open_modal_uses_clientside_open_seed_callback():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal")' in page_text
     assert 'Input("po-open-modal-button", "n_clicks")' in page_text
-    assert 'Input("po-url-location", "pathname")' in page_text
+    assert 'Input("_pages_location", "pathname")' in page_text
     assert 'Input("po-page-load-trigger", "n_intervals")' in page_text
     assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
     open_block = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal")', 1)[1]
@@ -210,8 +210,8 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
-    assert getattr(blocker_store, "data", None) is True
-    assert getattr(blocker_overlay, "visible", None) is True
+    assert getattr(blocker_store, "data", None) is False
+    assert getattr(blocker_overlay, "visible", None) is False
     assert getattr(blocker_overlay, "zIndex", None) == 2500
 
 
@@ -2410,10 +2410,12 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Input("po-series-selection-modal", "opened")' in page_text
     assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("po-page-load-trigger", "n_intervals")' in page_text
+    assert 'Input("dashmat-route-blocker-store", "data")' in page_text
+    assert 'Output("po-route-ready-store", "data")' in page_text
     assert 'State("po-page-visited-store", "data")' in page_text
     assert 'State("po-series-order-store", "data")' in page_text
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
-    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries)" in js_text
+    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries)" in js_text
     assert "function portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
 
 

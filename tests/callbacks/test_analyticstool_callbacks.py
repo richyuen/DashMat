@@ -507,14 +507,16 @@ def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Output("at-series-selection-container", "children")' in page_text
     assert 'Output("at-ui-blocker-store", "data", allow_duplicate=True),' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitialSeriesBlocker")' in page_text
-    assert 'Input("at-url-location", "pathname")' in page_text
+    assert 'Input("_pages_location", "pathname")' in page_text
     assert 'Input("at-series-selection-modal", "opened")' in page_text
     assert 'Input("at-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
+    assert 'Input("dashmat-route-blocker-store", "data")' in page_text
+    assert 'Output("at-route-ready-store", "data")' in page_text
     assert 'State("at-page-visited-store", "data")' in page_text
     assert 'State("at-series-order-store", "data")' in page_text
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
-    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries)" in js_text
+    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries)" in js_text
     assert "function analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
 
 
@@ -559,8 +561,8 @@ def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
-    assert getattr(blocker_store, "data", None) is True
-    assert getattr(blocker_overlay, "visible", None) is True
+    assert getattr(blocker_store, "data", None) is False
+    assert getattr(blocker_overlay, "visible", None) is False
     assert getattr(blocker_overlay, "zIndex", None) == 2500
 
 

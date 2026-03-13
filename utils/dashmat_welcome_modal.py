@@ -36,16 +36,18 @@ def _sid(prefix: str, suffix: str) -> str:
     return f"{prefix}-{suffix}"
 
 
-_ANCHORED_GROWING_MODAL_Y_OFFSET = "28vh"
+_ANCHORED_GROWING_MODAL_Y_OFFSET = "34vh"
 _ANCHORED_GROWING_MODAL_STYLES = {
     "content": {
-        "maxHeight": "84vh",
+        "maxHeight": "80vh",
     },
     "body": {
-        "maxHeight": "72vh",
+        "maxHeight": "66vh",
         "overflowY": "auto",
     },
 }
+_MODAL_DROPDOWN_HEIGHT = 320
+_MODAL_SMALL_DROPDOWN_HEIGHT = 220
 _UPWARD_MULTISELECT_COMBOBOX_PROPS = {
     "position": "top",
     "middlewares": {
@@ -508,7 +510,7 @@ def build_db_add_modal(prefix: str):
                 clearSearchOnChange=False,
                 placeholder="Select one or more series",
                 nothingFoundMessage="No categories found",
-                maxDropdownHeight=380,
+                maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                 comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
                 w="100%",
             ),
@@ -561,7 +563,7 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                         searchable=True,
                         clearable=True,
                         nothingFoundMessage="No portfolios found",
-                        maxDropdownHeight=480,
+                        maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                     ),
                     dmc.Group(
                         gap="sm",
@@ -573,7 +575,7 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                                 value=None,
                                 clearable=False,
                                 searchable=True,
-                                maxDropdownHeight=480,
+                                maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                                 w=220,
                             ),
                             dmc.Checkbox(
@@ -590,7 +592,7 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                                 value=None,
                                 clearable=False,
                                 searchable=True,
-                                maxDropdownHeight=480,
+                                maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                                 w=220,
                                 disabled=True,
                             ),
@@ -708,7 +710,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                                 value=None,
                                 clearable=False,
                                 searchable=False,
-                                maxDropdownHeight=240,
+                                maxDropdownHeight=_MODAL_SMALL_DROPDOWN_HEIGHT,
                                 w=180,
                                 placeholder="Select base",
                             ),
@@ -719,7 +721,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                                 value=[],
                                 searchable=False,
                                 clearable=True,
-                                maxDropdownHeight=240,
+                                maxDropdownHeight=_MODAL_SMALL_DROPDOWN_HEIGHT,
                                 comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
                                 w=280,
                                 placeholder="Select one or more types",
@@ -735,7 +737,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                         clearable=True,
                         disabled=True,
                         nothingFoundMessage="No underlying categories found",
-                        maxDropdownHeight=480,
+                        maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                         comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
                         w="100%",
                         placeholder="Select one or more underlying categories",
@@ -837,7 +839,7 @@ def build_sheet_select_modal(prefix: str):
                 w="100%",
                 size="sm",
                 placeholder="Select sheet(s)",
-                maxDropdownHeight=480,
+                maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                 comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
             ),
             dmc.Group(
@@ -891,7 +893,7 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                         searchable=True,
                         clearable=True,
                         nothingFoundMessage="No series found",
-                        maxDropdownHeight=480,
+                        maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                     ),
                     dmc.Group(
                         gap="sm",
@@ -906,7 +908,7 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                                 value="daily",
                                 clearable=False,
                                 searchable=False,
-                                maxDropdownHeight=480,
+                                maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                                 w=200,
                             ),
                             dmc.Select(
@@ -919,7 +921,7 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                                 value="net",
                                 clearable=False,
                                 searchable=False,
-                                maxDropdownHeight=480,
+                                maxDropdownHeight=_MODAL_DROPDOWN_HEIGHT,
                                 w=200,
                             ),
                             dmc.Checkbox(

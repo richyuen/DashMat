@@ -16,6 +16,16 @@
     return triggered[0].prop_id.split(".")[0];
   }
 
+  const dashmatModuleRoutes = ["/analyticstool", "/portopt", "/regression"];
+
+  function normalizePath(pathname) {
+    return String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+  }
+
+  function isDashmatModuleRoute(pathname) {
+    return dashmatModuleRoutes.indexOf(normalizePath(pathname)) !== -1;
+  }
+
   function clickUploadInput(rootId) {
     setTimeout(function () {
       const uploadDiv = document.getElementById(rootId);
@@ -187,7 +197,7 @@
   }
 
   function startInitialSeriesModalBlocker(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath) {
-    const pagePath = String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+    const pagePath = normalizePath(pathname);
     if (pagePath !== targetPath) {
       return noUpdate();
     }
@@ -201,6 +211,45 @@
       return true;
     }
     return pageLoadReady ? false : noUpdate();
+  }
+
+  function buildModuleRouteReadyPayload(targetPath, routeBlockerState, ready) {
+    const state = routeBlockerState && typeof routeBlockerState === "object" ? routeBlockerState : {};
+    const statePath = normalizePath(state.pathname);
+    const requestId = Number.isFinite(state.requestId) ? state.requestId : 0;
+    return {
+      pathname: targetPath,
+      requestId: statePath === targetPath ? requestId : 0,
+      ready: statePath === targetPath ? !!ready : false
+    };
+  }
+
+  function buildLocalBlockerState(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath) {
+    return startInitialSeriesModalBlocker(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      modalStillNeeded,
+      virtualRows,
+      targetPath
+    );
+  }
+
+  function modulePageRouteReady(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath, routeBlockerState) {
+    const localBlocker = buildLocalBlockerState(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      modalStillNeeded,
+      virtualRows,
+      targetPath
+    );
+    const pagePath = normalizePath(pathname);
+    let routeReady = false;
+    if (pagePath === targetPath && pageLoadReady) {
+      routeReady = localBlocker === true || modalOpened === true || !modalStillNeeded || Array.isArray(virtualRows);
+    }
+    return buildModuleRouteReadyPayload(targetPath, routeBlockerState, routeReady);
   }
 
   function analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited) {
@@ -228,14 +277,26 @@
     return (!pageVisited && !selectedValid.length) || genericNew.length > 0;
   }
 
-  function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries) {
-    return startInitialSeriesModalBlocker(
+  function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries) {
+    return buildLocalBlockerState(
       pathname,
       pageLoadReady,
       modalOpened,
       analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited),
       virtualRows,
       "/analyticstool"
+    );
+  }
+
+  function analyticsRouteReady(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries) {
+    return modulePageRouteReady(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited),
+      virtualRows,
+      "/analyticstool",
+      routeBlockerState
     );
   }
 
@@ -269,14 +330,26 @@
     return genericNew.length > 0;
   }
 
-  function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries) {
-    return startInitialSeriesModalBlocker(
+  function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries) {
+    return buildLocalBlockerState(
       pathname,
       pageLoadReady,
       modalOpened,
       portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited),
       virtualRows,
       "/portopt"
+    );
+  }
+
+  function portoptRouteReady(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries) {
+    return modulePageRouteReady(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited),
+      virtualRows,
+      "/portopt",
+      routeBlockerState
     );
   }
 
@@ -911,8 +984,8 @@
     return genericNew.length > 0;
   }
 
-  function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, currentDepVar, poOriginSeries) {
-    return startInitialSeriesModalBlocker(
+  function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, currentDepVar, poOriginSeries) {
+    return buildLocalBlockerState(
       pathname,
       pageLoadReady,
       modalOpened,
@@ -920,6 +993,58 @@
       virtualRows,
       "/regression"
     );
+  }
+
+  function regressionRouteReady(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, currentDepVar, poOriginSeries) {
+    return modulePageRouteReady(
+      pathname,
+      pageLoadReady,
+      modalOpened,
+      regressionInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, currentDepVar, poOriginSeries, pageVisited),
+      virtualRows,
+      "/regression",
+      routeBlockerState
+    );
+  }
+
+  function moduleRouteBlockerState(pathname, currentState) {
+    const nextPath = normalizePath(pathname);
+    const state = currentState && typeof currentState === "object" ? currentState : {};
+    const prevPath = normalizePath(state.pathname);
+    const prevRequestId = Number.isFinite(state.requestId) ? state.requestId : 0;
+    if (!isDashmatModuleRoute(nextPath)) {
+      return { active: false, pathname: nextPath, requestId: prevRequestId };
+    }
+    if (!prevPath || prevPath === "/" || nextPath === prevPath || !isDashmatModuleRoute(prevPath)) {
+      return { active: false, pathname: nextPath, requestId: prevRequestId };
+    }
+    return { active: true, pathname: nextPath, requestId: prevRequestId + 1 };
+  }
+
+  function moduleRouteBlockerPresentation(routeBlockerState, atReady, poReady, regReady) {
+    const state = routeBlockerState && typeof routeBlockerState === "object" ? routeBlockerState : {};
+    const path = normalizePath(state.pathname);
+    if (!state.active || !isDashmatModuleRoute(path)) {
+      return [{ display: "none" }, false];
+    }
+    const requestId = Number.isFinite(state.requestId) ? state.requestId : 0;
+    let readyPayload = null;
+    if (path === "/analyticstool") {
+      readyPayload = atReady;
+    } else if (path === "/portopt") {
+      readyPayload = poReady;
+    } else if (path === "/regression") {
+      readyPayload = regReady;
+    }
+    const readyState = readyPayload && typeof readyPayload === "object" ? readyPayload : {};
+    const isReady =
+      normalizePath(readyState.pathname) === path &&
+      Number(readyState.requestId || 0) === requestId &&
+      readyState.ready === true;
+    if (isReady) {
+      return [{ display: "none" }, false];
+    }
+    return [{ position: "fixed", inset: 0, zIndex: 2400 }, true];
   }
 
   function clearWorkspaceSession(n_clicks) {
@@ -1198,8 +1323,13 @@
       commonDailyButtonDisabled: commonDailyButtonDisabled,
       loadWorkspaceSession: loadWorkspaceSession,
       loadWorkspaceSessionDialog: loadWorkspaceSessionDialog,
+      moduleRouteBlockerPresentation: moduleRouteBlockerPresentation,
+      moduleRouteBlockerState: moduleRouteBlockerState,
+      analyticsRouteReady: analyticsRouteReady,
       navigateAnalytics: navigateAnalytics,
       navigatePortopt: navigatePortopt,
+      portoptRouteReady: portoptRouteReady,
+      regressionRouteReady: regressionRouteReady,
       navigateRegression: navigateRegression,
       openPortoptSeriesModal: openPortoptSeriesModal,
       openRegressionSeriesModal: openRegressionSeriesModal,

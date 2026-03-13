@@ -447,8 +447,8 @@ def test_reg_layout_starts_with_welcome_and_main_hidden(regression_page):
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
-    assert getattr(blocker_store, "data", None) is True
-    assert getattr(blocker_overlay, "visible", None) is True
+    assert getattr(blocker_store, "data", None) is False
+    assert getattr(blocker_overlay, "visible", None) is False
     assert getattr(blocker_overlay, "zIndex", None) == 2500
 
 
@@ -807,15 +807,17 @@ def test_regression_file_menu_includes_account_list_actions():
     assert 'id="reg-menu-save-session"' in page_text
     assert 'disabled=True' in page_text
     assert page_text.index('id="reg-menu-save-session"') < page_text.index('id="reg-menu-load-account-list"')
-    assert 'Input("reg-url-location", "pathname")' in page_text
+    assert 'Input("_pages_location", "pathname")' in page_text
     assert 'Input("reg-series-selection-modal", "opened")' in page_text
     assert 'Input("reg-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
+    assert 'Input("dashmat-route-blocker-store", "data")' in page_text
+    assert 'Output("reg-route-ready-store", "data")' in page_text
     assert 'State("reg-page-visited-store", "data")' in page_text
     assert 'State("reg-series-order-store", "data")' in page_text
     assert 'State("reg-dependent-var-store", "data")' in page_text
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
-    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, currentDepVar, poOriginSeries)" in js_text
+    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, currentDepVar, poOriginSeries)" in js_text
     assert "function regressionInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, currentDepVar, poOriginSeries, pageVisited)" in js_text
 
 

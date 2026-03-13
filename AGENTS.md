@@ -41,12 +41,29 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Preserve callback IDs and store schemas unless a migration is intentional and updated everywhere.
 - Keep shared JSON/store payloads compatible across pages.
 - Avoid broad refactors in large callback files; patch the smallest safe section.
+- For app-shell features shared across pages, prefer a helper module with `build_*_components()` and `register_*_callbacks()` rather than growing `app.py` callback logic directly.
 - Preserve imported series names exactly as loaded from source data or DB-backed account names. Do not sanitize or alias series names just to satisfy a grid or chart component.
 - Do not add dependencies unless necessary.
 - Add comments only when logic is not obvious.
 - Do not mutate or delete database table data from runtime callback code.
 - Database setup, backfills, truncates, deletes, reseeds, and migrations belong in explicit scripts under `tools/db`.
 - Exception: AnalyticsTool factor-definition CRUD is allowed at runtime for `FactorDefinitions` and `FactorDefinitionsArchive` only. Archive the prior row first and use optimistic concurrency via `UPDATE_DATE`.
+
+## Production `app.py` Guide
+
+When porting shared app-shell changes into a production variant of `app.py`, keep the file as composition-only glue and move behavior into helper modules.
+
+- For the shared module-switch blocker added in this repo:
+  - import `build_module_route_blocker_components` and `register_module_route_blocker_callbacks` from `utils.module_route_blocker`
+  - add `*build_module_route_blocker_components()` alongside the other shared stores/components in the root provider layout
+  - call `register_module_route_blocker_callbacks(app)` after app creation, similar to `register_account_list_callbacks(...)`
+- Keep the blocker scoped to the DashMat module routes only:
+  - `/analyticstool`
+  - `/portopt`
+  - `/regression`
+  - do not enable it for `/`, `/restricted`, or unrelated production pages
+- Do not move page-local modal/upload blocker logic into `app.py`
+- Do not add app-level callbacks that write page-local outputs from `app.py`; shared app-shell callbacks should only write always-mounted shared stores/components
 
 ## Data Expectations
 
@@ -152,6 +169,10 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Prefer narrower PO-only experiments, one hidden subtree at a time, with remeasurement against the committed baseline before keeping a change.
 - Recent blocker tuning: page-local startup blockers can help perceived first-switch timing, but release conditions must stay aligned with modal/grid hydration. If the blocker misbehaves, check the modal-open path and `virtualRowData` release signal before adding more blocker layers.
 - For shared or app-shell loading overlays, do not leave a full-screen fixed wrapper mounted while the overlay is "hidden". If the wrapper covers the viewport, gate the wrapper itself with `display:none` or equivalent when inactive, otherwise it can block clicks across the app even with `visible=False`.
+- For module-switch blockers, keep route-transition blocking separate from page-local upload/modal blockers. Use a shared app-level blocker only for switches among the DashMat module routes, and keep page-local blockers hidden by default unless a local operation actually needs them.
+- For shared route/path callbacks, use the always-mounted `_pages_location.pathname` instead of page-local `dcc.Location` ids if the callback must exist while other pages are active.
+- Do not mix always-mounted outputs with page-local outputs in the same shared callback. If an output only exists on one page, keep it on a page-local callback and write shared app-level stores from a separate callback.
+- If a shared callback must read page-local inputs or states while other pages may be mounted, mark those inputs/states with `allow_optional=True`.
 
 ## Windows and Tooling Learnings
 
@@ -169,8 +190,10 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - For browser file uploads in Playwright, prefer normalized forward-slash paths such as `C:/Git/DashMat/...` when passing paths into browser-side code.
 - Keep Playwright runtime artifacts out of commits. `.playwright-cli/` and `output/` are local runtime outputs unless a specific artifact is intentionally being checked in.
 - If you need to compare two commits side by side, run the app on separate ports instead of editing `app.py`. A reliable pattern is `conda run -n dashmat python -c "import app; app.app.run(port=8051)"`.
+- For temporary local app launches used by browser checks, a short script that prepends the repo root to `sys.path` is more reliable than running a helper script from a nested `output/` folder and assuming `import app` will resolve.
 - Fresh git worktrees may have missing or zero-byte SQLite files under `data/`. Validate or rebuild the local seed DBs before starting DB-backed browser runs.
 - For side-by-side A/B comparisons, be explicit about which repo root owns the app process, DB files, and output artifacts. Launch the app after that repo root's seed DBs are valid.
 - If a baseline worktree is missing the same local DB contents as the target repo, browser A/B results are contaminated. Before comparing DB-backed flows, verify matching non-zero `data/` files in both worktrees or copy the local seed DBs explicitly.
 - The warm-switch harness currently accepts runs that may include browser console callback errors. Treat single-run results cautiously and prefer repeated A/B runs before concluding that a small regression is real.
 - AG Grid treats dotted column `field` names as nested object paths by default. For result grids that use literal series names as fields, set `dashGridOptions.suppressFieldDotNotation = True` instead of renaming the series.
+- Mantine upward-opening dropdowns inside anchored add/import modals can clip against the top of a 1080p viewport. Prefer changing the shared builders in `utils/dashmat_welcome_modal.py` by lowering the modal `yOffset` and reducing `maxDropdownHeight`, rather than patching page-specific modal instances one by one.

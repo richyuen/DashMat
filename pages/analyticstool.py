@@ -4932,10 +4932,10 @@ layout = dmc.Container(
         dcc.Store(id="at-conditional-returns-rendered-key-store", data=None, storage_type="memory"),
 
         # UI Blocker for file dialog (Overlay)
-        dcc.Store(id="at-ui-blocker-store", data=True),
+        dcc.Store(id="at-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
             id="at-ui-blocker-overlay",
-            visible=True,
+            visible=False,
             zIndex=2500,
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
@@ -5655,6 +5655,22 @@ clientside_callback(
     Input("at-series-selection-grid", "virtualRowData", allow_optional=True),
     State("at-page-visited-store", "data"),
     State("at-series-order-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsRouteReady"),
+    Output("at-route-ready-store", "data"),
+    Input("_pages_location", "pathname"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("at-series-select", "data", allow_optional=True),
+    Input("at-page-load-trigger", "n_intervals", allow_optional=True),
+    Input("at-series-selection-modal", "opened", allow_optional=True),
+    Input("at-series-selection-grid", "virtualRowData", allow_optional=True),
+    Input("dashmat-route-blocker-store", "data"),
+    State("at-page-visited-store", "data", allow_optional=True),
+    State("at-series-order-store", "data", allow_optional=True),
     State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call=True,
 )

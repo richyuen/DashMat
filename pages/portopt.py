@@ -4046,10 +4046,10 @@ layout = dmc.Container(
         dcc.Interval(id="po-page-load-trigger", interval=50, max_intervals=1, n_intervals=0),
 
         # UI Blocker for file dialog (Overlay)
-        dcc.Store(id="po-ui-blocker-store", data=True),
+        dcc.Store(id="po-ui-blocker-store", data=False),
         dmc.LoadingOverlay(
             id="po-ui-blocker-overlay",
-            visible=True,
+            visible=False,
             zIndex=2500,
             overlayProps={"radius": "sm", "blur": 2},
             loaderProps={"variant": "bars"},
@@ -4867,6 +4867,22 @@ clientside_callback(
     Input("po-series-selection-grid", "virtualRowData", allow_optional=True),
     State("po-page-visited-store", "data"),
     State("po-series-order-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptRouteReady"),
+    Output("po-route-ready-store", "data"),
+    Input("_pages_location", "pathname"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-series-select", "data", allow_optional=True),
+    Input("po-page-load-trigger", "n_intervals", allow_optional=True),
+    Input("po-series-selection-modal", "opened", allow_optional=True),
+    Input("po-series-selection-grid", "virtualRowData", allow_optional=True),
+    Input("dashmat-route-blocker-store", "data"),
+    State("po-page-visited-store", "data", allow_optional=True),
+    State("po-series-order-store", "data", allow_optional=True),
     State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call=True,
 )
