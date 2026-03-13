@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import logging
 import os
+import sys
 import time
 from typing import Any
 
@@ -17,6 +18,7 @@ def _env_bool(name: str, default: str = "0") -> bool:
 _TIMING_ENABLED = _env_bool("DASHMAT_TIMING_ENABLED", "0")
 _TIMING_MIN_MS = float(os.getenv("DASHMAT_TIMING_MIN_MS", "0"))
 _TIMING_LOGGER = logging.getLogger(os.getenv("DASHMAT_TIMING_LOGGER", "dashmat.timing"))
+_TIMING_HANDLER_NAME = "dashmat.timing.stdout"
 
 
 def _format_fields(fields: dict[str, Any]) -> str:
@@ -28,16 +30,41 @@ def _format_fields(fields: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def timing_enabled() -> bool:
+    return _TIMING_ENABLED
+
+
+def configure_timing_logger() -> logging.Logger:
+    """Attach a dedicated stdout handler for timing logs when enabled."""
+    if not _TIMING_ENABLED:
+        return _TIMING_LOGGER
+
+    for handler in _TIMING_LOGGER.handlers:
+        if getattr(handler, "name", "") == _TIMING_HANDLER_NAME:
+            _TIMING_LOGGER.setLevel(logging.INFO)
+            _TIMING_LOGGER.propagate = False
+            return _TIMING_LOGGER
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.set_name(_TIMING_HANDLER_NAME)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    _TIMING_LOGGER.addHandler(handler)
+    _TIMING_LOGGER.setLevel(logging.INFO)
+    _TIMING_LOGGER.propagate = False
+    return _TIMING_LOGGER
+
+
 @contextmanager
 def timed_block(name: str, **fields: Any):
     """Measure a code block and emit a structured timing log when enabled."""
     if not _TIMING_ENABLED:
-        yield
+        yield fields
         return
 
     start = time.perf_counter()
     try:
-        yield
+        yield fields
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         if elapsed_ms < _TIMING_MIN_MS:

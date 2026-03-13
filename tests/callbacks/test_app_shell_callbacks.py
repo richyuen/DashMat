@@ -91,6 +91,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'Input("po-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text
     assert 'Input("reg-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text
     assert 'sessionStorage.setItem(key, JSON.stringify(sessionPayload[key]));' in account_list_text
+    assert "configure_timing_logger" in app_text
 
 
 def test_account_list_modal_does_not_open_when_optional_menu_input_mounts(monkeypatch):

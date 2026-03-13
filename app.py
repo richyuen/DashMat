@@ -1,5 +1,7 @@
 """DashMat - Market Returns Time Series Dashboard."""
 
+import logging
+
 import dash
 import dash_mantine_components as dmc
 from dash import Dash, Input, Output, dcc, html, page_container
@@ -15,6 +17,7 @@ from utils.module_route_blocker import (
     build_module_route_blocker_components,
     register_module_route_blocker_callbacks,
 )
+from utils.perf_timing import configure_timing_logger
 from utils.returns import build_raw_data_metadata
 
 # Initialize the app with multi-page support
@@ -26,6 +29,8 @@ app = Dash(
 
 # Initialize cache for performance optimization (after app creation)
 cache = init_cache(app.server)
+configure_timing_logger()
+app.server.logger.setLevel(logging.INFO)
 
 USERINFO_DATA = {"role": "Admin", "username": "Admin User"}
 dmc.pre_render_color_scheme()

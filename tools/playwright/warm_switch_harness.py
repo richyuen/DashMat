@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import subprocess
+import shutil
 import sys
 import time
 import traceback
@@ -24,6 +26,14 @@ DEFAULT_DB_SERIES = [
     "BCTBill13_TRIndex",
 ]
 
+TIMING_EVENT_NAMES = (
+    "portopt.project_results",
+    "portopt.render_weight_chart",
+    "portopt.render_statistics",
+    "portopt.render_attribution_table",
+    "portopt.render_frontier_table",
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -36,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-db-build", action="store_true")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--db-series", nargs="+", default=DEFAULT_DB_SERIES)
+    parser.add_argument("--server-log", default="")
     return parser.parse_args()
 
 
@@ -133,6 +144,42 @@ def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str)
     port = urllib.parse.urlparse(base_url).port
     port_token = f"p{port}" if port else "punknown"
     return f"warm_switch_{timestamp}_{label_token}_{git_token}_{port_token}"
+
+
+def parse_timing_log(server_log: Path | None) -> dict[str, object]:
+    summary = {
+        "sourcePath": str(server_log) if server_log else None,
+        "copiedPath": None,
+        "eventsPresent": {name: False for name in TIMING_EVENT_NAMES},
+        "eventCounts": {name: 0 for name in TIMING_EVENT_NAMES},
+        "matchedLines": [],
+    }
+    if not server_log or not server_log.exists():
+        return summary
+
+    line_re = re.compile(r"timing name=(?P<name>[^ ]+)")
+    matched_lines: list[str] = []
+    for line in server_log.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = line_re.search(line)
+        if not match:
+            continue
+        name = match.group("name")
+        if name not in summary["eventsPresent"]:
+            continue
+        summary["eventsPresent"][name] = True
+        summary["eventCounts"][name] += 1
+        if len(matched_lines) < 50:
+            matched_lines.append(line)
+    summary["matchedLines"] = matched_lines
+    return summary
+
+
+def copy_server_log(server_log: Path | None, out_dir: Path, stem: str) -> str | None:
+    if not server_log or not server_log.exists():
+        return None
+    copied_path = out_dir / f"{stem}_server.log"
+    shutil.copyfile(server_log, copied_path)
+    return str(copied_path)
 
 
 def write_failure_artifacts(
@@ -516,6 +563,7 @@ def main() -> int:
         base_url=args.base_url,
         timestamp=datetime.now().strftime("%Y-%m-%dT%H-%M-%S"),
     )
+    server_log_path = Path(args.server_log).resolve() if args.server_log else None
 
     try:
         wait_for_app(args.base_url, args.startup_timeout)
@@ -573,6 +621,8 @@ def main() -> int:
         print(f"RAW_PATH={raw_path}")
         return 1
 
+    timing_summary = parse_timing_log(server_log_path)
+    timing_summary["copiedPath"] = copy_server_log(server_log_path, out_dir, stem)
     out_path = out_dir / f"{stem}.json"
     payload = {
         "timestamp": datetime.now().astimezone().isoformat(),
@@ -590,10 +640,12 @@ def main() -> int:
         "portopt": result["results"]["portopt"],
         "regression": result["results"]["regression"],
         "consoleMessages": result["consoleMessages"],
+        "timingSummary": timing_summary,
     }
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     print(f"OUT_PATH={out_path}")
+    print("TIMING=" + json.dumps(timing_summary, separators=(",", ":")))
     print("ANALYTICS=" + json.dumps(result["results"]["analytics"], separators=(",", ":")))
     print("PORTOPT=" + json.dumps(result["results"]["portopt"], separators=(",", ":")))
     print("REGRESSION=" + json.dumps(result["results"]["regression"], separators=(",", ":")))
