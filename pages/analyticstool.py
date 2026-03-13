@@ -151,6 +151,7 @@ from utils.regime_analysis import (
     regime_required_series,
     regime_series_store_names,
     resolve_regime_source_data,
+    build_wide_detail_frame,
     build_regime_statistics_table,
     build_regime_timeline_frame,
     build_regime_transition_matrix,
@@ -1482,26 +1483,16 @@ def _build_factor_detail_frame(artifacts: _FactorArtifacts, selected_series, qua
 
     quantile_labels, _ordered_labels = _factor_quantile_labels(artifacts.factor_display, quantiles)
     factor_name = "Factor Value"
-    detail_df = pd.concat(
+    return build_wide_detail_frame(
+        artifacts.dependent_df,
         [
-            quantile_labels.rename("Quantile"),
-            artifacts.factor_display.rename(factor_name),
-            artifacts.dependent_df,
+            ("Quantile", quantile_labels.rename("Quantile")),
+            (factor_name, artifacts.factor_display.rename(factor_name)),
         ],
-        axis=1,
+        index_name="Date",
+        value_columns=[col for col in (selected_series or []) if col in artifacts.dependent_df.columns],
+        drop_all_missing_values=True,
     )
-    detail_df.index = pd.to_datetime(detail_df.index, errors="coerce")
-    detail_df = detail_df[~detail_df.index.isna()]
-    detail_df = detail_df[~detail_df.index.duplicated(keep="last")]
-    detail_df = detail_df.sort_index()
-    detail_df = detail_df.dropna(subset=[factor_name])
-    series_columns = [col for col in (selected_series or []) if col in detail_df.columns]
-    if series_columns:
-        detail_df = detail_df.dropna(subset=series_columns, how="all")
-    if detail_df.empty:
-        return pd.DataFrame()
-    detail_df = detail_df.reset_index().rename(columns={"index": "Date"})
-    return detail_df
 
 
 def _prepare_factor_analysis_selected_df(
@@ -1848,31 +1839,50 @@ def _build_conditional_detail_frames_from_core(
     anchor_index = core.anchor_index
     coincident_detail_frames: list[pd.DataFrame] = []
     forward_detail_frames: list[pd.DataFrame] = []
+    lookback_labels = {label: pd.Series(label, index=anchor_index, dtype="object") for label in core.window_labels}
+    forward_labels = {label: pd.Series(label, index=anchor_index, dtype="object") for label in core.window_labels}
 
     for label in core.window_labels:
-        factor_window = core.factor_windows.get(label, pd.Series(dtype=float))
-        qualified = core.qualified_masks.get(label, pd.Series(dtype=bool))
-        base_frame = pd.DataFrame(
-            {
-                "End Date": anchor_index,
-                "Lookback": label,
-                "Factor Value": factor_window.reindex(anchor_index).to_numpy(dtype=float, copy=False),
-                "Condition Met": qualified.reindex(anchor_index).fillna(False).to_numpy(dtype=bool, copy=False),
-            }
-        )
+        factor_window = core.factor_windows.get(label, pd.Series(dtype=float)).reindex(anchor_index)
+        qualified = core.qualified_masks.get(label, pd.Series(dtype=bool)).reindex(anchor_index).fillna(False)
+        value_frame = pd.DataFrame(index=anchor_index)
         for series_name in series_names:
             series_window = core.coincident_series_windows.get(label, {}).get(series_name)
             if series_window is not None:
-                base_frame[series_name] = series_window.reindex(anchor_index).to_numpy(dtype=float, copy=False)
+                value_frame[series_name] = series_window.reindex(anchor_index).to_numpy(dtype=float, copy=False)
+        base_frame = build_wide_detail_frame(
+            value_frame,
+            [
+                ("Lookback", lookback_labels[label]),
+                ("Factor Value", factor_window),
+                ("Condition Met", qualified),
+            ],
+            index_name="End Date",
+            value_columns=list(series_names),
+            drop_all_missing_values=True,
+            inputs_aligned=True,
+        )
         coincident_detail_frames.append(base_frame)
 
         for horizon_label in core.window_labels:
-            forward_frame = base_frame.copy()
-            forward_frame.insert(2, "Forward Period", horizon_label)
+            forward_value_frame = value_frame.copy()
             for series_name in series_names:
                 forward_window = core.forward_series_windows.get(series_name, {}).get(horizon_label)
                 if forward_window is not None:
-                    forward_frame[series_name] = forward_window.reindex(anchor_index).to_numpy(dtype=float, copy=False)
+                    forward_value_frame[series_name] = forward_window.reindex(anchor_index).to_numpy(dtype=float, copy=False)
+            forward_frame = build_wide_detail_frame(
+                forward_value_frame,
+                [
+                    ("Lookback", lookback_labels[label]),
+                    ("Forward Period", forward_labels[horizon_label]),
+                    ("Factor Value", factor_window),
+                    ("Condition Met", qualified),
+                ],
+                index_name="End Date",
+                value_columns=list(series_names),
+                drop_all_missing_values=True,
+                inputs_aligned=True,
+            )
             forward_detail_frames.append(forward_frame)
 
     coincident_detail_df = _order_conditional_detail_frame(

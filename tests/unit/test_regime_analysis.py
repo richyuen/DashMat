@@ -9,6 +9,7 @@ from utils.regime_analysis import (
     build_regime_statistics_table,
     build_regime_timeline_frame,
     build_regime_transition_matrix,
+    build_wide_detail_frame,
     compute_regime_assignments,
     prepare_regime_input_frame,
 )
@@ -171,6 +172,54 @@ def test_build_regime_detail_frame_avoids_signal_name_collision_with_series_colu
     assert list(detail_df.columns[:4]) == ["Date", "Regime", "Regime Signal", "SPX_TRIndex"]
     assert detail_df["Regime Signal"].tolist() == [100.0, 99.5, 100.5]
     assert detail_df["SPX_TRIndex"].tolist() == [0.01, -0.02, 0.03]
+
+
+def test_build_wide_detail_frame_normalizes_overlap_and_drops_all_missing_series_rows():
+    idx = pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02", "2024-01-02"])
+    value_frame = pd.DataFrame(
+        {
+            "Asset_A": [0.03, 0.01, None, 0.02],
+            "Asset_B": [None, None, None, None],
+        },
+        index=idx,
+    )
+    metadata = [
+        ("Quantile", pd.Series(["Q3", "Q1", "Q2"], index=pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"]))),
+        ("Regime", pd.Series([2, 1, 1], index=pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"]))),
+    ]
+
+    detail_df = build_wide_detail_frame(
+        value_frame,
+        metadata,
+        value_columns=["Asset_A", "Asset_B"],
+        int_columns={"Regime"},
+    )
+
+    assert list(detail_df.columns[:4]) == ["Date", "Quantile", "Regime", "Asset_A"]
+    assert detail_df["Date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-01", "2024-01-02", "2024-01-03"]
+    assert detail_df["Quantile"].tolist() == ["Q1", "Q2", "Q3"]
+    assert detail_df["Regime"].tolist() == [1, 1, 2]
+    assert detail_df.loc[detail_df["Date"] == pd.Timestamp("2024-01-02"), "Asset_A"].iloc[0] == pytest.approx(0.02)
+
+
+def test_build_wide_detail_frame_accepts_aligned_inputs_without_normalizing():
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"])
+    value_frame = pd.DataFrame({"Asset_A": [0.01, None, 0.03], "Asset_B": [0.02, None, 0.04]}, index=idx)
+
+    detail_df = build_wide_detail_frame(
+        value_frame,
+        [
+            ("Lookback", pd.Series("1M", index=idx, dtype="object")),
+            ("Condition Met", pd.Series([True, False, True], index=idx, dtype=bool)),
+        ],
+        value_columns=["Asset_A", "Asset_B"],
+        inputs_aligned=True,
+    )
+
+    assert list(detail_df.columns[:3]) == ["Date", "Lookback", "Condition Met"]
+    assert detail_df["Date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-01", "2024-01-03"]
+    assert detail_df["Lookback"].tolist() == ["1M", "1M"]
+    assert detail_df["Condition Met"].tolist() == [True, True]
 
 
 def test_compute_regime_assignments_returns_warning_for_invalid_definition(raw_json):

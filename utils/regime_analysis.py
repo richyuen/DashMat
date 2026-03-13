@@ -45,6 +45,81 @@ def _as_tuple(series: Any) -> tuple:
     return (text_val,)
 
 
+def _normalize_detail_series(series: pd.Series, name: str | None = None) -> pd.Series:
+    out = pd.Series(series.copy(), name=name if name is not None else getattr(series, "name", None))
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()]
+    out = out[~out.index.duplicated(keep="last")]
+    return out.sort_index()
+
+
+def _normalize_detail_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()]
+    out = out[~out.index.duplicated(keep="last")]
+    return out.sort_index()
+
+
+def build_wide_detail_frame(
+    value_frame: pd.DataFrame,
+    metadata_columns: list[tuple[str, pd.Series]],
+    *,
+    index_name: str = "Date",
+    value_columns: list[str] | tuple[str, ...] | None = None,
+    drop_all_missing_values: bool = True,
+    int_columns: list[str] | tuple[str, ...] | set[str] | None = None,
+    inputs_aligned: bool = False,
+) -> pd.DataFrame:
+    if value_frame is None or value_frame.empty:
+        return pd.DataFrame()
+
+    values_work = value_frame if inputs_aligned else _normalize_detail_frame(value_frame)
+    if values_work.empty:
+        return pd.DataFrame()
+
+    common_idx = values_work.index
+    normalized_metadata: list[tuple[str, pd.Series]] = []
+    for column_name, series in metadata_columns:
+        if inputs_aligned:
+            series_work = series if isinstance(series, pd.Series) else pd.Series(series, index=common_idx, name=column_name)
+            if series_work.name != column_name:
+                series_work = series_work.rename(column_name)
+            if not series_work.index.equals(common_idx):
+                series_work = series_work.reindex(common_idx)
+        else:
+            series_work = _normalize_detail_series(series, column_name)
+        if series_work.empty:
+            return pd.DataFrame()
+        if not inputs_aligned:
+            common_idx = common_idx.intersection(series_work.index)
+        normalized_metadata.append((column_name, series_work))
+
+    if common_idx.empty:
+        return pd.DataFrame()
+
+    metadata_frame = pd.DataFrame(index=common_idx)
+    for column_name, series_work in normalized_metadata:
+        metadata_frame[column_name] = series_work.reindex(common_idx)
+
+    detail_df = pd.concat([metadata_frame, values_work.reindex(common_idx)], axis=1)
+    series_columns = [col for col in (value_columns or values_work.columns) if col in detail_df.columns]
+    if drop_all_missing_values and series_columns:
+        detail_df = detail_df.dropna(subset=series_columns, how="all")
+    if detail_df.empty:
+        return pd.DataFrame()
+
+    for column_name in set(int_columns or ()):
+        if column_name in detail_df.columns:
+            detail_df[column_name] = pd.to_numeric(detail_df[column_name], errors="coerce").astype("Int64")
+
+    detail_df.index.name = index_name
+    detail_df = detail_df.reset_index()
+    if detail_df.columns[0] != index_name:
+        detail_df = detail_df.rename(columns={detail_df.columns[0]: index_name})
+    return detail_df
+
+
 def regime_required_series(definition: dict[str, Any] | None) -> list[str]:
     """Extract required source series names from a regime definition."""
     normalized, error = validate_regime_definition_payload(definition or {})
@@ -878,44 +953,19 @@ def build_regime_detail_frame(
         return pd.DataFrame()
 
     signal_name = "Regime Signal"
-    returns_work = returns_df.copy()
-    returns_work.index = pd.to_datetime(returns_work.index, errors="coerce")
-    returns_work = returns_work[~returns_work.index.isna()]
-    returns_work = returns_work[~returns_work.index.duplicated(keep="last")]
-    returns_work = returns_work.sort_index()
-    if returns_work.empty:
+    states_work = pd.to_numeric(_normalize_detail_series(states, "Regime"), errors="coerce").astype("Int64").dropna()
+    signal_work = pd.to_numeric(_normalize_detail_series(signal, signal_name), errors="coerce").dropna()
+    if states_work.empty or signal_work.empty:
         return pd.DataFrame()
 
-    states_work = pd.Series(states.copy(), name="Regime")
-    states_work.index = pd.to_datetime(states_work.index, errors="coerce")
-    states_work = states_work[~states_work.index.isna()]
-    states_work = states_work[~states_work.index.duplicated(keep="last")]
-    states_work = pd.to_numeric(states_work, errors="coerce").astype("Int64").dropna()
-    if states_work.empty:
-        return pd.DataFrame()
-
-    signal_work = pd.Series(signal.copy(), name=signal_name)
-    signal_work.index = pd.to_datetime(signal_work.index, errors="coerce")
-    signal_work = signal_work[~signal_work.index.isna()]
-    signal_work = signal_work[~signal_work.index.duplicated(keep="last")]
-    signal_work = pd.to_numeric(signal_work, errors="coerce").dropna()
-    if signal_work.empty:
-        return pd.DataFrame()
-
-    common_idx = returns_work.index.intersection(states_work.index).intersection(signal_work.index)
-    if common_idx.empty:
-        return pd.DataFrame()
-
-    detail_df = returns_work.reindex(common_idx).copy()
-    if detail_df.empty:
-        return pd.DataFrame()
-    detail_df.insert(0, signal_name, signal_work.reindex(common_idx).to_numpy(dtype=float, copy=False))
-    detail_df.insert(0, "Regime", states_work.reindex(common_idx).to_numpy(dtype="int64", copy=False))
-    detail_df.insert(0, "Date", pd.to_datetime(common_idx, errors="coerce"))
-    series_columns = [col for col in detail_df.columns if col not in {"Date", "Regime", signal_name}]
-    if series_columns:
-        detail_df = detail_df.dropna(subset=series_columns, how="all")
-    if detail_df.empty:
-        return pd.DataFrame()
-    detail_df["Regime"] = pd.to_numeric(detail_df["Regime"], errors="coerce").astype("Int64")
-    return detail_df.reset_index(drop=True)
+    return build_wide_detail_frame(
+        returns_df,
+        [
+            ("Regime", states_work),
+            (signal_name, signal_work),
+        ],
+        index_name="Date",
+        value_columns=list(returns_df.columns),
+        drop_all_missing_values=True,
+        int_columns={"Regime"},
+    )
