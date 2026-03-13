@@ -1708,12 +1708,12 @@ def _apply_zscore(values: pd.Series) -> pd.Series:
     return clean.astype(float)
 
 
-def _factor_conversion_warning_text(conversion: str) -> str | None:
-    if conversion == "compound":
-        return "Compound Return is usually most natural for return-like factors; End of Period or Average is often a better fit for level-like factors."
-    if conversion == "sum":
-        return "Sum is usually most natural for additive factors; End of Period or Average is often a better fit for level-like factors."
-    return None
+def _conditional_conversion_tooltip_text() -> str:
+    return (
+        "Compound Return is usually most natural for return-like factors. "
+        "End of Period or Average is often a better fit for level-like factors. "
+        "Sum is usually most natural for additive factors."
+    )
 
 
 def _empty_conditional_returns_payload() -> _ConditionalReturnsPayload:
@@ -3852,7 +3852,33 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                                 html.Div(
                                     children=[
-                                        dmc.Text("Factor Window", size="sm", fw=500, mb=3),
+                                        dmc.Group(
+                                            gap=4,
+                                            align="center",
+                                            mb=3,
+                                            children=[
+                                                dmc.Text("Factor Window", size="sm", fw=500),
+                                                dmc.Tooltip(
+                                                    id="at-conditional-window-conversion-tooltip",
+                                                    label=_conditional_conversion_tooltip_text(),
+                                                    position="top",
+                                                    withArrow=True,
+                                                    children=html.Span(
+                                                        DashIconify(
+                                                            icon="tabler:info-circle",
+                                                            width=14,
+                                                            color="#868e96",
+                                                        ),
+                                                        id="at-conditional-window-conversion-tooltip-target",
+                                                        style={
+                                                            "display": "inline-flex",
+                                                            "alignItems": "center",
+                                                            "cursor": "help",
+                                                        },
+                                                    ),
+                                                ),
+                                            ],
+                                        ),
                                         dmc.Select(
                                             id="at-conditional-window-conversion-select",
                                             data=CONDITIONAL_FACTOR_CONVERSION_OPTIONS,
@@ -3895,7 +3921,6 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 ),
                             ],
                         ),
-                        html.Div(id="at-conditional-conversion-note"),
                         html.Div(id="at-conditional-returns-warning"),
                         dcc.Loading(
                             id="at-loading-conditional-returns",
@@ -10906,7 +10931,6 @@ def _write_export_sheet_specs(writer, sheet_specs: list[_ExcelSheetSpec]) -> Non
 
 
 @callback(
-    Output("at-conditional-conversion-note", "children"),
     Output("at-conditional-returns-warning", "children"),
     Output("at-conditional-returns-container", "children"),
     Input("at-main-tabs", "value"),
@@ -10964,24 +10988,17 @@ def update_conditional_returns(
     ):
         raise PreventUpdate
 
-    note_text = _factor_conversion_warning_text(conditional_window_conversion or "compound")
-    note_children = (
-        dmc.Alert(note_text, color="yellow", variant="light", mb="sm")
-        if note_text
-        else None
-    )
-
     if raw_data is None or not selected_series:
-        return note_children, None, dmc.Text("Select series to view conditional returns.", size="sm", c="dimmed")
+        return None, dmc.Text("Select series to view conditional returns.", size="sm", c="dimmed")
     if not factor_series:
-        return note_children, None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
+        return None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
 
     definition_payload = ""
     factor_prefix, factor_name = _split_factor_select_key(factor_series)
     if factor_prefix == "def":
         definition = _lookup_factor_definition(factor_name, factor_definitions_db, factor_definitions_local)
         if not definition:
-            return note_children, None, dmc.Text("Selected factor definition is unavailable.", size="sm", c="dimmed")
+            return None, dmc.Text("Selected factor definition is unavailable.", size="sm", c="dimmed")
         definition_payload = _definition_payload_for_compute(definition)
 
     display_mode = conditional_display_mode if conditional_display_mode in {"summary", "detail"} else "summary"
@@ -11025,7 +11042,7 @@ def update_conditional_returns(
                 variant="light",
                 mb="sm",
             )
-            return note_children, warning_children, dmc.Text("Detail view is capped for large outputs. Excel export still includes the full detail table.", size="sm", c="dimmed")
+            return warning_children, dmc.Text("Detail view is capped for large outputs. Excel export still includes the full detail table.", size="sm", c="dimmed")
 
     payload = _compute_conditional_returns_cached(
         _dataset_key(raw_data) or "",
@@ -11051,7 +11068,7 @@ def update_conditional_returns(
     if display_mode == "detail":
         detail_frame = payload.coincident_detail_df if (conditional_view or "forward") == "coincident" else payload.forward_detail_df
         if detail_frame.empty:
-            return note_children, None, dmc.Text("No evaluated windows available for current settings.", size="sm", c="dimmed")
+            return None, dmc.Text("No evaluated windows available for current settings.", size="sm", c="dimmed")
         if (conditional_view or "forward") == "coincident":
             grid = _build_conditional_detail_grid_component(
                 f"Coincident Conditional Returns Detail vs {payload.factor_label}",
@@ -11059,7 +11076,7 @@ def update_conditional_returns(
                 series_names=selected_series_tuple,
                 include_forward=False,
             )
-            return note_children, warning_children, grid
+            return warning_children, grid
 
         grid = _build_conditional_detail_grid_component(
             f"Forward Conditional Returns Detail vs {payload.factor_label}",
@@ -11067,10 +11084,10 @@ def update_conditional_returns(
             series_names=selected_series_tuple,
             include_forward=True,
         )
-        return note_children, warning_children, grid
+        return warning_children, grid
 
     if payload.coincident_mean_df.empty and not payload.forward_mean_by_series:
-        return note_children, None, dmc.Text("No qualifying data available for current settings.", size="sm", c="dimmed")
+        return None, dmc.Text("No qualifying data available for current settings.", size="sm", c="dimmed")
 
     if (conditional_view or "forward") == "forward" and len(payload.forward_mean_by_series) > 10:
         warning_children = dmc.Alert(
@@ -11087,7 +11104,7 @@ def update_conditional_returns(
             payload.coincident_count_df,
             row_label="Window",
         )
-        return note_children, warning_children, grid
+        return warning_children, grid
 
     stack_children = []
     for series_name in selected_series:
@@ -11103,9 +11120,9 @@ def update_conditional_returns(
         )
 
     if not stack_children:
-        return note_children, warning_children, dmc.Text("No qualifying forward observations available.", size="sm", c="dimmed")
+        return warning_children, dmc.Text("No qualifying forward observations available.", size="sm", c="dimmed")
 
-    return note_children, warning_children, dmc.Stack(gap="sm", children=stack_children)
+    return warning_children, dmc.Stack(gap="sm", children=stack_children)
 
 
 def _build_regime_grid_component(

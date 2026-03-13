@@ -581,6 +581,32 @@ def test_at_result_grids_treat_series_fields_as_literal_keys(page_modules):
         assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
 
 
+def test_conditional_factor_window_uses_tooltip_help_target(page_modules):
+    analyticstool, _ = page_modules
+
+    tooltip = _find_component_by_id(analyticstool.layout, "at-conditional-window-conversion-tooltip")
+    target = _find_component_by_id(analyticstool.layout, "at-conditional-window-conversion-tooltip-target")
+    removed_note = _find_component_by_id(analyticstool.layout, "at-conditional-conversion-note")
+
+    assert tooltip is not None
+    assert getattr(tooltip, "position", None) == "top"
+    assert getattr(tooltip, "withArrow", None) is True
+    assert getattr(tooltip, "disabled", None) in (None, False)
+    assert "return-like factors" in str(getattr(tooltip, "label", ""))
+    assert "additive factors" in str(getattr(tooltip, "label", ""))
+    assert target is not None
+    assert removed_note is None
+
+
+def test_conditional_conversion_tooltip_text_is_static(page_modules):
+    analyticstool, _ = page_modules
+
+    label = analyticstool._conditional_conversion_tooltip_text()
+    assert "return-like factors" in label
+    assert "level-like factors" in label
+    assert "additive factors" in label
+
+
 def test_at_series_modal_has_explicit_zindex():
     modal_text = Path("utils/dashmat_welcome_modal.py").read_text(encoding="utf-8")
     assert "zIndex=1900" in modal_text
