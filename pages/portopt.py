@@ -421,13 +421,13 @@ def _po_apply_window_weights_to_panel(returns_df: pd.DataFrame, window_weights) 
 
 
 @cache_config.cache.memoize(timeout=0)
-def _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload):
+def _po_build_result_basis_bundle_cached(dataset_key, run_inputs_payload):
     try:
         run_inputs = json.loads(run_inputs_payload) if run_inputs_payload else {}
     except Exception:
         run_inputs = {}
     selected_series = tuple(run_inputs.get("selected_series") or ())
-    if not raw_data or not selected_series:
+    if not dataset_key or not selected_series:
         return canonical_json_dumps({})
 
     periodicity = run_inputs.get("periodicity") or "daily"
@@ -438,7 +438,7 @@ def _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload):
     vol_scaling_assignments = dict(run_inputs.get("vol_scaling_assignments") or {})
 
     optimization_bundle = _build_po_working_bundle(
-        raw_data,
+        dataset_key,
         periodicity,
         benchmark_assignments,
         long_short_assignments,
@@ -451,7 +451,7 @@ def _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload):
 
     reporting_ls = {series: False for series in selected_series}
     reporting_bundle = _build_po_working_bundle(
-        raw_data,
+        dataset_key,
         periodicity,
         benchmark_assignments,
         reporting_ls,
@@ -471,7 +471,7 @@ def _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload):
     benchmark_source_df = pd.DataFrame()
     if unique_benchmarks:
         benchmark_bundle = _build_po_working_bundle(
-            raw_data,
+            dataset_key,
             periodicity,
             {},
             {},
@@ -523,7 +523,10 @@ def _po_get_result_basis_bundle(
         vol_scaler=vol_scaler,
         vol_scaling=vol_scaling,
     )
-    payload = _po_build_result_basis_bundle_cached(raw_data, canonical_json_dumps(run_inputs))
+    payload = _po_build_result_basis_bundle_cached(
+        _dataset_key(raw_data) or "",
+        canonical_json_dumps(run_inputs),
+    )
     try:
         bundle = json.loads(payload) if payload else {}
     except Exception:
@@ -628,7 +631,7 @@ def _po_build_performance_source_cached(
     reporting_returns_json,
     benchmark_returns_json,
     run_inputs_payload,
-    raw_data,
+    dataset_key,
 ):
     if not selected_portfolio or not reporting_returns_json:
         return canonical_json_dumps({})
@@ -653,7 +656,11 @@ def _po_build_performance_source_cached(
     except Exception:
         portfolio_benchmark = pd.Series(dtype=float)
 
-    payload = _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload) if raw_data and run_inputs else canonical_json_dumps({})
+    payload = (
+        _po_build_result_basis_bundle_cached(dataset_key, run_inputs_payload)
+        if dataset_key and run_inputs
+        else canonical_json_dumps({})
+    )
     try:
         basis_bundle = json.loads(payload) if payload else {}
     except Exception:
@@ -768,7 +775,7 @@ def _po_get_performance_frames(
         _po_result_returns_json(entry, basis="reporting"),
         _po_result_returns_json(entry, basis="benchmark"),
         canonical_json_dumps(run_inputs),
-        raw_data,
+        _dataset_key(raw_data) or "",
     )
     try:
         parsed = json.loads(payload) if payload else {}
@@ -799,7 +806,7 @@ def _po_build_display_series_cached(
     selected_portfolio,
     reporting_returns_json,
     run_inputs_payload,
-    raw_data,
+    dataset_key,
 ):
     if not selected_portfolio or not reporting_returns_json:
         return None, []
@@ -819,8 +826,8 @@ def _po_build_display_series_cached(
     except Exception:
         run_inputs = {}
     source_series = list(dict.fromkeys((run_inputs or {}).get("selected_series") or []))
-    if raw_data and source_series and run_inputs:
-        payload = _po_build_result_basis_bundle_cached(raw_data, run_inputs_payload)
+    if dataset_key and source_series and run_inputs:
+        payload = _po_build_result_basis_bundle_cached(dataset_key, run_inputs_payload)
         try:
             bundle = json.loads(payload) if payload else {}
             working_df = json_to_df(bundle.get("reporting_df")) if bundle.get("reporting_df") else pd.DataFrame()

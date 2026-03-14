@@ -1,6 +1,7 @@
 """DashMat - Market Returns Time Series Dashboard."""
 
 import logging
+import os
 
 import dash
 import dash_mantine_components as dmc
@@ -20,6 +21,23 @@ from utils.module_route_blocker import (
 from utils.perf_timing import configure_timing_logger
 from utils.returns import build_raw_data_metadata
 
+
+def _compression_enabled() -> bool:
+    value = str(os.getenv("DASHMAT_ENABLE_COMPRESSION", "")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _maybe_enable_compression(server) -> None:
+    if not _compression_enabled():
+        return
+    try:
+        from flask_compress import Compress
+    except ImportError as exc:
+        raise RuntimeError(
+            "DASHMAT_ENABLE_COMPRESSION is set but flask_compress is not installed."
+        ) from exc
+    Compress(server)
+
 # Initialize the app with multi-page support
 app = Dash(
     __name__,
@@ -29,6 +47,7 @@ app = Dash(
 
 # Initialize cache for performance optimization (after app creation)
 cache = init_cache(app.server)
+_maybe_enable_compression(app.server)
 configure_timing_logger()
 app.server.logger.setLevel(logging.INFO)
 

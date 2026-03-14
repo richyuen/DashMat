@@ -157,11 +157,17 @@ def parse_timing_log(server_log: Path | None, start_offset: int = 0) -> dict[str
         "sourcePath": str(server_log) if server_log else None,
         "copiedPath": None,
         "startOffset": max(int(start_offset or 0), 0),
+        "warning": None,
         "eventsPresent": {name: False for name in TIMING_EVENT_NAMES},
         "eventCounts": {name: 0 for name in TIMING_EVENT_NAMES},
         "matchedLines": [],
     }
     if not server_log or not server_log.exists():
+        if server_log:
+            summary["warning"] = (
+                "Server log path was provided but does not exist. "
+                "Launch the app with unbuffered stdout and a real file path if you want timing correlation."
+            )
         return summary
 
     line_re = re.compile(r"timing name=(?P<name>[^ ]+)")
@@ -181,6 +187,12 @@ def parse_timing_log(server_log: Path | None, start_offset: int = 0) -> dict[str
         if len(matched_lines) < 50:
             matched_lines.append(line)
     summary["matchedLines"] = matched_lines
+    if not matched_lines:
+        summary["warning"] = (
+            "No timing events were found in the provided server log during the measured window. "
+            "If the app was launched with `conda run`, prefer `conda run --no-capture-output -n dashmat "
+            "python -u ...` so stdout reaches the log file while the server is still running."
+        )
     return summary
 
 
@@ -311,9 +323,10 @@ def warm_analytics_db(page, base_url: str, db_series: list[str]) -> str:
     page.goto(base_url + analytics_path, wait_until="domcontentloaded")
     renderer_mode = detect_renderer_mode(page)
     wait_visible(page, "#at-welcome-add-db-btn")
-    page.locator("#at-welcome-add-db-btn").click()
+    # The welcome flow can keep a modal overlay mounted during idle states.
+    page.locator("#at-welcome-add-db-btn").click(force=True)
     if not page.locator("#at-db-add-series-select").is_visible(timeout=3000):
-        page.locator("#at-welcome-add-db-btn").click()
+        page.locator("#at-welcome-add-db-btn").click(force=True)
     page.wait_for_selector("#at-db-add-series-select", state="visible", timeout=30000)
     page.evaluate(
         """
@@ -324,9 +337,9 @@ def warm_analytics_db(page, base_url: str, db_series: list[str]) -> str:
         db_series,
     )
     page.wait_for_timeout(300)
-    page.locator("#at-db-add-ok-button").click()
+    page.locator("#at-db-add-ok-button").click(force=True)
     page.wait_for_selector("#at-modal-ok-button", state="visible", timeout=30000)
-    page.locator("#at-modal-ok-button").click()
+    page.locator("#at-modal-ok-button").click(force=True)
     wait_visible(page, "#at-main-app-container")
     wait_ready(page, "#at-periodicity-select")
     return renderer_mode

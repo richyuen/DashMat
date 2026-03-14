@@ -370,7 +370,7 @@ def get_available_periodicities(original_periodicity: str) -> list[dict]:
 
 
 @cache_config.cache.memoize(timeout=0)
-def build_raw_data_metadata(raw_data_store: dict | None, original_periodicity: str | None) -> dict:
+def _build_raw_data_metadata_cached(dataset_key: str | None, original_periodicity: str | None) -> dict:
     """Build compact shared metadata for the current raw-data payload."""
     resolved_periodicity = original_periodicity or "daily"
     periodicity_options = get_available_periodicities(resolved_periodicity)
@@ -381,7 +381,6 @@ def build_raw_data_metadata(raw_data_store: dict | None, original_periodicity: s
         else (valid_values[0] if valid_values else "daily_trading")
     )
 
-    dataset_key = get_dataset_key(raw_data_store) if raw_data_store else None
     if not dataset_key:
         return {
             "has_data": False,
@@ -417,6 +416,12 @@ def build_raw_data_metadata(raw_data_store: dict | None, original_periodicity: s
         "min_date": df.index.min().strftime("%Y-%m-%d"),
         "max_date": df.index.max().strftime("%Y-%m-%d"),
     }
+
+
+def build_raw_data_metadata(raw_data_store: dict | None, original_periodicity: str | None) -> dict:
+    """Build compact shared metadata for the current raw-data payload."""
+    dataset_key = get_dataset_key(raw_data_store) if raw_data_store else None
+    return _build_raw_data_metadata_cached(dataset_key, original_periodicity)
 
 
 def merge_returns(existing_df: pd.DataFrame | None, new_df: pd.DataFrame) -> pd.DataFrame:

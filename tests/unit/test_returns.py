@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 import utils.returns as returns_module
+from utils.raw_dataset import build_raw_data_store_payload
 from utils.returns import (
     _fast_rolling_return_series,
     _legacy_rolling_return_series,
@@ -90,6 +91,19 @@ def test_build_raw_data_metadata_returns_columns_and_periodicity_options():
     assert any(option["value"] == "daily_trading" for option in metadata["periodicity_options"])
     assert metadata["min_date"] == "2024-01-01"
     assert metadata["max_date"] == "2024-01-02"
+
+
+def test_build_raw_data_metadata_accepts_payload_dict():
+    idx = pd.date_range("2024-01-01", periods=2, freq="D")
+    df = pd.DataFrame({"A": [0.01, 0.02]}, index=idx)
+    df.index.name = "Date"
+
+    payload = build_raw_data_store_payload(df)
+    metadata = build_raw_data_metadata(payload, "daily")
+
+    assert metadata["has_data"] is True
+    assert metadata["dataset_key"] == payload["dataset_key"]
+    assert metadata["columns"] == ["A"]
 
 
 def test_merge_returns_renames_overlapping_columns():

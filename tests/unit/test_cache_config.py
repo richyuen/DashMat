@@ -22,6 +22,14 @@ class _FakeCache:
         self.store.clear()
 
 
+class _StringyObject:
+    def __init__(self, label: str):
+        self.label = label
+
+    def __str__(self):
+        return self.label
+
+
 def test_build_cache_config_defaults(monkeypatch):
     monkeypatch.delenv("DASHMAT_CACHE_TYPE", raising=False)
     monkeypatch.delenv("DASHMAT_CACHE_DEFAULT_TIMEOUT", raising=False)
@@ -80,6 +88,46 @@ def test_memoize_with_cache_reuses_cached_result(monkeypatch):
     assert multiply(3, b=4) == 12
     assert multiply(3, b=4) == 12
     assert calls["n"] == 1
+
+
+def test_make_memoize_cache_key_is_stable_for_reordered_kwargs():
+    first = cache_config._make_memoize_cache_key(
+        "demo.fn",
+        ("value", 1),
+        {"alpha": 1, "beta": 2},
+    )
+    second = cache_config._make_memoize_cache_key(
+        "demo.fn",
+        ("value", 1),
+        {"beta": 2, "alpha": 1},
+    )
+
+    assert first == second
+
+
+def test_make_memoize_cache_key_changes_when_value_changes():
+    first = cache_config._make_memoize_cache_key("demo.fn", ("value",), {"alpha": 1})
+    second = cache_config._make_memoize_cache_key("demo.fn", ("value",), {"alpha": 2})
+
+    assert first != second
+
+
+def test_make_memoize_cache_key_hashes_large_strings():
+    payload = "x" * 2048
+
+    first = cache_config._make_memoize_cache_key("demo.fn", (payload,), {})
+    second = cache_config._make_memoize_cache_key("demo.fn", (payload,), {})
+
+    assert first == second
+
+
+def test_make_memoize_cache_key_supports_unknown_objects():
+    first = cache_config._make_memoize_cache_key("demo.fn", (_StringyObject("engine://demo"),), {})
+    second = cache_config._make_memoize_cache_key("demo.fn", (_StringyObject("engine://demo"),), {})
+    different = cache_config._make_memoize_cache_key("demo.fn", (_StringyObject("engine://other"),), {})
+
+    assert first == second
+    assert first != different
 
 
 def test_cache_proxy_clear_delegates_to_backend(monkeypatch):

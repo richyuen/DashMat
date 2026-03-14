@@ -6,6 +6,7 @@ param(
     [int]$StartupTimeout = 30,
     [string]$Label = '',
     [string]$GitRef = '',
+    [string]$ServerLog = '',
     [switch]$SkipDbBuild,
     [switch]$Headed
 )
@@ -33,6 +34,10 @@ if ($SkipDbBuild) {
 if ($DbSeries -and $DbSeries.Count -gt 0) {
   $args += '--db-series'
   $args += $DbSeries
+}
+if ($ServerLog) {
+  $args += '--server-log'
+  $args += $ServerLog
 }
 
 & conda @args

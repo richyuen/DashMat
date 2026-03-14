@@ -121,6 +121,85 @@ def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
     assert bundle.benchmark_payload == '{"Asset_A":"Asset_B"}'
 
 
+def test_po_get_result_basis_bundle_uses_dataset_key(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    captured = {}
+
+    def _fake_cached(dataset_key, run_inputs_payload):
+        captured["dataset_key"] = dataset_key
+        captured["run_inputs_payload"] = run_inputs_payload
+        return portopt.canonical_json_dumps({})
+
+    monkeypatch.setattr(portopt, "_po_build_result_basis_bundle_cached", _fake_cached)
+
+    portopt._po_get_result_basis_bundle(
+        {"run_inputs": {"selected_series": ["Asset_A"], "periodicity": "daily"}},
+        raw_json,
+    )
+
+    assert captured["dataset_key"] == resolve_dataset_key(raw_json)
+
+
+def test_po_get_performance_frames_uses_dataset_key(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    captured = {}
+
+    def _fake_cached(selected_portfolio, reporting_returns_json, benchmark_returns_json, run_inputs_payload, dataset_key):
+        captured["selected_portfolio"] = selected_portfolio
+        captured["dataset_key"] = dataset_key
+        captured["run_inputs_payload"] = run_inputs_payload
+        return portopt.canonical_json_dumps({})
+
+    monkeypatch.setattr(portopt, "_po_build_performance_source_cached", _fake_cached)
+
+    frames = portopt._po_get_performance_frames(
+        {
+            "Port1": {
+                "reporting_returns_json": "",
+                "benchmark_returns_json": "",
+                "run_inputs": {"selected_series": ["Asset_A"], "periodicity": "daily"},
+            }
+        },
+        "Port1",
+        raw_json,
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+    )
+
+    assert captured["selected_portfolio"] == "Port1"
+    assert captured["dataset_key"] == resolve_dataset_key(raw_json)
+    assert frames["display_cols"] == []
+
+
+def test_po_build_display_series_cached_uses_dataset_key(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    captured = {}
+    working_df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]]
+    working_df.index = pd.to_datetime(working_df.index)
+
+    def _fake_cached(dataset_key, run_inputs_payload):
+        captured["dataset_key"] = dataset_key
+        captured["run_inputs_payload"] = run_inputs_payload
+        return portopt.canonical_json_dumps({"reporting_df": df_to_json(working_df)})
+
+    monkeypatch.setattr(portopt, "_po_build_result_basis_bundle_cached", _fake_cached)
+
+    payload, ordered_cols = portopt._po_build_display_series_cached(
+        "Port1",
+        working_df["Asset_A"].rename("Port1").to_json(date_format="iso"),
+        portopt.canonical_json_dumps({"selected_series": ["Asset_A", "Asset_B"]}),
+        resolve_dataset_key(raw_json),
+    )
+
+    assert captured["dataset_key"] == resolve_dataset_key(raw_json)
+    assert payload
+    assert ordered_cols == ["Port1", "Asset_A", "Asset_B"]
+
+
 def test_po_bootstrap_helpers_default_to_idle_state(page_modules):
     _, portopt = page_modules
 
