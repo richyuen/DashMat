@@ -470,6 +470,76 @@
     return captureGridSnapshot("reg-series-selection-grid", modalOpened);
   }
 
+  async function bulkUpdateSeriesSelection(selectAllClicks, unselectAllClicks, modalOpened) {
+    const trigger = triggeredId() || "";
+    if (!trigger || modalOpened === false) {
+      return noUpdate();
+    }
+    if (!window.dash_ag_grid || !window.dash_ag_grid.getApiAsync) {
+      return noUpdate();
+    }
+
+    const isSelectAll = trigger.indexOf("-select-all-button") !== -1;
+    const isUnselectAll = trigger.indexOf("-unselect-all-button") !== -1;
+    if ((!isSelectAll && !isUnselectAll) || (!selectAllClicks && !unselectAllClicks)) {
+      return noUpdate();
+    }
+
+    let gridId = null;
+    let targetField = null;
+    if (trigger.indexOf("at-") === 0) {
+      gridId = "at-series-selection-grid";
+      targetField = "Selected";
+    } else if (trigger.indexOf("po-") === 0) {
+      gridId = "po-series-selection-grid";
+      targetField = "Selected";
+    } else if (trigger.indexOf("reg-") === 0) {
+      gridId = "reg-series-selection-grid";
+      targetField = "X";
+    } else {
+      return noUpdate();
+    }
+
+    try {
+      const api = await window.dash_ag_grid.getApiAsync(gridId);
+      if (!api) {
+        return noUpdate();
+      }
+      try {
+        api.stopEditing();
+      } catch (_err) {
+      }
+
+      const nextValue = isSelectAll;
+      let changed = false;
+      api.forEachNode(function (node) {
+        if (!node || !node.data || node.data.Delete) {
+          return;
+        }
+        if (!!node.data[targetField] === nextValue) {
+          return;
+        }
+        changed = true;
+        node.setData(
+          Object.assign({}, node.data, {
+            [targetField]: nextValue
+          })
+        );
+      });
+
+      if (!changed) {
+        return noUpdate();
+      }
+      try {
+        api.refreshCells({ columns: [targetField], force: true });
+      } catch (_err) {
+      }
+      return Date.now();
+    } catch (_err) {
+      return noUpdate();
+    }
+  }
+
   async function enforceRegressionSingleY(cellClick, modalOpened) {
     const evt = latestGridEvent(cellClick);
     if (!evt || modalOpened === false) {
@@ -1566,6 +1636,7 @@
   window.dash_clientside = Object.assign({}, window.dash_clientside, {
     dashmat_callbacks: {
       analyticsControlSync: analyticsControlSync,
+      bulkUpdateSeriesSelection: bulkUpdateSeriesSelection,
       captureAnalyticsSeriesSnapshot: captureAnalyticsSeriesSnapshot,
       capturePortoptSeriesSnapshot: capturePortoptSeriesSnapshot,
       captureRegressionSeriesSnapshot: captureRegressionSeriesSnapshot,

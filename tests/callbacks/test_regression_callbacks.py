@@ -783,6 +783,19 @@ def test_reg_series_modal_open_is_clientside():
     assert "def reg_open_modal(" not in page_text
 
 
+def test_reg_series_modal_bulk_actions_use_shared_clientside_helper():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="bulkUpdateSeriesSelection")' in page_text
+    assert 'Output("reg-series-bulk-action-dummy", "data")' in page_text
+    assert 'Input("reg-select-all-button", "n_clicks")' in page_text
+    assert 'Input("reg-unselect-all-button", "n_clicks")' in page_text
+    assert 'State("reg-series-selection-modal", "opened")' in page_text
+    assert 'gridId = "reg-series-selection-grid";' in js_text
+    assert 'targetField = "X";' in js_text
+
+
 def test_reg_blocker_wiring_covers_add_modal_entry_and_series_render():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")

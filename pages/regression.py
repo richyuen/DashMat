@@ -3510,6 +3510,15 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="bulkUpdateSeriesSelection"),
+    Output("reg-series-bulk-action-dummy", "data"),
+    Input("reg-select-all-button", "n_clicks"),
+    Input("reg-unselect-all-button", "n_clicks"),
+    State("reg-series-selection-modal", "opened"),
+    prevent_initial_call=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Series grid population

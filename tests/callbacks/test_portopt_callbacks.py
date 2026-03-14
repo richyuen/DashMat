@@ -224,6 +224,19 @@ def test_po_open_modal_js_keeps_manual_open_and_blocker_seed():
     assert "true" in js_text
 
 
+def test_po_series_modal_bulk_actions_use_shared_clientside_helper():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="bulkUpdateSeriesSelection")' in page_text
+    assert 'Output("po-series-bulk-action-dummy", "data")' in page_text
+    assert 'Input("po-select-all-button", "n_clicks")' in page_text
+    assert 'Input("po-unselect-all-button", "n_clicks")' in page_text
+    assert 'State("po-series-selection-modal", "opened")' in page_text
+    assert 'gridId = "po-series-selection-grid";' in js_text
+    assert 'targetField = "Selected";' in js_text
+
+
 def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     _, portopt = page_modules
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
-from dash import html, no_update
+from dash import dcc, html, no_update
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
@@ -455,6 +455,25 @@ def build_series_selection_modal(cfg: PagePrefixConfig):
                 hide=True,
                 mb="md",
                 withCloseButton=True,
+            ),
+            dcc.Store(id=_sid(cfg.prefix, "series-bulk-action-dummy"), data=None, storage_type="memory"),
+            dmc.Group(
+                mb="sm",
+                gap="xs",
+                children=[
+                    dmc.Button(
+                        "Select All",
+                        id=_sid(cfg.prefix, "select-all-button"),
+                        variant="light",
+                        size="xs",
+                    ),
+                    dmc.Button(
+                        "Unselect All",
+                        id=_sid(cfg.prefix, "unselect-all-button"),
+                        variant="outline",
+                        size="xs",
+                    ),
+                ],
             ),
             html.Div(
                 id=_sid(cfg.prefix, "series-selection-container"),

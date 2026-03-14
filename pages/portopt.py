@@ -7419,6 +7419,15 @@ clientside_callback(
     State("po-page-visited-store", "data"),
     prevent_initial_call=True,
 )
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="bulkUpdateSeriesSelection"),
+    Output("po-series-bulk-action-dummy", "data"),
+    Input("po-select-all-button", "n_clicks"),
+    Input("po-unselect-all-button", "n_clicks"),
+    State("po-series-selection-modal", "opened"),
+    prevent_initial_call=True,
+)
 # ---------------------------------------------------------------------------
 # Series selection modal: render rows
 # ---------------------------------------------------------------------------

@@ -497,6 +497,20 @@ def test_at_series_modal_open_is_clientside():
     assert "def open_modal(" not in page_text
 
 
+def test_at_series_modal_bulk_actions_use_shared_clientside_helper():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="bulkUpdateSeriesSelection")' in page_text
+    assert 'Output("at-series-bulk-action-dummy", "data")' in page_text
+    assert 'Input("at-select-all-button", "n_clicks")' in page_text
+    assert 'Input("at-unselect-all-button", "n_clicks")' in page_text
+    assert 'State("at-series-selection-modal", "opened")' in page_text
+    assert "function bulkUpdateSeriesSelection(selectAllClicks, unselectAllClicks, modalOpened)" in js_text
+    assert 'targetField = "Selected";' in js_text
+    assert "if (!node || !node.data || node.data.Delete) {" in js_text
+
+
 def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
@@ -612,6 +626,13 @@ def test_conditional_conversion_tooltip_text_is_static(page_modules):
 def test_at_series_modal_has_explicit_zindex():
     modal_text = Path("utils/dashmat_welcome_modal.py").read_text(encoding="utf-8")
     assert "zIndex=1900" in modal_text
+
+
+def test_at_series_modal_has_bulk_action_controls_and_dummy_sink():
+    modal_text = Path("utils/dashmat_welcome_modal.py").read_text(encoding="utf-8")
+    assert '"series-bulk-action-dummy"' in modal_text
+    assert '"select-all-button"' in modal_text
+    assert '"unselect-all-button"' in modal_text
 
 
 def test_at_bootstrap_uses_only_page_load_interval_and_real_secondary_ready_signal():

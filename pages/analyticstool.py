@@ -5736,6 +5736,15 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="bulkUpdateSeriesSelection"),
+    Output("at-series-bulk-action-dummy", "data"),
+    Input("at-select-all-button", "n_clicks"),
+    Input("at-unselect-all-button", "n_clicks"),
+    State("at-series-selection-modal", "opened"),
+    prevent_initial_call=True,
+)
+
 
 
 
