@@ -272,7 +272,7 @@ def test_po_open_modal_uses_clientside_open_seed_callback():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal")' in page_text
     assert 'Input("po-open-modal-button", "n_clicks")' in page_text
-    assert 'Input("_pages_location", "pathname")' in page_text
+    assert 'Input("po-url-location", "pathname")' in page_text
     assert 'Input("po-page-load-trigger", "n_intervals")' in page_text
     assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
     open_block = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="openPortoptSeriesModal")', 1)[1]
@@ -380,8 +380,10 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
 
 def test_po_shell_visibility_uses_raw_data_presence_and_page_load_tick():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
-    visibility_block = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptBootstrapRestore")', 1)[0]
-    assert 'Output("po-welcome-screen", "style")' in visibility_block
+    visibility_block = page_text.split('Output("po-welcome-screen", "style")', 1)[1].split(
+        'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptBootstrapRestore")',
+        1,
+    )[0]
     assert 'Output("po-main-container", "style")' in visibility_block
     assert 'Input("dashmat-raw-data-store", "data")' in visibility_block
     assert 'Input("po-page-load-trigger", "n_intervals")' in visibility_block
@@ -2545,12 +2547,10 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Input("po-series-selection-modal", "opened")' in page_text
     assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("po-page-load-trigger", "n_intervals")' in page_text
-    assert 'Input("dashmat-route-blocker-store", "data")' in page_text
-    assert 'Output("po-route-ready-store", "data")' in page_text
     assert 'State("po-page-visited-store", "data")' in page_text
     assert 'State("po-series-order-store", "data")' in page_text
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
-    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries)" in js_text
+    assert "function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries)" in js_text
     assert "function portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
 
 

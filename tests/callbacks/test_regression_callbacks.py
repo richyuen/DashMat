@@ -462,7 +462,11 @@ def test_reg_bootstrap_uses_only_page_load_interval_for_tab_ready():
     assert 'State("reg-active-tab-store", "data")' in page_text
     assert 'Output("reg-welcome-screen", "style")' in page_text
     assert 'Input("dashmat-raw-data-store", "data")' in page_text
-    assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
+    visibility_block = page_text.split('Output("reg-welcome-screen", "style")', 1)[1].split(
+        'Output("reg-initial-tab-render-ready-store", "data")',
+        1,
+    )[0]
+    assert 'Input("reg-page-load-trigger", "n_intervals")' in visibility_block
 
 
 def test_reg_layout_uses_diagnostics_first_tab_order(regression_page):
@@ -820,17 +824,15 @@ def test_regression_file_menu_includes_account_list_actions():
     assert 'id="reg-menu-save-session"' in page_text
     assert 'disabled=True' in page_text
     assert page_text.index('id="reg-menu-save-session"') < page_text.index('id="reg-menu-load-account-list"')
-    assert 'Input("_pages_location", "pathname")' in page_text
+    assert 'Input("reg-url-location", "pathname")' in page_text
     assert 'Input("reg-series-selection-modal", "opened")' in page_text
     assert 'Input("reg-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("reg-page-load-trigger", "n_intervals")' in page_text
-    assert 'Input("dashmat-route-blocker-store", "data")' in page_text
-    assert 'Output("reg-route-ready-store", "data")' in page_text
     assert 'State("reg-page-visited-store", "data")' in page_text
     assert 'State("reg-series-order-store", "data")' in page_text
     assert 'State("reg-dependent-var-store", "data")' in page_text
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
-    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, currentDepVar, poOriginSeries)" in js_text
+    assert "function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, currentDepVar, poOriginSeries)" in js_text
     assert "function regressionInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, currentDepVar, poOriginSeries, pageVisited)" in js_text
     assert 'const selected = resolveStoredList(currentSelect, "reg-series-select");' in js_text
     assert 'const effectiveDepVar = resolveStoredString(currentDepVar, "reg-dependent-var-store");' in js_text

@@ -14,10 +14,6 @@ from utils.account_list_modal import (
     build_account_list_modal_components,
     register_account_list_callbacks,
 )
-from utils.module_route_blocker import (
-    build_module_route_blocker_components,
-    register_module_route_blocker_callbacks,
-)
 from utils.perf_timing import configure_timing_logger
 from utils.returns import build_raw_data_metadata
 
@@ -101,7 +97,6 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-account-list-enter-submit-dummy", data=None),
     dcc.Store(id="dashmat-account-list-focus-dummy", data=None),
     *build_account_list_modal_components(),
-    *build_module_route_blocker_components(),
     dmc.AppShell(
         header={"height": 45},
         padding=0,
@@ -240,7 +235,6 @@ register_account_list_callbacks(
     mrd_engine=MRD_ENGINE,
     perf_engine=PERF_ENGINE,
 )
-register_module_route_blocker_callbacks(app)
 
 # Theme consumer callbacks are defined in page modules for charts.
 

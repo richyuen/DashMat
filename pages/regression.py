@@ -1878,23 +1878,6 @@ clientside_callback(
 )
 
 clientside_callback(
-    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionRouteReady"),
-    Output("reg-route-ready-store", "data"),
-    Input("_pages_location", "pathname"),
-    Input("dashmat-raw-data-meta-store", "data"),
-    Input("reg-series-select", "data", allow_optional=True),
-    Input("reg-page-load-trigger", "n_intervals", allow_optional=True),
-    Input("reg-series-selection-modal", "opened", allow_optional=True),
-    Input("reg-series-selection-grid", "virtualRowData", allow_optional=True),
-    Input("dashmat-route-blocker-store", "data"),
-    State("reg-page-visited-store", "data", allow_optional=True),
-    State("reg-series-order-store", "data", allow_optional=True),
-    State("reg-dependent-var-store", "data", allow_optional=True),
-    State("dashmat-pending-new-series-store", "data"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady"),
     Output("reg-ui-blocker-store", "data", allow_duplicate=True),
     Input("reg-series-selection-grid", "virtualRowData", allow_optional=True),

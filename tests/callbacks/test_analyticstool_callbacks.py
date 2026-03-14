@@ -521,16 +521,14 @@ def test_at_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Output("at-series-selection-container", "children")' in page_text
     assert 'Output("at-ui-blocker-store", "data", allow_duplicate=True),' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitialSeriesBlocker")' in page_text
-    assert 'Input("_pages_location", "pathname")' in page_text
+    assert 'Input("at-url-location", "pathname")' in page_text
     assert 'Input("at-series-selection-modal", "opened")' in page_text
     assert 'Input("at-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
-    assert 'Input("dashmat-route-blocker-store", "data")' in page_text
-    assert 'Output("at-route-ready-store", "data")' in page_text
     assert 'State("at-page-visited-store", "data")' in page_text
     assert 'State("at-series-order-store", "data")' in page_text
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
-    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, poOriginSeries)" in js_text
+    assert "function analyticsInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries)" in js_text
     assert "function analyticsInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
 
 
@@ -646,7 +644,11 @@ def test_at_bootstrap_uses_only_page_load_interval_and_real_secondary_ready_sign
     assert 'Input("at-state-ready-store", "data")' in page_text
     assert 'Output("at-welcome-screen-container", "style")' in page_text
     assert 'Input("dashmat-raw-data-store", "data")' in page_text
-    assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
+    visibility_block = page_text.split('Output("at-welcome-screen-container", "style")', 1)[1].split(
+        'Output("at-initial-tab-render-ready-store", "data")',
+        1,
+    )[0]
+    assert 'Input("at-page-load-trigger", "n_intervals")' in visibility_block
 
 
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
