@@ -906,12 +906,31 @@ def _po_rolling_metric_tickformat(metric: str) -> str:
     return ".2%" if metric in {"total_return", "excess_return", "volatility", "tracking_error"} else ".2f"
 
 
-def _po_tab_render_ready(active_tab, expected_tab: str, initial_tab_ready) -> bool:
-    return active_tab == expected_tab and bool(initial_tab_ready)
+def _po_bootstrap_state(bootstrap_state) -> dict:
+    loaded_tabs = {
+        "weight": False,
+        "attribution": False,
+        "risk": False,
+        "frontier": False,
+    }
+    phase = "idle"
+    if isinstance(bootstrap_state, dict):
+        if bootstrap_state.get("phase") == "ready":
+            phase = "ready"
+        raw_loaded = bootstrap_state.get("loadedTabs")
+        if isinstance(raw_loaded, dict):
+            for tab_name in loaded_tabs:
+                loaded_tabs[tab_name] = bool(raw_loaded.get(tab_name))
+    return {"phase": phase, "loadedTabs": loaded_tabs}
 
 
-def _po_lazy_tab_render_ready(active_tab, expected_tab: str, tab_loaded) -> bool:
-    return active_tab == expected_tab and bool(tab_loaded)
+def _po_bootstrap_ready(bootstrap_state) -> bool:
+    return _po_bootstrap_state(bootstrap_state)["phase"] == "ready"
+
+
+def _po_bootstrap_tab_render_ready(active_tab, expected_tab: str, bootstrap_state) -> bool:
+    state = _po_bootstrap_state(bootstrap_state)
+    return state["phase"] == "ready" and active_tab == expected_tab and bool(state["loadedTabs"].get(expected_tab))
 
 
 def _build_apply_weight_matrix(
@@ -4012,12 +4031,11 @@ layout = dmc.Container(
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
-        dcc.Store(id="po-initial-tab-render-ready-store", data=False, storage_type="memory"),
-        dcc.Store(id="po-secondary-restore-ready-store", data=False, storage_type="memory"),
-        dcc.Store(id="po-restore-complete-store", data=False, storage_type="memory"),
-        dcc.Store(id="po-attribution-tab-loaded-store", data=False, storage_type="memory"),
-        dcc.Store(id="po-risk-tab-loaded-store", data=False, storage_type="memory"),
-        dcc.Store(id="po-frontier-tab-loaded-store", data=False, storage_type="memory"),
+        dcc.Store(
+            id="po-bootstrap-store",
+            data={"phase": "idle", "loadedTabs": {"weight": False, "attribution": False, "risk": False, "frontier": False}},
+            storage_type="memory",
+        ),
         # Chart/table switch stores
         dcc.Store(id="po-weight-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-attribution-chart-switch-store", data="chart", storage_type="session"),
@@ -4945,36 +4963,6 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    """
-    function(n, storedValue) {
-        if (!n) {
-            return window.dash_clientside.no_update;
-        }
-        return storedValue === false ? "zero" : "tbill";
-    }
-    """,
-    Output("po-use-risk-free-switch", "value"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("po-use-risk-free-store", "data"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(n, storedValue) {
-        if (!n) {
-            return window.dash_clientside.no_update;
-        }
-        return storedValue === "excess" ? "excess" : "total";
-    }
-    """,
-    Output("po-returns-basis-control", "value"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("po-returns-basis-store", "data"),
-    prevent_initial_call=True,
-)
-
 @callback(
     Output("po-returns-basis-control", "value", allow_duplicate=True),
     Input("po-returns-basis-control-returns", "value"),
@@ -5016,21 +5004,6 @@ def sync_po_returns_basis_mirrors(current_value, returns_value, calendar_value, 
 
     return _sync(returns_value), _sync(calendar_value), _sync(drawdown_value)
 
-
-clientside_callback(
-    """
-    function(n, storedValue) {
-        if (!n) {
-            return window.dash_clientside.no_update;
-        }
-        return storedValue ? "split" : "match";
-    }
-    """,
-    Output("po-reporting-basis-control", "value"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("po-reporting-basis-store", "data"),
-    prevent_initial_call=True,
-)
 
 # Sync periodicity to Analytics only on raw-data load/update events.
 clientside_callback(
@@ -6135,305 +6108,23 @@ clientside_callback(
 )
 
 clientside_callback(
-    """
-    function(n_intervals) {
-        const ready = !!(n_intervals && n_intervals >= 1);
-        return [ready, ready];
-    }
-    """,
-    Output("po-initial-tab-render-ready-store", "data"),
-    Output("po-secondary-restore-ready-store", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
-)
-
-# ---------------------------------------------------------------------------
-# Restore application state when raw data loads
-# ---------------------------------------------------------------------------
-
-@callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptBootstrapRestore"),
     Output("po-periodicity-select", "data", allow_duplicate=True),
     Output("po-periodicity-select", "value", allow_duplicate=True),
     Output("po-vol-scaler-input", "value"),
-    Output("po-series-select", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
-    State("po-periodicity-value-store", "data"),
-    State("po-series-select-value-store", "data"),
-    State("po-vol-scaler-value-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def po_restore_state(raw_meta, stored_periodicity, stored_series, stored_vol):
-    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
-        raise PreventUpdate
-    try:
-        columns = raw_meta.get("columns") or []
-        if not columns:
-            raise PreventUpdate
-
-        periodicity_options = raw_meta.get("periodicity_options") or [{"value": "daily_trading", "label": "Daily (Trading)"}]
-        orig_periodicity = raw_meta.get("original_periodicity") or "daily"
-        
-        # Validate stored values
-        valid_periodicity = stored_periodicity
-        if valid_periodicity not in [p["value"] for p in periodicity_options]:
-            valid_periodicity = "daily_trading" if orig_periodicity == "daily" else (orig_periodicity or "daily_trading")
-            
-        valid_vol = stored_vol if stored_vol is not None else 0
-        
-        # Validate series
-        current_selection = stored_series or []
-        valid_selection = [s for s in current_selection if s in columns]
-
-        return (
-            periodicity_options,
-            valid_periodicity,
-            valid_vol,
-            valid_selection,
-        )
-    except Exception as e:
-
-        # Critical: Do not return defaults on error, as it wipes persistence.
-        # Preserve whatever session state exists.
-        raise PreventUpdate
-
-
-clientside_callback(
-    """
-    function(n, storedTab) {
-        if (!n) {
-            return window.dash_clientside.no_update;
-        }
-        const allowed = ["weight", "attribution", "risk", "turnover", "frontier", "statistics", "returns", "rolling", "calendar", "growth", "drawdown"];
-        return allowed.includes(storedTab) ? storedTab : 'weight';
-    }
-    """,
+    Output("po-series-select", "data", allow_duplicate=True),
     Output("po-vis-tabs", "value"),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("po-active-tab-store", "data"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(activeTab, attributionLoaded, riskLoaded, frontierLoaded) {
-        return [
-            !!attributionLoaded || activeTab === "attribution",
-            !!riskLoaded || activeTab === "risk",
-            !!frontierLoaded || activeTab === "frontier",
-        ];
-    }
-    """,
-    Output("po-attribution-tab-loaded-store", "data"),
-    Output("po-risk-tab-loaded-store", "data"),
-    Output("po-frontier-tab-loaded-store", "data"),
-    Input("po-vis-tabs", "value"),
-    State("po-attribution-tab-loaded-store", "data"),
-    State("po-risk-tab-loaded-store", "data"),
-    State("po-frontier-tab-loaded-store", "data"),
-    prevent_initial_call=False,
-)
-
-
-clientside_callback(
-    """
-    function(n, activeTab, weightView, attributionView, riskView, turnoverView) {
-        const nu = window.dash_clientside.no_update;
-        if (!n) {
-            return [nu, nu, nu, nu];
-        }
-        return [
-            activeTab === 'weight' ? (weightView || 'chart') : nu,
-            activeTab === 'attribution' ? (attributionView || 'chart') : nu,
-            activeTab === 'risk' ? (riskView || 'chart') : nu,
-            activeTab === 'turnover' ? (turnoverView || 'chart') : nu,
-        ];
-    }
-    """,
     Output("po-weight-chart-switch", "value", allow_duplicate=True),
     Output("po-attribution-chart-switch", "value", allow_duplicate=True),
     Output("po-risk-chart-switch", "value", allow_duplicate=True),
     Output("po-turnover-chart-switch", "value", allow_duplicate=True),
-    Input("po-page-load-trigger", "n_intervals"),
-    State("po-active-tab-store", "data"),
-    State("po-weight-chart-switch-store", "data"),
-    State("po-attribution-chart-switch-store", "data"),
-    State("po-risk-chart-switch-store", "data"),
-    State("po-turnover-chart-switch-store", "data"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(
-        rawMeta,
-        secondaryReady,
-        periodicityValue,
-        volScalerValue,
-        selectedSeries,
-        activeTab,
-        optWindow,
-        windowSize,
-        optStep,
-        optStepUnit,
-        model,
-        name,
-        expWt,
-        halflife,
-        covShrinkage,
-        covShrinkageTarget,
-        missingData,
-        fillInSample
-    ) {
-        if (!secondaryReady || !rawMeta || !rawMeta.has_data) {
-            return false;
-        }
-
-        const columns = Array.isArray(rawMeta.columns) ? rawMeta.columns : [];
-        if (!columns.length) {
-            return false;
-        }
-
-        const periodicityOptions = Array.isArray(rawMeta.periodicity_options)
-            ? rawMeta.periodicity_options
-            : [{value: "daily_trading", label: "Daily (Trading)"}];
-        const validPeriodicities = periodicityOptions.map((option) => option.value);
-        const allowedTabs = ["weight", "attribution", "risk", "turnover", "frontier", "statistics", "returns", "rolling", "calendar", "growth", "drawdown"];
-        const validWindowTypes = ["rolling", "expanding", "full"];
-        const validStepUnits = ["months", "periods"];
-        const validModels = [
-            "risk_parity",
-            "factor_risk_parity",
-            "hierarchical_risk_parity",
-            "hrp",
-            "maximize_sharpe",
-            "minimize_variance",
-            "minimize_cvar",
-            "equal_weight",
-            "ex_ante_mv",
-            "black_litterman",
-        ];
-        const validShrinkage = ["none", "ledoit_wolf", "oas"];
-        const validShrinkageTargets = ["scaled_identity", "constant_correlation"];
-        const validMissingData = ["fill_na", "fill_0"];
-        const validFillInSample = ["off", "on"];
-        const selected = Array.isArray(selectedSeries) ? selectedSeries : [];
-        const allSeriesAvailable = selected.every((series) => columns.includes(series));
-        const resolvedActiveTab = activeTab || "weight";
-        const resolvedWindowType = optWindow || "rolling";
-        const resolvedWindowSize = windowSize !== null && windowSize !== undefined ? windowSize : 252;
-        const resolvedOptStep = optStep !== null && optStep !== undefined ? optStep : 1;
-        const resolvedStepUnit = optStepUnit || "months";
-        const resolvedModel = model || "risk_parity";
-        const resolvedName = (name && String(name).trim()) ? String(name).trim() : "RP";
-        const resolvedExpWt = !!expWt;
-        const resolvedHalflife = halflife !== null && halflife !== undefined ? halflife : 63;
-        const resolvedCovShrinkage = covShrinkage || "none";
-        const resolvedCovShrinkageTarget = covShrinkageTarget || "scaled_identity";
-        const resolvedMissingData = missingData || "fill_na";
-        const resolvedFillInSample = fillInSample || "off";
-        const resolvedVolScaler = volScalerValue !== null && volScalerValue !== undefined ? volScalerValue : 0;
-        const numericWindowSize = Number(resolvedWindowSize);
-        const numericOptStep = Number(resolvedOptStep);
-        const numericHalflife = Number(resolvedHalflife);
-
-        return (
-            validPeriodicities.includes(periodicityValue) &&
-            Number.isFinite(Number(resolvedVolScaler)) &&
-            allSeriesAvailable &&
-            allowedTabs.includes(resolvedActiveTab) &&
-            validWindowTypes.includes(resolvedWindowType) &&
-            Number.isFinite(numericWindowSize) &&
-            numericWindowSize >= 2 &&
-            Number.isFinite(numericOptStep) &&
-            numericOptStep >= 1 &&
-            validStepUnits.includes(resolvedStepUnit) &&
-            validModels.includes(resolvedModel) &&
-            resolvedName.length > 0 &&
-            typeof resolvedExpWt === "boolean" &&
-            Number.isFinite(numericHalflife) &&
-            numericHalflife > 0 &&
-            validShrinkage.includes(resolvedCovShrinkage) &&
-            validShrinkageTargets.includes(resolvedCovShrinkageTarget) &&
-            validMissingData.includes(resolvedMissingData) &&
-            validFillInSample.includes(resolvedFillInSample)
-        );
-    }
-    """,
-    Output("po-restore-complete-store", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
-    Input("po-secondary-restore-ready-store", "data"),
-    Input("po-periodicity-select", "value"),
-    Input("po-vol-scaler-input", "value"),
-    Input("po-series-select", "data"),
-    Input("po-vis-tabs", "value"),
-    Input("po-opt-window-select", "value"),
-    Input("po-window-size-input", "value"),
-    Input("po-opt-step-input", "value"),
-    Input("po-opt-step-unit-select", "value"),
-    Input("po-opt-model-select", "value"),
-    Input("po-portfolio-name-input", "value"),
-    Input("po-exp-wt-cov-switch", "checked"),
-    Input("po-halflife-input", "value"),
-    Input("po-cov-shrinkage-select", "value"),
-    Input("po-cov-shrinkage-target-select", "value"),
-    Input("po-missing-data-select", "value"),
-    Input("po-fill-in-sample-select", "value"),
-    prevent_initial_call=False,
-)
-
-
-# ---------------------------------------------------------------------------
-# Restore optimization controls from stores on page load
-# ---------------------------------------------------------------------------
-
-clientside_callback(
-    """
-    function(ready, optWindow, windowSize, optStep, optStepUnit, model, name, expWt, halflife, covShrinkage, covShrinkageTarget, missing, fillIS) {
-        const nu = window.dash_clientside.no_update;
-        if (!ready) {
-            return [nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu];
-        }
-        var safeModel = model || "risk_parity";
-        var defaults = {
-            "risk_parity": "RP",
-            "factor_risk_parity": "FRP",
-            "hierarchical_risk_parity": "HRP",
-            "hrp": "HRP",
-            "maximize_sharpe": "MSR",
-            "minimize_variance": "MinVar",
-            "minimize_cvar": "MinCVaR",
-            "equal_weight": "EW",
-            "ex_ante_mv": "ExAnteMV",
-            "black_litterman": "BL",
-        };
-        var defaultName = defaults[safeModel] || "Port";
-        var shrinkage = covShrinkage || "none";
-        var shrinkageTarget = covShrinkageTarget || "scaled_identity";
-        var expWeighted = !!expWt;
-        var targetDisabled = expWeighted || shrinkage !== "ledoit_wolf";
-        return [
-            optWindow,
-            windowSize,
-            optStep,
-            optStepUnit,
-            safeModel,
-            name || defaultName,
-            expWeighted,
-            halflife,
-            shrinkage,
-            shrinkageTarget,
-            !expWeighted,
-            targetDisabled,
-            missing,
-            fillIS
-        ];
-    }
-    """,
+    Output("po-frontier-chart-switch", "value"),
     Output("po-opt-window-select", "value"),
     Output("po-window-size-input", "value", allow_duplicate=True),
     Output("po-opt-step-input", "value", allow_duplicate=True),
     Output("po-opt-step-unit-select", "value"),
     Output("po-opt-model-select", "value"),
-    Output("po-portfolio-name-input", "value"),
+    Output("po-portfolio-name-input", "value", allow_duplicate=True),
     Output("po-exp-wt-cov-switch", "checked"),
     Output("po-halflife-input", "value", allow_duplicate=True),
     Output("po-cov-shrinkage-select", "value"),
@@ -6442,7 +6133,23 @@ clientside_callback(
     Output("po-cov-shrinkage-target-select", "disabled", allow_duplicate=True),
     Output("po-missing-data-select", "value"),
     Output("po-fill-in-sample-select", "value"),
-    Input("po-secondary-restore-ready-store", "data"),
+    Output("po-ex-ante-mode-select", "value"),
+    Output("po-objective-select", "value"),
+    Output("po-use-risk-free-switch", "value"),
+    Output("po-returns-basis-control", "value", allow_duplicate=True),
+    Output("po-reporting-basis-control", "value", allow_duplicate=True),
+    Output("po-bootstrap-store", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    State("po-periodicity-value-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-series-select-value-store", "data"),
+    State("po-active-tab-store", "data"),
+    State("po-weight-chart-switch-store", "data"),
+    State("po-attribution-chart-switch-store", "data"),
+    State("po-risk-chart-switch-store", "data"),
+    State("po-turnover-chart-switch-store", "data"),
+    State("po-frontier-chart-switch-store", "data"),
     State("po-opt-window-store", "data"),
     State("po-window-size-store", "data"),
     State("po-opt-step-store", "data"),
@@ -6455,28 +6162,19 @@ clientside_callback(
     State("po-cov-shrinkage-target-store", "data"),
     State("po-missing-data-store", "data"),
     State("po-fill-in-sample-store", "data"),
+    State("po-ex-ante-mode-store", "data"),
+    State("po-objective-store", "data"),
+    State("po-use-risk-free-store", "data"),
+    State("po-returns-basis-store", "data"),
+    State("po-reporting-basis-store", "data"),
     prevent_initial_call=True,
 )
 
-
-# ---------------------------------------------------------------------------
-# Restore ex ante controls from stores on page load
-# ---------------------------------------------------------------------------
-
 clientside_callback(
-    """
-    function(ready, mode, objective) {
-        if (!ready) {
-            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
-        }
-        return [mode || "ret_cov", objective || "maximize_sharpe"];
-    }
-    """,
-    Output("po-ex-ante-mode-select", "value"),
-    Output("po-objective-select", "value"),
-    Input("po-secondary-restore-ready-store", "data"),
-    State("po-ex-ante-mode-store", "data"),
-    State("po-objective-store", "data"),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptMarkVisitedTabLoaded"),
+    Output("po-bootstrap-store", "data", allow_duplicate=True),
+    Input("po-vis-tabs", "value"),
+    State("po-bootstrap-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -6491,7 +6189,7 @@ clientside_callback(
     Output("po-run-button-tooltip", "disabled"),
     Output("po-menu-save-session", "disabled"),
     Output("po-menu-download-excel", "disabled"),
-    Input("po-restore-complete-store", "data"),
+    Input("po-bootstrap-store", "data"),
     Input("po-portfolio-name-input", "value"),
     Input("po-series-select", "data"),
     Input("po-opt-model-select", "value"),
@@ -6518,7 +6216,7 @@ clientside_callback(
     Input("po-results-store", "data"),
 )
 def po_toggle_ui_elements(
-    restore_complete,
+    bootstrap_state,
     name,
     selected,
     opt_model,
@@ -6546,7 +6244,7 @@ def po_toggle_ui_elements(
 ):
     save_disabled = not (welcome_style and welcome_style.get("display") == "none")
     download_disabled = not bool(results_data and len(results_data) > 0)
-    if not restore_complete:
+    if not _po_bootstrap_ready(bootstrap_state):
         return True, "Loading controls...", False, save_disabled, download_disabled
 
     validation_error = _validate_optimization_inputs(
@@ -9062,11 +8760,13 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("po-initial-tab-render-ready-store", "data"),
+    Input("po-bootstrap-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, initial_tab_ready=True):
-    if not _po_tab_render_ready(active_tab, "weight", initial_tab_ready) or switch_value != "chart" or not selected_portfolio or not results:
+def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state):
+    if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "chart":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -9671,8 +9371,8 @@ def po_render_drawdown(
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-attribution-tab-loaded-store", "data"),
     Input("po-attribution-chart-switch", "value"),
+    Input("po-bootstrap-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
@@ -9684,10 +9384,12 @@ def po_render_drawdown(
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def po_render_attribution_chart(selected_portfolio, results, active_tab, tab_loaded, switch_value,
+def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                                  raw_data, orig_periodicity, periodicity, bench, ls,
                                  date_range, vol_scaler, vol_scaling, theme):
-    if not _po_lazy_tab_render_ready(active_tab, "attribution", tab_loaded) or switch_value != "chart" or not selected_portfolio or not results:
+    if not _po_bootstrap_tab_render_ready(active_tab, "attribution", bootstrap_state) or switch_value != "chart":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -9771,11 +9473,13 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, tab_loa
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
-    Input("po-initial-tab-render-ready-store", "data"),
+    Input("po-bootstrap-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, initial_tab_ready=True):
-    if not _po_tab_render_ready(active_tab, "weight", initial_tab_ready) or switch_value != "table" or not selected_portfolio or not results:
+def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state):
+    if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "table":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -9821,8 +9525,8 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-attribution-tab-loaded-store", "data"),
     Input("po-attribution-chart-switch", "value"),
+    Input("po-bootstrap-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -9832,10 +9536,12 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     State("po-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_attribution_table(selected_portfolio, results, active_tab, tab_loaded, switch_value,
+def po_render_attribution_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                                 raw_data, periodicity, bench, ls, date_range,
                                 vol_scaler, vol_scaling):
-    if not _po_lazy_tab_render_ready(active_tab, "attribution", tab_loaded) or switch_value != "table" or not selected_portfolio or not results:
+    if not _po_bootstrap_tab_render_ready(active_tab, "attribution", bootstrap_state) or switch_value != "table":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -10622,8 +10328,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-risk-tab-loaded-store", "data"),
     Input("po-risk-chart-switch", "value"),
+    Input("po-bootstrap-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10635,10 +10341,12 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def po_render_risk_chart(selected_portfolio, results, active_tab, tab_loaded, switch_value,
+def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                          raw_data, periodicity, bench, ls, date_range,
                          vol_scaler, vol_scaling, series_select, theme):
-    if not _po_lazy_tab_render_ready(active_tab, "risk", tab_loaded) or switch_value != "chart" or not selected_portfolio or not results:
+    if not _po_bootstrap_tab_render_ready(active_tab, "risk", bootstrap_state) or switch_value != "chart":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -10726,8 +10434,8 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, tab_loaded, sw
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-risk-tab-loaded-store", "data"),
     Input("po-risk-chart-switch", "value"),
+    Input("po-bootstrap-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10738,10 +10446,12 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, tab_loaded, sw
     State("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_render_risk_table(selected_portfolio, results, active_tab, tab_loaded, switch_value,
+def po_render_risk_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                          raw_data, periodicity, bench, ls, date_range,
                          vol_scaler, vol_scaling, series_select):
-    if not _po_lazy_tab_render_ready(active_tab, "risk", tab_loaded) or switch_value != "table" or not selected_portfolio or not results:
+    if not _po_bootstrap_tab_render_ready(active_tab, "risk", bootstrap_state) or switch_value != "table":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -10998,8 +10708,8 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-frontier-tab-loaded-store", "data"),
     Input("po-frontier-chart-switch", "value"),
+    Input("po-bootstrap-store", "data"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -11017,12 +10727,14 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-linear-constraints-store", "data"),
     prevent_initial_call=True,
 )
-def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded, switch_value,
+def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, use_risk_free, series_select, theme,
                              linear_constraints):
-    if not _po_lazy_tab_render_ready(active_tab, "frontier", tab_loaded) or switch_value != "chart" or not selected_portfolio or not results:
+    if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "chart":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()
@@ -11144,8 +10856,8 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, tab_loaded
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
-    Input("po-frontier-tab-loaded-store", "data"),
     Input("po-frontier-chart-switch", "value"),
+    Input("po-bootstrap-store", "data"),
     Input("po-frontier-window-select", "value"),
     Input("po-frontier-rm-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -11164,8 +10876,8 @@ def po_render_frontier_table(
     selected_portfolio,
     results,
     active_tab,
-    tab_loaded,
     switch_value,
+    bootstrap_state,
     window_idx,
     rm,
     raw_data,
@@ -11179,7 +10891,9 @@ def po_render_frontier_table(
     use_risk_free,
     linear_constraints,
 ):
-    if not _po_lazy_tab_render_ready(active_tab, "frontier", tab_loaded) or switch_value != "table" or not selected_portfolio or not results:
+    if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "table":
+        raise PreventUpdate
+    if not selected_portfolio or not results:
         return html.Div()
     if selected_portfolio not in results:
         return html.Div()

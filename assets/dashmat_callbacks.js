@@ -1314,6 +1314,211 @@
     ];
   }
 
+  function defaultPortoptLoadedTabs() {
+    return {
+      weight: false,
+      attribution: false,
+      risk: false,
+      frontier: false
+    };
+  }
+
+  function portoptBootstrapRestore(
+    pageLoadIntervals,
+    rawMeta,
+    storedPeriodicity,
+    storedVolScaler,
+    storedSeries,
+    storedActiveTab,
+    storedWeightView,
+    storedAttributionView,
+    storedRiskView,
+    storedTurnoverView,
+    storedFrontierView,
+    storedOptWindow,
+    storedWindowSize,
+    storedOptStep,
+    storedOptStepUnit,
+    storedOptModel,
+    storedPortfolioName,
+    storedExpWtCov,
+    storedHalflife,
+    storedCovShrinkage,
+    storedCovShrinkageTarget,
+    storedMissingData,
+    storedFillInSample,
+    storedExAnteMode,
+    storedObjective,
+    storedUseRiskFree,
+    storedReturnsBasis,
+    storedReportingBasis
+  ) {
+    const nu = noUpdate();
+    const idleState = { phase: "idle", loadedTabs: defaultPortoptLoadedTabs() };
+    if (!pageLoadIntervals || !rawMeta || rawMeta.has_data !== true) {
+      return [
+        nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu,
+        nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, idleState
+      ];
+    }
+
+    const columns = rawMetaColumns(rawMeta);
+    if (!columns.length) {
+      return [
+        nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu,
+        nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, idleState
+      ];
+    }
+
+    const periodicityOptions = Array.isArray(rawMeta.periodicity_options) && rawMeta.periodicity_options.length
+      ? rawMeta.periodicity_options.slice()
+      : [{ value: "daily_trading", label: "Daily (Trading)" }];
+    const periodicityValues = periodicityOptions
+      .map(function (option) { return option && option.value; })
+      .filter(function (value) { return typeof value === "string" && value.length; });
+    const fallbackPeriodicity = rawMeta.original_periodicity === "daily"
+      ? "daily_trading"
+      : (rawMeta.original_periodicity || periodicityValues[0] || "daily_trading");
+    const resolvedPeriodicity = periodicityValues.indexOf(storedPeriodicity) !== -1
+      ? storedPeriodicity
+      : (periodicityValues.indexOf(fallbackPeriodicity) !== -1 ? fallbackPeriodicity : (periodicityValues[0] || "daily_trading"));
+
+    const columnSet = new Set(columns);
+    const selectedSeries = Array.isArray(storedSeries)
+      ? storedSeries.filter(function (series) { return columnSet.has(series); })
+      : [];
+    const resolvedVolScaler = storedVolScaler !== null && storedVolScaler !== undefined && Number.isFinite(Number(storedVolScaler))
+      ? Number(storedVolScaler)
+      : 0;
+
+    const allowedTabs = ["weight", "attribution", "risk", "turnover", "frontier", "statistics", "returns", "rolling", "calendar", "growth", "drawdown"];
+    const resolvedActiveTab = allowedTabs.indexOf(storedActiveTab) !== -1 ? storedActiveTab : "weight";
+
+    function normalizeView(viewMode) {
+      return viewMode === "table" ? "table" : "chart";
+    }
+
+    const validWindowTypes = ["rolling", "expanding", "full"];
+    const resolvedOptWindow = validWindowTypes.indexOf(storedOptWindow) !== -1 ? storedOptWindow : "rolling";
+    const resolvedWindowSize = storedWindowSize !== null && storedWindowSize !== undefined && Number.isFinite(Number(storedWindowSize)) && Number(storedWindowSize) >= 2
+      ? Number(storedWindowSize)
+      : 252;
+    const resolvedOptStep = storedOptStep !== null && storedOptStep !== undefined && Number.isFinite(Number(storedOptStep)) && Number(storedOptStep) >= 1
+      ? Number(storedOptStep)
+      : 1;
+
+    const validStepUnits = ["months", "periods"];
+    const resolvedOptStepUnit = validStepUnits.indexOf(storedOptStepUnit) !== -1 ? storedOptStepUnit : "months";
+
+    const validModels = [
+      "risk_parity",
+      "factor_risk_parity",
+      "hierarchical_risk_parity",
+      "hrp",
+      "maximize_sharpe",
+      "minimize_variance",
+      "minimize_cvar",
+      "equal_weight",
+      "ex_ante_mv",
+      "black_litterman"
+    ];
+    const resolvedOptModel = validModels.indexOf(storedOptModel) !== -1 ? storedOptModel : "risk_parity";
+    const modelDefaults = {
+      risk_parity: "RP",
+      factor_risk_parity: "FRP",
+      hierarchical_risk_parity: "HRP",
+      hrp: "HRP",
+      maximize_sharpe: "MSR",
+      minimize_variance: "MinVar",
+      minimize_cvar: "MinCVaR",
+      equal_weight: "EW",
+      ex_ante_mv: "ExAnteMV",
+      black_litterman: "BL"
+    };
+    const trimmedName = typeof storedPortfolioName === "string" ? storedPortfolioName.trim() : "";
+    const resolvedPortfolioName = trimmedName || modelDefaults[resolvedOptModel] || "Port";
+
+    const expWeighted = !!storedExpWtCov;
+    const resolvedHalflife = storedHalflife !== null && storedHalflife !== undefined && Number.isFinite(Number(storedHalflife)) && Number(storedHalflife) > 0
+      ? Number(storedHalflife)
+      : 63;
+
+    const validShrinkage = ["none", "ledoit_wolf", "oas"];
+    const resolvedCovShrinkage = validShrinkage.indexOf(storedCovShrinkage) !== -1 ? storedCovShrinkage : "none";
+    const validShrinkageTargets = ["scaled_identity", "constant_correlation"];
+    const resolvedCovShrinkageTarget = validShrinkageTargets.indexOf(storedCovShrinkageTarget) !== -1
+      ? storedCovShrinkageTarget
+      : "scaled_identity";
+    const halflifeDisabled = !expWeighted;
+    const covShrinkageTargetDisabled = expWeighted || resolvedCovShrinkage !== "ledoit_wolf";
+
+    const validMissingData = ["fill_na", "fill_0"];
+    const resolvedMissingData = validMissingData.indexOf(storedMissingData) !== -1 ? storedMissingData : "fill_na";
+    const validFillInSample = ["off", "on"];
+    const resolvedFillInSample = validFillInSample.indexOf(storedFillInSample) !== -1 ? storedFillInSample : "off";
+
+    const resolvedExAnteMode = storedExAnteMode === "ret_cov" ? "ret_cov" : "ret_vol_corr";
+    const validObjectives = ["maximize_sharpe", "minimize_variance", "minimize_cvar"];
+    const resolvedObjective = validObjectives.indexOf(storedObjective) !== -1 ? storedObjective : "maximize_sharpe";
+    const resolvedUseRiskFree = storedUseRiskFree === false ? "zero" : "tbill";
+    const resolvedReturnsBasis = storedReturnsBasis === "excess" ? "excess" : "total";
+    const resolvedReportingBasis = storedReportingBasis ? "split" : "match";
+
+    const loadedTabs = defaultPortoptLoadedTabs();
+    if (Object.prototype.hasOwnProperty.call(loadedTabs, resolvedActiveTab)) {
+      loadedTabs[resolvedActiveTab] = true;
+    }
+
+    return [
+      periodicityOptions,
+      resolvedPeriodicity,
+      resolvedVolScaler,
+      selectedSeries,
+      resolvedActiveTab,
+      normalizeView(storedWeightView),
+      normalizeView(storedAttributionView),
+      normalizeView(storedRiskView),
+      normalizeView(storedTurnoverView),
+      normalizeView(storedFrontierView),
+      resolvedOptWindow,
+      resolvedWindowSize,
+      resolvedOptStep,
+      resolvedOptStepUnit,
+      resolvedOptModel,
+      resolvedPortfolioName,
+      expWeighted,
+      resolvedHalflife,
+      resolvedCovShrinkage,
+      resolvedCovShrinkageTarget,
+      halflifeDisabled,
+      covShrinkageTargetDisabled,
+      resolvedMissingData,
+      resolvedFillInSample,
+      resolvedExAnteMode,
+      resolvedObjective,
+      resolvedUseRiskFree,
+      resolvedReturnsBasis,
+      resolvedReportingBasis,
+      { phase: "ready", loadedTabs: loadedTabs }
+    ];
+  }
+
+  function portoptMarkVisitedTabLoaded(activeTab, bootstrapState) {
+    if (!bootstrapState || bootstrapState.phase !== "ready" || !bootstrapState.loadedTabs) {
+      return noUpdate();
+    }
+    if (!Object.prototype.hasOwnProperty.call(bootstrapState.loadedTabs, activeTab)) {
+      return noUpdate();
+    }
+    if (bootstrapState.loadedTabs[activeTab]) {
+      return noUpdate();
+    }
+    return {
+      phase: "ready",
+      loadedTabs: Object.assign({}, bootstrapState.loadedTabs, { [activeTab]: true })
+    };
+  }
+
   function portoptControlSync(periodicity, volScaler, activeTab, seriesSelect, fillInSample, optStepUnit, optWindow, windowSize, optStep, optModel, portfolioName, expWtCov, halflife, covShrinkage, covShrinkageTarget, missingData, objective, blTau, exAnteMode, useRiskFree, returnsBasis, reportingBasis) {
     return [
       periodicity,
@@ -1383,8 +1588,10 @@
       navigateRegression: navigateRegression,
       openPortoptSeriesModal: openPortoptSeriesModal,
       openRegressionSeriesModal: openRegressionSeriesModal,
+      portoptBootstrapRestore: portoptBootstrapRestore,
       portoptControlSync: portoptControlSync,
       portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
+      portoptMarkVisitedTabLoaded: portoptMarkVisitedTabLoaded,
       portoptViewSync: portoptViewSync,
       regressionInitialSeriesBlocker: regressionInitialSeriesBlocker,
       regressionControlSync: regressionControlSync,

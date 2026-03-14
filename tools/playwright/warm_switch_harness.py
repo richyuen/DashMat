@@ -29,8 +29,12 @@ DEFAULT_DB_SERIES = [
 TIMING_EVENT_NAMES = (
     "portopt.project_results",
     "portopt.render_weight_chart",
+    "portopt.render_attribution_chart",
     "portopt.render_statistics",
+    "portopt.render_risk_chart",
+    "portopt.render_frontier_chart",
     "portopt.render_attribution_table",
+    "portopt.render_risk_table",
     "portopt.render_frontier_table",
 )
 
@@ -46,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-db-build", action="store_true")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--db-series", nargs="+", default=DEFAULT_DB_SERIES)
+    parser.add_argument("--portopt-restore-tab", default="weight")
+    parser.add_argument("--portopt-entry-only", action="store_true")
     parser.add_argument("--server-log", default="")
     return parser.parse_args()
 
@@ -146,10 +152,11 @@ def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str)
     return f"warm_switch_{timestamp}_{label_token}_{git_token}_{port_token}"
 
 
-def parse_timing_log(server_log: Path | None) -> dict[str, object]:
+def parse_timing_log(server_log: Path | None, start_offset: int = 0) -> dict[str, object]:
     summary = {
         "sourcePath": str(server_log) if server_log else None,
         "copiedPath": None,
+        "startOffset": max(int(start_offset or 0), 0),
         "eventsPresent": {name: False for name in TIMING_EVENT_NAMES},
         "eventCounts": {name: 0 for name in TIMING_EVENT_NAMES},
         "matchedLines": [],
@@ -159,7 +166,10 @@ def parse_timing_log(server_log: Path | None) -> dict[str, object]:
 
     line_re = re.compile(r"timing name=(?P<name>[^ ]+)")
     matched_lines: list[str] = []
-    for line in server_log.read_text(encoding="utf-8", errors="replace").splitlines():
+    raw_text = server_log.read_text(encoding="utf-8", errors="replace")
+    if summary["startOffset"]:
+        raw_text = raw_text[summary["startOffset"]:]
+    for line in raw_text.splitlines():
         match = line_re.search(line)
         if not match:
             continue
@@ -300,7 +310,10 @@ def warm_analytics_db(page, base_url: str, db_series: list[str]) -> str:
     analytics_path = "/analyticstool"
     page.goto(base_url + analytics_path, wait_until="domcontentloaded")
     renderer_mode = detect_renderer_mode(page)
+    wait_visible(page, "#at-welcome-add-db-btn")
     page.locator("#at-welcome-add-db-btn").click()
+    if not page.locator("#at-db-add-series-select").is_visible(timeout=3000):
+        page.locator("#at-welcome-add-db-btn").click()
     page.wait_for_selector("#at-db-add-series-select", state="visible", timeout=30000)
     page.evaluate(
         """
@@ -376,7 +389,28 @@ def resolve_portopt_series(db_series: list[str]) -> list[str]:
     return db_series[: min(len(db_series), 3)]
 
 
-def warm_portopt_results(page, base_url: str, db_series: list[str]) -> None:
+PORTOPT_RESTORE_TAB_CONFIG = {
+    "weight": {"content": "#po-weight-chart-content", "switch": "po-weight-chart-switch"},
+    "frontier": {"content": "#po-frontier-chart-container", "switch": "po-frontier-chart-switch"},
+    "risk": {"content": "#po-risk-chart-container", "switch": "po-risk-chart-switch"},
+    "attribution": {"content": "#po-attribution-chart-container", "switch": "po-attribution-chart-switch"},
+}
+
+
+def normalize_portopt_restore_tab(value: str) -> str:
+    normalized = str(value or "weight").strip().lower()
+    return normalized if normalized in PORTOPT_RESTORE_TAB_CONFIG else "weight"
+
+
+def seed_portopt_restore_tab(page, restore_tab: str) -> None:
+    resolved_restore_tab = normalize_portopt_restore_tab(restore_tab)
+    cfg = PORTOPT_RESTORE_TAB_CONFIG[resolved_restore_tab]
+    set_component_value(page, "po-vis-tabs", resolved_restore_tab)
+    set_component_value(page, cfg["switch"], "chart")
+    wait_plotly_content(page, cfg["content"], timeout=60000)
+
+
+def warm_portopt_results(page, base_url: str, db_series: list[str], restore_tab: str) -> None:
     page.goto(base_url + "/portopt", wait_until="domcontentloaded")
     wait_visible(page, "#po-main-container")
     wait_ready(page, "#po-periodicity-select")
@@ -404,9 +438,7 @@ def warm_portopt_results(page, base_url: str, db_series: list[str]) -> None:
         raise RuntimeError(f"PortOpt harness solve failed: {completion_text}")
     page.locator("#po-close-completion-button").click()
     page.wait_for_selector("#po-close-completion-button", state="hidden", timeout=30000)
-    set_component_value(page, "po-vis-tabs", "weight")
-    set_component_value(page, "po-weight-chart-switch", "chart")
-    wait_plotly_content(page, "#po-weight-chart-content", timeout=60000)
+    seed_portopt_restore_tab(page, restore_tab)
 
 
 def select_portopt_tab_and_measure(page, tab_value: str, content_selector: str, switch_id: str | None = None) -> int:
@@ -418,7 +450,9 @@ def select_portopt_tab_and_measure(page, tab_value: str, content_selector: str, 
     return round((time.perf_counter() - start) * 1000)
 
 
-def measure_portopt(page, cfg: dict[str, str]) -> dict[str, int]:
+def measure_portopt(page, cfg: dict[str, str], restore_tab: str, entry_only: bool) -> dict[str, int]:
+    resolved_restore_tab = normalize_portopt_restore_tab(restore_tab)
+    restore_cfg = PORTOPT_RESTORE_TAB_CONFIG[resolved_restore_tab]
     start = time.perf_counter()
     page.evaluate("(path) => { window.location.pathname = path; }", cfg["path"])
     page.wait_for_function(
@@ -430,6 +464,16 @@ def measure_portopt(page, cfg: dict[str, str]) -> dict[str, int]:
     shell_ms = round((time.perf_counter() - start) * 1000)
     wait_ready(page, cfg["ready"])
     ready_ms = round((time.perf_counter() - start) * 1000)
+
+    wait_plotly_content(page, restore_cfg["content"])
+    restored_tab_ready_ms = round((time.perf_counter() - start) * 1000)
+
+    if entry_only:
+        return {
+            "shellMs": shell_ms,
+            "readyMs": ready_ms,
+            "restoredTabReadyMs": restored_tab_ready_ms,
+        }
 
     set_component_value(page, "po-vis-tabs", "weight")
     set_component_value(page, "po-weight-chart-switch", "chart")
@@ -454,10 +498,12 @@ def measure_portopt(page, cfg: dict[str, str]) -> dict[str, int]:
         "#po-attribution-chart-container",
         "po-attribution-chart-switch",
     )
+    seed_portopt_restore_tab(page, resolved_restore_tab)
 
     return {
         "shellMs": shell_ms,
         "readyMs": ready_ms,
+        "restoredTabReadyMs": restored_tab_ready_ms,
         "weightsReadyMs": weights_ready_ms,
         "frontierOpenMs": frontier_open_ms,
         "riskOpenMs": risk_open_ms,
@@ -465,7 +511,16 @@ def measure_portopt(page, cfg: dict[str, str]) -> dict[str, int]:
     }
 
 
-def run_harness(base_url: str, runs: int, label: str, db_series: list[str], headed: bool) -> dict:
+def run_harness(
+    base_url: str,
+    runs: int,
+    label: str,
+    db_series: list[str],
+    headed: bool,
+    restore_tab: str,
+    entry_only: bool,
+    server_log: Path | None,
+) -> dict:
     pages = {
         "analytics": {"path": "/analyticstool", "shell": "#at-main-app-container", "ready": "#at-periodicity-select"},
         "portopt": {"path": "/portopt", "shell": "#po-main-container", "ready": "#po-periodicity-select"},
@@ -491,9 +546,10 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
         page.on("pageerror", on_page_error)
 
         renderer_mode = warm_analytics_db(page, base_url, db_series)
-        warm_portopt_results(page, base_url, db_series)
+        warm_portopt_results(page, base_url, db_series, restore_tab)
         measure(page, pages["portopt"])
         measure(page, pages["regression"])
+        timing_start_offset = server_log.stat().st_size if server_log and server_log.exists() else 0
 
         results = {
             name: {"runs": 0, "shellMs": [], "readyMs": []}
@@ -501,32 +557,43 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
         }
         results["portopt"].update(
             {
-                "weightsReadyMs": [],
-                "frontierOpenMs": [],
-                "riskOpenMs": [],
-                "attributionOpenMs": [],
+                "restoredTab": normalize_portopt_restore_tab(restore_tab),
+                "restoredTabReadyMs": [],
             }
         )
+        if not entry_only:
+            results["portopt"].update(
+                {
+                    "weightsReadyMs": [],
+                    "frontierOpenMs": [],
+                    "riskOpenMs": [],
+                    "attributionOpenMs": [],
+                }
+            )
         order = ["analytics", "portopt", "regression"]
         for _ in range(runs):
             for name in order:
-                metrics = measure_portopt(page, pages[name]) if name == "portopt" else measure(page, pages[name])
+                metrics = measure_portopt(page, pages[name], restore_tab, entry_only) if name == "portopt" else measure(page, pages[name])
                 results[name]["runs"] += 1
                 results[name]["shellMs"].append(metrics["shellMs"])
                 results[name]["readyMs"].append(metrics["readyMs"])
                 if name == "portopt":
-                    results[name]["weightsReadyMs"].append(metrics["weightsReadyMs"])
-                    results[name]["frontierOpenMs"].append(metrics["frontierOpenMs"])
-                    results[name]["riskOpenMs"].append(metrics["riskOpenMs"])
-                    results[name]["attributionOpenMs"].append(metrics["attributionOpenMs"])
+                    results[name]["restoredTabReadyMs"].append(metrics["restoredTabReadyMs"])
+                    if not entry_only:
+                        results[name]["weightsReadyMs"].append(metrics["weightsReadyMs"])
+                        results[name]["frontierOpenMs"].append(metrics["frontierOpenMs"])
+                        results[name]["riskOpenMs"].append(metrics["riskOpenMs"])
+                        results[name]["attributionOpenMs"].append(metrics["attributionOpenMs"])
 
         for data in results.values():
             data["shellMedian"] = round(median(data["shellMs"]))
             data["readyMedian"] = round(median(data["readyMs"]))
-        results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))
-        results["portopt"]["frontierOpenMedian"] = round(median(results["portopt"]["frontierOpenMs"]))
-        results["portopt"]["riskOpenMedian"] = round(median(results["portopt"]["riskOpenMs"]))
-        results["portopt"]["attributionOpenMedian"] = round(median(results["portopt"]["attributionOpenMs"]))
+        results["portopt"]["restoredTabReadyMedian"] = round(median(results["portopt"]["restoredTabReadyMs"]))
+        if not entry_only:
+            results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))
+            results["portopt"]["frontierOpenMedian"] = round(median(results["portopt"]["frontierOpenMs"]))
+            results["portopt"]["riskOpenMedian"] = round(median(results["portopt"]["riskOpenMs"]))
+            results["portopt"]["attributionOpenMedian"] = round(median(results["portopt"]["attributionOpenMs"]))
 
         browser.close()
 
@@ -535,11 +602,14 @@ def run_harness(base_url: str, runs: int, label: str, db_series: list[str], head
         "label": label,
         "baseUrl": base_url,
         "dbSeries": db_series,
+        "portoptRestoreTab": normalize_portopt_restore_tab(restore_tab),
+        "portoptEntryOnly": bool(entry_only),
         "runs": runs,
         "warmupFlow": "analyticstool-aa-db-import+series-selection-confirm+portopt-risk-parity-solve",
         "rendererMode": renderer_mode,
         "results": results,
         "consoleMessages": console_messages,
+        "timingStartOffset": timing_start_offset,
     }
 
 
@@ -573,6 +643,9 @@ def main() -> int:
             label=args.label,
             db_series=args.db_series,
             headed=args.headed,
+            restore_tab=args.portopt_restore_tab,
+            entry_only=args.portopt_entry_only,
+            server_log=server_log_path,
         )
     except Exception as exc:
         page_state: dict | None = None
@@ -621,7 +694,7 @@ def main() -> int:
         print(f"RAW_PATH={raw_path}")
         return 1
 
-    timing_summary = parse_timing_log(server_log_path)
+    timing_summary = parse_timing_log(server_log_path, start_offset=result.get("timingStartOffset", 0))
     timing_summary["copiedPath"] = copy_server_log(server_log_path, out_dir, stem)
     out_path = out_dir / f"{stem}.json"
     payload = {
@@ -632,6 +705,8 @@ def main() -> int:
         "baseUrl": result["baseUrl"],
         "repoRoot": str(root),
         "dbSeries": result["dbSeries"],
+        "portoptRestoreTab": result["portoptRestoreTab"],
+        "portoptEntryOnly": result["portoptEntryOnly"],
         "warmupFlow": result["warmupFlow"],
         "runs": result["runs"],
         "dbRebuilt": db_rebuilt,

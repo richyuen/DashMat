@@ -121,17 +121,39 @@ def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
     assert bundle.benchmark_payload == '{"Asset_A":"Asset_B"}'
 
 
-def test_po_restore_state_keeps_empty_selection_when_nothing_is_stored(page_modules, raw_json):
+def test_po_bootstrap_helpers_default_to_idle_state(page_modules):
     _, portopt = page_modules
 
-    restored = portopt.po_restore_state(
-        _raw_meta(raw_json),
-        "daily_trading",
-        [],
-        None,
-    )
+    state = portopt._po_bootstrap_state(None)
 
-    assert restored[3] == []
+    assert state == {
+        "phase": "idle",
+        "loadedTabs": {
+            "weight": False,
+            "attribution": False,
+            "risk": False,
+            "frontier": False,
+        },
+    }
+    assert portopt._po_bootstrap_ready(None) is False
+
+
+def test_po_bootstrap_tab_render_ready_requires_matching_loaded_tab(page_modules):
+    _, portopt = page_modules
+
+    bootstrap_state = {
+        "phase": "ready",
+        "loadedTabs": {
+            "weight": False,
+            "attribution": False,
+            "risk": True,
+            "frontier": False,
+        },
+    }
+
+    assert portopt._po_bootstrap_tab_render_ready("risk", "risk", bootstrap_state) is True
+    assert portopt._po_bootstrap_tab_render_ready("weight", "weight", bootstrap_state) is False
+    assert portopt._po_bootstrap_tab_render_ready("frontier", "risk", bootstrap_state) is False
 
 
 def test_sync_po_returns_basis_from_mirrors_updates_canonical(monkeypatch, page_modules):
@@ -209,27 +231,42 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     main = _find_component_by_id(portopt.layout, "po-main-container")
     blocker_store = _find_component_by_id(portopt.layout, "po-ui-blocker-store")
     blocker_overlay = _find_component_by_id(portopt.layout, "po-ui-blocker-overlay")
+    bootstrap_store = _find_component_by_id(portopt.layout, "po-bootstrap-store")
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
     assert getattr(blocker_store, "data", None) is False
     assert getattr(blocker_overlay, "visible", None) is False
     assert getattr(blocker_overlay, "zIndex", None) == 2500
+    assert getattr(bootstrap_store, "data", None) == {
+        "phase": "idle",
+        "loadedTabs": {
+            "weight": False,
+            "attribution": False,
+            "risk": False,
+            "frontier": False,
+        },
+    }
 
 
 def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert page_text.count('dcc.Interval(id="po-page-load-trigger"') == 1
     assert "def po_sync_results_with_raw_data" not in page_text
-    assert 'dcc.Store(id="po-restore-complete-store", data=False, storage_type="memory")' in page_text
+    assert 'id="po-bootstrap-store"' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptBootstrapRestore")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptMarkVisitedTabLoaded")' in page_text
+    assert "function portoptBootstrapRestore(" in js_text
+    assert "function portoptMarkVisitedTabLoaded(" in js_text
     assert 'Output("po-vis-tabs", "value")' in page_text
     assert 'State("po-active-tab-store", "data")' in page_text
-    assert 'Output("po-attribution-tab-loaded-store", "data")' in page_text
-    assert 'Output("po-risk-tab-loaded-store", "data")' in page_text
-    assert 'Output("po-frontier-tab-loaded-store", "data")' in page_text
-    assert page_text.count('Input("po-attribution-tab-loaded-store", "data")') == 2
-    assert page_text.count('Input("po-risk-tab-loaded-store", "data")') == 2
-    assert page_text.count('Input("po-frontier-tab-loaded-store", "data")') == 2
+    assert 'po-restore-complete-store' not in page_text
+    assert 'po-secondary-restore-ready-store' not in page_text
+    assert 'po-initial-tab-render-ready-store' not in page_text
+    assert 'po-attribution-tab-loaded-store' not in page_text
+    assert 'po-risk-tab-loaded-store' not in page_text
+    assert 'po-frontier-tab-loaded-store' not in page_text
     assert 'Output("po-attribution-chart-container", "children")' in page_text
     assert 'Output("po-attribution-grid-container", "children")' in page_text
     assert 'po-attribution-chart-content' not in page_text
@@ -246,34 +283,38 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-turnover-grid-container", "children")' in page_text
     assert 'po-turnover-chart-content' not in page_text
     assert 'po-turnover-grid-content' not in page_text
-    assert page_text.count('Input("po-initial-tab-render-ready-store", "data")') == 2
+    assert page_text.count('Input("po-bootstrap-store", "data")') >= 7
 
 
 def test_po_shell_visibility_uses_raw_data_presence_and_page_load_tick():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
-    visibility_block = page_text.split('Output("po-secondary-restore-ready-store", "data")', 1)[0]
+    visibility_block = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptBootstrapRestore")', 1)[0]
     assert 'Output("po-welcome-screen", "style")' in visibility_block
     assert 'Output("po-main-container", "style")' in visibility_block
     assert 'Input("dashmat-raw-data-store", "data")' in visibility_block
     assert 'Input("po-page-load-trigger", "n_intervals")' in visibility_block
 
 
-def test_po_toggle_ui_elements_uses_restore_complete_store():
+def test_po_toggle_ui_elements_uses_bootstrap_store():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     toggle_block = page_text.split("def po_toggle_ui_elements", 1)[0]
     toggle_callback = toggle_block.rsplit("@callback(", 1)[-1]
-    assert 'Input("po-restore-complete-store", "data")' in toggle_callback
-    assert 'Input("po-secondary-restore-ready-store", "data")' not in toggle_callback
+    assert 'Input("po-bootstrap-store", "data")' in toggle_callback
+    assert 'po-restore-complete-store' not in toggle_callback
 
 
-def test_po_restore_complete_store_waits_for_secondary_restore_and_valid_controls():
+def test_po_bootstrap_reducer_reads_stored_controls_and_marks_loaded_tabs():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
-    assert 'Output("po-restore-complete-store", "data")' in page_text
-    restore_block = page_text.split('Output("po-restore-complete-store", "data")', 1)[1]
-    restore_callback = restore_block.split("# ---------------------------------------------------------------------------\n# Restore optimization controls from stores on page load", 1)[0]
-    assert 'Input("po-secondary-restore-ready-store", "data")' in restore_callback
-    assert 'Input("po-periodicity-select", "value")' in restore_callback
-    assert 'Input("po-series-select", "data")' in restore_callback
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    bootstrap_block = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptBootstrapRestore")', 1)[1]
+    bootstrap_callback = bootstrap_block.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptMarkVisitedTabLoaded")', 1)[0]
+    assert 'Input("po-page-load-trigger", "n_intervals")' in bootstrap_callback
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in bootstrap_callback
+    assert 'State("po-active-tab-store", "data")' in bootstrap_callback
+    assert 'State("po-frontier-chart-switch-store", "data")' in bootstrap_callback
+    assert 'Output("po-bootstrap-store", "data")' in bootstrap_callback
+    assert "defaultPortoptLoadedTabs" in js_text
+    assert 'phase: "ready"' in js_text
 
 
 def test_po_init_date_range_no_longer_depends_on_common_daily_store():
@@ -408,8 +449,8 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
         "P1",
         results,
         "attribution",
-        True,
         "table",
+        {"phase": "ready", "loadedTabs": {"attribution": True}},
         raw_json,
         "daily",
         {},
@@ -1145,7 +1186,7 @@ def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
 
     run_disabled, tooltip, tooltip_disabled, save_disabled, download_disabled = (
         portopt.po_toggle_ui_elements(
-            False,
+            {"phase": "idle", "loadedTabs": {}},
             "MyPortfolio",
             ["Asset_A"],
             "risk_parity",
@@ -1200,7 +1241,7 @@ def test_po_toggle_ui_elements_waits_for_restore_completion(page_modules):
 
     run_disabled, tooltip, tooltip_disabled, save_disabled, download_disabled = (
         portopt.po_toggle_ui_elements(
-            True,
+            {"phase": "ready", "loadedTabs": {"weight": True}},
             "MyPortfolio",
             [],
             "risk_parity",
@@ -1239,7 +1280,7 @@ def test_po_toggle_ui_elements_ex_ante_requires_complete_expected_inputs(page_mo
     _, portopt = page_modules
 
     run_disabled, tooltip, *_rest = portopt.po_toggle_ui_elements(
-        True,
+        {"phase": "ready", "loadedTabs": {"weight": True}},
         "MyPortfolio",
         ["Asset_A", "Asset_B"],
         "ex_ante_mv",
@@ -1536,8 +1577,8 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
         "P1",
         results,
         "frontier",
-        True,
         "table",
+        {"phase": "ready", "loadedTabs": {"frontier": True}},
         "1",
         "MV",
         raw_json,
@@ -1582,8 +1623,8 @@ def test_po_render_frontier_chart_uses_shared_snapshot_resolver(monkeypatch, pag
         "P1",
         {"P1": {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()}},
         "frontier",
-        True,
         "chart",
+        {"phase": "ready", "loadedTabs": {"frontier": True}},
         "1",
         "MV",
         raw_json,
@@ -1620,8 +1661,8 @@ def test_po_render_frontier_chart_reports_missing_source_series(page_modules, ra
         "P1",
         results,
         "frontier",
-        True,
         "chart",
+        {"phase": "ready", "loadedTabs": {"frontier": True}},
         "0",
         "MV",
         df_to_json(raw_df),
