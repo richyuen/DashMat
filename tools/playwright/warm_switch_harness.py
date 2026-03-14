@@ -255,6 +255,21 @@ def wait_visible(page, selector: str, timeout: int = 30000) -> None:
     )
 
 
+def wait_dash_hydrated(page, timeout: int = 30000) -> None:
+    page.wait_for_function(
+        """
+        () => {
+          const title = (document.title || "").trim();
+          if (!title || title === "Updating...") {
+            return false;
+          }
+          return !document.querySelector('[data-dash-is-loading="true"]');
+        }
+        """,
+        timeout=timeout,
+    )
+
+
 def wait_ready(page, selector: str, timeout: int = 30000) -> None:
     page.wait_for_function(
         """
@@ -271,6 +286,33 @@ def wait_ready(page, selector: str, timeout: int = 30000) -> None:
         }
         """,
         arg=selector,
+        timeout=timeout,
+    )
+
+
+def wait_analytics_db_modal_ready(page, timeout: int = 30000) -> None:
+    page.wait_for_function(
+        """
+        () => {
+          const visible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+          };
+          const select = document.querySelector("#at-db-add-series-select");
+          const ok = document.querySelector("#at-db-add-ok-button");
+          const cancel = document.querySelector("#at-db-add-cancel-button");
+          const title = (document.title || "").trim();
+          return (
+            !!title &&
+            title !== "Updating..." &&
+            visible(select) &&
+            visible(ok) &&
+            visible(cancel)
+          );
+        }
+        """,
         timeout=timeout,
     )
 
@@ -321,13 +363,21 @@ def detect_renderer_mode(page) -> str:
 def warm_analytics_db(page, base_url: str, db_series: list[str]) -> str:
     analytics_path = "/analyticstool"
     page.goto(base_url + analytics_path, wait_until="domcontentloaded")
+    wait_dash_hydrated(page)
     renderer_mode = detect_renderer_mode(page)
     wait_visible(page, "#at-welcome-add-db-btn")
     # The welcome flow can keep a modal overlay mounted during idle states.
-    page.locator("#at-welcome-add-db-btn").click(force=True)
-    if not page.locator("#at-db-add-series-select").is_visible(timeout=3000):
+    modal_ready = False
+    for _ in range(3):
         page.locator("#at-welcome-add-db-btn").click(force=True)
-    page.wait_for_selector("#at-db-add-series-select", state="visible", timeout=30000)
+        try:
+            wait_analytics_db_modal_ready(page, timeout=5000)
+            modal_ready = True
+            break
+        except Exception:
+            wait_dash_hydrated(page, timeout=10000)
+    if not modal_ready:
+        raise RuntimeError("AnalyticsTool DB import modal did not become ready during harness warmup.")
     page.evaluate(
         """
         (series) => {
@@ -336,7 +386,7 @@ def warm_analytics_db(page, base_url: str, db_series: list[str]) -> str:
         """,
         db_series,
     )
-    page.wait_for_timeout(300)
+    wait_ready(page, "#at-db-add-ok-button")
     page.locator("#at-db-add-ok-button").click(force=True)
     page.wait_for_selector("#at-modal-ok-button", state="visible", timeout=30000)
     page.locator("#at-modal-ok-button").click(force=True)
