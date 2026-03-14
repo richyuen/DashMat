@@ -1,10 +1,10 @@
 """Statistics calculations for returns analysis."""
 
+from functools import lru_cache
 import logging
 from typing import Optional
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 import cache_config
 from utils.covariance import covariance_to_correlation, estimate_covariance_matrix
@@ -26,6 +26,11 @@ SPX_DAILY_INCEPTION_DATE = pd.Timestamp("1988-01-04")
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
+def _import_scipy_stats():
+    """Lazy-import scipy.stats on first use."""
+    from scipy import stats
+    return stats
 
 
 def cumulative_return(returns: pd.Series) -> float:
@@ -311,6 +316,7 @@ def calculate_statistics(
     use_risk_free: bool = True,
 ) -> dict:
     """Calculate all statistics for a single series (optimized for performance)."""
+    stats = _import_scipy_stats()
     periods_per_year = annualization_factor(periodicity)
     effective_risk_free = risk_free_returns if use_risk_free else None
 

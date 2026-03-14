@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import numpy as np
 import pandas as pd
-from sklearn.covariance import LedoitWolf, OAS
 
 from utils.exponential_weighting import normalize_decay_input, resolve_ewm_params
 
@@ -22,6 +22,13 @@ _COV_SHRINKAGE_TARGET_LABELS = {
     "scaled_identity": "Scaled Identity",
     "constant_correlation": "Constant Correlation",
 }
+
+
+@lru_cache(maxsize=1)
+def _import_sklearn_covariance():
+    """Lazy-import sklearn covariance estimators on first use."""
+    from sklearn.covariance import LedoitWolf, OAS
+    return LedoitWolf, OAS
 
 
 def normalize_cov_shrinkage(value: str | None) -> str:
@@ -250,6 +257,7 @@ def estimate_covariance_matrix(
     if effective_shrinkage == "ledoit_wolf" and effective_target == "constant_correlation":
         cov_df = _ledoit_wolf_constant_correlation_covariance(clean_df, columns)
     else:
+        LedoitWolf, OAS = _import_sklearn_covariance()
         estimator = LedoitWolf() if effective_shrinkage == "ledoit_wolf" else OAS()
         estimator.fit(clean_df.to_numpy(dtype=float, copy=False))
         cov_df = pd.DataFrame(estimator.covariance_, index=columns, columns=columns)

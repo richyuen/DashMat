@@ -1,19 +1,30 @@
 """Portfolio optimization engine using riskfolio-lib."""
 
 from dataclasses import dataclass
+from functools import lru_cache
 import warnings
 import numpy as np
 import pandas as pd
-import riskfolio as rp
-from scipy.optimize import linprog, minimize
 from utils.covariance import (
     estimate_covariance_matrix,
     resolve_cov_shrinkage_spec,
 )
 from utils.exponential_weighting import normalize_decay_input, resolve_ewm_params
 
-# Suppress cvxpy deprecation warning from riskfolio-lib internals
-warnings.filterwarnings("ignore", category=UserWarning, module="cvxpy")
+
+@lru_cache(maxsize=1)
+def _import_riskfolio():
+    """Lazy-import riskfolio-lib (and suppress cvxpy warnings) on first use."""
+    warnings.filterwarnings("ignore", category=UserWarning, module="cvxpy")
+    import riskfolio as rp
+    return rp
+
+
+@lru_cache(maxsize=1)
+def _import_scipy_optimize():
+    """Lazy-import scipy.optimize on first use."""
+    from scipy.optimize import linprog, minimize
+    return linprog, minimize
 
 
 @dataclass
@@ -429,6 +440,7 @@ def _build_native_solver_inputs(
 
 def _build_native_initial_guess(inputs: _NativeSolverInputs) -> np.ndarray | None:
     """Find a feasible starting point for SLSQP."""
+    linprog, _ = _import_scipy_optimize()
     bounds = list(zip(inputs.lower_bounds, inputs.upper_bounds))
     linprog_result = linprog(
         c=np.zeros(len(inputs.asset_names), dtype=float),
@@ -519,6 +531,7 @@ def _native_result_to_weights(asset_names, weights):
 
 
 def _solve_native_min_variance(inputs: _NativeSolverInputs):
+    _, minimize = _import_scipy_optimize()
     x0 = _build_native_initial_guess(inputs)
     if x0 is None:
         return None
@@ -537,6 +550,7 @@ def _solve_native_min_variance(inputs: _NativeSolverInputs):
 
 
 def _solve_native_risk_parity(inputs: _NativeSolverInputs):
+    _, minimize = _import_scipy_optimize()
     starts = _build_native_risk_parity_starts(inputs)
     if not starts:
         return None
@@ -593,6 +607,7 @@ def _optimize_risk_parity_riskfolio_reference(
     linear_constraints=None,
 ):
     """Reference Riskfolio implementation for classical risk parity."""
+    rp = _import_riskfolio()
     port_data = window_data[asset_names].copy()
     port = rp.Portfolio(returns=port_data)
     port.assets_stats(method_mu="hist", method_cov="hist")
@@ -780,6 +795,7 @@ def _optimize_ex_ante_mv(asset_names, lower_bounds, upper_bounds,
         raise ValueError("No covariance matrix provided and no historical data to estimate from.")
 
     # Create Portfolio object — use clean data (drop NaN rows)
+    rp = _import_riskfolio()
     if window_data is not None:
         clean_returns = window_data[asset_names].dropna()
         if len(clean_returns) < 10:
@@ -918,6 +934,7 @@ def _optimize_black_litterman(window_data, asset_names, lower_bounds, upper_boun
         result[free_series[0]] = max(0, remaining)
         return result
 
+    rp = _import_riskfolio()
     n_assets = len(asset_names)
     port_data = window_data[asset_names].copy()
     cov_shrinkage, cov_shrinkage_target = resolve_cov_shrinkage_spec(
@@ -1197,6 +1214,7 @@ def _optimize_single_window(window_data, model, asset_names, lower_bounds, upper
 
     # Build riskfolio Portfolio
     # Use only the columns that are in asset_names
+    rp = _import_riskfolio()
     port_data = window_data[asset_names].copy()
 
     port = rp.Portfolio(returns=port_data)
@@ -1707,6 +1725,7 @@ def compute_efficient_frontier(
         - frontier_portfolios: list of
           {"point_index": int, "return": float, "risk": float, "weights": {asset: weight}}
     """
+    rp = _import_riskfolio()
     port = rp.Portfolio(returns=returns_df)
     port.assets_stats(method_mu="hist", method_cov="hist")
 
