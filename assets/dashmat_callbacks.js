@@ -83,6 +83,48 @@
     });
   }
 
+  function readSessionStoreValue(storeId) {
+    if (!storeId) {
+      return null;
+    }
+    try {
+      const raw = sessionStorage.getItem(storeId);
+      if (raw === null || raw === undefined) {
+        return null;
+      }
+      return JSON.parse(raw);
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function resolveStoredList(currentValue, storeId) {
+    if (Array.isArray(currentValue) && currentValue.length) {
+      return currentValue.slice();
+    }
+    const stored = readSessionStoreValue(storeId);
+    return Array.isArray(stored) ? stored.slice() : [];
+  }
+
+  function resolveStoredString(currentValue, storeId) {
+    if (typeof currentValue === "string" && currentValue.trim()) {
+      return currentValue;
+    }
+    const stored = readSessionStoreValue(storeId);
+    return typeof stored === "string" ? stored : currentValue;
+  }
+
+  function resolveStoredBool(currentValue, storeId) {
+    if (currentValue === true) {
+      return true;
+    }
+    return readSessionStoreValue(storeId) === true;
+  }
+
+  function resolveStoredNames(currentValue, storeId) {
+    return storeNames(currentValue).length ? storeNames(currentValue) : storeNames(readSessionStoreValue(storeId));
+  }
+
   function triggerUploadWithCancel(rootId, blockerStoreId) {
     const uploadDiv = document.getElementById(rootId);
     if (!uploadDiv) {
@@ -306,23 +348,23 @@
       return false;
     }
     const columnSet = new Set(columns);
-    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selected = resolveStoredList(currentSelect, "po-series-select");
     const selectedValid = selected.filter(function (series) {
       return columnSet.has(series);
     });
-    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+    const knownColumns = new Set(resolveStoredList(currentOrder, "po-series-order-store").filter(function (series) {
       return columnSet.has(series);
     }));
     selectedValid.forEach(function (series) {
       knownColumns.add(series);
     });
-    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+    const poOriginSet = new Set(resolveStoredNames(poOriginSeries, "dashmat-pending-new-series-store").filter(function (series) {
       return columnSet.has(series);
     }));
     const genericNew = columns.filter(function (series) {
       return !knownColumns.has(series) && !poOriginSet.has(series);
     });
-    if (!pageVisited && !selectedValid.length) {
+    if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {
       return columns.some(function (series) {
         return !poOriginSet.has(series);
       });
@@ -552,7 +594,7 @@
       ];
     }
 
-    if (trigger === "dashmat-raw-data-meta-store" && pageVisited) {
+    if (trigger === "dashmat-raw-data-meta-store") {
       return [
         noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
         noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
@@ -606,17 +648,17 @@
     }
 
     const columnSet = new Set(columns);
-    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selected = resolveStoredList(currentSelect, "po-series-select");
     const selectedValid = selected.filter(function (series) {
       return columnSet.has(series);
     });
-    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+    const knownColumns = new Set(resolveStoredList(currentOrder, "po-series-order-store").filter(function (series) {
       return columnSet.has(series);
     }));
     selectedValid.forEach(function (series) {
       knownColumns.add(series);
     });
-    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+    const poOriginSet = new Set(resolveStoredNames(poOriginSeries, "dashmat-pending-new-series-store").filter(function (series) {
       return columnSet.has(series);
     }));
     const genericNew = columns.filter(function (series) {
@@ -625,7 +667,7 @@
 
     let shouldOpen = false;
     let tempSelect = noUpdate();
-    if (!pageVisited && !selectedValid.length) {
+    if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {
       tempSelect = columns.filter(function (series) {
         return !poOriginSet.has(series);
       });
@@ -868,20 +910,21 @@
     }
 
     const columnSet = new Set(columns);
-    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selected = resolveStoredList(currentSelect, "reg-series-select");
     const selectedValid = selected.filter(function (series) {
       return columnSet.has(series);
     });
-    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+    const knownColumns = new Set(resolveStoredList(currentOrder, "reg-series-order-store").filter(function (series) {
       return columnSet.has(series);
     }));
     selectedValid.forEach(function (series) {
       knownColumns.add(series);
     });
-    if (typeof currentDepVar === "string" && columnSet.has(currentDepVar)) {
-      knownColumns.add(currentDepVar);
+    const effectiveDepVar = resolveStoredString(currentDepVar, "reg-dependent-var-store");
+    if (typeof effectiveDepVar === "string" && columnSet.has(effectiveDepVar)) {
+      knownColumns.add(effectiveDepVar);
     }
-    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+    const poOriginSet = new Set(resolveStoredNames(poOriginSeries, "dashmat-pending-new-series-store").filter(function (series) {
       return columnSet.has(series);
     }));
     const genericNew = columns.filter(function (series) {
@@ -889,8 +932,14 @@
     });
 
     let shouldOpen = false;
-    let tempSelect = Array.isArray(currentSelect) ? currentSelect.slice() : [];
+    let tempSelect = selected.slice();
     if (trigger === "dashmat-raw-data-meta-store") {
+      if (!resolveStoredBool(pageVisited, "reg-page-visited-store")) {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
       shouldOpen = genericNew.length > 0;
       if (shouldOpen) {
         const selectedSet = new Set(selectedValid);
@@ -902,7 +951,7 @@
         });
       }
     } else {
-      if (!pageVisited && !selectedValid.length) {
+      if (!resolveStoredBool(pageVisited, "reg-page-visited-store") && !selectedValid.length) {
         tempSelect = columns.filter(function (series) {
           return !poOriginSet.has(series);
         });
@@ -941,7 +990,7 @@
       currentBench || {},
       currentLs || {},
       currentVolScaling || {},
-      currentDepVar,
+      effectiveDepVar,
       currentLag || {},
       currentMinBeta || {},
       currentMaxBeta || {},
@@ -957,26 +1006,27 @@
       return false;
     }
     const columnSet = new Set(columns);
-    const selected = Array.isArray(currentSelect) ? currentSelect : [];
+    const selected = resolveStoredList(currentSelect, "reg-series-select");
     const selectedValid = selected.filter(function (series) {
       return columnSet.has(series);
     });
-    const knownColumns = new Set((Array.isArray(currentOrder) ? currentOrder : []).filter(function (series) {
+    const knownColumns = new Set(resolveStoredList(currentOrder, "reg-series-order-store").filter(function (series) {
       return columnSet.has(series);
     }));
     selectedValid.forEach(function (series) {
       knownColumns.add(series);
     });
-    if (typeof currentDepVar === "string" && columnSet.has(currentDepVar)) {
-      knownColumns.add(currentDepVar);
+    const effectiveDepVar = resolveStoredString(currentDepVar, "reg-dependent-var-store");
+    if (typeof effectiveDepVar === "string" && columnSet.has(effectiveDepVar)) {
+      knownColumns.add(effectiveDepVar);
     }
-    const poOriginSet = new Set(storeNames(poOriginSeries).filter(function (series) {
+    const poOriginSet = new Set(resolveStoredNames(poOriginSeries, "dashmat-pending-new-series-store").filter(function (series) {
       return columnSet.has(series);
     }));
     const genericNew = columns.filter(function (series) {
       return !knownColumns.has(series) && !poOriginSet.has(series);
     });
-    if (!pageVisited && !selectedValid.length) {
+    if (!resolveStoredBool(pageVisited, "reg-page-visited-store") && !selectedValid.length) {
       return columns.some(function (series) {
         return !poOriginSet.has(series);
       });

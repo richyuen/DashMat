@@ -182,11 +182,13 @@ def test_po_open_modal_uses_clientside_open_seed_callback():
 def test_po_open_modal_js_preserves_first_visit_and_generic_new_behavior():
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert "function openPortoptSeriesModal(" in js_text
-    assert 'if (!pageVisited && !selectedValid.length) {' in js_text
+    assert 'const selected = resolveStoredList(currentSelect, "po-series-select");' in js_text
+    assert 'const knownColumns = new Set(resolveStoredList(currentOrder, "po-series-order-store").filter(function (series) {' in js_text
+    assert 'if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {' in js_text
     assert "genericNew.length" in js_text
-    assert 'const poOriginSet = new Set(storeNames(poOriginSeries)' in js_text
+    assert 'const poOriginSet = new Set(resolveStoredNames(poOriginSeries, "dashmat-pending-new-series-store").filter(function (series) {' in js_text
     assert 'return !knownColumns.has(series) && !poOriginSet.has(series);' in js_text
-    assert 'if (trigger === "dashmat-raw-data-meta-store" && pageVisited) {' in js_text
+    assert 'if (trigger === "dashmat-raw-data-meta-store") {' in js_text
     assert 'if (trigger === "po-url-location") {' in js_text
     assert 'if (trigger === "po-page-load-trigger"' in js_text
 

@@ -819,6 +819,10 @@ def test_regression_file_menu_includes_account_list_actions():
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
     assert "function regressionInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, routeBlockerState, pageVisited, currentOrder, currentDepVar, poOriginSeries)" in js_text
     assert "function regressionInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, currentDepVar, poOriginSeries, pageVisited)" in js_text
+    assert 'const selected = resolveStoredList(currentSelect, "reg-series-select");' in js_text
+    assert 'const effectiveDepVar = resolveStoredString(currentDepVar, "reg-dependent-var-store");' in js_text
+    assert 'if (!resolveStoredBool(pageVisited, "reg-page-visited-store") && !selectedValid.length) {' in js_text
+    assert 'if (!resolveStoredBool(pageVisited, "reg-page-visited-store")) {' in js_text
 
 
 def test_reg_on_modal_ok_returns_no_update_for_unchanged_outputs(regression_page, raw_json):
