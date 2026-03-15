@@ -444,6 +444,28 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     assert getattr(main, "style", {})["display"] == "none"
 
 
+def test_po_layout_mounts_series_config_stores(page_modules):
+    _, portopt = page_modules
+
+    expected = {
+        "po-series-select": [],
+        "po-series-order-store": [],
+        "po-benchmark-assignments-store": {},
+        "po-cmabench-assignments-store": {},
+        "po-long-short-store": {},
+        "po-vol-scaling-assignments-store": {},
+        "po-min-wt-store": {},
+        "po-max-wt-store": {},
+        "po-force-max-store": {},
+    }
+
+    for store_id, initial_data in expected.items():
+        store = _find_component_by_id(portopt.layout, store_id)
+        assert store is not None, store_id
+        assert getattr(store, "storage_type", None) == "session"
+        assert getattr(store, "data", None) == initial_data
+
+
 def test_po_layout_uses_construction_first_tab_order(page_modules):
     _, portopt = page_modules
 

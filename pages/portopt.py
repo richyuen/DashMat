@@ -3372,6 +3372,17 @@ layout = dmc.Container(
             style={"display": "none"},
         ),
 
+        # Series/config stores
+        dcc.Store(id="po-series-select", data=[], storage_type="session"),
+        dcc.Store(id="po-series-order-store", data=[], storage_type="session"),
+        dcc.Store(id="po-benchmark-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="po-cmabench-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="po-long-short-store", data={}, storage_type="session"),
+        dcc.Store(id="po-vol-scaling-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="po-min-wt-store", data={}, storage_type="session"),
+        dcc.Store(id="po-max-wt-store", data={}, storage_type="session"),
+        dcc.Store(id="po-force-max-store", data={}, storage_type="session"),
+
         # Temp modal stores
         dcc.Store(id="po-temp-series-select", data=[]),
         dcc.Store(id="po-temp-series-order-store", data=[]),
