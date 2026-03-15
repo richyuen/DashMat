@@ -1082,6 +1082,99 @@ def test_po_run_optimization_monthly_result_stays_in_results_store(monkeypatch, 
     assert results_out["MyPort"]["saved_series_name"] is None
 
 
+def test_po_run_optimization_stores_split_reporting_payloads(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    opt_df = pd.read_json(StringIO(raw_json), orient="split")[["Asset_A", "Asset_B"]].head(3)
+    opt_df.index = pd.to_datetime(opt_df.index)
+    reporting_df = opt_df.mul(pd.Series({"Asset_A": 1.5, "Asset_B": 0.5}), axis=1)
+    expected_reporting = pd.Series(
+        (reporting_df.to_numpy() * np.array([[0.6, 0.4]])).sum(axis=1),
+        index=opt_df.index,
+    )
+    expected_optimization = pd.Series([0.02, 0.01, -0.005], index=opt_df.index)
+
+    def _fake_get_working_returns(bundle, _selected_series):
+        if bundle.long_short_payload in {"", "{}"}:
+            return reporting_df.copy()
+        return opt_df.copy()
+
+    monkeypatch.setattr(portopt, "_po_get_working_returns", _fake_get_working_returns)
+    monkeypatch.setattr(
+        portopt,
+        "run_portfolio_optimization",
+        lambda *_args, **_kwargs: (
+            [
+                SimpleNamespace(
+                    apply_start=opt_df.index[0],
+                    apply_end=opt_df.index[-1],
+                    est_start=opt_df.index[0],
+                    est_end=opt_df.index[-1],
+                    weights={"Asset_A": 0.6, "Asset_B": 0.4},
+                )
+            ],
+            expected_optimization.copy(),
+            {},
+        ),
+    )
+
+    results_out, _new_raw, status, _pending = portopt.po_run_optimization(
+        1,
+        raw_json,
+        "daily",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {"Asset_A": True},
+        None,
+        0,
+        {},
+        {},
+        {},
+        {},
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        "MyPort",
+        "full",
+        252,
+        1,
+        "months",
+        "risk_parity",
+        "fill_na",
+        "off",
+        {},
+        [],
+        {},
+        {},
+        [],
+        0.05,
+        "maximize_sharpe",
+        {},
+        {},
+        "ret_cov",
+        [],
+        "split",
+        None,
+    )
+
+    assert status["status"] == "complete"
+    result = results_out["MyPort"]
+    assert result["reporting_basis"] == "long_only_performance"
+
+    saved_series = pd.read_json(StringIO(result["returns_json"]), typ="series")
+    reporting_series = pd.read_json(StringIO(result["reporting_returns_json"]), typ="series")
+    optimization_series = pd.read_json(StringIO(result["optimization_returns_json"]), typ="series")
+    saved_series.index = pd.to_datetime(saved_series.index)
+    reporting_series.index = pd.to_datetime(reporting_series.index)
+    optimization_series.index = pd.to_datetime(optimization_series.index)
+
+    pd.testing.assert_series_equal(saved_series, expected_reporting, check_names=False)
+    pd.testing.assert_series_equal(reporting_series, expected_reporting, check_names=False)
+    pd.testing.assert_series_equal(optimization_series, expected_optimization, check_names=False)
+
+
 def test_po_save_series_aligns_month_end_and_updates_result(page_modules):
     _, portopt = page_modules
 
@@ -1159,6 +1252,24 @@ def test_po_save_series_overwrites_existing_saved_name(page_modules, raw_json):
     assert results_out["MyPort"]["saved_series_name"] == "MyPort"
     assert saved_store["MyPort"]["series_type"] == "portfolio"
     assert status == "Overwrote shared series MyPort."
+
+
+def test_po_render_returns_prefers_reporting_returns_for_split_basis(page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    results = {
+        "P1": {
+            "returns_json": pd.Series([0.01, 0.02], index=idx).to_json(date_format="iso"),
+            "reporting_returns_json": pd.Series([0.005, 0.01], index=idx).to_json(date_format="iso"),
+            "reporting_basis": "long_only_performance",
+            "config": {"selected_series": []},
+        }
+    }
+
+    column_defs, row_data = portopt.po_render_returns(results, "returns", "P1")
+
+    assert column_defs[1]["field"] == "P1"
+    assert row_data[0]["P1"] == pytest.approx(0.005)
 
 
 def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_modules, raw_json):

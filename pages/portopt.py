@@ -253,14 +253,9 @@ def _po_collect_portfolio_returns(results, selected_portfolios=None) -> pd.DataF
         pdata = (results or {}).get(pname)
         if not pdata:
             continue
-        returns_json = pdata.get("returns_json")
-        if not returns_json:
+        s = _po_single_portfolio_return(results, pname)
+        if s.empty:
             continue
-        try:
-            s = pd.read_json(StringIO(returns_json), typ="series")
-        except Exception:
-            continue
-        s.index = pd.to_datetime(s.index)
         all_returns[pname] = s
     if not all_returns:
         return pd.DataFrame()
@@ -269,11 +264,18 @@ def _po_collect_portfolio_returns(results, selected_portfolios=None) -> pd.DataF
     return combined_df
 
 
+def _po_result_reporting_basis(portfolio_data) -> str:
+    basis = str((portfolio_data or {}).get("reporting_basis") or "").strip().lower()
+    return basis or "match_optimization"
+
+
 def _po_single_portfolio_return(results, portfolio_name: str) -> pd.Series:
     if not results or not portfolio_name:
         return pd.Series(dtype=float)
     pdata = (results or {}).get(portfolio_name) or {}
     returns_json = pdata.get("returns_json")
+    if _po_result_reporting_basis(pdata) == "long_only_performance":
+        returns_json = pdata.get("reporting_returns_json") or returns_json
     if not returns_json:
         return pd.Series(dtype=float)
     try:
@@ -409,6 +411,25 @@ def _compute_monthly_attribution(
         columns=list(series_tuple),
     )
     return attribution_df.resample("ME").sum().dropna(how="all")
+
+
+def _po_apply_window_weights_to_panel(
+    working_df: pd.DataFrame,
+    selected_series,
+    window_weights,
+) -> pd.Series:
+    series_tuple = tuple(selected_series or ())
+    if working_df.empty or not series_tuple or not window_weights:
+        return pd.Series(dtype=float)
+
+    working_subset = working_df.loc[:, list(series_tuple)].fillna(0.0)
+    weight_values = _build_apply_weight_matrix(working_subset.index, series_tuple, window_weights)
+    has_weights = np.any(np.abs(weight_values) > 0, axis=1)
+    if not np.any(has_weights):
+        return pd.Series(dtype=float)
+
+    values = (weight_values[has_weights] * working_subset.to_numpy(copy=False)[has_weights]).sum(axis=1)
+    return pd.Series(values, index=working_subset.index[has_weights], name="Portfolio")
 
 
 def _compute_window_risk_contributions(
@@ -8416,6 +8437,7 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-corr-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-linear-constraints-store", "data"),
+    State("po-reporting-basis-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
@@ -8429,7 +8451,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         pending_series,
                         ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
                         ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints,
-                        saved_series_store):
+                        reporting_basis="match", saved_series_store=None):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -8697,6 +8719,11 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
         runtime_config["risk_free_mode"] = "series" if rf_series_runtime is not None else "fixed_annual"
         runtime_config["risk_free_series"] = rf_series_runtime
 
+        split_reporting_enabled = (
+            (reporting_basis or "match") == "split"
+            and _po_supports_split_reporting(model_value, opt_cols, long_short_assignments or {})
+        )
+
         # Run optimization
         run_out = run_portfolio_optimization(opt_df, runtime_config)
         if isinstance(run_out, tuple) and len(run_out) == 3:
@@ -8728,9 +8755,37 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 "weights": wr.weights,
             })
 
+        reporting_returns = portfolio_returns.copy()
+        if split_reporting_enabled:
+            reporting_bundle = _build_po_working_bundle(
+                raw_data,
+                periodicity,
+                benchmark_assignments,
+                {},
+                date_range,
+                vol_scaler,
+                vol_scaling_assignments,
+            )
+            reporting_df = _po_get_working_returns(reporting_bundle, opt_cols)
+            reporting_returns = _po_apply_window_weights_to_panel(reporting_df, opt_cols, window_data)
+            if reporting_returns.empty:
+                return (
+                    no_update,
+                    no_update,
+                    {
+                        "status": "error",
+                        "name": portfolio_name,
+                        "message": "Split-basis reporting could not build a usable long-only portfolio return series.",
+                    },
+                    no_update,
+                )
+
         result_entry = {
             "window_weights": window_data,
-            "returns_json": portfolio_returns.to_json(date_format="iso"),
+            "returns_json": reporting_returns.to_json(date_format="iso"),
+            "reporting_returns_json": reporting_returns.to_json(date_format="iso"),
+            "optimization_returns_json": portfolio_returns.to_json(date_format="iso"),
+            "reporting_basis": "long_only_performance" if split_reporting_enabled else "match_optimization",
             "config": config,
             "saved_series_name": None,
             "risk_free_meta": {
