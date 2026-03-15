@@ -62,6 +62,32 @@ def _call_reg_run(regression_page, **overrides):
     return regression_page.reg_run_regression(**params)
 
 
+def _find_component_by_id(node, target_id):
+    if node is None:
+        return None
+    if getattr(node, "id", None) == target_id:
+        return node
+
+    children = getattr(node, "children", None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            found = _find_component_by_id(child, target_id)
+            if found is not None:
+                return found
+    else:
+        found = _find_component_by_id(children, target_id)
+        if found is not None:
+            return found
+
+    props = getattr(node, "props", None)
+    if isinstance(props, dict):
+        for value in props.values():
+            found = _find_component_by_id(value, target_id)
+            if found is not None:
+                return found
+    return None
+
+
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
     idx = pd.date_range("2020-01-01", periods=6, freq="B")
     working_df = pd.DataFrame(
@@ -347,6 +373,14 @@ def test_reg_open_db_add_modal_uses_helper(monkeypatch, regression_page):
     assert regression_page.reg_open_db_add_modal(1) == expected
 
 
+def test_reg_layout_starts_with_welcome_and_main_hidden(regression_page):
+    welcome = _find_component_by_id(regression_page.layout, "reg-welcome-screen")
+    main = _find_component_by_id(regression_page.layout, "reg-main-container")
+
+    assert getattr(welcome, "style", {})["display"] == "none"
+    assert getattr(main, "style", {})["display"] == "none"
+
+
 def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, regression_page):
     idx = pd.date_range("2024-01-01", periods=5, freq="B")
     new_df = pd.DataFrame({"IDX_A": [0.01, 0.0, 0.002, -0.003, 0.004]}, index=idx)
@@ -405,11 +439,9 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
         ]
 
     monkeypatch.setattr(regression_page, "get_available_periodicities", _fake_get_available_periodicities)
-    welcome_style, main_style, options, value = regression_page.reg_toggle_welcome("raw", "daily", "monthly")
+    options, value = regression_page.reg_toggle_welcome("raw", "daily", "monthly")
 
     assert captured["arg"] == "daily"
-    assert welcome_style["display"] == "none"
-    assert main_style["display"] == "flex"
     assert options == [{"value": "daily", "label": "Daily"}, {"value": "monthly", "label": "Monthly"}]
     assert value == "monthly"
 
@@ -514,10 +546,7 @@ def _collect_ag_grids(node):
 
 
 def test_reg_toggle_welcome_no_data_shows_top_aligned_welcome(regression_page):
-    welcome_style, main_style, options, value = regression_page.reg_toggle_welcome(None, None, None)
-
-    assert welcome_style == {"display": "block"}
-    assert main_style["display"] == "none"
+    options, value = regression_page.reg_toggle_welcome(None, None, None)
     assert options == [{"value": "daily", "label": "Daily"}]
     assert value == "daily"
 

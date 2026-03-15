@@ -3388,14 +3388,14 @@ layout = dmc.Container(
             ],
         ),
 
-        # Welcome screen
+        # Welcome screen (Hide until hydration decides which view to show)
         html.Div(
             id="po-welcome-screen",
             children=build_po_welcome_screen(),
-            style={"display": "block"},
+            style={"display": "none"},
         ),
 
-        # Main container (hidden until data loaded)
+        # Main container (Hide until hydration decides which view to show)
         html.Div(
             id="po-main-container",
             children=build_po_main_layout(),
@@ -5888,6 +5888,9 @@ clientside_callback(
 clientside_callback(
     """
     function(n_intervals, data) {
+        if (n_intervals === null || n_intervals === undefined || n_intervals < 1) {
+            return [{display: "none"}, {display: "none"}];
+        }
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }

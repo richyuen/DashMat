@@ -3877,11 +3877,11 @@ layout = dmc.Container(
             ],
         ),
 
-        # Welcome Screen (Initially Visible)
+        # Welcome Screen (Hide until hydration decides which view to show)
         html.Div(
             id="at-welcome-screen-container",
             children=build_welcome_screen(),
-            style={"display": "block"}
+            style={"display": "none"}
         ),
 
         # Main App Container (Initially Hidden)
@@ -4020,6 +4020,9 @@ layout = dmc.Container(
 clientside_callback(
     """
     function(n_intervals, data) {
+        if (n_intervals === null || n_intervals === undefined || n_intervals < 1) {
+            return [{display: "none"}, {display: "none"}];
+        }
         if (data) {
             return [{display: "none"}, {display: "flex", flexDirection: "column", flex: "1", overflow: "hidden"}];
         }

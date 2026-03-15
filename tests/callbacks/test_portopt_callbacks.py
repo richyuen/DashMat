@@ -211,6 +211,16 @@ def test_po_render_returns_builds_returns_grid(page_modules):
     assert row_data[0]["Date"] == "2024-01-01"
 
 
+def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
+    _, portopt = page_modules
+
+    welcome = _find_component_by_id(portopt.layout, "po-welcome-screen")
+    main = _find_component_by_id(portopt.layout, "po-main-container")
+
+    assert getattr(welcome, "style", {})["display"] == "none"
+    assert getattr(main, "style", {})["display"] == "none"
+
+
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
     _, portopt = page_modules
 

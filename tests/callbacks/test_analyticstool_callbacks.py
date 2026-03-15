@@ -216,6 +216,16 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
     assert ready is True
 
 
+def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
+    analyticstool, _ = page_modules
+
+    welcome = _find_component_by_id(analyticstool.layout, "at-welcome-screen-container")
+    main = _find_component_by_id(analyticstool.layout, "at-main-app-container")
+
+    assert getattr(welcome, "style", {})["display"] == "none"
+    assert getattr(main, "style", {})["display"] == "none"
+
+
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
     analyticstool, _ = page_modules
 
