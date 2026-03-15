@@ -10,7 +10,7 @@ import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
 
-from utils.returns import df_to_json
+from utils.returns import df_to_json, json_to_df
 
 
 def _sample_window_weights() -> list[dict]:
@@ -85,6 +85,12 @@ def _find_component_by_id(node, target_id):
             if found is not None:
                 return found
     return None
+
+
+def _raw_json_value(value):
+    if isinstance(value, dict) and "raw_data" in value:
+        return value["raw_data"]
+    return value
 
 
 def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
@@ -391,18 +397,18 @@ def test_po_render_turnover_table_computes_turnover(page_modules):
     assert row_data[0]["Turnover"] == pytest.approx(0.1)
 
 
-def test_po_sync_results_with_raw_data_prunes_missing_portfolios(page_modules, raw_json):
+def test_po_sync_save_series_ui_tracks_saved_name(page_modules):
     _, portopt = page_modules
-    df = pd.read_json(StringIO(raw_json), orient="split")
-    df["KeepMe"] = 0.0
-    raw_with_portfolio = df_to_json(df)
-    results = {"KeepMe": {"x": 1}, "DropMe": {"x": 2}}
+    disabled, status = portopt.po_sync_save_series_ui(
+        "KeepMe",
+        {"KeepMe": {"saved_series_name": "KeepMe"}},
+    )
 
-    pruned = portopt.po_sync_results_with_raw_data(raw_with_portfolio, 1, results)
-    assert pruned == {"KeepMe": {"x": 1}}
+    assert disabled is False
+    assert status == "Saved as KeepMe."
 
 
-def test_po_delete_portfolio_removes_from_results_and_raw(page_modules, raw_json):
+def test_po_delete_portfolio_removes_result_but_keeps_saved_series(page_modules, raw_json):
     _, portopt = page_modules
     df = pd.read_json(StringIO(raw_json), orient="split")
     df["P1"] = 0.0
@@ -412,8 +418,7 @@ def test_po_delete_portfolio_removes_from_results_and_raw(page_modules, raw_json
     new_results, new_raw, new_sel = portopt.po_delete_portfolio(1, "P1", results, raw_with_portfolio)
 
     assert "P1" not in new_results
-    df_after = pd.read_json(StringIO(new_raw), orient="split")
-    assert "P1" not in df_after.columns
+    assert new_raw is no_update
     assert new_sel == "P2"
 
 
@@ -848,7 +853,7 @@ def test_po_run_optimization_stores_frontier_cache_for_ex_ante(monkeypatch, page
     assert "MV" in results_out["MyPort"]["frontier_cache"]["0"]
 
 
-def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, page_modules):
+def test_po_run_optimization_monthly_result_stays_in_results_store(monkeypatch, page_modules):
     _, portopt = page_modules
 
     raw_idx = pd.to_datetime(["1976-06-30", "1976-07-30", "1976-08-30", "1976-09-30"])
@@ -887,7 +892,7 @@ def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, pag
         ),
     )
 
-    results_out, new_raw, status, _pending = portopt.po_run_optimization(
+    results_out, new_raw, status, pending = portopt.po_run_optimization(
         1,
         raw_json,
         "monthly",
@@ -931,7 +936,51 @@ def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, pag
     assert status["status"] == "complete"
     assert "MyPort" in results_out
 
-    df_after = pd.read_json(StringIO(new_raw), orient="split")
+    assert new_raw is no_update
+    assert pending is no_update
+    saved_series = pd.read_json(StringIO(results_out["MyPort"]["returns_json"]), typ="series")
+    saved_series.index = pd.to_datetime(saved_series.index)
+    assert pd.Timestamp("1976-07-31") in saved_series.index
+    assert pd.Timestamp("1976-08-31") in saved_series.index
+    assert saved_series.loc[pd.Timestamp("1976-07-31")] == pytest.approx(0.006)
+    assert saved_series.loc[pd.Timestamp("1976-08-31")] == pytest.approx(0.007)
+    assert results_out["MyPort"]["saved_series_name"] is None
+
+
+def test_po_save_series_aligns_month_end_and_updates_result(page_modules):
+    _, portopt = page_modules
+
+    raw_idx = pd.to_datetime(["1976-06-30", "1976-07-30", "1976-08-30", "1976-09-30"])
+    raw_df = pd.DataFrame(
+        {
+            "Asset_A": [0.01, 0.02, 0.03, 0.04],
+            "Asset_B": [0.02, 0.01, -0.01, 0.00],
+        },
+        index=raw_idx,
+    )
+    raw_df.index.name = "Date"
+    raw_json = df_to_json(raw_df)
+    results = {
+        "MyPort": {
+            "returns_json": pd.Series(
+                [0.005, 0.006, 0.007, 0.008],
+                index=pd.to_datetime(["1976-06-30", "1976-07-31", "1976-08-31", "1976-09-30"]),
+            ).to_json(date_format="iso"),
+            "config": {"periodicity": "monthly"},
+            "saved_series_name": None,
+        }
+    }
+
+    results_out, new_raw, saved_store, status = portopt.po_save_series_to_shared_data(
+        1,
+        "MyPort",
+        results,
+        raw_json,
+        "monthly",
+        {},
+    )
+
+    df_after = json_to_df(_raw_json_value(new_raw))
     df_after.index = pd.to_datetime(df_after.index)
     assert pd.Timestamp("1976-07-30") not in df_after.index
     assert pd.Timestamp("1976-07-31") in df_after.index
@@ -939,6 +988,42 @@ def test_po_run_optimization_monthly_writeback_aligns_month_end(monkeypatch, pag
     assert df_after.index.is_month_end.all()
     assert df_after.loc[pd.Timestamp("1976-07-31"), "MyPort"] == pytest.approx(0.006)
     assert df_after.loc[pd.Timestamp("1976-08-31"), "MyPort"] == pytest.approx(0.007)
+    assert results_out["MyPort"]["saved_series_name"] == "MyPort"
+    assert saved_store["MyPort"]["origin_page"] == "portopt"
+    assert status == "Saved as MyPort."
+
+
+def test_po_save_series_overwrites_existing_saved_name(page_modules, raw_json):
+    _, portopt = page_modules
+
+    raw_df = json_to_df(raw_json)
+    raw_df["MyPort"] = [0.02] * len(raw_df.index)
+    raw_with_saved = df_to_json(raw_df)
+    results = {
+        "MyPort": {
+            "returns_json": pd.Series(
+                [0.11, 0.12, 0.13],
+                index=pd.to_datetime(raw_df.index[:3]),
+            ).to_json(date_format="iso"),
+            "config": {"periodicity": "daily"},
+            "saved_series_name": "MyPort",
+        }
+    }
+
+    results_out, new_raw, saved_store, status = portopt.po_save_series_to_shared_data(
+        1,
+        "MyPort",
+        results,
+        raw_with_saved,
+        "daily",
+        {"MyPort": {"origin_page": "portopt", "origin_result": "MyPort", "series_type": "portfolio"}},
+    )
+
+    df_after = json_to_df(_raw_json_value(new_raw))
+    assert df_after["MyPort"].dropna().iloc[:3].tolist() == pytest.approx([0.11, 0.12, 0.13])
+    assert results_out["MyPort"]["saved_series_name"] == "MyPort"
+    assert saved_store["MyPort"]["series_type"] == "portfolio"
+    assert status == "Overwrote shared series MyPort."
 
 
 def test_po_run_optimization_persists_cov_shrinkage_in_config(monkeypatch, page_modules, raw_json):

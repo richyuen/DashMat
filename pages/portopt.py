@@ -75,6 +75,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
+from utils.saved_series import save_series_to_raw_data
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
@@ -2222,6 +2223,15 @@ def build_po_main_layout():
                         clearable=False,
                     ),
                     dmc.Button(
+                        "Save Series",
+                        id="po-save-series-button",
+                        variant="light",
+                        color="blue",
+                        size="sm",
+                        disabled=True,
+                        leftSection=DashIconify(icon="tabler:device-floppy"),
+                    ),
+                    dmc.Button(
                         "Delete",
                         id="po-delete-portfolio-button",
                         variant="outline",
@@ -2243,6 +2253,7 @@ def build_po_main_layout():
                             ),
                         ],
                     ),
+                    dmc.Text(id="po-save-series-status-text", size="sm", c="dimmed"),
                 ],
             ),
 
@@ -8485,17 +8496,6 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             final_name = f"{base_name}_{counter}"
             counter += 1
 
-        # Add portfolio returns to raw data
-        if periodicity == "monthly":
-            existing_df = align_monthly_index_to_month_end(existing_df)
-            portfolio_series = align_monthly_series_to_month_end(portfolio_returns)
-            portfolio_frame = portfolio_series.to_frame(name=final_name)
-            existing_df = merge_returns(existing_df, portfolio_frame)
-        else:
-            portfolio_series = portfolio_returns.reindex(existing_df.index)
-            existing_df[final_name] = portfolio_series
-        new_raw_data = df_to_json(existing_df)
-
         # Store results
         window_data = []
         for wr in window_results:
@@ -8511,6 +8511,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             "window_weights": window_data,
             "returns_json": portfolio_returns.to_json(date_format="iso"),
             "config": config,
+            "saved_series_name": None,
             "risk_free_meta": {
                 "source": resolved_rf_context.get("rf_source"),
                 "annual": float(resolved_rf_context.get("rf_annual", 0.0) or 0.0),
@@ -8537,8 +8538,6 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         current_results[final_name] = result_entry
 
-        # Add to pending list so Analytics Tool auto-selects this series
-        updated_pending = list(pending_series or []) + [final_name]
         warning_parts = []
         if resolved_rf_context.get("rf_warning"):
             warning_parts.append(str(resolved_rf_context.get("rf_warning")))
@@ -8548,9 +8547,9 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
 
         return (
             current_results,
-            new_raw_data,
+            no_update,
             {"status": "complete", "name": final_name, "warning": warning_text},
-            updated_pending,
+            no_update,
         )
 
     except ValueError as e:
@@ -8671,26 +8670,91 @@ def po_update_portfolio_dropdowns(results, current_select, current_multi):
 
 
 # ---------------------------------------------------------------------------
-# Sync results store when raw data changes (e.g. series deleted in Analytics Tool)
+# Save portfolio return series
 # ---------------------------------------------------------------------------
 
 @callback(
+    Output("po-save-series-button", "disabled"),
+    Output("po-save-series-status-text", "children"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    prevent_initial_call=False,
+)
+def po_sync_save_series_ui(selected_portfolio, results):
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return True, ""
+
+    saved_name = ((results or {}).get(selected_portfolio) or {}).get("saved_series_name")
+    if not saved_name:
+        return False, ""
+    return False, f"Saved as {saved_name}."
+
+
+@callback(
     Output("po-results-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("po-page-load-trigger", "n_intervals"),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-pending-new-series-store", "data", allow_duplicate=True),
+    Output("po-save-series-status-text", "children", allow_duplicate=True),
+    Input("po-save-series-button", "n_clicks"),
+    State("po-weight-portfolio-select", "value"),
     State("po-results-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("po-periodicity-select", "value"),
+    State("dashmat-pending-new-series-store", "data"),
     prevent_initial_call=True,
 )
-def po_sync_results_with_raw_data(raw_data, _n, results):
-    if not results:
+def po_save_series_to_shared_data(
+    n_clicks,
+    selected_portfolio,
+    results,
+    raw_data,
+    periodicity,
+    saved_series_store,
+):
+    if not n_clicks or not selected_portfolio or not results or selected_portfolio not in results:
         raise PreventUpdate
-    if not raw_data:
-        return {}
-    df = json_to_df(raw_data)
-    pruned = {k: v for k, v in results.items() if k in df.columns}
-    if len(pruned) == len(results):
-        raise PreventUpdate
-    return pruned
+
+    entry = dict((results or {}).get(selected_portfolio) or {})
+    returns_json = entry.get("returns_json")
+    if not returns_json:
+        return no_update, no_update, no_update, "No portfolio return series available to save."
+
+    try:
+        portfolio_series = pd.read_json(StringIO(returns_json), typ="series")
+        portfolio_series.index = pd.to_datetime(portfolio_series.index)
+    except Exception as exc:
+        return no_update, no_update, no_update, f"Error saving series: {exc}"
+
+    try:
+        save_out = save_series_to_raw_data(
+            raw_data=raw_data,
+            periodicity=((entry.get("config") or {}).get("periodicity") or periodicity or "daily"),
+            series=portfolio_series.rename(selected_portfolio),
+            base_name=selected_portfolio,
+            saved_series_store=saved_series_store,
+            origin_page="portopt",
+            origin_result=selected_portfolio,
+            series_type="portfolio",
+            prior_saved_name=entry.get("saved_series_name"),
+        )
+    except Exception as exc:
+        return no_update, no_update, no_update, f"Error saving series: {exc}"
+
+    new_results = dict(results or {})
+    entry["saved_series_name"] = save_out["saved_name"]
+    new_results[selected_portfolio] = entry
+
+    if save_out["action"] == "overwritten":
+        status_text = f"Overwrote shared series {save_out['saved_name']}."
+    else:
+        status_text = f"Saved as {save_out['saved_name']}."
+
+    return (
+        new_results,
+        save_out["raw_data"],
+        save_out["saved_series_store"],
+        status_text,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -8716,19 +8780,11 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     # Remove from results
     new_results = {k: v for k, v in results.items() if k != selected_portfolio}
 
-    # Remove column from raw data
-    new_raw = raw_data
-    if raw_data:
-        df = json_to_df(raw_data)
-        if selected_portfolio in df.columns:
-            df = df.drop(columns=[selected_portfolio])
-            new_raw = df_to_json(df)
-
     # Pick next selection
     remaining = list(new_results.keys())
     new_sel = remaining[-1] if remaining else None
 
-    return new_results, new_raw, new_sel
+    return new_results, no_update, new_sel
 
 
 # ===========================================================================
