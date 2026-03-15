@@ -149,7 +149,9 @@ from utils.factor_definitions import (
     validate_factor_definition_payload,
 )
 from utils.regime_analysis import (
+    build_regime_detail_frame,
     build_regime_duration_table,
+    build_wide_detail_frame,
     regime_required_series,
     regime_series_store_names,
     resolve_regime_source_data,
@@ -157,6 +159,7 @@ from utils.regime_analysis import (
     build_regime_timeline_frame,
     build_regime_transition_matrix,
     compute_regime_assignments,
+    compute_regime_assignments_core,
 )
 from utils.regime_definitions import (
     REGIME_METHOD_OPTIONS,
@@ -186,6 +189,11 @@ CONDITIONAL_DISPLAY_MODE_OPTIONS = [
     {"value": "detail", "label": "Detail"},
 ]
 
+REGIME_DETAIL_DISPLAY_MODE_OPTIONS = [
+    {"value": "summary", "label": "Summary"},
+    {"value": "detail", "label": "Raw Detail"},
+]
+
 CONDITIONAL_COMPARATOR_OPTIONS = [
     {"value": "le", "label": "<="},
     {"value": "ge", "label": ">="},
@@ -199,6 +207,7 @@ CONDITIONAL_FACTOR_CONVERSION_OPTIONS = [
 ]
 
 CONDITIONAL_DETAIL_RENDER_ROW_LIMIT = 5000
+ANALYSIS_DETAIL_RENDER_CELL_WARNING_THRESHOLD = 200000
 
 AT_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     prefix="at",
@@ -321,6 +330,7 @@ class _RegimeAnalysisPayload:
     stats_df: pd.DataFrame
     transition_df: pd.DataFrame
     duration_df: pd.DataFrame
+    detail_df: pd.DataFrame
 
 
 @dataclass(frozen=True)
@@ -380,6 +390,7 @@ def _build_regime_analysis_payload(
     raw_data,
     periodicity,
     selected_series,
+    returns_type,
     benchmark_assignments,
     long_short_assignments,
     date_range,
@@ -422,12 +433,16 @@ def _build_regime_analysis_payload(
         vol_scaler,
         vol_scaling_assignments,
     )
-    states, diagnostics = compute_regime_assignments(
+    regime_artifacts = compute_regime_assignments_core(
         raw_data=combined_raw_data,
         periodicity=bundle.periodicity,
         definition=definition,
         date_range=date_range,
     )
+    states = regime_artifacts.get("states", pd.Series(dtype="Int64", name="Regime"))
+    diagnostics = dict(regime_artifacts.get("diagnostics", {}) or {})
+    signal = regime_artifacts.get("signal", pd.Series(dtype=float))
+    signal_label = str(getattr(signal, "name", None) or "Regime Signal")
     unresolved_tuple = tuple(str(item) for item in (unresolved or []) if str(item).strip())
     if states.empty:
         warning = str((diagnostics or {}).get("warning") or "No regime assignments were produced.")
@@ -468,12 +483,15 @@ def _build_regime_analysis_payload(
             {
                 "RegimeName": definition.get("RegimeName"),
                 "MethodType": diagnostics.get("method_type"),
+                "Signal Label": signal_label,
+                "Series Return Basis": "excess" if returns_type == "excess" else "total",
                 "NumRegimes": diagnostics.get("num_regimes"),
                 "Observations": diagnostics.get("observations"),
                 "Warning": _build_regime_warning_text(diagnostics, unresolved_tuple) or None,
             }
         ]
     )
+    detail_df = build_regime_detail_frame(working_returns_df[selected_columns], states, signal, signal_label)
     return _RegimeAnalysisBuildResult(
         "ok",
         payload=_RegimeAnalysisPayload(
@@ -485,6 +503,7 @@ def _build_regime_analysis_payload(
             stats_df=stats_df,
             transition_df=transition_df,
             duration_df=duration_df,
+            detail_df=detail_df,
         ),
     )
 
@@ -1791,6 +1810,29 @@ def _build_factor_pair_df(factor_values: pd.Series, dependent_values: pd.Series)
     return paired
 
 
+def _build_factor_detail_frame(
+    dependent_df: pd.DataFrame,
+    factor_values: pd.Series,
+    selected_series,
+    quantiles: int,
+) -> pd.DataFrame:
+    if dependent_df is None or dependent_df.empty or factor_values is None or factor_values.empty:
+        return pd.DataFrame()
+
+    quantile_labels, _ordered_labels = _factor_quantile_labels(factor_values, quantiles)
+    factor_name = "Factor Value"
+    return build_wide_detail_frame(
+        dependent_df,
+        [
+            ("Quantile", quantile_labels.rename("Quantile")),
+            (factor_name, factor_values.rename(factor_name)),
+        ],
+        index_name="Date",
+        value_columns=[col for col in (selected_series or []) if col in dependent_df.columns],
+        drop_all_missing_values=True,
+    )
+
+
 def _coerce_factor_quantiles(value, default: int = 5) -> int:
     """Clamp factor quantiles to a practical range."""
     try:
@@ -2766,7 +2808,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                       factor_quantiles, factor_transform, factor_series_options,
                       factor_series_value, factor_qq_reference, conditional_view,
                       conditional_comparator, conditional_threshold, conditional_window_conversion,
-                      conditional_step, conditional_step_unit, conditional_display_mode):
+                      conditional_step, conditional_step_unit, conditional_display_mode,
+                      regime_display_mode):
     
     # Calculate visibility styles - use flex for full height
     flex_style = {"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"}
@@ -2823,18 +2866,20 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                             w=200,
                                             disabled=False,
                                         ),
-                                        html.Div([
-                                            dmc.Text("Returns Type", size="sm", mb=3, fw=500),
-                                            dmc.SegmentedControl(
-                                                id="at-returns-type-select",
-                                                data=[
-                                                    {"value": "total", "label": "Total"},
-                                                    {"value": "excess", "label": "Excess"},
-                                                ],
-                                                value=returns_type,
-                                                w=250,
-                                            ),
-                                        ]),
+                                        html.Div(
+                                            style={"display": "none"},
+                                            children=[
+                                                dmc.SegmentedControl(
+                                                    id="at-returns-type-select",
+                                                    data=[
+                                                        {"value": "total", "label": "Total"},
+                                                        {"value": "excess", "label": "Excess"},
+                                                    ],
+                                                    value=returns_type,
+                                                    w=250,
+                                                ),
+                                            ],
+                                        ),
                                         html.Div([
                                             dmc.Text("Vol Scaler", size="sm", mb=3, fw=500),
                                             dmc.Tooltip(
@@ -3336,16 +3381,17 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                 _build_at_returns_type_control("at-returns-type-select-factor", returns_type),
                                 html.Div([
                                     dmc.Text("Mode", size="sm", fw=500, mb=3),
-                                    dmc.SegmentedControl(
-                                        id="at-factor-mode-select",
-                                        data=[
-                                            {"value": "box", "label": "Box Plot"},
-                                            {"value": "scatter", "label": "Scatter"},
-                                            {"value": "qq", "label": "Q-Q Plot"},
-                                        ],
-                                        value=factor_mode,
-                                        size="sm",
-                                    ),
+                                        dmc.SegmentedControl(
+                                            id="at-factor-mode-select",
+                                            data=[
+                                                {"value": "box", "label": "Box Plot"},
+                                                {"value": "scatter", "label": "Scatter"},
+                                                {"value": "detail", "label": "Raw Detail"},
+                                                {"value": "qq", "label": "Q-Q Plot"},
+                                            ],
+                                            value=factor_mode,
+                                            size="sm",
+                                        ),
                                 ]),
                                 html.Div(
                                     id="at-factor-qq-reference-wrapper",
@@ -3616,6 +3662,15 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         size="sm",
                                         variant="light",
                                         leftSection=DashIconify(icon="tabler:binary-tree-2", width=14),
+                                    ),
+                                ]),
+                                html.Div([
+                                    dmc.Text("View", size="sm", fw=500, mb=3),
+                                    dmc.SegmentedControl(
+                                        id="at-regime-detail-display-mode-select",
+                                        data=REGIME_DETAIL_DISPLAY_MODE_OPTIONS,
+                                        value=regime_display_mode,
+                                        size="sm",
                                     ),
                                 ]),
                             ],
@@ -4380,6 +4435,7 @@ layout = dmc.Container(
                 conditional_step=1,
                 conditional_step_unit="months",
                 conditional_display_mode="summary",
+                regime_display_mode="summary",
             ),
             style={"display": "none"},
         ),
@@ -4416,6 +4472,7 @@ layout = dmc.Container(
         dcc.Store(id="at-conditional-step-store", data=1, storage_type="session"),
         dcc.Store(id="at-conditional-step-unit-store", data="months", storage_type="session"),
         dcc.Store(id="at-conditional-display-mode-store", data="summary", storage_type="session"),
+        dcc.Store(id="at-regime-detail-display-mode-store", data="summary", storage_type="session"),
         dcc.Store(id="at-factor-definitions-db-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-definitions-local-store", data=[], storage_type="session"),
         dcc.Store(id="at-factor-def-modal-draft-store", data=None, storage_type="session"),
@@ -4544,6 +4601,7 @@ clientside_callback(
     Output("at-conditional-step-input", "value"),
     Output("at-conditional-step-unit-select", "value"),
     Output("at-conditional-display-mode-select", "value"),
+    Output("at-regime-detail-display-mode-select", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
     Output("at-state-ready-store", "data", allow_duplicate=True),
@@ -4573,6 +4631,7 @@ clientside_callback(
     State("at-conditional-step-store", "data"),
     State("at-conditional-step-unit-store", "data"),
     State("at-conditional-display-mode-store", "data"),
+    State("at-regime-detail-display-mode-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
@@ -4605,6 +4664,7 @@ def restore_application_state(
     stored_conditional_step,
     stored_conditional_step_unit,
     stored_conditional_display_mode,
+    stored_regime_display_mode,
     stored_monthly_view,
     stored_monthly_series,
     pending_series,
@@ -4614,7 +4674,7 @@ def restore_application_state(
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "tbill", "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "normal", "forward", "le", 0, "compound", 1, "months", "summary",
+            "box", 5, "raw", "normal", "forward", "le", 0, "compound", 1, "months", "summary", "summary",
             "annual", [], False
         )
 
@@ -4646,7 +4706,7 @@ def restore_application_state(
         # Growth
         gr_chart = stored_gr_chart if stored_gr_chart is not None else "chart"
 
-        factor_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter", "qq"} else "box"
+        factor_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter", "detail", "qq"} else "box"
         factor_quantiles = _coerce_factor_quantiles(stored_factor_quantiles, default=5)
         factor_transform = stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw"
         factor_qq_reference = stored_factor_qq_reference if stored_factor_qq_reference in {"normal", "reference"} else "normal"
@@ -4661,6 +4721,7 @@ def restore_application_state(
         conditional_step = _coerce_positive_int(stored_conditional_step, default=1)
         conditional_step_unit = stored_conditional_step_unit if stored_conditional_step_unit in {"periods", "months"} else "months"
         conditional_display_mode = stored_conditional_display_mode if stored_conditional_display_mode in {"summary", "detail"} else "summary"
+        regime_display_mode = stored_regime_display_mode if stored_regime_display_mode in {"summary", "detail"} else "summary"
         
         # Monthly View
         monthly_view = stored_monthly_view if stored_monthly_view is not None else "annual"
@@ -4674,7 +4735,7 @@ def restore_application_state(
             roll_win, roll_metric, roll_type, roll_type_disabled, roll_type_style, roll_chart, dd_chart, gr_chart,
             factor_mode, factor_quantiles, factor_transform, factor_qq_reference,
             conditional_view, conditional_comparator, conditional_threshold, conditional_window_conversion,
-            conditional_step, conditional_step_unit, conditional_display_mode,
+            conditional_step, conditional_step_unit, conditional_display_mode, regime_display_mode,
             monthly_view, valid_selection, False
         )
 
@@ -4683,7 +4744,7 @@ def restore_application_state(
         return (
             [{"value": "daily_trading", "label": "Daily (Trading)"}], "daily_trading", "total", 0, "tbill", "statistics",
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
-            "box", 5, "raw", "normal", "forward", "le", 0, "compound", 1, "months", "summary",
+            "box", 5, "raw", "normal", "forward", "le", 0, "compound", 1, "months", "summary", "summary",
             "annual", [], False
         )
 
@@ -4947,6 +5008,7 @@ clientside_callback(
                 'at-factor-def-modal-draft-store',
                 'at-factor-def-db-available-store',
                 'at-regime-definition-store',
+                'at-regime-detail-display-mode-store',
                 'at-regime-definitions-db-store',
                 'at-regime-definitions-local-store',
                 'at-regime-def-modal-draft-store',
@@ -5580,7 +5642,7 @@ clientside_callback(
 
 
 clientside_callback(
-    "function(value) { return (value === 'scatter' || value === 'qq') ? value : 'box'; }",
+    "function(value) { return (value === 'scatter' || value === 'detail' || value === 'qq') ? value : 'box'; }",
     Output("at-factor-mode-store", "data"),
     Input("at-factor-mode-select", "value"),
     prevent_initial_call=True,
@@ -5626,10 +5688,10 @@ clientside_callback(
     function(mode, qqReference) {
         const currentMode = mode || 'box';
         const currentReference = qqReference === 'reference' ? 'reference' : 'normal';
-        const showFactor = currentMode === 'box' || currentMode === 'scatter' || (currentMode === 'qq' && currentReference === 'reference');
-        const showTransform = currentMode === 'box' || currentMode === 'scatter';
+        const showFactor = currentMode === 'box' || currentMode === 'scatter' || currentMode === 'detail' || (currentMode === 'qq' && currentReference === 'reference');
+        const showTransform = currentMode === 'box' || currentMode === 'scatter' || currentMode === 'detail';
         return [
-            currentMode === 'box' ? {display: 'block'} : {display: 'none'},
+            (currentMode === 'box' || currentMode === 'detail') ? {display: 'block'} : {display: 'none'},
             currentMode === 'qq' ? {display: 'block'} : {display: 'none'},
             showFactor ? {display: 'block'} : {display: 'none'},
             showTransform ? {display: 'block'} : {display: 'none'},
@@ -5646,6 +5708,15 @@ clientside_callback(
     Input("at-factor-qq-reference-select", "value"),
     prevent_initial_call=False,
 )
+
+
+@callback(
+    Output("at-regime-detail-display-mode-store", "data"),
+    Input("at-regime-detail-display-mode-select", "value"),
+    prevent_initial_call=False,
+)
+def sync_regime_detail_display_mode(value):
+    return value if value in {"summary", "detail"} else "summary"
 
 
 clientside_callback(
@@ -9633,7 +9704,7 @@ def update_factor_analysis(
 
     if raw_data is None or not selected_series:
         return None, dmc.Text("Select series to view factor analysis.", size="sm", c="dimmed")
-    mode = factor_mode if factor_mode in {"box", "scatter", "qq"} else "box"
+    mode = factor_mode if factor_mode in {"box", "scatter", "detail", "qq"} else "box"
     qq_reference = factor_qq_reference if factor_qq_reference in {"normal", "reference"} else "normal"
     if mode != "qq" and not factor_series:
         return None, dmc.Text("Select a factor series.", size="sm", c="dimmed")
@@ -9680,6 +9751,21 @@ def update_factor_analysis(
         if (factor_transform or "raw") == "zscore"
         else display_factor_name
     )
+
+    if mode == "detail":
+        detail_df = _build_factor_detail_frame(dependent_df, factor_values, selected_series, quantiles)
+        if detail_df.empty:
+            return None, dmc.Text("No overlapping data available for factor detail.", size="sm", c="dimmed")
+        warning_children = _detail_render_warning(detail_df)
+        detail_grid = _build_regime_grid_component(
+            "Factor Detail",
+            detail_df,
+            theme,
+            percent_cols={str(col) for col in selected_series},
+            pinned_cols={"Date"},
+            max_height=560,
+        )
+        return warning_children, detail_grid
 
     charts = []
     total_points = 0
@@ -10432,6 +10518,20 @@ def _build_regime_grid_component(
     )
 
 
+def _detail_render_warning(df: pd.DataFrame) -> dmc.Alert | None:
+    if df is None or df.empty:
+        return None
+    cell_count = int(len(df.index) * max(1, len(df.columns)))
+    if cell_count <= ANALYSIS_DETAIL_RENDER_CELL_WARNING_THRESHOLD:
+        return None
+    return dmc.Alert(
+        "Large raw detail view. Excel export includes the same full detail if browser rendering feels slow.",
+        color="yellow",
+        variant="light",
+        mb="sm",
+    )
+
+
 def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     diagnostics = payload.diagnostics or {}
     regime_name = str(payload.definition.get("RegimeName") or "").strip() or "—"
@@ -10465,6 +10565,7 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     Output("at-regime-analysis-container", "children"),
     Input("at-main-tabs", "value"),
     Input("at-regime-definition-select", "value"),
+    Input("at-regime-detail-display-mode-select", "value"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
@@ -10484,6 +10585,7 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
 def update_regime_analysis(
     active_tab,
     regime_definition_key,
+    regime_display_mode,
     raw_data,
     periodicity,
     selected_series,
@@ -10517,6 +10619,7 @@ def update_regime_analysis(
         raw_data,
         periodicity,
         selected_series,
+        returns_type,
         benchmark_assignments,
         long_short_assignments,
         date_range,
@@ -10536,6 +10639,40 @@ def update_regime_analysis(
         return None, dmc.Text(build_result.message or "Unable to build regime analysis.", size="sm", c="dimmed")
 
     payload = build_result.payload
+    warning_children = []
+    warning_text = str((payload.diagnostics or {}).get("warning") or "").strip()
+    if warning_text:
+        warning_children.append(dmc.Alert(warning_text, color="orange", variant="light", mb="sm"))
+    if payload.unresolved:
+        warning_children.append(
+            dmc.Alert(
+                f"Missing source series (not resolved from DB): {', '.join(payload.unresolved)}",
+                color="orange",
+                variant="light",
+                mb="sm",
+            )
+        )
+
+    display_mode = regime_display_mode if regime_display_mode in {"summary", "detail"} else "summary"
+    if display_mode == "detail":
+        detail_warning = _detail_render_warning(payload.detail_df)
+        if payload.detail_df.empty:
+            return None, dmc.Text("No regime raw detail is available for current settings.", size="sm", c="dimmed")
+        if detail_warning is not None:
+            warning_children.append(detail_warning)
+        return (
+            html.Div(warning_children),
+            _build_regime_grid_component(
+                "Regime Raw Detail",
+                payload.detail_df,
+                theme,
+                percent_cols={str(col) for col in selected_series},
+                integer_cols={"Regime"},
+                pinned_cols={"Date", "Regime"},
+                max_height=560,
+            ),
+        )
+
     timeline = payload.timeline_df
     if timeline.empty:
         return None, dmc.Text("No regime timeline available for current settings.", size="sm", c="dimmed")
@@ -10606,20 +10743,6 @@ def update_regime_analysis(
             max_height=260,
         ),
     ]
-
-    warning_children = []
-    warning_text = str((payload.diagnostics or {}).get("warning") or "").strip()
-    if warning_text:
-        warning_children.append(dmc.Alert(warning_text, color="orange", variant="light", mb="sm"))
-    if payload.unresolved:
-        warning_children.append(
-            dmc.Alert(
-                f"Missing source series (not resolved from DB): {', '.join(payload.unresolved)}",
-                color="orange",
-                variant="light",
-                mb="sm",
-            )
-        )
 
     return html.Div(warning_children), dmc.Stack(gap="sm", children=stack_children)
 

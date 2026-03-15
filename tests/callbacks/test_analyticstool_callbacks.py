@@ -293,13 +293,14 @@ def test_restore_application_state_accepts_saved_series_dict(page_modules, raw_j
         1,
         "months",
         "summary",
+        "summary",
         "annual",
         None,
         {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
     )
 
-    assert out[26] == ["Asset_A"]
-    assert out[27] is False
+    assert out[27] == ["Asset_A"]
+    assert out[28] is False
 
 
 def test_at_get_series_page_state_excludes_saved_result_series(page_modules, raw_json):
@@ -1353,6 +1354,7 @@ def test_restore_application_state_restores_factor_analysis_qq_controls(page_mod
         1,
         "months",
         "summary",
+        "summary",
         "monthly",
         None,
         {},
@@ -1483,44 +1485,41 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     regime_states = pd.Series([1, 1, 2, 2, 3], index=idx, dtype="Int64", name="Regime")
     monkeypatch.setattr(
         analyticstool,
-        "compute_regime_assignments",
-        lambda *_args, **_kwargs: (
-            regime_states,
-            {"method_type": 2, "num_regimes": 3, "observations": 5, "warning": None},
+        "_build_regime_analysis_payload",
+        lambda *_args, **_kwargs: analyticstool._RegimeAnalysisBuildResult(
+            "ok",
+            payload=analyticstool._RegimeAnalysisPayload(
+                definition={"RegimeName": "SavedRegime"},
+                diagnostics={"method_type": 2, "num_regimes": 3, "observations": 5, "warning": None},
+                unresolved=(),
+                settings_df=pd.DataFrame([{"RegimeName": "SavedRegime", "MethodType": 2, "NumRegimes": 3, "Observations": 5}]),
+                timeline_df=pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3]}),
+                stats_df=pd.DataFrame(
+                    [
+                        {
+                            "Regime": 1,
+                            "Series": "Asset_A",
+                            "Observations": 2,
+                            "Mean Return": 0.01,
+                        }
+                    ]
+                ),
+                transition_df=pd.DataFrame(
+                    [[0.5, 0.5], [0.2, 0.8]],
+                    index=pd.Index([1, 2], name="From Regime"),
+                    columns=[1, 2],
+                ),
+                duration_df=pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
+                detail_df=pd.DataFrame(
+                    {
+                        "Date": idx,
+                        "Regime": regime_states.to_list(),
+                        "Regime Signal": [0.1, 0.05, -0.02, -0.01, 0.03],
+                        "Asset_A": returns_df["Asset_A"].to_list(),
+                    }
+                ),
+            ),
         ),
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_timeline_frame",
-        lambda *_args, **_kwargs: pd.DataFrame({"Date": idx, "Regime": [1, 1, 2, 2, 3]}),
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_statistics_table",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [
-                {
-                    "Regime": 1,
-                    "Series": "Asset_A",
-                    "Observations": 2,
-                    "Mean Return": 0.01,
-                }
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_transition_matrix",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [[0.5, 0.5], [0.2, 0.8]],
-            index=pd.Index([1, 2], name="From Regime"),
-            columns=[1, 2],
-        ),
-    )
-    monkeypatch.setattr(
-        analyticstool,
-        "build_regime_duration_table",
-        lambda *_args, **_kwargs: pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
     )
     monkeypatch.setattr(analyticstool.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
 
@@ -1814,17 +1813,38 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
 
     monkeypatch.setattr(
         analyticstool,
-        "compute_regime_assignments",
-        lambda *_args, **_kwargs: (
-            states,
-            {"method_type": 3, "num_regimes": 3, "observations": 6, "warning": None},
+        "_build_regime_analysis_payload",
+        lambda *_args, **_kwargs: analyticstool._RegimeAnalysisBuildResult(
+            "ok",
+            payload=analyticstool._RegimeAnalysisPayload(
+                definition={"RegimeName": "SavedRegime"},
+                diagnostics={"method_type": 3, "num_regimes": 3, "observations": 6, "warning": None},
+                unresolved=(),
+                settings_df=pd.DataFrame([{"RegimeName": "SavedRegime", "MethodType": 3, "NumRegimes": 3, "Observations": 6}]),
+                timeline_df=pd.DataFrame({"Date": idx, "Regime": states.to_list()}),
+                stats_df=pd.DataFrame([{"Regime": 1, "Series": "Asset_A", "Observations": 2, "Mean Return": 0.01}]),
+                transition_df=pd.DataFrame(
+                    [[0.5, 0.5], [0.2, 0.8]],
+                    index=pd.Index([1, 2], name="From Regime"),
+                    columns=[1, 2],
+                ),
+                duration_df=pd.DataFrame([{"Regime": 1, "Runs": 1, "Current Run Length": 2}]),
+                detail_df=pd.DataFrame(
+                    {
+                        "Date": idx,
+                        "Regime": states.to_list(),
+                        "Regime Signal": [0.1, 0.05, -0.02, -0.01, 0.03, 0.04],
+                        "Asset_A": returns_df["Asset_A"].to_list(),
+                    }
+                ),
+            ),
         ),
     )
-    monkeypatch.setattr(analyticstool, "get_working_returns", lambda *_args, **_kwargs: returns_df.copy())
 
     warning, content = analyticstool.update_regime_analysis(
         "regime_analysis",
         "def::SavedRegime",
+        "summary",
         "raw-json",
         "daily",
         ["Asset_A"],

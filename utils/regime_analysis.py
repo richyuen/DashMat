@@ -45,6 +45,83 @@ def _as_tuple(series: Any) -> tuple:
     return (text_val,)
 
 
+def _normalize_detail_series(series: pd.Series, name: str | None = None) -> pd.Series:
+    out = pd.Series(series, copy=True)
+    if name is not None and out.name != name:
+        out = out.rename(name)
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()]
+    out = out[~out.index.duplicated(keep="last")]
+    return out.sort_index()
+
+
+def _normalize_detail_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()]
+    out = out[~out.index.duplicated(keep="last")]
+    return out.sort_index()
+
+
+def build_wide_detail_frame(
+    value_frame: pd.DataFrame,
+    metadata_columns: list[tuple[str, pd.Series]],
+    *,
+    index_name: str = "Date",
+    value_columns: list[str] | tuple[str, ...] | None = None,
+    drop_all_missing_values: bool = True,
+    int_columns: list[str] | tuple[str, ...] | set[str] | None = None,
+    inputs_aligned: bool = False,
+) -> pd.DataFrame:
+    if value_frame is None or value_frame.empty:
+        return pd.DataFrame()
+
+    values_work = value_frame if inputs_aligned else _normalize_detail_frame(value_frame)
+    if values_work.empty:
+        return pd.DataFrame()
+
+    common_idx = values_work.index
+    normalized_metadata: list[tuple[str, pd.Series]] = []
+    for column_name, series in metadata_columns:
+        if inputs_aligned:
+            series_work = series if isinstance(series, pd.Series) else pd.Series(series, index=common_idx, name=column_name)
+            if series_work.name != column_name:
+                series_work = series_work.rename(column_name)
+            if not series_work.index.equals(common_idx):
+                series_work = series_work.reindex(common_idx)
+        else:
+            series_work = _normalize_detail_series(series, column_name)
+        if series_work.empty:
+            return pd.DataFrame()
+        if not inputs_aligned:
+            common_idx = common_idx.intersection(series_work.index)
+        normalized_metadata.append((column_name, series_work))
+
+    if common_idx.empty:
+        return pd.DataFrame()
+
+    metadata_frame = pd.DataFrame(index=common_idx)
+    for column_name, series_work in normalized_metadata:
+        metadata_frame[column_name] = series_work.reindex(common_idx)
+
+    detail_df = pd.concat([metadata_frame, values_work.reindex(common_idx)], axis=1)
+    series_columns = [col for col in (value_columns or values_work.columns) if col in detail_df.columns]
+    if drop_all_missing_values and series_columns:
+        detail_df = detail_df.dropna(subset=series_columns, how="all")
+    if detail_df.empty:
+        return pd.DataFrame()
+
+    for column_name in set(int_columns or ()):
+        if column_name in detail_df.columns:
+            detail_df[column_name] = pd.to_numeric(detail_df[column_name], errors="coerce").astype("Int64")
+
+    detail_df.index.name = index_name
+    detail_df = detail_df.reset_index()
+    if detail_df.columns[0] != index_name:
+        detail_df = detail_df.rename(columns={detail_df.columns[0]: index_name})
+    return detail_df
+
+
 def regime_required_series(definition: dict[str, Any] | None) -> list[str]:
     """Extract required source series names from a regime definition."""
     normalized, error = validate_regime_definition_payload(definition or {})
@@ -826,3 +903,31 @@ def build_regime_timeline_frame(states: pd.Series) -> pd.DataFrame:
     out["Regime"] = pd.to_numeric(out["Regime"], errors="coerce").astype("Int64")
     out = out.dropna(subset=["Date", "Regime"]).sort_values("Date")
     return out.reset_index(drop=True)
+
+
+def build_regime_detail_frame(
+    returns_df: pd.DataFrame,
+    states: pd.Series,
+    signal: pd.Series,
+    signal_label: str = "Regime Signal",
+) -> pd.DataFrame:
+    if returns_df is None or returns_df.empty or states is None or states.empty:
+        return pd.DataFrame()
+
+    signal_name = signal_label or "Regime Signal"
+    states_work = pd.to_numeric(_normalize_detail_series(states, "Regime"), errors="coerce").astype("Int64").dropna()
+    signal_work = pd.to_numeric(_normalize_detail_series(signal, signal_name), errors="coerce").dropna()
+    if states_work.empty or signal_work.empty:
+        return pd.DataFrame()
+
+    return build_wide_detail_frame(
+        returns_df,
+        [
+            ("Regime", states_work),
+            (signal_name, signal_work),
+        ],
+        index_name="Date",
+        value_columns=list(returns_df.columns),
+        drop_all_missing_values=True,
+        int_columns={"Regime"},
+    )

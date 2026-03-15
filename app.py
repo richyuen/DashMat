@@ -26,7 +26,7 @@ app = Dash(
 cache = init_cache(app.server)
 app.server.logger.setLevel(logging.INFO)
 
-USERINFO_DATA = {"role": "Admin"}
+USERINFO_DATA = {"role": "Admin", "username": "Admin User"}
 dmc.pre_render_color_scheme()
 
 
