@@ -136,6 +136,19 @@ _MODEL_DEFAULT_NAME = {
     "elastic_net": "Elastic Net",
 }
 
+REG_TAB_SPECS = (
+    {"value": "anova", "label": "ANOVA"},
+    {"value": "rolling", "label": "Rolling Summary"},
+    {"value": "scatter", "label": "Scatter"},
+    {"value": "weights", "label": "Weights"},
+    {"value": "statistics", "label": "Statistics"},
+    {"value": "returns", "label": "Returns"},
+    {"value": "rolling_returns", "label": "Rolling"},
+    {"value": "calendar", "label": "Calendar Year"},
+    {"value": "growth", "label": "Growth of $1"},
+    {"value": "drawdown", "label": "Drawdown"},
+)
+
 _MISSING_DATA_OPTIONS = [
     {"value": "fill_na", "label": "Fill NA"},
     {"value": "fill_0", "label": "Fill 0"},
@@ -151,6 +164,10 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
+
+
+def literal_field_dash_grid_options(options: dict | None = None) -> dict:
+    return {"suppressFieldDotNotation": True, **(options or {})}
 
 
 def _reg_get_working_returns(raw_data, periodicity, selected_series,
@@ -930,7 +947,7 @@ def build_reg_help_modal():
                                         dmc.Text("Run Regression executes using the current configuration and selected series.", size="sm"),
                                         dmc.Text("Results are saved by name, selectable from the result dropdown, and can be deleted.", size="sm"),
                                         dmc.Text(
-                                            "Output tabs include ANOVA, Rolling Summary, Rolling, Weights, Statistics, Returns, Growth of $1, Calendar Year, Drawdown, and Scatter.",
+                                            "Output tabs include ANOVA, Rolling Summary, Scatter, Weights, Statistics, Returns, Rolling, Calendar Year, Growth of $1, and Drawdown.",
                                             size="sm",
                                         ),
                                         dmc.Text("Rolling tab supports Total Return, Volatility, Sharpe Ratio, and Sortino Ratio metrics.", size="sm"),
@@ -1657,16 +1674,8 @@ def build_reg_main_layout():
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
                             dmc.TabsList([
-                                dmc.TabsTab("ANOVA", value="anova"),
-                                dmc.TabsTab("Rolling Summary", value="rolling"),
-                                dmc.TabsTab("Weights", value="weights"),
-                                dmc.TabsTab("Statistics", value="statistics"),
-                                dmc.TabsTab("Returns", value="returns"),
-                                dmc.TabsTab("Rolling", value="rolling_returns"),
-                                dmc.TabsTab("Calendar Year", value="calendar"),
-                                dmc.TabsTab("Growth of $1", value="growth"),
-                                dmc.TabsTab("Drawdown", value="drawdown"),
-                                dmc.TabsTab("Scatter", value="scatter"),
+                                dmc.TabsTab(spec["label"], value=spec["value"])
+                                for spec in REG_TAB_SPECS
                             ]),
                             dmc.TabsPanel(
                                 value="anova",
@@ -4800,6 +4809,16 @@ def reg_download_excel(
         returns_df["Date"] = pd.to_datetime(returns_df["Date"]).dt.strftime("%Y-%m-%d")
 
     # ------------------------------------------------------------------
+    # Scatter tab
+    # ------------------------------------------------------------------
+    scatter_df = _info_df("No scatter data available.")
+    if not display_df.empty and ordered_cols:
+        scatter_df = display_df[ordered_cols].copy()
+        scatter_df.index.name = "Date"
+        scatter_df = scatter_df.reset_index()
+        scatter_df["Date"] = pd.to_datetime(scatter_df["Date"]).dt.strftime("%Y-%m-%d")
+
+    # ------------------------------------------------------------------
     # Rolling tab
     # ------------------------------------------------------------------
     rolling_df = _info_df("No rolling values available for selected settings.")
@@ -4918,6 +4937,7 @@ def reg_download_excel(
         ("Settings", settings_df),
         ("ANOVA", anova_df),
         ("Rolling Summary", rolling_summary_df),
+        ("Scatter", scatter_df),
         ("Weights", weights_df),
         ("Statistics", stats_df),
         ("Returns", returns_df),
@@ -5558,7 +5578,7 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
         rowData=df_display[table_fields].to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "380px"},
-        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
     )
     if view_mode == "table":
         return table
@@ -5674,7 +5694,7 @@ def reg_render_rolling_returns(
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "440px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5761,7 +5781,7 @@ def reg_render_weights(selected, results, view_mode, theme):
                 rowData=table_df[table_fields].to_dict("records"),
                 defaultColDef={"resizable": True, "sortable": True},
                 style={"height": "420px"},
-                dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+                dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
             )
             ],
         )
@@ -5833,11 +5853,11 @@ def reg_render_returns(selected, results, raw_data):
         rowData=df_reset.to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "500px"},
-        dashGridOptions={
+        dashGridOptions=literal_field_dash_grid_options({
             "pagination": False,
             "suppressExcelExport": True,
             "suppressCsvExport": True,
-        },
+        }),
     )
 
 
@@ -5893,7 +5913,7 @@ def reg_render_growth(selected, results, raw_data, view_mode, theme):
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "460px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5992,7 +6012,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
             rowData=monthly_rows,
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "460px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     cal_df = calculate_calendar_year_returns(
@@ -6030,7 +6050,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
         rowData=table_df.to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "460px"},
-        dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+        dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
     )
 
 
@@ -6088,7 +6108,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "440px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -6253,7 +6273,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
             rowData=row_data,
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "600px"},
-            dashGridOptions={"suppressExcelExport": True, "suppressCsvExport": True},
+            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     entry = results[selected]

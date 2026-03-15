@@ -512,6 +512,25 @@ def test_reg_layout_starts_with_welcome_and_main_hidden(regression_page):
     assert getattr(main, "style", {})["display"] == "none"
 
 
+def test_reg_layout_uses_diagnostics_first_tab_order(regression_page):
+    tabs = _find_component_by_id(regression_page.layout, "reg-tabs")
+    tabs_list = getattr(tabs, "children", [])[0]
+    labels = [getattr(tab, "children", None) for tab in getattr(tabs_list, "children", [])]
+
+    assert labels == [
+        "ANOVA",
+        "Rolling Summary",
+        "Scatter",
+        "Weights",
+        "Statistics",
+        "Returns",
+        "Rolling",
+        "Calendar Year",
+        "Growth of $1",
+        "Drawdown",
+    ]
+
+
 def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, regression_page):
     idx = pd.date_range("2024-01-01", periods=5, freq="B")
     new_df = pd.DataFrame({"IDX_A": [0.01, 0.0, 0.002, -0.003, 0.004]}, index=idx)
@@ -856,7 +875,7 @@ def test_reg_help_modal_covers_three_sections_and_model_explainers(regression_pa
         "fill in-sample",
         "linear constraints",
         "run regression",
-        "anova, rolling summary, rolling, weights, statistics, returns, growth of $1, calendar year, drawdown, and scatter",
+        "anova, rolling summary, scatter, weights, statistics, returns, rolling, calendar year, growth of $1, and drawdown",
         "save session",
         "load session",
         "download excel",
@@ -1198,6 +1217,7 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
         "Settings",
         "ANOVA",
         "Rolling Summary",
+        "Scatter",
         "Weights",
         "Statistics",
         "Returns",
@@ -1228,6 +1248,12 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     assert "Overall Fit" in set(anova_df["Block"].dropna())
     assert "ARIMA.const" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
     assert "GARCH.mu" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
+
+    scatter_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Scatter")
+    assert "Date" in scatter_df.columns
+    assert "Predicted" in scatter_df.columns
+    assert "Actual (Y)" in scatter_df.columns
+    assert "Residual" in scatter_df.columns
 
 
 def test_reg_sync_anova_window_options_defaults_to_latest_on_result_change(monkeypatch, regression_page):
@@ -1266,6 +1292,25 @@ def test_reg_sync_anova_window_options_defaults_to_latest_on_results_refresh(mon
     _options, value, _disabled = regression_page.reg_sync_anova_window_options("R1", results, "1")
 
     assert value == "2"
+
+
+def test_reg_render_returns_preserves_dotted_series_fields(monkeypatch, regression_page):
+    idx = pd.date_range("2024-01-01", periods=2, freq="D")
+    dotted_name = "T. Rowe Fund"
+    monkeypatch.setattr(
+        regression_page,
+        "_reg_build_display_series",
+        lambda *_args, **_kwargs: (
+            pd.DataFrame({dotted_name: [0.01, 0.02]}, index=idx),
+            [dotted_name],
+        ),
+    )
+
+    grid = regression_page.reg_render_returns("R1", {"R1": {"periodicity": "daily"}}, "raw-json")
+
+    assert getattr(grid, "columnDefs", [])[1]["field"] == dotted_name
+    assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
+    assert getattr(grid, "rowData", [])[0][dotted_name] == pytest.approx(0.01)
 
 
 def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, regression_page):
