@@ -36,6 +36,17 @@ def _sid(prefix: str, suffix: str) -> str:
     return f"{prefix}-{suffix}"
 
 
+_ANCHORED_GROWING_MODAL_Y_OFFSET = "28vh"
+_ANCHORED_GROWING_MODAL_STYLES = {
+    "content": {"maxHeight": "84vh"},
+    "body": {"maxHeight": "72vh", "overflowY": "auto"},
+}
+_UPWARD_MULTISELECT_COMBOBOX_PROPS = {
+    "position": "top",
+    "middlewares": {"flip": False, "shift": True},
+}
+
+
 @dataclass(frozen=True)
 class PagePrefixConfig:
     prefix: str
@@ -410,14 +421,16 @@ def build_db_add_modal(prefix: str):
                 dmc.Text("AA Tool indices", fw=600, size="sm"),
             ],
         ),
-        size="md",
-        centered=True,
+        size="820px",
+        centered=False,
+        yOffset=_ANCHORED_GROWING_MODAL_Y_OFFSET,
         closeOnClickOutside=True,
         withCloseButton=True,
         radius="lg",
         className="dashmat-modal",
         overlayProps={"blur": 2, "opacity": 0.45},
         transitionProps={"transition": "fade", "duration": 180},
+        styles=_ANCHORED_GROWING_MODAL_STYLES,
         children=[
             dmc.Alert(
                 id=_sid(prefix, "db-add-error-alert"),
@@ -435,7 +448,8 @@ def build_db_add_modal(prefix: str):
                 clearSearchOnChange=False,
                 placeholder="Select one or more series",
                 nothingFoundMessage="No categories found",
-                maxDropdownHeight=480,
+                maxDropdownHeight=380,
+                comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
                 w="100%",
             ),
             dmc.Group(
@@ -603,13 +617,15 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
             ],
         ),
         size="900px",
-        centered=True,
+        centered=False,
+        yOffset=_ANCHORED_GROWING_MODAL_Y_OFFSET,
         closeOnClickOutside=True,
         withCloseButton=True,
         radius="lg",
         className="dashmat-modal",
         overlayProps={"blur": 2, "opacity": 0.45},
         transitionProps={"transition": "fade", "duration": 180},
+        styles=_ANCHORED_GROWING_MODAL_STYLES,
         children=[
             dmc.Alert(
                 id=_sid(prefix, "underlying-add-error-alert"),
@@ -644,6 +660,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                                 searchable=False,
                                 clearable=True,
                                 maxDropdownHeight=240,
+                                comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
                                 w=280,
                                 placeholder="Select one or more types",
                             ),
@@ -659,6 +676,7 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                         disabled=True,
                         nothingFoundMessage="No underlying categories found",
                         maxDropdownHeight=480,
+                        comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
                         w="100%",
                         placeholder="Select one or more underlying categories",
                     ),
@@ -742,12 +760,14 @@ def build_sheet_select_modal(prefix: str):
             ],
         ),
         size="lg",
-        centered=True,
+        centered=False,
+        yOffset=_ANCHORED_GROWING_MODAL_Y_OFFSET,
         closeOnClickOutside=False,
         radius="lg",
         className="dashmat-modal",
         overlayProps={"blur": 2, "opacity": 0.45},
         transitionProps={"transition": "fade", "duration": 180},
+        styles=_ANCHORED_GROWING_MODAL_STYLES,
         children=[
             dmc.Text("This file contains multiple sheets. Select one or more sheets to import:", size="sm", mb="md"),
             dmc.MultiSelect(
@@ -758,6 +778,7 @@ def build_sheet_select_modal(prefix: str):
                 size="sm",
                 placeholder="Select sheet(s)",
                 maxDropdownHeight=480,
+                comboboxProps=_UPWARD_MULTISELECT_COMBOBOX_PROPS,
             ),
             dmc.Group(
                 mt="md",
