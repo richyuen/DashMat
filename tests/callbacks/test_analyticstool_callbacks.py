@@ -209,6 +209,7 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
             {"start": "2024-01-01", "end": "2024-12-31"},
             None,
             None,
+            "daily",
         )
     )
 
@@ -216,6 +217,39 @@ def test_initialize_date_range_skips_store_write_when_range_unchanged(monkeypatc
     assert end == "2024-12-31"
     assert range_store is no_update
     assert ready is True
+
+
+def test_initialize_date_range_disables_common_daily_without_daily_source(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+
+    monkeypatch.setattr(
+        analyticstool,
+        "compute_date_range_candidates",
+        lambda *_args, **_kwargs: {
+            "available_series": ["Asset_A"],
+            "common_daily_start": "2024-01-01",
+            "common_daily_end": "2024-12-31",
+        },
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "resolve_initial_range",
+        lambda *_args, **_kwargs: ("2024-01-01", "2024-12-31"),
+    )
+
+    _start, _end, _style, _common_disabled, daily_disabled, _max_disabled, _range_store, _ready = (
+        analyticstool.initialize_date_range(
+            "raw-json",
+            "monthly",
+            ["Asset_A"],
+            None,
+            None,
+            None,
+            "monthly",
+        )
+    )
+
+    assert daily_disabled is True
 
 
 def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
@@ -239,6 +273,7 @@ def test_restore_application_state_accepts_saved_series_dict(page_modules, raw_j
         ["Asset_A"],
         "total",
         0,
+        "tbill",
         "statistics",
         "1y",
         "total_return",
@@ -254,8 +289,8 @@ def test_restore_application_state_accepts_saved_series_dict(page_modules, raw_j
         {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
     )
 
-    assert out[17] == ["Asset_A"]
-    assert out[18] is False
+    assert out[18] == ["Asset_A"]
+    assert out[19] is False
 
 
 def test_at_get_series_page_state_excludes_saved_result_series(page_modules, raw_json):
@@ -329,7 +364,10 @@ def test_at_open_modal_raw_data_adds_only_generic_new_series(monkeypatch, page_m
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
     analyticstool, _ = page_modules
 
-    def _fake_stats(*_args, **_kwargs):
+    called = {}
+
+    def _fake_stats(*args, **_kwargs):
+        called["use_risk_free"] = args[-1]
         return [
             {"Series": "Asset_A", "Cumulative Return": 0.10},
             {"Series": "Asset_B", "Cumulative Return": 0.20},
@@ -347,6 +385,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         True,
         0,
         {},
+        "zero",
         None,
     )
 
@@ -356,6 +395,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     assert cum_row["Asset_A"] == pytest.approx(0.10)
     assert cum_row["Asset_B"] == pytest.approx(0.20)
     assert loaded is True
+    assert called["use_risk_free"] is False
 
 
 def test_update_download_excel_disabled_uses_ready_state(page_modules):
@@ -387,6 +427,7 @@ def test_update_statistics_requires_ready_state(page_modules):
             False,
             0,
             {},
+            "tbill",
             None,
         )
 
@@ -1205,6 +1246,7 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         None,
         0,
         {},
+        "tbill",
         False,
         63,
         "none",
@@ -1287,6 +1329,7 @@ def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeyp
         None,
         0,
         {},
+        "tbill",
         False,
         63,
         "ledoit_wolf",

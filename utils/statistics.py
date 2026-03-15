@@ -302,9 +302,11 @@ def calculate_statistics(
     is_long_short: bool = False,
     risk_free_returns: Optional[pd.Series] = None,
     spx_returns: Optional[pd.Series] = None,
+    use_risk_free: bool = True,
 ) -> dict:
     """Calculate all statistics for a single series (optimized for performance)."""
     periods_per_year = annualization_factor(periodicity)
+    effective_risk_free = risk_free_returns if use_risk_free else None
 
     # Align returns and benchmark more efficiently
     same_series = returns.name == benchmark_returns.name
@@ -351,10 +353,10 @@ def calculate_statistics(
             "Annualized Return": ls_ann_ret,
             "Annualized Volatility": annualized_volatility(ls_returns, periods_per_year),
             "Sharpe Ratio": sharpe_ratio_with_risk_free(
-                ls_returns, periodicity, periods_per_year, risk_free_returns
+                ls_returns, periodicity, periods_per_year, effective_risk_free
             ),
             "Sortino Ratio": sortino_ratio_with_risk_free(
-                ls_returns, periodicity, periods_per_year, risk_free_returns
+                ls_returns, periodicity, periods_per_year, effective_risk_free
             ),
             "Beta to S&P 500": beta_to_spx_if_eligible(
                 ls_returns, spx_returns, beta_allowed
@@ -406,10 +408,10 @@ def calculate_statistics(
                 result[f"{label} Annualized Return"] = trailing_ls_ann_ret
                 result[f"{label} Annualized Volatility"] = annualized_volatility(trailing_ls, periods_per_year)
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio_with_risk_free(
-                    trailing_ls, periodicity, periods_per_year, risk_free_returns
+                    trailing_ls, periodicity, periods_per_year, effective_risk_free
                 )
                 result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
-                    trailing_ls, periodicity, periods_per_year, risk_free_returns
+                    trailing_ls, periodicity, periods_per_year, effective_risk_free
                 )
                 result[f"{label} Beta to S&P 500"] = beta_to_spx_if_eligible(
                     trailing_ls, spx_returns, beta_allowed
@@ -449,10 +451,10 @@ def calculate_statistics(
             "Annualized Return": ann_ret,
             "Annualized Volatility": annualized_volatility(ret, periods_per_year),
             "Sharpe Ratio": sharpe_ratio_with_risk_free(
-                ret, periodicity, periods_per_year, risk_free_returns
+                ret, periodicity, periods_per_year, effective_risk_free
             ),
             "Sortino Ratio": sortino_ratio_with_risk_free(
-                ret, periodicity, periods_per_year, risk_free_returns
+                ret, periodicity, periods_per_year, effective_risk_free
             ),
             "Beta to S&P 500": beta_to_spx_if_eligible(
                 ret, spx_returns, beta_allowed
@@ -502,10 +504,10 @@ def calculate_statistics(
                 result[f"{label} Annualized Return"] = trailing_ann_ret
                 result[f"{label} Annualized Volatility"] = annualized_volatility(trailing_ret, periods_per_year)
                 result[f"{label} Sharpe Ratio"] = sharpe_ratio_with_risk_free(
-                    trailing_ret, periodicity, periods_per_year, risk_free_returns
+                    trailing_ret, periodicity, periods_per_year, effective_risk_free
                 )
                 result[f"{label} Sortino Ratio"] = sortino_ratio_with_risk_free(
-                    trailing_ret, periodicity, periods_per_year, risk_free_returns
+                    trailing_ret, periodicity, periods_per_year, effective_risk_free
                 )
                 result[f"{label} Beta to S&P 500"] = beta_to_spx_if_eligible(
                     trailing_ret, spx_returns, beta_allowed
@@ -540,6 +542,7 @@ def calculate_statistics_cached(
     vol_scaling_assignments: str = "",
     risk_free_returns_json: str = "",
     spx_returns_json: str = "",
+    use_risk_free: bool = True,
 ) -> list:
     """Calculate statistics for all selected series with caching."""
     # Use get_working_returns to get aligned data + benchmarks
@@ -607,6 +610,7 @@ def calculate_statistics_cached(
             is_long_short,
             risk_free_series,
             spx_series,
+            use_risk_free,
         )
         results.append(stats_dict)
 
