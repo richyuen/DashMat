@@ -284,13 +284,14 @@ def test_restore_application_state_accepts_saved_series_dict(page_modules, raw_j
         "box",
         5,
         "raw",
+        "normal",
         "annual",
         None,
         {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
     )
 
-    assert out[18] == ["Asset_A"]
-    assert out[19] is False
+    assert out[19] == ["Asset_A"]
+    assert out[20] is False
 
 
 def test_at_get_series_page_state_excludes_saved_result_series(page_modules, raw_json):
@@ -1124,6 +1125,7 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
     warning, content = analyticstool.update_factor_analysis(
         "factor_analysis",
         "scatter",
+        "normal",
         "Factor_X",
         5,
         "raw",
@@ -1144,6 +1146,156 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
     graphs = [child for child in (content.children or []) if getattr(child, "figure", None) is not None]
     assert len(graphs) == 2
     assert all("Factor Scatter" in graph.figure.layout.title.text for graph in graphs)
+
+
+def test_prepare_at_qq_reference_series_uses_current_returns_basis_for_raw_reference(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    captured = {}
+
+    def _fake_excess(*args, **_kwargs):
+        captured["selected"] = args[2]
+        captured["returns_type"] = args[4]
+        return pd.DataFrame({"Asset_B": [0.02, 0.01, -0.01, 0.0]}, index=idx)
+
+    monkeypatch.setattr(analyticstool, "calculate_excess_returns", _fake_excess)
+
+    out = analyticstool._prepare_at_qq_reference_series(
+        "raw-json",
+        "daily",
+        "raw::Asset_B",
+        "excess",
+        {"Asset_A": "Asset_B"},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        0,
+        {},
+    )
+
+    assert captured["selected"] == ("Asset_B",)
+    assert captured["returns_type"] == "excess"
+    assert out.name == "Asset_B"
+
+
+def test_update_factor_analysis_renders_qq_normal_without_reference(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    dependent_df = pd.DataFrame(
+        {
+            "Asset_A": [0.01, 0.02, 0.0, -0.01, 0.005, 0.008],
+            "Asset_B": [0.015, 0.01, -0.005, 0.0, 0.004, 0.006],
+        },
+        index=idx,
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "_prepare_factor_analysis_selected_df",
+        lambda *_args, **_kwargs: dependent_df,
+    )
+
+    warning, content = analyticstool.update_factor_analysis(
+        "factor_analysis",
+        "qq",
+        "normal",
+        None,
+        5,
+        "raw",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "excess",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        True,
+        0,
+        {},
+        "light",
+    )
+
+    assert warning is None
+    graphs = [child for child in (content.children or []) if getattr(child, "figure", None) is not None]
+    assert len(graphs) == 2
+    assert all("vs Normal" in graph.figure.layout.title.text for graph in graphs)
+
+
+def test_update_factor_analysis_renders_qq_reference_with_zscore_axes(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+    dependent_df = pd.DataFrame({"Asset_A": [0.01, 0.03, -0.02, 0.0, 0.02]}, index=idx)
+    reference_series = pd.Series([0.015, 0.01, -0.005, -0.01, 0.03], index=idx, name="Ref_X")
+    monkeypatch.setattr(
+        analyticstool,
+        "_prepare_factor_analysis_selected_df",
+        lambda *_args, **_kwargs: dependent_df,
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "_prepare_at_qq_reference_series",
+        lambda *_args, **_kwargs: reference_series,
+    )
+
+    warning, content = analyticstool.update_factor_analysis(
+        "factor_analysis",
+        "qq",
+        "reference",
+        "raw::Ref_X",
+        5,
+        "raw",
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-01-31"},
+        True,
+        0,
+        {},
+        "light",
+    )
+
+    assert warning is None
+    graphs = [child for child in (content.children or []) if getattr(child, "figure", None) is not None]
+    assert len(graphs) == 1
+    fig = graphs[0].figure
+    assert fig.layout.title.text == "Q-Q Plot: Asset_A vs Ref_X"
+    assert fig.layout.xaxis.title.text.endswith("(Z-Score)")
+    assert fig.layout.yaxis.title.text.endswith("(Z-Score)")
+
+
+def test_restore_application_state_restores_factor_analysis_qq_controls(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    restored = analyticstool.restore_application_state(
+        1,
+        raw_json,
+        "daily",
+        "daily_trading",
+        ["Asset_A"],
+        "excess",
+        7,
+        "zero",
+        "factor_analysis",
+        "3y",
+        "volatility",
+        "cumulative",
+        "table",
+        "table",
+        "table",
+        "qq",
+        7,
+        "zscore",
+        "reference",
+        "monthly",
+        None,
+        {},
+    )
+
+    assert restored[14] == "qq"
+    assert restored[15] == 7
+    assert restored[16] == "zscore"
+    assert restored[17] == "reference"
 
 
 def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_modules):
