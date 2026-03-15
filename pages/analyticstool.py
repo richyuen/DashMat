@@ -59,6 +59,7 @@ from utils.charting import apply_chart_theme
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
 from utils.perf_timing import timed_block
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
+from utils.saved_series import saved_series_store_names
 from utils.shared_metrics import (
     MARKET_BETA_SERIES,
     RISK_FREE_SERIES,
@@ -4155,7 +4156,7 @@ def restore_application_state(
             valid_selection = list(df.columns)
 
         # Auto-add any pending new series from portfolio optimization
-        for s in (pending_series or []):
+        for s in saved_series_store_names(pending_series):
             if s in df.columns and s not in valid_selection:
                 valid_selection.append(s)
         

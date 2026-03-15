@@ -226,6 +226,36 @@ def test_at_layout_starts_with_welcome_and_main_hidden(page_modules):
     assert getattr(main, "style", {})["display"] == "none"
 
 
+def test_restore_application_state_accepts_saved_series_dict(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    out = analyticstool.restore_application_state(
+        1,
+        raw_json,
+        "daily",
+        "daily_trading",
+        ["Asset_A"],
+        "total",
+        0,
+        "statistics",
+        "1y",
+        "total_return",
+        "annualized",
+        "chart",
+        "chart",
+        "chart",
+        "box",
+        5,
+        "raw",
+        "annual",
+        None,
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+    )
+
+    assert out[17] == ["Asset_A"]
+    assert out[18] is False
+
+
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
     analyticstool, _ = page_modules
 

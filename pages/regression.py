@@ -47,6 +47,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
+from utils.saved_series import save_series_to_raw_data
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
@@ -1603,6 +1604,15 @@ def build_reg_main_layout():
                                 clearable=False,
                             ),
                             dmc.Button(
+                                "Save Series",
+                                id="reg-save-series-button",
+                                variant="light",
+                                color="blue",
+                                size="sm",
+                                disabled=True,
+                                leftSection=DashIconify(icon="tabler:device-floppy"),
+                            ),
+                            dmc.Button(
                                 "Delete",
                                 id="reg-delete-result-btn",
                                 variant="outline",
@@ -1611,6 +1621,7 @@ def build_reg_main_layout():
                                 disabled=True,
                                 leftSection=DashIconify(icon="tabler:trash"),
                             ),
+                            dmc.Text(id="reg-save-series-status-text", size="sm", c="dimmed"),
                         ],
                     ),
                     dmc.Tabs(
@@ -4943,6 +4954,7 @@ def reg_run_regression(
         "window_results": [_serialize_wr(wr) for wr in window_results],
         "predicted_json": df_to_json(predicted.to_frame("predicted")),
         "residuals_json": df_to_json(residuals.to_frame("residuals")),
+        "saved_series_name": None,
         "dependent_var": dep_var,
         "independent_vars": x_display_cols,
         "independent_vars_internal": x_cols,
@@ -4985,6 +4997,23 @@ def reg_sync_result_options(results, current_val):
 
 
 @callback(
+    Output("reg-save-series-button", "disabled"),
+    Output("reg-save-series-status-text", "children"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    prevent_initial_call=False,
+)
+def reg_sync_save_series_ui(selected, results):
+    if not selected or not results or selected not in results:
+        return True, ""
+
+    saved_name = ((results or {}).get(selected) or {}).get("saved_series_name")
+    if not saved_name:
+        return False, ""
+    return False, f"Saved as {saved_name}."
+
+
+@callback(
     Output("reg-anova-window-select", "data"),
     Output("reg-anova-window-select", "value"),
     Output("reg-anova-window-select", "disabled"),
@@ -5014,6 +5043,61 @@ def reg_sync_anova_window_options(selected, results, current_window):
 
     latest_val = str(len(wrs) - 1)
     return options, latest_val, False
+
+
+@callback(
+    Output("reg-results-store", "data", allow_duplicate=True),
+    Output("dashmat-raw-data-store", "data", allow_duplicate=True),
+    Output("dashmat-pending-new-series-store", "data", allow_duplicate=True),
+    Output("reg-save-series-status-text", "children", allow_duplicate=True),
+    Input("reg-save-series-button", "n_clicks"),
+    State("reg-result-select", "value"),
+    State("reg-results-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("reg-periodicity-select", "value"),
+    State("dashmat-pending-new-series-store", "data"),
+    prevent_initial_call=True,
+)
+def reg_save_series_to_shared_data(n_clicks, selected, results, raw_data, periodicity, saved_series_store):
+    if not n_clicks or not selected or not results or selected not in results:
+        raise PreventUpdate
+
+    entry = dict((results or {}).get(selected) or {})
+    predicted_df = json_to_df(entry.get("predicted_json")) if entry.get("predicted_json") else pd.DataFrame()
+    if predicted_df.empty:
+        return no_update, no_update, no_update, "No predicted series available to save."
+
+    series = predicted_df.iloc[:, 0].dropna().rename(selected)
+    try:
+        save_out = save_series_to_raw_data(
+            raw_data=raw_data,
+            periodicity=((entry.get("config") or {}).get("periodicity") or entry.get("periodicity") or periodicity or "daily"),
+            series=series,
+            base_name=selected,
+            saved_series_store=saved_series_store,
+            origin_page="regression",
+            origin_result=selected,
+            series_type="predicted",
+            prior_saved_name=entry.get("saved_series_name"),
+        )
+    except Exception as exc:
+        return no_update, no_update, no_update, f"Error saving series: {exc}"
+
+    new_results = dict(results or {})
+    entry["saved_series_name"] = save_out["saved_name"]
+    new_results[selected] = entry
+
+    if save_out["action"] == "overwritten":
+        status_text = f"Overwrote shared series {save_out['saved_name']}."
+    else:
+        status_text = f"Saved as {save_out['saved_name']}."
+
+    return (
+        new_results,
+        save_out["raw_data"],
+        save_out["saved_series_store"],
+        status_text,
+    )
 
 
 @callback(
