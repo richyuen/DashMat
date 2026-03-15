@@ -68,6 +68,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Validate local SQLite files under `data/` before DB-backed browser runs or A/B comparisons.
 - For timing runs that rely on copied stdout logs, launch the app with unbuffered Python (`python -u app.py`); buffered stdout can hide timing lines until process exit.
 - For strict PortOpt first-entry validation, capture a timing-log offset after warmup and parse only the measured entry window; otherwise later tab switches will contaminate the timing summary.
+- If the warm-switch harness stalls waiting for `#po-run-button`, verify the canonical PortOpt series-config session stores are mounted before changing the harness, especially `po-series-select` and the related series-config stores.
 - Keep Playwright runtime artifacts out of commits unless explicitly needed.
 - AG Grid treats dotted `field` names as nested paths by default; use `dashGridOptions.suppressFieldDotNotation = True` for literal series names.
 - If upward-opening modal dropdowns clip at the top of the viewport, fix the shared builders in `utils/dashmat_welcome_modal.py` instead of patching page-specific modal instances.
