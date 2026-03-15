@@ -2264,16 +2264,16 @@ def build_po_main_layout():
                 children=[
                     dmc.TabsList(children=[
                         dmc.TabsTab("Weights", value="weight"),
+                        dmc.TabsTab("Attribution", value="attribution"),
+                        dmc.TabsTab("Risk", value="risk"),
                         dmc.TabsTab("Turnover", value="turnover"),
+                        dmc.TabsTab("Frontier", value="frontier"),
                         dmc.TabsTab("Statistics", value="statistics"),
                         dmc.TabsTab("Returns", value="returns"),
                         dmc.TabsTab("Rolling", value="rolling"),
                         dmc.TabsTab("Calendar Year", value="calendar"),
                         dmc.TabsTab("Growth of $1", value="growth"),
                         dmc.TabsTab("Drawdown", value="drawdown"),
-                        dmc.TabsTab("Attribution", value="attribution"),
-                        dmc.TabsTab("Risk", value="risk"),
-                        dmc.TabsTab("Frontier", value="frontier"),
                     ]),
                     dmc.TabsPanel(
                         value="weight",
@@ -3080,7 +3080,7 @@ layout = dmc.Container(
                                                         dmc.Text("3) Set Periodicity, Vol Scaler, and Date Range so estimation and backtest use the intended sample.", size="sm"),
                                                         dmc.Text("4) Choose Model and controls (window, step, missing-data handling, and optional exponential weighting).", size="sm"),
                                                         dmc.Text("5) Click Run to create a named portfolio. Run additional scenarios using different names.", size="sm"),
-                                                        dmc.Text("6) Review Weights, Turnover, Statistics, Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, and Frontier tabs.", size="sm"),
+                                                        dmc.Text("6) Review Weights, Attribution, Risk, Turnover, Frontier, Statistics, Returns, Rolling, Calendar Year, Growth, and Drawdown tabs.", size="sm"),
                                                     ])),
                                                 ],
                                             ),
@@ -3151,16 +3151,16 @@ layout = dmc.Container(
                                                     dmc.AccordionControl("Reading the Tabs"),
                                                     dmc.AccordionPanel(dmc.Stack(gap="xs", children=[
                                                         dmc.Text("Weights: allocation by asset over time, chart or table.", size="sm"),
-                                                        dmc.Text("Turnover: absolute allocation changes per rebalance window.", size="sm"),
-                                                        dmc.Text("Statistics: portfolio-level performance and risk metrics.", size="sm"),
-                                                        dmc.Text("Returns: return time series grid.", size="sm"),
-                                                        dmc.Text("Growth of $1: compounded path from initial value 1.", size="sm"),
-                                                        dmc.Text("Rolling: trailing Total Return, Volatility, Sharpe, or Sortino across selected windows.", size="sm"),
-                                                        dmc.Text("Calendar Year: one-row-per-year compounded annual return table.", size="sm"),
-                                                        dmc.Text("Drawdown: peak-to-trough drawdown paths as chart or table.", size="sm"),
                                                         dmc.Text("Attribution: asset-level return contribution.", size="sm"),
                                                         dmc.Text("Risk: asset-level risk contribution across windows.", size="sm"),
+                                                        dmc.Text("Turnover: absolute allocation changes per rebalance window.", size="sm"),
                                                         dmc.Text("Frontier: efficient frontier with active-portfolio marker.", size="sm"),
+                                                        dmc.Text("Statistics: portfolio-level performance and risk metrics.", size="sm"),
+                                                        dmc.Text("Returns: return time series grid.", size="sm"),
+                                                        dmc.Text("Rolling: trailing Total Return, Volatility, Sharpe, or Sortino across selected windows.", size="sm"),
+                                                        dmc.Text("Calendar Year: one-row-per-year compounded annual return table.", size="sm"),
+                                                        dmc.Text("Growth of $1: compounded path from initial value 1.", size="sm"),
+                                                        dmc.Text("Drawdown: peak-to-trough drawdown paths as chart or table.", size="sm"),
                                                     ])),
                                                 ],
                                             ),
@@ -3263,7 +3263,7 @@ layout = dmc.Container(
                                                         dmc.Text("Delete icon removes selected result. Use unique names to keep scenario history.", size="sm"),
                                                         dmc.Text("File > Save session exports JSON state; Load session restores it.", size="sm"),
                                                         dmc.Text(
-                                                            "File > Download Excel exports Settings, Weights, Turnover, Statistics, Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, and Frontier.",
+                                                            "File > Download Excel exports Settings, Weights, Attribution, Risk, Turnover, Frontier, Statistics, Returns, Rolling, Calendar Year, Growth, and Drawdown.",
                                                             size="sm",
                                                         ),
                                                         dmc.Text("Run disabled: load data and select at least one series.", size="sm"),
@@ -10378,23 +10378,24 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         frontier_df = format_excel_dates(frontier_df)
 
         with pd.ExcelWriter(output, engine="xlsxwriter", date_format="m/d/yyyy", datetime_format="m/d/yyyy") as writer:
-            # Keep exact tab order: Settings, Weights, Turnover, Statistics,
-            # Returns, Growth, Rolling, Calendar Year, Drawdown, Attribution, Risk, Frontier.
+            # Keep exact tab order: Settings, Weights, Attribution, Risk,
+            # Turnover, Frontier, Statistics, Returns, Rolling, Calendar Year,
+            # Growth of $1, Drawdown.
             write_excel_with_autofit(writer, settings_df, "Settings", index=False)
             write_excel_with_autofit(writer, weights_df, "Weights", index=False)
+            write_excel_with_autofit(writer, attribution_df, "Attribution", index=False)
+            write_excel_with_autofit(writer, risk_df, "Risk", index=False)
             write_excel_with_autofit(writer, turnover_df, "Turnover", index=False)
+            write_excel_with_autofit(writer, frontier_df, "Frontier", index=False)
             write_excel_with_autofit(writer, stats_df, "Statistics", index=False)
             write_excel_with_autofit(writer, returns_df, "Returns", index=False)
-            write_excel_with_autofit(writer, growth_df, "Growth of $1", index=False)
             if not rolling_df.empty:
                 write_excel_with_autofit(writer, rolling_df, "Rolling", index=True)
             if not calendar_df.empty:
                 write_excel_with_autofit(writer, calendar_df, "Calendar Year", index=True)
+            write_excel_with_autofit(writer, growth_df, "Growth of $1", index=False)
             if not drawdown_df.empty:
                 write_excel_with_autofit(writer, drawdown_df, "Drawdown", index=True)
-            write_excel_with_autofit(writer, attribution_df, "Attribution", index=False)
-            write_excel_with_autofit(writer, risk_df, "Risk", index=False)
-            write_excel_with_autofit(writer, frontier_df, "Frontier", index=False)
 
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), "portfolio_optimization.xlsx")
