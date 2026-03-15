@@ -59,6 +59,7 @@ from utils.covariance import (
 )
 from utils.exponential_weighting import normalize_decay_input
 from utils.help_links import ANALYTICSTOOL_HELP_URL
+from utils.ag_grid import literal_field_dash_grid_options
 from utils.charting import apply_chart_theme
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
 from utils.perf_timing import timed_block
@@ -2955,6 +2956,16 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                     pt="md",
                     style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                     children=[
+                        dmc.Group(
+                            mb="md",
+                            children=[
+                                _build_at_returns_type_control(
+                                    "at-returns-type-select-returns",
+                                    returns_type,
+                                    show_label=False,
+                                )
+                            ],
+                        ),
                         dcc.Loading(
                             id="at-loading-returns",
                             type="default",
@@ -3134,6 +3145,11 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.Group(
                             mb="md",
                             children=[
+                                _build_at_returns_type_control(
+                                    "at-returns-type-select-calendar",
+                                    returns_type,
+                                    show_label=False,
+                                ),
                                 dmc.SegmentedControl(
                                     id="at-monthly-view-checkbox",
                                     data=[
@@ -3188,6 +3204,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             gap="md",
                             align="flex-end",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-correlogram", returns_type),
                                 html.Div([
                                     dmc.Text("View", size="sm", fw=500, mb=3),
                                     html.Div(
@@ -3316,6 +3333,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             gap="md",
                             align="flex-end",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-factor", returns_type),
                                 html.Div([
                                     dmc.Text("Mode", size="sm", fw=500, mb=3),
                                     dmc.SegmentedControl(
@@ -3577,6 +3595,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             gap="md",
                             align="flex-end",
                             children=[
+                                _build_at_returns_type_control("at-returns-type-select-regime", returns_type),
                                 dmc.Select(
                                     id="at-regime-definition-select",
                                     label="Regime definition",
@@ -3673,6 +3692,11 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                         dmc.Group(
                             mb="md",
                             children=[
+                                _build_at_returns_type_control(
+                                    "at-returns-type-select-drawdown",
+                                    returns_type,
+                                    show_label=False,
+                                ),
                                 dmc.SegmentedControl(
                                     id="at-drawdown-chart-switch",
                                     data=[

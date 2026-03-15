@@ -3445,6 +3445,7 @@ layout = dmc.Container(
         dcc.Store(id="po-risk-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-turnover-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="po-frontier-chart-switch-store", data="chart", storage_type="session"),
+        dcc.Store(id="po-page-visited-store", data=False, storage_type="session"),
         # Save/Load session
         dcc.Store(id="po-save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="po-load-session-dummy", data=None, storage_type="memory"),
@@ -7375,9 +7376,9 @@ clientside_callback(
     Output("po-temp-force-max-store", "data", allow_duplicate=True),
     Output("po-page-visited-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("po-url-location", "pathname"),
     Input("po-page-load-trigger", "n_intervals"),
-    State("po-url-location", "pathname"),
+    Input("dashmat-raw-data-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -7393,9 +7394,9 @@ clientside_callback(
 )
 def po_open_modal(
     n_clicks,
-    raw_data,
-    page_load_intervals,
     pathname,
+    page_load_intervals,
+    raw_data,
     current_select,
     current_bench,
     current_cmabench,

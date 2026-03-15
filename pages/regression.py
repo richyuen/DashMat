@@ -1653,6 +1653,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="reg-use-risk-free-store", data=True, storage_type="session"),
         dcc.Store(id="reg-date-range-store", data=None, storage_type="session"),
+        dcc.Store(id="reg-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-common-daily-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-series-select-value-store", data=[], storage_type="session"),
         # Regression settings

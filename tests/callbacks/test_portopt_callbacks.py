@@ -126,9 +126,9 @@ def test_po_open_modal_page_load_excludes_saved_result_series(monkeypatch, page_
     monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
     result = portopt.po_open_modal(
         None,
-        df_to_json(df),
-        1,
         "/portopt",
+        1,
+        df_to_json(df),
         [],
         {},
         {},
@@ -155,9 +155,9 @@ def test_po_open_modal_raw_data_adds_only_generic_new_series(monkeypatch, page_m
     monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "dashmat-raw-data-store"})())
     result = portopt.po_open_modal(
         None,
-        df_to_json(df),
-        1,
         "/portopt",
+        1,
+        df_to_json(df),
         ["Asset_A"],
         {},
         {},
