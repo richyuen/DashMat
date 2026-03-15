@@ -59,7 +59,7 @@ from utils.charting import apply_chart_theme
 from utils.excel_export import format_excel_dates, write_excel_with_autofit
 from utils.perf_timing import timed_block
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
-from utils.saved_series import saved_series_store_names
+from utils.saved_series import normalize_saved_series_store
 from utils.shared_metrics import (
     MARKET_BETA_SERIES,
     RISK_FREE_SERIES,
@@ -3922,6 +3922,7 @@ layout = dmc.Container(
         dcc.Store(id="at-returns-type-value-store", data="total", storage_type="session"),
         dcc.Store(id="at-series-select-value-store", data=[], storage_type="session"),
         dcc.Store(id="at-series-order-store", data=[], storage_type="session"),
+        dcc.Store(id="at-page-visited-store", data=False, storage_type="session"),
         dcc.Store(id="at-active-tab-store", data="statistics", storage_type="session"),
         dcc.Store(id="at-rolling-window-store", data="1y", storage_type="session"),
         dcc.Store(id="at-rolling-metric-store", data="total_return", storage_type="session"),
@@ -4152,13 +4153,6 @@ def restore_application_state(
         # Monthly Series Options & Selection
         current_selection = stored_series or []
         valid_selection = [s for s in current_selection if s in df.columns]
-        if not valid_selection:
-            valid_selection = list(df.columns)
-
-        # Auto-add any pending new series from portfolio optimization
-        for s in saved_series_store_names(pending_series):
-            if s in df.columns and s not in valid_selection:
-                valid_selection.append(s)
         
         return (
             periodicity_options, valid_periodicity, valid_returns, valid_vol, active_tab,
@@ -4173,6 +4167,35 @@ def restore_application_state(
             "1y", "total_return", "annualized", False, {}, "chart", "chart", "chart",
             "box", 5, "raw", "annual", [], False
         )
+
+
+def _at_get_series_page_state(raw_data, current_select, current_order, saved_series_store):
+    if not raw_data:
+        return [], [], [], []
+
+    try:
+        columns = list(json_to_df(raw_data).columns)
+    except Exception:
+        return [], [], [], []
+
+    if not columns:
+        return [], [], [], []
+
+    column_set = set(columns)
+    selected_valid = [series for series in (current_select or []) if series in column_set]
+    known_columns = set(series for series in (current_order or []) if series in column_set)
+    known_columns.update(selected_valid)
+
+    saved_names = {
+        series
+        for series in normalize_saved_series_store(saved_series_store).keys()
+        if series in column_set
+    }
+    generic_new = [
+        series for series in columns
+        if series not in known_columns and series not in saved_names
+    ]
+    return columns, selected_valid, generic_new, [series for series in columns if series in saved_names]
 
 
 @callback(
@@ -4304,6 +4327,7 @@ clientside_callback(
                 'at-returns-type-value-store',
                 'at-series-select-value-store',
                 'at-series-order-store',
+                'at-page-visited-store',
                 'at-active-tab-store',
                 'at-rolling-window-store',
                 'at-rolling-return-type-store',
@@ -4411,18 +4435,111 @@ clientside_callback(
     Output("at-temp-series-order-store", "data", allow_duplicate=True),
     Output("at-temp-deleted-series-store", "data", allow_duplicate=True),
     Output("at-temp-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("at-page-visited-store", "data", allow_duplicate=True),
     Input("at-open-series-modal-button", "n_clicks"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-page-load-trigger", "n_intervals"),
+    State("at-url-location", "pathname"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
     State("at-series-order-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    State("at-page-visited-store", "data"),
     prevent_initial_call=True,
 )
-def open_modal(n_clicks, current_select, current_bench, current_ls, current_order, current_vol_scaling):
-    if not n_clicks:
+def open_modal(
+    n_clicks,
+    raw_data,
+    page_load_intervals,
+    pathname,
+    current_select,
+    current_bench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
+    saved_series_store,
+    page_visited,
+):
+    triggered_id = callback_context.triggered_id
+
+    if triggered_id == "at-open-series-modal-button":
+        if not n_clicks:
+            raise PreventUpdate
+        return (
+            True,
+            current_select or [],
+            current_bench or {},
+            current_ls or {},
+            current_order or [],
+            [],
+            current_vol_scaling or {},
+            no_update,
+        )
+
+    if triggered_id not in {"at-page-load-trigger", "dashmat-raw-data-store"}:
         raise PreventUpdate
-    return True, current_select, current_bench, current_ls, current_order, [], current_vol_scaling
+    if triggered_id == "at-page-load-trigger" and page_load_intervals is None:
+        raise PreventUpdate
+
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+    if page_path != "/analyticstool":
+        raise PreventUpdate
+
+    columns, selected_valid, generic_new, saved_result_series = _at_get_series_page_state(
+        raw_data,
+        current_select,
+        current_order,
+        saved_series_store,
+    )
+    if not columns:
+        if triggered_id == "at-page-load-trigger":
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+            )
+        raise PreventUpdate
+
+    should_open = False
+    temp_select = no_update
+    if not page_visited and not selected_valid:
+        temp_select = [series for series in columns if series not in saved_result_series]
+        should_open = bool(temp_select)
+    elif generic_new:
+        selected_set = set(selected_valid)
+        selected_set.update(generic_new)
+        temp_select = [series for series in columns if series in selected_set]
+        should_open = True
+
+    if not should_open:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+        )
+
+    return (
+        True,
+        temp_select,
+        current_bench or {},
+        current_ls or {},
+        current_order or [],
+        [],
+        current_vol_scaling or {},
+        True,
+    )
 
 
 @callback(

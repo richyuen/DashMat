@@ -93,6 +93,89 @@ def _raw_json_value(value):
     return value
 
 
+def test_po_get_modal_series_state_excludes_saved_result_series(page_modules, raw_json):
+    _, portopt = page_modules
+    df = json_to_df(raw_json)
+    df["SavedPort"] = 0.0
+    state = portopt._po_get_modal_series_state(
+        df_to_json(df),
+        ["Asset_A"],
+        ["Asset_A"],
+        {"SavedPort": {"origin_page": "regression", "origin_result": "SavedPort", "series_type": "predicted"}},
+    )
+
+    assert state[1] == ["Asset_A"]
+    assert state[2] == ["Asset_B", "Asset_C", "Asset_D"]
+    assert state[3] == ["SavedPort"]
+
+
+def test_po_restore_state_leaves_selection_empty_when_no_valid_series(page_modules, raw_json):
+    _, portopt = page_modules
+
+    restored = portopt.po_restore_state(raw_json, "daily", "daily_trading", [], 0)
+
+    assert restored[3] == []
+
+
+def test_po_open_modal_page_load_excludes_saved_result_series(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    df = json_to_df(raw_json)[["Asset_A"]]
+    df["SavedPort"] = 0.0
+
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-page-load-trigger"})())
+    result = portopt.po_open_modal(
+        None,
+        df_to_json(df),
+        1,
+        "/portopt",
+        [],
+        {},
+        {},
+        {},
+        [],
+        {},
+        {},
+        {},
+        {},
+        {"SavedPort": {"origin_page": "regression", "origin_result": "SavedPort", "series_type": "predicted"}},
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A"]
+    assert result[11] is True
+
+
+def test_po_open_modal_raw_data_adds_only_generic_new_series(monkeypatch, page_modules, raw_json):
+    _, portopt = page_modules
+    df = json_to_df(raw_json)
+    df["SavedPort"] = 0.0
+
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "dashmat-raw-data-store"})())
+    result = portopt.po_open_modal(
+        None,
+        df_to_json(df),
+        1,
+        "/portopt",
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        {},
+        {"SavedPort": {"origin_page": "regression", "origin_result": "SavedPort", "series_type": "predicted"}},
+        True,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_B", "Asset_C", "Asset_D"]
+    assert "SavedPort" not in result[1]
+    assert result[11] is True
+
+
 def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
     _, portopt = page_modules
 

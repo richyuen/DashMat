@@ -47,7 +47,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
-from utils.saved_series import save_series_to_raw_data
+from utils.saved_series import normalize_saved_series_store, save_series_to_raw_data
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
@@ -2075,6 +2075,7 @@ layout = dmc.Container(
         # ---- Stores ----
         dcc.Store(id="reg-series-select", data=[], storage_type="session"),
         dcc.Store(id="reg-series-order-store", data=[], storage_type="session"),
+        dcc.Store(id="reg-page-visited-store", data=False, storage_type="session"),
         dcc.Store(id="reg-benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="reg-long-short-store", data={}, storage_type="session"),
         dcc.Store(id="reg-vol-scaling-assignments-store", data={}, storage_type="session"),
@@ -3750,6 +3751,37 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
 # Open modal
 # ---------------------------------------------------------------------------
 
+def _reg_get_modal_series_state(raw_data, current_x, current_order, dep_var, saved_series_store):
+    if not raw_data:
+        return [], [], [], []
+
+    try:
+        columns = list(json_to_df(raw_data).columns)
+    except Exception:
+        return [], [], [], []
+
+    if not columns:
+        return [], [], [], []
+
+    column_set = set(columns)
+    x_valid = [series for series in (current_x or []) if series in column_set]
+    known_columns = set(series for series in (current_order or []) if series in column_set)
+    known_columns.update(x_valid)
+    if dep_var in column_set:
+        known_columns.add(dep_var)
+
+    saved_names = {
+        series
+        for series in normalize_saved_series_store(saved_series_store).keys()
+        if series in column_set
+    }
+    generic_new = [
+        series for series in columns
+        if series not in known_columns and series not in saved_names
+    ]
+    return columns, x_valid, generic_new, [series for series in columns if series in saved_names]
+
+
 @callback(
     Output("reg-series-selection-modal", "opened"),
     Output("reg-temp-series-select", "data", allow_duplicate=True),
@@ -3763,6 +3795,7 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     Output("reg-temp-min-beta-store", "data", allow_duplicate=True),
     Output("reg-temp-max-beta-store", "data", allow_duplicate=True),
     Output("reg-temp-enable-constraint-store", "data", allow_duplicate=True),
+    Output("reg-page-visited-store", "data", allow_duplicate=True),
     Input("reg-open-modal-button", "n_clicks"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-page-load-trigger", "n_intervals"),
@@ -3777,44 +3810,110 @@ def reg_toggle_welcome(raw_data, original_periodicity, stored_periodicity):
     State("reg-min-beta-store", "data"),
     State("reg-max-beta-store", "data"),
     State("reg-enable-constraint-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    State("reg-page-visited-store", "data"),
     prevent_initial_call=True,
 )
 def reg_open_modal(n_clicks, raw_data, page_load_intervals, pathname, sel, order, bench, ls, vol_scale, dep_var,
-                   lag, min_beta, max_beta, enable):
+                   lag, min_beta, max_beta, enable, saved_series_store, page_visited):
     triggered_id = callback_context.triggered_id
-
-    should_open = False
     if triggered_id == "reg-open-modal-button":
-        should_open = bool(n_clicks)
-    elif triggered_id == "dashmat-raw-data-store":
-        if raw_data:
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
-            known_order = list(order or [])
-            new_columns = [c for c in columns if c not in known_order]
-            should_open = bool(new_columns)
-    elif triggered_id == "reg-page-load-trigger":
-        if page_load_intervals is None:
+        if not n_clicks:
             raise PreventUpdate
-        page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
-        if page_path == "/regression" and raw_data:
-            try:
-                columns = list(json_to_df(raw_data).columns)
-            except Exception:
-                columns = []
-            selected = set(sel or [])
-            has_selected = bool(selected.intersection(columns))
-            has_dependent = bool(dep_var and dep_var in columns)
-            should_open = bool(columns) and not (has_selected or has_dependent)
+        return (
+            True,
+            sel or [],
+            order or [],
+            [],
+            bench or {},
+            ls or {},
+            vol_scale or {},
+            dep_var,
+            lag or {},
+            min_beta or {},
+            max_beta or {},
+            enable or {},
+            no_update,
+        )
 
-    if not should_open:
+    if triggered_id not in {"dashmat-raw-data-store", "reg-page-load-trigger"}:
+        raise PreventUpdate
+    if triggered_id == "reg-page-load-trigger" and page_load_intervals is None:
         raise PreventUpdate
 
-    return (True, sel or [], order or [], [],
-            bench or {}, ls or {}, vol_scale or {},
-            dep_var, lag or {}, min_beta or {}, max_beta or {}, enable or {})
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+    if page_path != "/regression":
+        raise PreventUpdate
+
+    columns, selected_valid, generic_new, saved_result_series = _reg_get_modal_series_state(
+        raw_data,
+        sel,
+        order,
+        dep_var,
+        saved_series_store,
+    )
+    if not columns:
+        if triggered_id == "reg-page-load-trigger":
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+            )
+        raise PreventUpdate
+
+    should_open = False
+    temp_select = sel or []
+    if not page_visited and not selected_valid and not (dep_var and dep_var in columns):
+        temp_select = [series for series in columns if series not in saved_result_series]
+        should_open = bool(temp_select)
+    elif generic_new:
+        selected_set = set(selected_valid)
+        selected_set.update(generic_new)
+        temp_select = [series for series in columns if series in selected_set]
+        should_open = True
+
+    if not should_open:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+        )
+
+    return (
+        True,
+        temp_select,
+        order or [],
+        [],
+        bench or {},
+        ls or {},
+        vol_scale or {},
+        dep_var,
+        lag or {},
+        min_beta or {},
+        max_beta or {},
+        enable or {},
+        True,
+    )
 
 
 # ---------------------------------------------------------------------------

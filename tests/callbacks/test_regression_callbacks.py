@@ -88,6 +88,81 @@ def _find_component_by_id(node, target_id):
     return None
 
 
+def test_reg_get_modal_series_state_excludes_saved_result_series(regression_page, raw_json):
+    df = json_to_df(raw_json)
+    df["SavedPort"] = 0.0
+    state = regression_page._reg_get_modal_series_state(
+        df_to_json(df),
+        ["Asset_A"],
+        ["Asset_A"],
+        None,
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+    )
+
+    assert state[1] == ["Asset_A"]
+    assert state[2] == ["Asset_B", "Asset_C", "Asset_D"]
+    assert state[3] == ["SavedPort"]
+
+
+def test_reg_open_modal_page_load_excludes_saved_result_series(monkeypatch, regression_page, raw_json):
+    df = json_to_df(raw_json)[["Asset_A"]]
+    df["SavedPort"] = 0.0
+
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-page-load-trigger"})())
+    result = regression_page.reg_open_modal(
+        None,
+        df_to_json(df),
+        1,
+        "/regression",
+        [],
+        [],
+        {},
+        {},
+        {},
+        None,
+        {},
+        {},
+        {},
+        {},
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A"]
+    assert result[12] is True
+
+
+def test_reg_open_modal_raw_data_adds_only_generic_new_series(monkeypatch, regression_page, raw_json):
+    df = json_to_df(raw_json)
+    df["SavedPort"] = 0.0
+
+    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "dashmat-raw-data-store"})())
+    result = regression_page.reg_open_modal(
+        None,
+        df_to_json(df),
+        1,
+        "/regression",
+        ["Asset_A"],
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        None,
+        {},
+        {},
+        {},
+        {},
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+        True,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_B", "Asset_C", "Asset_D"]
+    assert "SavedPort" not in result[1]
+    assert result[12] is True
+
+
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
     idx = pd.date_range("2020-01-01", periods=6, freq="B")
     working_df = pd.DataFrame(

@@ -8,6 +8,8 @@ import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
 
+from utils.returns import df_to_json
+
 
 def _collect_component_text(node):
     if node is None:
@@ -254,6 +256,74 @@ def test_restore_application_state_accepts_saved_series_dict(page_modules, raw_j
 
     assert out[17] == ["Asset_A"]
     assert out[18] is False
+
+
+def test_at_get_series_page_state_excludes_saved_result_series(page_modules, raw_json):
+    analyticstool, _ = page_modules
+    df = pd.read_json(StringIO(raw_json), orient="split")
+    df["SavedPort"] = 0.0
+    state = analyticstool._at_get_series_page_state(
+        df_to_json(df),
+        ["Asset_A"],
+        ["Asset_A"],
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+    )
+
+    assert state[1] == ["Asset_A"]
+    assert state[2] == ["Asset_B", "Asset_C", "Asset_D"]
+    assert state[3] == ["SavedPort"]
+
+
+def test_at_open_modal_page_load_excludes_saved_result_series(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    df = pd.read_json(StringIO(raw_json), orient="split")
+    df = df[["Asset_A"]]
+    df["SavedPort"] = 0.0
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-page-load-trigger"})())
+    result = analyticstool.open_modal(
+        None,
+        df_to_json(df),
+        1,
+        "/analyticstool",
+        [],
+        {},
+        {},
+        [],
+        {},
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+        False,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A"]
+    assert result[7] is True
+
+
+def test_at_open_modal_raw_data_adds_only_generic_new_series(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    df = pd.read_json(StringIO(raw_json), orient="split")
+    df["SavedPort"] = 0.0
+
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "dashmat-raw-data-store"})())
+    result = analyticstool.open_modal(
+        None,
+        df_to_json(df),
+        1,
+        "/analyticstool",
+        ["Asset_A"],
+        {},
+        {},
+        ["Asset_A"],
+        {},
+        {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
+        True,
+    )
+
+    assert result[0] is True
+    assert result[1] == ["Asset_A", "Asset_B", "Asset_C", "Asset_D"]
+    assert "SavedPort" not in result[1]
+    assert result[7] is True
 
 
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):

@@ -75,7 +75,7 @@ from utils.statistics import (
 )
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
-from utils.saved_series import save_series_to_raw_data
+from utils.saved_series import normalize_saved_series_store, save_series_to_raw_data
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
@@ -3417,6 +3417,7 @@ layout = dmc.Container(
         # Series/config stores
         dcc.Store(id="po-series-select", data=[], storage_type="session"),
         dcc.Store(id="po-series-order-store", data=[], storage_type="session"),
+        dcc.Store(id="po-page-visited-store", data=False, storage_type="session"),
         dcc.Store(id="po-benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="po-cmabench-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="po-long-short-store", data={}, storage_type="session"),
@@ -3663,6 +3664,7 @@ clientside_callback(
                 'po-vol-scaler-value-store',
                 'po-date-range-store',
                 'po-series-select-value-store',
+                'po-page-visited-store',
                 'po-opt-window-store',
                 'po-window-size-store',
                 'po-opt-step-store',
@@ -5950,10 +5952,6 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         # Validate series
         current_selection = stored_series or []
         valid_selection = [s for s in current_selection if s in df.columns]
-        
-        # If no stored selection matches, select all (default behavior)
-        if not valid_selection:
-            valid_selection = list(df.columns)
             
         return (
             periodicity_options,
@@ -5966,6 +5964,35 @@ def po_restore_state(raw_data, orig_periodicity, stored_periodicity, stored_seri
         # Critical: Do not return defaults on error, as it wipes persistence.
         # Preserve whatever session state exists.
         raise PreventUpdate
+
+
+def _po_get_modal_series_state(raw_data, current_select, current_order, saved_series_store):
+    if not raw_data:
+        return [], [], [], []
+
+    try:
+        columns = list(json_to_df(raw_data).columns)
+    except Exception:
+        return [], [], [], []
+
+    if not columns:
+        return [], [], [], []
+
+    column_set = set(columns)
+    selected_valid = [series for series in (current_select or []) if series in column_set]
+    known_columns = set(series for series in (current_order or []) if series in column_set)
+    known_columns.update(selected_valid)
+
+    saved_names = {
+        series
+        for series in normalize_saved_series_store(saved_series_store).keys()
+        if series in column_set
+    }
+    generic_new = [
+        series for series in columns
+        if series not in known_columns and series not in saved_names
+    ]
+    return columns, selected_valid, generic_new, [series for series in columns if series in saved_names]
 
 
 # ---------------------------------------------------------------------------
@@ -7235,7 +7262,11 @@ clientside_callback(
     Output("po-temp-min-wt-store", "data", allow_duplicate=True),
     Output("po-temp-max-wt-store", "data", allow_duplicate=True),
     Output("po-temp-force-max-store", "data", allow_duplicate=True),
+    Output("po-page-visited-store", "data", allow_duplicate=True),
     Input("po-open-modal-button", "n_clicks"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-url-location", "pathname"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
@@ -7245,14 +7276,121 @@ clientside_callback(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-pending-new-series-store", "data"),
+    State("po-page-visited-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_modal(n_clicks, current_select, current_bench, current_cmabench, current_ls, current_order,
-                  current_vol_scaling, current_min_wt, current_max_wt, current_force_max):
-    if not n_clicks:
+def po_open_modal(
+    n_clicks,
+    raw_data,
+    page_load_intervals,
+    pathname,
+    current_select,
+    current_bench,
+    current_cmabench,
+    current_ls,
+    current_order,
+    current_vol_scaling,
+    current_min_wt,
+    current_max_wt,
+    current_force_max,
+    saved_series_store,
+    page_visited,
+):
+    triggered_id = callback_context.triggered_id
+
+    if triggered_id == "po-open-modal-button":
+        if not n_clicks:
+            raise PreventUpdate
+        return (
+            True,
+            current_select or [],
+            current_bench or {},
+            current_cmabench or {},
+            current_ls or {},
+            current_order or [],
+            [],
+            current_vol_scaling or {},
+            current_min_wt or {},
+            current_max_wt or {},
+            current_force_max or {},
+            no_update,
+        )
+
+    if triggered_id not in {"dashmat-raw-data-store", "po-page-load-trigger"}:
         raise PreventUpdate
-    return (True, current_select, current_bench, current_cmabench, current_ls, current_order, [],
-            current_vol_scaling, current_min_wt, current_max_wt, current_force_max)
+    if triggered_id == "po-page-load-trigger" and page_load_intervals is None:
+        raise PreventUpdate
+
+    page_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+    if page_path != "/portopt":
+        raise PreventUpdate
+
+    columns, selected_valid, generic_new, saved_result_series = _po_get_modal_series_state(
+        raw_data,
+        current_select,
+        current_order,
+        saved_series_store,
+    )
+    if not columns:
+        if triggered_id == "po-page-load-trigger":
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+            )
+        raise PreventUpdate
+
+    should_open = False
+    temp_select = no_update
+    if not page_visited and not selected_valid:
+        temp_select = [series for series in columns if series not in saved_result_series]
+        should_open = bool(temp_select)
+    elif generic_new:
+        selected_set = set(selected_valid)
+        selected_set.update(generic_new)
+        temp_select = [series for series in columns if series in selected_set]
+        should_open = True
+
+    if not should_open:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            True,
+        )
+
+    return (
+        True,
+        temp_select,
+        current_bench or {},
+        current_cmabench or {},
+        current_ls or {},
+        current_order or [],
+        [],
+        current_vol_scaling or {},
+        current_min_wt or {},
+        current_max_wt or {},
+        current_force_max or {},
+        True,
+    )
 
 
 # ---------------------------------------------------------------------------
