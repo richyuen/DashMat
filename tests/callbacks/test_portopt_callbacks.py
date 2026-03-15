@@ -318,6 +318,76 @@ def test_po_render_statistics_transposes_stats(monkeypatch, page_modules):
     assert row["P2"] == pytest.approx(0.2)
 
 
+def test_po_render_statistics_uses_result_rf_setting_not_live_toggle(monkeypatch, page_modules):
+    _, portopt = page_modules
+    captured = {}
+
+    def _fake_stats(*args, **_kwargs):
+        captured["use_risk_free"] = args[-1]
+        return [{"Series": "P1", "Cumulative Return": 0.1}]
+
+    monkeypatch.setattr(portopt, "calculate_statistics_cached", _fake_stats)
+
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    results = {
+        "P1": {
+            "returns_json": pd.Series([0.01, 0.02], index=idx).to_json(date_format="iso"),
+            "risk_free_meta": {"enabled": False},
+            "config": {"model": "risk_parity"},
+        }
+    }
+
+    portopt.po_render_statistics(results, "statistics", "P1", None, "daily")
+
+    assert captured["use_risk_free"] is False
+
+
+def test_po_render_statistics_uses_stored_portfolio_benchmark(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    captured = {}
+
+    def _fake_calculate_statistics_cached(raw_json, periodicity, selected_series, benchmark_assignments, *_args, **_kwargs):
+        captured["df"] = pd.read_json(StringIO(raw_json), orient="split")
+        captured["periodicity"] = periodicity
+        captured["selected_series"] = selected_series
+        captured["benchmark_assignments"] = benchmark_assignments
+        return [{"Series": "P1"}]
+
+    monkeypatch.setattr(portopt, "calculate_statistics_cached", _fake_calculate_statistics_cached)
+
+    results = {
+        "P1": {
+            "reporting_returns_json": pd.Series([0.01, 0.02], index=idx).to_json(date_format="iso"),
+            "benchmark_returns_json": pd.Series([0.005, 0.01], index=idx).to_json(date_format="iso"),
+            "run_inputs": {"selected_series": [], "periodicity": "weekly_friday"},
+            "risk_free_meta": {"enabled": False},
+        }
+    }
+
+    column_defs, row_data = portopt.po_render_statistics(
+        results,
+        "statistics",
+        "P1",
+        None,
+        "daily",
+        None,
+        {"live": "bench"},
+        {"live": True},
+        None,
+        0,
+        {},
+    )
+
+    assert column_defs[0]["field"] == "Statistic"
+    assert isinstance(row_data, list)
+    assert len(row_data) > 0
+    assert captured["periodicity"] == "weekly_friday"
+    assert captured["selected_series"] == ("P1",)
+    assert captured["benchmark_assignments"] == '{"P1":"__bm__P1"}'
+    assert "__bm__P1" in captured["df"].columns
+
+
 def test_po_render_returns_builds_returns_grid(page_modules):
     _, portopt = page_modules
 
@@ -461,6 +531,7 @@ def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeyp
         "annualized",
         "total_return",
         "table",
+        None,
         "raw-json",
         {},
         {},
@@ -472,6 +543,42 @@ def test_po_render_rolling_table_mode_returns_grid_with_wide_date_column(monkeyp
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
+def test_po_render_rolling_uses_result_rf_setting_not_live_toggle(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.date_range("2024-01-01", periods=4, freq="D")
+    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
+    captured = {}
+
+    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+
+    def _fake_rolling(*args, **_kwargs):
+        captured["use_risk_free"] = args[-1]
+        return pd.DataFrame({"P1": [0.08]}, index=[pd.Timestamp("2024-01-31")])
+
+    monkeypatch.setattr(portopt, "calculate_rolling_returns", _fake_rolling)
+
+    portopt.po_render_rolling(
+        {"P1": {"risk_free_meta": {"enabled": False}}},
+        "rolling",
+        "P1",
+        "daily",
+        "1y",
+        "annualized",
+        "sharpe_ratio",
+        "table",
+        None,
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+        "light",
+    )
+
+    assert captured["use_risk_free"] is False
 
 
 def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
@@ -1155,8 +1262,8 @@ def test_po_run_optimization_stores_split_reporting_payloads(monkeypatch, page_m
         {},
         "ret_cov",
         [],
-        "split",
         None,
+        "split",
     )
 
     assert status["status"] == "complete"

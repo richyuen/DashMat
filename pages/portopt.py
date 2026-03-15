@@ -269,6 +269,18 @@ def _po_result_reporting_basis(portfolio_data) -> str:
     return basis or "match_optimization"
 
 
+def _po_result_use_risk_free(portfolio_data) -> bool:
+    if not isinstance(portfolio_data, dict):
+        return True
+    risk_free_meta = portfolio_data.get("risk_free_meta")
+    if isinstance(risk_free_meta, dict) and "enabled" in risk_free_meta:
+        return bool(risk_free_meta.get("enabled"))
+    config = portfolio_data.get("config")
+    if isinstance(config, dict) and "use_risk_free" in config:
+        return bool(config.get("use_risk_free"))
+    return True
+
+
 def _po_single_portfolio_return(results, portfolio_name: str) -> pd.Series:
     if not results or not portfolio_name:
         return pd.Series(dtype=float)
@@ -338,6 +350,69 @@ def _po_build_display_series(
     display_df = display_df[ordered_cols]
     display_df.index.name = "Date"
     return display_df, ordered_cols
+
+
+def _po_build_statistics_source(
+    results,
+    selected_portfolio,
+    raw_data,
+    periodicity,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+) -> tuple[str, str, list[str], str]:
+    pdata = (results or {}).get(selected_portfolio) or {}
+    stored_returns_json = pdata.get("reporting_returns_json") or pdata.get("returns_json")
+    stored_benchmark_json = pdata.get("benchmark_returns_json")
+
+    if stored_returns_json:
+        try:
+            portfolio_series = pd.read_json(StringIO(stored_returns_json), typ="series")
+            portfolio_series.index = pd.to_datetime(portfolio_series.index)
+            portfolio_series = portfolio_series.dropna().rename(selected_portfolio)
+        except Exception:
+            portfolio_series = pd.Series(dtype=float)
+        if not portfolio_series.empty:
+            df_map = {selected_portfolio: portfolio_series}
+            benchmark_payload = "{}"
+            if stored_benchmark_json:
+                try:
+                    benchmark_series = pd.read_json(StringIO(stored_benchmark_json), typ="series")
+                    benchmark_series.index = pd.to_datetime(benchmark_series.index)
+                    benchmark_series = benchmark_series.dropna()
+                except Exception:
+                    benchmark_series = pd.Series(dtype=float)
+                if not benchmark_series.empty:
+                    bench_col = f"__bm__{selected_portfolio}"
+                    df_map[bench_col] = benchmark_series.rename(bench_col)
+                    benchmark_payload = _mapping_payload({selected_portfolio: bench_col})
+
+            stats_df = pd.DataFrame(df_map).sort_index()
+            stats_df.index.name = "Date"
+            calc_periodicity = (
+                ((pdata.get("run_inputs") or {}).get("periodicity"))
+                or ((pdata.get("config") or {}).get("periodicity"))
+                or periodicity
+                or "daily"
+            )
+            return df_to_json(stats_df), calc_periodicity, [selected_portfolio], benchmark_payload
+
+    display_df, ordered_cols = _po_build_display_series(
+        results,
+        selected_portfolio,
+        raw_data,
+        periodicity,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+    )
+    if display_df.empty or not ordered_cols:
+        return "", periodicity or "daily", [], "{}"
+    return df_to_json(display_df[ordered_cols]), periodicity or "daily", list(ordered_cols), "{}"
 
 
 def _po_rolling_metric_label(metric: str) -> str:
@@ -8437,8 +8512,8 @@ def po_update_date_range_store(start, end):
     State("po-ex-ante-corr-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     State("po-linear-constraints-store", "data"),
-    State("po-reporting-basis-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
+    State("po-reporting-basis-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -8451,7 +8526,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                         pending_series,
                         ex_ante_returns, ex_ante_cov, bl_views, bl_tau, objective,
                         ex_ante_vol, ex_ante_corr, ex_ante_mode, linear_constraints,
-                        reporting_basis="match", saved_series_store=None):
+                        saved_series_store=None, reporting_basis="match"):
     if not n_clicks or not raw_data or not selected_series:
         raise PreventUpdate
 
@@ -9268,6 +9343,7 @@ def po_toggle_rolling_return_type(metric):
     Input("po-rolling-return-type-select", "value"),
     Input("po-rolling-metric-select", "value"),
     Input("po-rolling-chart-switch", "value"),
+    State("dashmat-saved-series-cache-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9286,6 +9362,7 @@ def po_render_rolling(
     return_type,
     metric,
     view_mode,
+    saved_series_store,
     raw_data,
     bench,
     ls,
@@ -9297,6 +9374,7 @@ def po_render_rolling(
     if active_tab != "rolling" or not results:
         return html.Div()
 
+    result_use_risk_free = _po_result_use_risk_free((results or {}).get(selected_portfolio))
     display_df, ordered_cols = _po_build_display_series(
         results,
         selected_portfolio,
@@ -9325,6 +9403,8 @@ def po_render_rolling(
         metric,
         0,
         "{}",
+        _risk_free_json_from_store(saved_series_store),
+        result_use_risk_free,
     )
     if rolling_df.empty:
         return dmc.Text("No rolling values available for selected settings.", c="dimmed")
@@ -9913,8 +9993,11 @@ def po_render_statistics(
             if legacy_compare:
                 display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
                 ordered_cols = list(display_df.columns)
+                raw_json = df_to_json(display_df[ordered_cols]) if not display_df.empty and ordered_cols else ""
+                calc_periodicity = periodicity or "daily"
+                benchmark_payload = "{}"
             else:
-                display_df, ordered_cols = _po_build_display_series(
+                raw_json, calc_periodicity, ordered_cols, benchmark_payload = _po_build_statistics_source(
                     results,
                     selected_portfolio,
                     raw_data,
@@ -9925,23 +10008,27 @@ def po_render_statistics(
                     vol_scaler,
                     vol_scaling,
                 )
-            if display_df.empty or not ordered_cols:
+            if not raw_json or not ordered_cols:
                 return [], []
 
-            raw_json = df_to_json(display_df[ordered_cols])
             series_names = list(ordered_cols)
 
             stats = calculate_statistics_cached(
                 raw_json,
-                periodicity or "daily",
+                calc_periodicity,
                 tuple(series_names),
-                "{}",
+                benchmark_payload,
                 "{}",
                 "null",
                 0,
                 "{}",
                 _risk_free_json_from_store(saved_series_store),
                 _spx_json_from_store(saved_series_store),
+                (
+                    _po_result_use_risk_free((results or {}).get(selected_portfolio))
+                    if not legacy_compare
+                    else True
+                ),
             )
 
             if not stats:
