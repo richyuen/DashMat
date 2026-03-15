@@ -77,6 +77,12 @@ from utils.statistics import (
 from utils.charting import apply_chart_theme
 from utils.sample_data import get_sample_file_path
 from utils.saved_series import normalize_saved_series_store, save_series_to_raw_data
+from utils.account_lists import (
+    add_db_import_provenance_entry,
+    prune_db_import_provenance,
+    remove_db_import_provenance_series,
+    rename_db_import_provenance_series,
+)
 from utils.core_categories import (
     clear_dropdown_caches,
     get_cma_versions_cached,
@@ -3089,6 +3095,17 @@ layout = dmc.Container(
                                     ),
                                     dmc.MenuDivider(),
                                     dmc.MenuItem(
+                                        "Load account list",
+                                        id="po-menu-load-account-list",
+                                        leftSection=DashIconify(icon="tabler:list-details", width=14),
+                                    ),
+                                    dmc.MenuItem(
+                                        "Save account list",
+                                        id="po-menu-save-account-list",
+                                        leftSection=DashIconify(icon="tabler:bookmark-plus", width=14),
+                                    ),
+                                    dmc.MenuDivider(),
+                                    dmc.MenuItem(
                                         "Download Excel",
                                         id="po-menu-download-excel",
                                         leftSection=DashIconify(icon="tabler:file-spreadsheet", width=14),
@@ -3279,6 +3296,10 @@ layout = dmc.Container(
                     ],
                 ),
             ],
+        ),
+        html.Div(
+            id="dashmat-account-list-notice-container",
+            style={"marginTop": "-8px", "marginBottom": "12px"},
         ),
 
         build_db_add_modal("po"),
@@ -6283,6 +6304,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     Output("po-temp-force-max-store", "data", allow_duplicate=True),
     Output("po-db-add-modal", "opened", allow_duplicate=True),
     Output("po-db-add-series-select", "value", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("po-db-add-ok-button", "n_clicks"),
     State("po-db-add-series-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -6296,6 +6318,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_series_from_database(
@@ -6312,6 +6335,7 @@ def po_add_series_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6325,7 +6349,7 @@ def po_add_series_from_database(
             False,
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no, n_no, n_no, n_no,
-            True, n_no,
+            True, n_no, n_no,
         )
 
     try:
@@ -6340,7 +6364,7 @@ def po_add_series_from_database(
                     False,
                     n_no, n_no, n_no, n_no, n_no,
                     n_no, n_no, n_no, n_no, n_no, n_no,
-                    True, n_no,
+                    True, n_no, n_no,
                 )
 
         new_df, db_meta = load_cma_returns_for_benches_with_meta(
@@ -6404,6 +6428,13 @@ def po_add_series_from_database(
         alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
         if daily_transition_notes:
             alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(daily_transition_notes)}"
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type="cma_bench",
+            loader_args={"selected_benches": list(selected_benches or [])},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
 
         return (
             df_to_json(merged_df),
@@ -6428,6 +6459,7 @@ def po_add_series_from_database(
             current_force_max or {},
             False,
             [],
+            updated_provenance,
         )
     except Exception as e:
         return (
@@ -6437,7 +6469,7 @@ def po_add_series_from_database(
             False,
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no, n_no, n_no, n_no,
-            True, n_no,
+            True, n_no, n_no,
         )
 
 
@@ -6468,6 +6500,7 @@ def po_add_series_from_database(
     Output("po-raw-db-add-error-alert", "children", allow_duplicate=True),
     Output("po-raw-db-add-error-alert", "hide", allow_duplicate=True),
     Output("po-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("po-raw-db-add-ok-button", "n_clicks"),
     State("po-raw-db-add-mode-store", "data"),
     State("po-raw-db-add-rows-store", "data"),
@@ -6482,6 +6515,7 @@ def po_add_series_from_database(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_raw_series_from_database(
@@ -6499,6 +6533,7 @@ def po_add_raw_series_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6518,6 +6553,7 @@ def po_add_raw_series_from_database(
             "Stage at least one row before importing.",
             False,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            n_no,
         )
 
     try:
@@ -6545,6 +6581,7 @@ def po_add_raw_series_from_database(
                     rows,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
+                    n_no,
                     n_no,
                 )
 
@@ -6575,6 +6612,13 @@ def po_add_raw_series_from_database(
 
         updated_bench = dict(current_bench or {})
         updated_bench.update(load_result.benchmark_assignments or {})
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type=f"raw_{mode_key}",
+            loader_args={"rows": rows},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
 
         return (
             df_to_json(merged_df),
@@ -6603,6 +6647,7 @@ def po_add_raw_series_from_database(
             no_update,
             True,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            updated_provenance,
         )
     except Exception as e:
         return (
@@ -6615,6 +6660,7 @@ def po_add_raw_series_from_database(
             rows,
             f"Error loading raw database series: {str(e)}",
             False,
+            n_no,
             n_no,
         )
 
@@ -6645,6 +6691,7 @@ def po_add_raw_series_from_database(
     Output("po-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("po-underlying-add-error-alert", "children", allow_duplicate=True),
     Output("po-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("po-underlying-add-ok-button", "n_clicks"),
     State("po-underlying-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
@@ -6658,6 +6705,7 @@ def po_add_raw_series_from_database(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_underlying_categories_from_database(
@@ -6674,6 +6722,7 @@ def po_add_underlying_categories_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6691,6 +6740,7 @@ def po_add_underlying_categories_from_database(
             rows,
             "Stage at least one underlying category row before importing.",
             False,
+            n_no,
         )
 
     try:
@@ -6714,6 +6764,7 @@ def po_add_underlying_categories_from_database(
                     rows,
                     duplicate_text,
                     False,
+                    n_no,
                 )
 
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
@@ -6725,6 +6776,13 @@ def po_add_underlying_categories_from_database(
 
         new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
         updated_selection = (current_selection or []) + new_series
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type="underlying_category",
+            loader_args={"rows": rows},
+            emitted_series=list(imported_df.columns),
+            primary_series=list(imported_df.columns)[0] if list(imported_df.columns) else None,
+        )
 
         return (
             df_to_json(merged_df),
@@ -6752,6 +6810,7 @@ def po_add_underlying_categories_from_database(
             [],
             no_update,
             True,
+            updated_provenance,
         )
     except Exception as exc:
         error_text = f"Error loading underlying category series: {exc}"
@@ -6765,6 +6824,7 @@ def po_add_underlying_categories_from_database(
             rows,
             error_text,
             False,
+            n_no,
         )
 
 
@@ -6794,6 +6854,7 @@ def po_add_underlying_categories_from_database(
     Output("po-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "children", allow_duplicate=True),
     Output("po-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("po-portfolio-add-ok-button", "n_clicks"),
     State("po-portfolio-add-mode-store", "data"),
     State("po-portfolio-add-rows-store", "data"),
@@ -6808,6 +6869,7 @@ def po_add_underlying_categories_from_database(
     State("po-min-wt-store", "data"),
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_portfolios_from_database(
@@ -6825,6 +6887,7 @@ def po_add_portfolios_from_database(
     current_min_wt,
     current_max_wt,
     current_force_max,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6844,6 +6907,7 @@ def po_add_portfolios_from_database(
             rows,
             "Stage at least one portfolio row before importing.",
             False,
+            n_no,
         )
 
     try:
@@ -6873,6 +6937,7 @@ def po_add_portfolios_from_database(
                     rows,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
+                    n_no,
                 )
 
         new_periodicity = load_result.periodicity or "monthly"
@@ -6900,6 +6965,13 @@ def po_add_portfolios_from_database(
 
         updated_bench = dict(current_bench or {})
         updated_bench.update(load_result.benchmark_assignments or {})
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type=f"portfolio_{mode}",
+            loader_args={"rows": rows},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
 
         return (
             df_to_json(merged_df),
@@ -6927,6 +6999,7 @@ def po_add_portfolios_from_database(
             [],
             no_update,
             True,
+            updated_provenance,
         )
     except Exception as e:
         return (
@@ -6941,6 +7014,7 @@ def po_add_portfolios_from_database(
             rows,
             f"Error loading portfolio series: {str(e)}",
             False,
+            n_no,
         )
 
 
@@ -8093,6 +8167,7 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     Output("po-max-wt-store", "data"),
     Output("po-force-max-store", "data"),
     Output("po-results-store", "data", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("po-modal-ok-button", "n_clicks"),
     State("po-temp-series-select", "data"),
     State("po-temp-benchmark-assignments-store", "data"),
@@ -8106,6 +8181,7 @@ def po_reorder_series(virtual_rows, selected_rows, current_order, current_select
     State("po-temp-max-wt-store", "data"),
     State("po-temp-force-max-store", "data"),
     State("po-results-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def po_on_modal_ok(
@@ -8122,6 +8198,7 @@ def po_on_modal_ok(
     temp_max_wt,
     temp_force_max,
     current_results,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -8143,12 +8220,15 @@ def po_on_modal_ok(
 
     updated_raw_data = raw_data
     updated_results = no_update
+    updated_provenance = current_provenance
     if temp_deleted and raw_data:
         df = json_to_df(raw_data)
         to_drop = [s for s in temp_deleted if s in df.columns]
         if to_drop:
             df = df.drop(columns=to_drop)
             updated_raw_data = df_to_json(df)
+            updated_provenance = remove_db_import_provenance_series(current_provenance, to_drop)
+            updated_provenance = prune_db_import_provenance(updated_provenance, list(df.columns))
             if temp_bench:
                 temp_bench = {k: v for k, v in temp_bench.items() if k not in to_drop}
                 remaining_cols = set(df.columns)
@@ -8183,9 +8263,23 @@ def po_on_modal_ok(
                     updated_results = {k: v for k, v in current_results.items()
                                        if k not in deleted_portfolios}
 
-    return (temp_select, temp_bench, temp_cmabench, temp_ls, temp_order, False, temp_select,
-            updated_raw_data, temp_vol_scaling, temp_min_wt, temp_max_wt, temp_force_max,
-            updated_results)
+    provenance_output = no_update if updated_provenance == (current_provenance or {}) else updated_provenance
+    return (
+        temp_select,
+        temp_bench,
+        temp_cmabench,
+        temp_ls,
+        temp_order,
+        False,
+        temp_select,
+        updated_raw_data,
+        temp_vol_scaling,
+        temp_min_wt,
+        temp_max_wt,
+        temp_force_max,
+        updated_results,
+        provenance_output,
+    )
 
 
 # ---------------------------------------------------------------------------

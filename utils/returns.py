@@ -14,6 +14,7 @@ from utils.serialization import (
     normalize_date_range_payload,
     parse_mapping_payload,
 )
+from utils.raw_dataset import get_dataset_key, get_raw_dataset_df
 import cache_config
 
 logger = logging.getLogger(__name__)
@@ -1227,3 +1228,54 @@ def annualization_factor(periodicity: str) -> float:
         "monthly": 12,
     }
     return factors.get(periodicity, 252)
+
+
+@cache_config.cache.memoize(timeout=0)
+def _build_raw_data_metadata_cached(dataset_key: str | None, original_periodicity: str | None) -> dict:
+    resolved_periodicity = str(original_periodicity or "daily")
+    periodicity_options = get_available_periodicities(resolved_periodicity)
+    default_periodicity = (
+        "daily_trading" if resolved_periodicity == "daily" else resolved_periodicity
+    )
+
+    if not dataset_key:
+        return {
+            "has_data": False,
+            "columns": [],
+            "dataset_key": None,
+            "original_periodicity": resolved_periodicity,
+            "periodicity_options": periodicity_options,
+            "default_periodicity": default_periodicity,
+            "min_date": None,
+            "max_date": None,
+        }
+
+    df = get_raw_dataset_df(dataset_key)
+    if df.empty:
+        return {
+            "has_data": False,
+            "columns": [],
+            "dataset_key": dataset_key,
+            "original_periodicity": resolved_periodicity,
+            "periodicity_options": periodicity_options,
+            "default_periodicity": default_periodicity,
+            "min_date": None,
+            "max_date": None,
+        }
+
+    return {
+        "has_data": bool(df.columns.size),
+        "columns": list(df.columns),
+        "dataset_key": dataset_key,
+        "original_periodicity": resolved_periodicity,
+        "periodicity_options": periodicity_options,
+        "default_periodicity": default_periodicity,
+        "min_date": df.index.min().strftime("%Y-%m-%d"),
+        "max_date": df.index.max().strftime("%Y-%m-%d"),
+    }
+
+
+def build_raw_data_metadata(raw_data_store: dict | str | None, original_periodicity: str | None) -> dict:
+    """Build compact shared metadata for the current raw-data payload."""
+    dataset_key = get_dataset_key(raw_data_store) if raw_data_store else None
+    return _build_raw_data_metadata_cached(dataset_key, original_periodicity)

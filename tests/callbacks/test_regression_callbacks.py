@@ -540,8 +540,8 @@ def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, re
         lambda *_args, **_kwargs: (new_df, {"IDX_A": {"starts_daily": True}}),
     )
 
-    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide = (
-        regression_page.reg_add_series_from_database(1, ["IDX_A"], None, None)
+    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide, provenance = (
+        regression_page.reg_add_series_from_database(1, ["IDX_A"], None, None, {})
     )
 
     assert isinstance(raw, str)
@@ -552,6 +552,7 @@ def test_reg_add_series_from_database_imports_and_updates_stores(monkeypatch, re
     assert selected == []
     assert err_hide is True
     assert err_text is no_update
+    assert isinstance(provenance, dict)
 
 
 def test_reg_add_series_from_database_rejects_duplicates(monkeypatch, regression_page):
@@ -564,8 +565,8 @@ def test_reg_add_series_from_database_rejects_duplicates(monkeypatch, regression
         lambda *_args, **_kwargs: (existing_df.copy(), {"IDX_A": {"starts_daily": True}}),
     )
 
-    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide = (
-        regression_page.reg_add_series_from_database(1, ["IDX_A"], existing_raw, "daily")
+    raw, orig_p, p_value, p_sync, opened, selected, err_text, err_hide, provenance = (
+        regression_page.reg_add_series_from_database(1, ["IDX_A"], existing_raw, "daily", {})
     )
 
     assert raw is no_update
@@ -574,6 +575,7 @@ def test_reg_add_series_from_database_rejects_duplicates(monkeypatch, regression
     assert p_sync is no_update
     assert opened is True
     assert selected is no_update
+    assert provenance is no_update
     assert "duplicate" in str(err_text).lower()
     assert err_hide is False
 
@@ -1591,3 +1593,15 @@ def test_reg_render_weights_table_only_shows_prediction_coefficients(regression_
     row_data = getattr(grid, "rowData", []) or []
     assert row_data[0].get("X1") == 0.3
     assert row_data[1].get("X1") == 0.4
+
+
+def test_regression_layout_has_account_list_actions():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+
+    assert 'id="reg-menu-load-account-list"' in page_text
+    assert 'id="reg-menu-save-account-list"' in page_text
+    assert 'id="dashmat-account-list-notice-container"' in page_text
+    assert 'id=_sid(cfg.prefix, "welcome-load-account-list-btn")' in Path(
+        "utils/dashmat_welcome_modal.py"
+    ).read_text(encoding="utf-8")
+    assert page_text.index('id="reg-menu-save-session"') < page_text.index('id="reg-menu-load-account-list"')

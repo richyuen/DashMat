@@ -1837,3 +1837,15 @@ def test_po_help_modal_model_deep_dive_covers_all_models(page_modules):
     ]
     for model in required_models:
         assert model in text_blob
+
+
+def test_portopt_layout_has_account_list_actions():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+
+    assert 'id="po-menu-load-account-list"' in page_text
+    assert 'id="po-menu-save-account-list"' in page_text
+    assert 'id="dashmat-account-list-notice-container"' in page_text
+    assert 'id=_sid(cfg.prefix, "welcome-load-account-list-btn")' in Path(
+        "utils/dashmat_welcome_modal.py"
+    ).read_text(encoding="utf-8")
+    assert page_text.index('id="po-menu-save-session"') < page_text.index('id="po-menu-load-account-list"')

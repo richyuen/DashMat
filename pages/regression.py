@@ -50,6 +50,12 @@ from utils.qq import build_normal_qq_series, build_qq_figure
 from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
 from utils.saved_series import normalize_saved_series_store, save_series_to_raw_data
+from utils.account_lists import (
+    add_db_import_provenance_entry,
+    prune_db_import_provenance,
+    remove_db_import_provenance_series,
+    rename_db_import_provenance_series,
+)
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
 from utils.help_links import REGRESSION_HELP_URL
@@ -1479,6 +1485,11 @@ layout = dmc.Container(
                                     dmc.MenuItem("Save session", id="reg-menu-save-session",
                                                  leftSection=DashIconify(icon="tabler:device-floppy", width=14)),
                                     dmc.MenuDivider(),
+                                    dmc.MenuItem("Load account list", id="reg-menu-load-account-list",
+                                                 leftSection=DashIconify(icon="tabler:list-details", width=14)),
+                                    dmc.MenuItem("Save account list", id="reg-menu-save-account-list",
+                                                 leftSection=DashIconify(icon="tabler:bookmark-plus", width=14)),
+                                    dmc.MenuDivider(),
                                     dmc.MenuItem("Download Excel", id="reg-menu-download-excel",
                                                  leftSection=DashIconify(icon="tabler:file-spreadsheet", width=14)),
                                     dmc.MenuDivider(),
@@ -1575,6 +1586,10 @@ layout = dmc.Container(
                     ],
                 ),
             ],
+        ),
+        html.Div(
+            id="dashmat-account-list-notice-container",
+            style={"marginTop": "-8px", "marginBottom": "12px"},
         ),
 
         # Welcome screen (Hide until hydration decides which view to show)
@@ -2215,18 +2230,26 @@ def reg_validate_db_add_selection(selected_benches, raw_data, opened):
     Output("reg-db-add-series-select", "value", allow_duplicate=True),
     Output("reg-db-add-error-alert", "children", allow_duplicate=True),
     Output("reg-db-add-error-alert", "hide", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("reg-db-add-ok-button", "n_clicks"),
     State("reg-db-add-series-select", "value"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
-def reg_add_series_from_database(n_clicks, selected_benches, existing_data, existing_periodicity):
+def reg_add_series_from_database(
+    n_clicks,
+    selected_benches,
+    existing_data,
+    existing_periodicity,
+    current_provenance,
+):
     if not n_clicks:
         raise PreventUpdate
 
     if not selected_benches:
-        return no_update, no_update, no_update, no_update, True, no_update, "Select at least one series.", False
+        return no_update, no_update, no_update, no_update, True, no_update, "Select at least one series.", False, no_update
 
     try:
         if existing_data:
@@ -2235,14 +2258,14 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
             if duplicates:
                 return (
                     no_update, no_update, no_update, no_update,
-                    True, no_update, f"Cannot add duplicate series: {', '.join(duplicates)}", False,
+                    True, no_update, f"Cannot add duplicate series: {', '.join(duplicates)}", False, no_update,
                 )
 
         new_df, db_meta = load_cma_returns_for_benches_with_meta(DB_ENGINE, selected_benches, MRD_ENGINE)
         if new_df.empty:
             return (
                 no_update, no_update, no_update, no_update,
-                True, no_update, "No rows returned for selected series.", False,
+                True, no_update, "No rows returned for selected series.", False, no_update,
             )
 
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
@@ -2262,6 +2285,13 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
             default_periodicity = "daily" if all_start_daily else "monthly"
         else:
             default_periodicity = merged_periodicity
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type="cma_bench",
+            loader_args={"selected_benches": list(selected_benches or [])},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             merged_periodicity,
@@ -2271,11 +2301,12 @@ def reg_add_series_from_database(n_clicks, selected_benches, existing_data, exis
             [],
             no_update,
             True,
+            updated_provenance,
         )
     except Exception as exc:
         return (
             no_update, no_update, no_update, no_update,
-            True, no_update, f"Error loading database series: {exc}", False,
+            True, no_update, f"Error loading database series: {exc}", False, no_update,
         )
 
 
@@ -2948,11 +2979,13 @@ clientside_callback(
     Output("reg-raw-db-add-error-alert", "children", allow_duplicate=True),
     Output("reg-raw-db-add-error-alert", "hide", allow_duplicate=True),
     Output("reg-raw-db-preview-lines", "children", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("reg-raw-db-add-ok-button", "n_clicks"),
     State("reg-raw-db-add-mode-store", "data"),
     State("reg-raw-db-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def reg_add_raw_series_from_database(
@@ -2961,6 +2994,7 @@ def reg_add_raw_series_from_database(
     staged_rows,
     existing_data,
     existing_periodicity,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -2976,6 +3010,7 @@ def reg_add_raw_series_from_database(
             "Stage at least one row before importing.",
             False,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            no_update,
         )
 
     try:
@@ -3001,11 +3036,19 @@ def reg_add_raw_series_from_database(
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
                     no_update,
+                    no_update,
                 )
 
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type=f"raw_{mode_key}",
+            loader_args={"rows": rows},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             merged_periodicity,
@@ -3017,6 +3060,7 @@ def reg_add_raw_series_from_database(
             no_update,
             True,
             "Select a series to preview option-adjusted results (first 6 rows).",
+            updated_provenance,
         )
     except Exception as exc:
         return (
@@ -3026,6 +3070,7 @@ def reg_add_raw_series_from_database(
             rows,
             f"Error loading raw database series: {exc}",
             False,
+            no_update,
             no_update,
         )
 
@@ -3040,10 +3085,12 @@ def reg_add_raw_series_from_database(
     Output("reg-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("reg-underlying-add-error-alert", "children", allow_duplicate=True),
     Output("reg-underlying-add-error-alert", "hide", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("reg-underlying-add-ok-button", "n_clicks"),
     State("reg-underlying-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def reg_add_underlying_categories_from_database(
@@ -3051,6 +3098,7 @@ def reg_add_underlying_categories_from_database(
     staged_rows,
     existing_data,
     existing_periodicity,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -3064,6 +3112,7 @@ def reg_add_underlying_categories_from_database(
             rows,
             "Stage at least one underlying category row before importing.",
             False,
+            no_update,
         )
 
     try:
@@ -3083,11 +3132,19 @@ def reg_add_underlying_categories_from_database(
                     rows,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
+                    no_update,
                 )
 
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type="underlying_category",
+            loader_args={"rows": rows},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             merged_periodicity,
@@ -3098,6 +3155,7 @@ def reg_add_underlying_categories_from_database(
             [],
             no_update,
             True,
+            updated_provenance,
         )
     except Exception as exc:
         return (
@@ -3107,6 +3165,7 @@ def reg_add_underlying_categories_from_database(
             rows,
             f"Error loading underlying category series: {exc}",
             False,
+            no_update,
         )
 
 
@@ -3120,11 +3179,13 @@ def reg_add_underlying_categories_from_database(
     Output("reg-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("reg-portfolio-add-error-alert", "children", allow_duplicate=True),
     Output("reg-portfolio-add-error-alert", "hide", allow_duplicate=True),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("reg-portfolio-add-ok-button", "n_clicks"),
     State("reg-portfolio-add-mode-store", "data"),
     State("reg-portfolio-add-rows-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def reg_add_portfolios_from_database(
@@ -3133,6 +3194,7 @@ def reg_add_portfolios_from_database(
     staged_rows,
     existing_data,
     existing_periodicity,
+    current_provenance,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -3146,6 +3208,7 @@ def reg_add_portfolios_from_database(
             rows,
             "Stage at least one portfolio row before importing.",
             False,
+            no_update,
         )
 
     try:
@@ -3170,11 +3233,19 @@ def reg_add_portfolios_from_database(
                     rows,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
                     False,
+                    no_update,
                 )
 
         merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
         merged_df = merge_result.merged_df
         merged_periodicity = merge_result.combined_periodicity
+        updated_provenance = add_db_import_provenance_entry(
+            current_provenance,
+            loader_type=f"portfolio_{mode}",
+            loader_args={"rows": rows},
+            emitted_series=list(new_df.columns),
+            primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
+        )
         return (
             df_to_json(merged_df),
             merged_periodicity,
@@ -3185,6 +3256,7 @@ def reg_add_portfolios_from_database(
             [],
             no_update,
             True,
+            updated_provenance,
         )
     except Exception as exc:
         return (
@@ -3194,6 +3266,7 @@ def reg_add_portfolios_from_database(
             rows,
             f"Error loading portfolio series: {exc}",
             False,
+            no_update,
         )
 
 
@@ -3733,6 +3806,7 @@ def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
     Output("reg-min-beta-store", "data"),
     Output("reg-max-beta-store", "data"),
     Output("reg-enable-constraint-store", "data"),
+    Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("reg-modal-ok-button", "n_clicks"),
     State("reg-temp-series-select", "data"),
     State("reg-temp-benchmark-assignments-store", "data"),
@@ -3746,10 +3820,11 @@ def reg_sync_grid_to_temp(cell_change, cell_click, row_data, cur_dep):
     State("reg-temp-min-beta-store", "data"),
     State("reg-temp-max-beta-store", "data"),
     State("reg-temp-enable-constraint-store", "data"),
+    State("dashmat-db-import-provenance-store", "data"),
     prevent_initial_call=True,
 )
 def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_deleted,
-                    raw_data, temp_vol, temp_dep, temp_lag, temp_min, temp_max, temp_enable):
+                    raw_data, temp_vol, temp_dep, temp_lag, temp_min, temp_max, temp_enable, current_provenance):
     if not n_clicks:
         raise PreventUpdate
     temp_x = list(temp_x or [])
@@ -3757,12 +3832,15 @@ def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_dele
         x_set = set(temp_x)
         temp_x = [s for s in temp_order if s in x_set]
     updated_raw = raw_data
+    updated_provenance = current_provenance
     if temp_deleted and raw_data:
         df = json_to_df(raw_data)
         to_drop = [s for s in temp_deleted if s in df.columns]
         if to_drop:
             df = df.drop(columns=to_drop)
             updated_raw = df_to_json(df)
+            updated_provenance = remove_db_import_provenance_series(current_provenance, to_drop)
+            updated_provenance = prune_db_import_provenance(updated_provenance, list(df.columns))
             drop_set = set(to_drop)
             temp_x = [s for s in temp_x if s not in drop_set]
             if temp_dep in drop_set:
@@ -3773,9 +3851,23 @@ def reg_on_modal_ok(n_clicks, temp_x, temp_bench, temp_ls, temp_order, temp_dele
                 if store:
                     for s in to_drop:
                         store.pop(s, None)
-    return (temp_x, temp_bench or {}, temp_ls or {}, temp_order or [],
-            False, temp_x, updated_raw, temp_vol or {},
-            temp_dep, temp_lag or {}, temp_min or {}, temp_max or {}, temp_enable or {})
+    provenance_output = no_update if updated_provenance == (current_provenance or {}) else updated_provenance
+    return (
+        temp_x,
+        temp_bench or {},
+        temp_ls or {},
+        temp_order or [],
+        False,
+        temp_x,
+        updated_raw,
+        temp_vol or {},
+        temp_dep,
+        temp_lag or {},
+        temp_min or {},
+        temp_max or {},
+        temp_enable or {},
+        provenance_output,
+    )
 
 
 @callback(

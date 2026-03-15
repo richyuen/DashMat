@@ -873,9 +873,11 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
         [],
         raw_json,
         {},
+        {},
     )
 
     assert result[6] is no_update
+    assert result[8] is no_update
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):
@@ -909,6 +911,7 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
         {},
         [],
         False,
+        {},
         {},
     )
 
@@ -1861,3 +1864,15 @@ def test_help_modal_mentions_factor_analysis(page_modules):
     assert "analytics tool" in text_blob
     assert "factor analysis" in text_blob
     assert "regime analysis" in text_blob
+
+
+def test_analytics_layout_has_account_list_actions():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+
+    assert 'id="at-menu-load-account-list"' in page_text
+    assert 'id="at-menu-save-account-list"' in page_text
+    assert 'id="dashmat-account-list-notice-container"' in page_text
+    assert 'id=_sid(cfg.prefix, "welcome-load-account-list-btn")' in Path(
+        "utils/dashmat_welcome_modal.py"
+    ).read_text(encoding="utf-8")
+    assert page_text.index('id="at-menu-save-session"') < page_text.index('id="at-menu-load-account-list"')
