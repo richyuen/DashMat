@@ -1500,6 +1500,9 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     assert settings_map["Decay Mode"] == "halflife_periods"
     assert settings_map["Selected Series"] == "Asset_A, Asset_B"
     assert settings_map["Benchmark Assignments"] == "{}"
+    assert settings_map["Reporting Basis"] == "match_optimization"
+    assert settings_map["Use BCTBill13 for Sharpe/Sortino"] == True
+    assert settings_map["Returns Type (Export)"] == "total"
 
     weights_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Weights")
     assert list(weights_df.columns) == ["Apply Start", "Apply End", "Asset_A", "Asset_B"]

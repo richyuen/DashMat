@@ -8792,6 +8792,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
                 "source": resolved_rf_context.get("rf_source"),
                 "annual": float(resolved_rf_context.get("rf_annual", 0.0) or 0.0),
                 "warning": resolved_rf_context.get("rf_warning"),
+                "enabled": True,
             },
         }
         if model_value in {"ex_ante_mv", "black_litterman"}:
@@ -10199,9 +10200,12 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         _add_setting("Ex-Ante Correlation", _safe_json_text(cfg.get("ex_ante_corr") or {}))
         _add_setting("BL Tau", cfg.get("bl_tau"))
         _add_setting("BL Views", _safe_json_text(cfg.get("bl_views") or []))
+        _add_setting("Reporting Basis", _po_result_reporting_basis(pdata))
+        _add_setting("Use BCTBill13 for Sharpe/Sortino", bool(risk_free_meta.get("enabled", cfg.get("use_risk_free", True))))
         _add_setting("Risk-Free Source", risk_free_meta.get("source", cfg.get("risk_free_source", "")))
         _add_setting("Risk-Free Annual", risk_free_meta.get("annual", cfg.get("risk_free_annual_default")))
         _add_setting("Risk-Free Warning", risk_free_meta.get("warning", cfg.get("risk_free_warning", "")))
+        _add_setting("Returns Type (Export)", "total")
         _add_setting("Rolling Window (Export)", rolling_window or "1y")
         _add_setting("Rolling Return Type (Export)", rolling_return_type or "annualized")
         _add_setting("Rolling Metric (Export)", rolling_metric or "total_return")
