@@ -208,6 +208,24 @@ def _po_build_help_control() -> dmc.Anchor | dmc.Button:
     )
 
 
+def _build_po_returns_basis_control(control_id, value="total", show_label=True):
+    children = []
+    if show_label:
+        children.append(dmc.Text("Returns Type", size="sm", mb=3, fw=500))
+    children.append(
+        dmc.SegmentedControl(
+            id=control_id,
+            data=[
+                {"value": "total", "label": "Total"},
+                {"value": "excess", "label": "Excess"},
+            ],
+            value=value,
+            size="sm",
+        )
+    )
+    return html.Div(children)
+
+
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
 
@@ -436,6 +454,156 @@ def _po_build_statistics_source(
     if display_df.empty or not ordered_cols:
         return "", periodicity or "daily", [], "{}"
     return df_to_json(display_df[ordered_cols]), periodicity or "daily", list(ordered_cols), "{}"
+
+
+def _po_get_performance_frames(
+    results,
+    selected_portfolio,
+    raw_data,
+    periodicity,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+):
+    if not selected_portfolio or not results or selected_portfolio not in results:
+        return {
+            "source_df": pd.DataFrame(),
+            "total_df": pd.DataFrame(),
+            "excess_df": pd.DataFrame(),
+            "display_cols": [],
+            "benchmark_map": {},
+            "periodicity": periodicity or "daily",
+        }
+
+    pdata = (results or {}).get(selected_portfolio) or {}
+    config = pdata.get("config", {}) or {}
+    calc_periodicity = (
+        ((pdata.get("run_inputs") or {}).get("periodicity"))
+        or config.get("periodicity")
+        or periodicity
+        or "daily"
+    )
+
+    series_map = {}
+    benchmark_map = {}
+    display_cols = []
+
+    portfolio_series = _po_single_portfolio_return(results, selected_portfolio)
+    if not portfolio_series.empty:
+        series_map[selected_portfolio] = portfolio_series.rename(selected_portfolio)
+        display_cols.append(selected_portfolio)
+
+    stored_benchmark_json = pdata.get("benchmark_returns_json")
+    if stored_benchmark_json:
+        try:
+            benchmark_series = pd.read_json(StringIO(stored_benchmark_json), typ="series")
+            benchmark_series.index = pd.to_datetime(benchmark_series.index)
+            benchmark_series = benchmark_series.dropna()
+        except Exception:
+            benchmark_series = pd.Series(dtype=float)
+        if not benchmark_series.empty:
+            bench_col = f"__bm__{selected_portfolio}"
+            series_map[bench_col] = benchmark_series.rename(bench_col)
+            benchmark_map[selected_portfolio] = bench_col
+
+    source_series = list(dict.fromkeys(config.get("selected_series") or []))
+    if raw_data and source_series:
+        working_bundle = _build_po_working_bundle(
+            raw_data,
+            calc_periodicity,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+        )
+        try:
+            working_df = _po_get_working_returns(working_bundle, source_series)
+        except Exception:
+            working_df = pd.DataFrame()
+        for name in source_series:
+            if not name or name == selected_portfolio or name not in working_df.columns:
+                continue
+            component = working_df[name].dropna()
+            if component.empty:
+                continue
+            series_map[name] = component.rename(name)
+            if name not in display_cols:
+                display_cols.append(name)
+
+        unique_benchmarks = []
+        for series_name in source_series:
+            bench_name = str((benchmark_assignments or {}).get(series_name, "") or "").strip()
+            if not bench_name or bench_name == "None" or bench_name in unique_benchmarks:
+                continue
+            unique_benchmarks.append(bench_name)
+        if unique_benchmarks:
+            benchmark_bundle = _build_po_working_bundle(
+                raw_data,
+                calc_periodicity,
+                {},
+                {},
+                date_range,
+                vol_scaler,
+                vol_scaling_assignments,
+            )
+            try:
+                benchmark_df = _po_get_working_returns(benchmark_bundle, tuple(unique_benchmarks))
+            except Exception:
+                benchmark_df = pd.DataFrame()
+            for series_name in source_series:
+                if series_name not in display_cols:
+                    continue
+                bench_name = str((benchmark_assignments or {}).get(series_name, "") or "").strip()
+                if not bench_name or bench_name == "None" or bench_name not in benchmark_df.columns:
+                    continue
+                aligned = benchmark_df[bench_name].reindex(series_map[series_name].index)
+                aligned = aligned.where(series_map[series_name].notna())
+                aligned = aligned.dropna()
+                if aligned.empty:
+                    continue
+                bench_col = f"__bm__{series_name}"
+                series_map[bench_col] = aligned.rename(bench_col)
+                benchmark_map[series_name] = bench_col
+
+    if not series_map or not display_cols:
+        return {
+            "source_df": pd.DataFrame(),
+            "total_df": pd.DataFrame(),
+            "excess_df": pd.DataFrame(),
+            "display_cols": [],
+            "benchmark_map": {},
+            "periodicity": calc_periodicity,
+        }
+
+    source_df = pd.concat(series_map, axis=1).sort_index()
+    source_df.index.name = "Date"
+    total_df = source_df[display_cols].copy()
+    try:
+        excess_df = calculate_excess_returns(
+            df_to_json(source_df),
+            calc_periodicity,
+            tuple(display_cols),
+            _mapping_payload(benchmark_map),
+            "excess",
+            "{}",
+            "null",
+            0,
+            "{}",
+        )
+    except Exception:
+        excess_df = pd.DataFrame()
+
+    return {
+        "source_df": source_df,
+        "total_df": total_df,
+        "excess_df": excess_df,
+        "display_cols": display_cols,
+        "benchmark_map": benchmark_map,
+        "periodicity": calc_periodicity,
+    }
 
 
 def _po_rolling_metric_label(metric: str) -> str:
@@ -2412,6 +2580,21 @@ def build_po_main_layout():
                     dmc.Text(id="po-save-series-status-text", size="sm", c="dimmed"),
                 ],
             ),
+            html.Div(
+                id="po-returns-basis-wrapper",
+                style={"display": "none"},
+                children=[
+                    dmc.SegmentedControl(
+                        id="po-returns-basis-control",
+                        data=[
+                            {"value": "total", "label": "Total"},
+                            {"value": "excess", "label": "Excess"},
+                        ],
+                        value="total",
+                        size="sm",
+                    ),
+                ],
+            ),
 
             dmc.Tabs(
                 id="po-vis-tabs",
@@ -2685,6 +2868,10 @@ def build_po_main_layout():
                         pt="md",
                         style={"flex": "1", "display": "flex", "flexDirection": "column", "overflow": "hidden"},
                         children=[
+                            dmc.Group(
+                                mb="md",
+                                children=[_build_po_returns_basis_control("po-returns-basis-control-returns", show_label=False)],
+                            ),
                             dag.AgGrid(
                                 enableEnterpriseModules=True,
                                 licenseKey=AG_GRID_LICENSE_KEY,
@@ -2792,6 +2979,7 @@ def build_po_main_layout():
                                 mb="md",
                                 gap="md",
                                 children=[
+                                    _build_po_returns_basis_control("po-returns-basis-control-calendar", show_label=False),
                                     dmc.SegmentedControl(
                                         id="po-calendar-view-select",
                                         data=[
@@ -2824,6 +3012,7 @@ def build_po_main_layout():
                             dmc.Group(
                                 mb="md",
                                 children=[
+                                    _build_po_returns_basis_control("po-returns-basis-control-drawdown", show_label=False),
                                     dmc.SegmentedControl(
                                         id="po-drawdown-chart-switch",
                                         data=[
@@ -3186,6 +3375,7 @@ layout = dmc.Container(
         dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="po-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
+        dcc.Store(id="po-returns-basis-store", data="total", storage_type="session"),
         dcc.Store(id="po-reporting-basis-store", data="match", storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
@@ -4359,6 +4549,14 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+# Store sync: returns basis
+clientside_callback(
+    "function(value) { return value || 'total'; }",
+    Output("po-returns-basis-store", "data"),
+    Input("po-returns-basis-control", "value"),
+    prevent_initial_call=True,
+)
+
 # Store sync: reporting basis
 clientside_callback(
     "function(value) { return value || 'match'; }",
@@ -4366,6 +4564,48 @@ clientside_callback(
     Input("po-reporting-basis-control", "value"),
     prevent_initial_call=True,
 )
+
+
+@callback(
+    Output("po-returns-basis-control", "value", allow_duplicate=True),
+    Input("po-returns-basis-control-returns", "value"),
+    Input("po-returns-basis-control-calendar", "value"),
+    Input("po-returns-basis-control-drawdown", "value"),
+    State("po-returns-basis-control", "value"),
+    prevent_initial_call=True,
+)
+def sync_po_returns_basis_from_mirrors(returns_value, calendar_value, drawdown_value, current_value):
+    value_by_trigger = {
+        "po-returns-basis-control-returns": returns_value,
+        "po-returns-basis-control-calendar": calendar_value,
+        "po-returns-basis-control-drawdown": drawdown_value,
+    }
+    next_value = value_by_trigger.get(callback_context.triggered_id)
+    if next_value is None:
+        return no_update
+    normalized = "excess" if next_value == "excess" else "total"
+    if normalized == ("excess" if current_value == "excess" else "total"):
+        return no_update
+    return normalized
+
+
+@callback(
+    Output("po-returns-basis-control-returns", "value"),
+    Output("po-returns-basis-control-calendar", "value"),
+    Output("po-returns-basis-control-drawdown", "value"),
+    Input("po-returns-basis-control", "value"),
+    State("po-returns-basis-control-returns", "value"),
+    State("po-returns-basis-control-calendar", "value"),
+    State("po-returns-basis-control-drawdown", "value"),
+    prevent_initial_call=False,
+)
+def sync_po_returns_basis_mirrors(current_value, returns_value, calendar_value, drawdown_value):
+    normalized = "excess" if current_value == "excess" else "total"
+
+    def _sync(value):
+        return no_update if value == normalized else normalized
+
+    return _sync(returns_value), _sync(calendar_value), _sync(drawdown_value)
 
 
 @callback(
@@ -5858,6 +6098,18 @@ clientside_callback(
     Output("po-reporting-basis-control", "value", allow_duplicate=True),
     Input("po-page-load-trigger", "n_intervals"),
     State("po-reporting-basis-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n, returnsBasis) {
+        return returnsBasis || "total";
+    }
+    """,
+    Output("po-returns-basis-control", "value", allow_duplicate=True),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-returns-basis-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -9096,6 +9348,7 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     Input("po-periodicity-select", "value"),
     Input("po-calendar-view-select", "value"),
     Input("po-calendar-series-select", "value"),
+    Input("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9111,6 +9364,7 @@ def po_render_calendar(
     periodicity,
     view_mode,
     monthly_series,
+    returns_basis,
     raw_data,
     bench,
     ls,
@@ -9121,7 +9375,7 @@ def po_render_calendar(
     if active_tab != "calendar" or not results:
         return html.Div()
 
-    display_df, ordered_cols = _po_build_display_series(
+    perf = _po_get_performance_frames(
         results,
         selected_portfolio,
         raw_data,
@@ -9132,18 +9386,23 @@ def po_render_calendar(
         vol_scaler,
         vol_scaling,
     )
-    if display_df.empty or not ordered_cols:
+    calc_periodicity = perf["periodicity"]
+    source_df = perf["source_df"]
+    ordered_cols = perf["display_cols"]
+    benchmark_map = perf["benchmark_map"]
+    returns_type = "excess" if returns_basis == "excess" else "total"
+    if source_df.empty or not ordered_cols:
         return dmc.Text("No calendar data available.", c="dimmed")
 
     if (view_mode or "annual") == "monthly":
         target_series = monthly_series if monthly_series in ordered_cols else ordered_cols[0]
         monthly_col_defs, monthly_rows = create_monthly_view(
-            df_to_json(display_df[ordered_cols]),
+            df_to_json(source_df),
             target_series,
-            periodicity or "daily",
-            periodicity or "daily",
-            "total",
-            {},
+            calc_periodicity,
+            calc_periodicity,
+            returns_type,
+            benchmark_map,
             {},
             tuple(ordered_cols),
             None,
@@ -9170,12 +9429,12 @@ def po_render_calendar(
         )
 
     cal_df = calculate_calendar_year_returns(
-        df_to_json(display_df[ordered_cols]),
-        periodicity or "daily",
-        periodicity or "daily",
+        df_to_json(source_df),
+        calc_periodicity,
+        calc_periodicity,
         tuple(ordered_cols),
-        "total",
-        "{}",
+        returns_type,
+        _mapping_payload(benchmark_map),
         "{}",
         "null",
         0,
@@ -9224,6 +9483,7 @@ def po_render_calendar(
     Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
     Input("po-drawdown-chart-switch", "value"),
+    Input("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9239,6 +9499,7 @@ def po_render_drawdown(
     selected_portfolio,
     periodicity,
     view_mode,
+    returns_basis,
     raw_data,
     bench,
     ls,
@@ -9250,7 +9511,7 @@ def po_render_drawdown(
     if active_tab != "drawdown" or not results:
         return html.Div()
 
-    display_df, ordered_cols = _po_build_display_series(
+    perf = _po_get_performance_frames(
         results,
         selected_portfolio,
         raw_data,
@@ -9261,15 +9522,18 @@ def po_render_drawdown(
         vol_scaler,
         vol_scaling,
     )
-    if display_df.empty or not ordered_cols:
+    calc_periodicity = perf["periodicity"]
+    source_df = perf["source_df"]
+    ordered_cols = perf["display_cols"]
+    if source_df.empty or not ordered_cols:
         return dmc.Text("No drawdown data available.", c="dimmed")
 
     drawdown_df = calculate_drawdown(
-        df_to_json(display_df[ordered_cols]),
-        periodicity or "daily",
+        df_to_json(source_df),
+        calc_periodicity,
         tuple(ordered_cols),
-        "total",
-        "{}",
+        "excess" if returns_basis == "excess" else "total",
+        _mapping_payload(perf["benchmark_map"]),
         "{}",
         "null",
         0,
@@ -9671,6 +9935,7 @@ def po_render_statistics(
     Input("po-results-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
+    Input("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -9684,6 +9949,7 @@ def po_render_returns(
     results,
     active_tab,
     selected_portfolio,
+    returns_basis="total",
     raw_data=None,
     periodicity=None,
     bench=None,
@@ -9701,7 +9967,7 @@ def po_render_returns(
             display_df = _po_collect_portfolio_returns(results, list(selected_portfolio))
             ordered_cols = list(display_df.columns)
         else:
-            display_df, ordered_cols = _po_build_display_series(
+            perf = _po_get_performance_frames(
                 results,
                 selected_portfolio,
                 raw_data,
@@ -9712,6 +9978,8 @@ def po_render_returns(
                 vol_scaler,
                 vol_scaling,
             )
+            display_df = perf["excess_df"] if returns_basis == "excess" else perf["total_df"]
+            ordered_cols = perf["display_cols"]
         if display_df.empty or not ordered_cols:
             return [], []
 
@@ -9758,12 +10026,13 @@ def po_render_returns(
     State("po-rolling-window-select", "value"),
     State("po-rolling-return-type-select", "value"),
     State("po-rolling-metric-select", "value"),
+    State("po-returns-basis-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-weight-portfolio-select", "value"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
-                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, saved_series_store=None, selected_portfolio=None):
+                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, returns_basis="total", saved_series_store=None, selected_portfolio=None):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -9887,7 +10156,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         _add_setting("Risk-Free Source", risk_free_meta.get("source", cfg.get("risk_free_source", "")))
         _add_setting("Risk-Free Annual", risk_free_meta.get("annual", cfg.get("risk_free_annual_default")))
         _add_setting("Risk-Free Warning", risk_free_meta.get("warning", cfg.get("risk_free_warning", "")))
-        _add_setting("Returns Type (Export)", "total")
+        _add_setting("Returns Type (Export)", returns_basis or "total")
         _add_setting("Rolling Window (Export)", rolling_window or "1y")
         _add_setting("Rolling Return Type (Export)", rolling_return_type or "annualized")
         _add_setting("Rolling Metric (Export)", rolling_metric or "total_return")

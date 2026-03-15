@@ -259,6 +259,39 @@ def test_compute_monthly_attribution_matches_expected(page_modules):
     assert monthly.sum(axis=1).iloc[0] == pytest.approx(expected_total)
 
 
+def test_sync_po_returns_basis_from_mirrors_updates_canonical(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(
+        portopt,
+        "callback_context",
+        type("Ctx", (), {"triggered_id": "po-returns-basis-control-calendar"})(),
+    )
+
+    result = portopt.sync_po_returns_basis_from_mirrors(
+        "total",
+        "excess",
+        "total",
+        "total",
+    )
+
+    assert result == "excess"
+
+
+def test_sync_po_returns_basis_mirrors_only_updates_mismatched(page_modules):
+    _, portopt = page_modules
+
+    result = portopt.sync_po_returns_basis_mirrors(
+        "excess",
+        "excess",
+        "total",
+        "excess",
+    )
+
+    assert result[0] is no_update
+    assert result[1] == "excess"
+    assert result[2] is no_update
+
+
 def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=60, freq="D")
@@ -585,8 +618,18 @@ def test_po_render_rolling_uses_result_rf_setting_not_live_toggle(monkeypatch, p
 def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
     _, portopt = page_modules
     idx = pd.date_range("2024-01-01", periods=4, freq="D")
-    display_df = pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx)
-    monkeypatch.setattr(portopt, "_po_build_display_series", lambda *_args, **_kwargs: (display_df, ["P1"]))
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx),
+            "total_df": pd.DataFrame({"P1": [0.01, -0.005, 0.002, 0.003]}, index=idx),
+            "excess_df": pd.DataFrame({"P1": [0.005, -0.01, 0.001, 0.002]}, index=idx),
+            "display_cols": ["P1"],
+            "benchmark_map": {"P1": "__bm__P1"},
+            "periodicity": "daily",
+        },
+    )
     monkeypatch.setattr(
         portopt,
         "calculate_drawdown",
@@ -599,6 +642,7 @@ def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkey
         "P1",
         "daily",
         "table",
+        "total",
         "raw-json",
         {},
         {},
@@ -610,6 +654,138 @@ def test_po_render_drawdown_table_mode_returns_grid_with_wide_date_column(monkey
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+
+
+def test_po_render_returns_uses_excess_basis_frame(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    source_df = pd.DataFrame({"P1": [0.01, 0.02]}, index=idx)
+    source_df.index.name = "Date"
+    total_df = pd.DataFrame({"P1": [0.01, 0.02]}, index=idx)
+    total_df.index.name = "Date"
+    excess_df = pd.DataFrame({"P1": [0.005, 0.01]}, index=idx)
+    excess_df.index.name = "Date"
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": source_df,
+            "total_df": total_df,
+            "excess_df": excess_df,
+            "display_cols": ["P1"],
+            "benchmark_map": {"P1": "__bm__P1"},
+            "periodicity": "daily",
+        },
+    )
+
+    column_defs, row_data = portopt.po_render_returns(
+        {"P1": {"run_inputs": {"selected_series": []}}},
+        "returns",
+        "P1",
+        "excess",
+        "raw-json",
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+    )
+
+    assert column_defs[0]["field"] == "Date"
+    assert row_data[0]["P1"] == pytest.approx(0.005)
+
+
+def test_po_render_calendar_passes_returns_basis_to_shared_helper(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    captured = {}
+
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({"P1": [0.01, 0.02], "__bm__P1": [0.005, 0.01]}, index=idx),
+            "total_df": pd.DataFrame({"P1": [0.01, 0.02]}, index=idx),
+            "excess_df": pd.DataFrame({"P1": [0.005, 0.01]}, index=idx),
+            "display_cols": ["P1"],
+            "benchmark_map": {"P1": "__bm__P1"},
+            "periodicity": "daily",
+        },
+    )
+
+    def _fake_calendar_year_returns(raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, *_args, **_kwargs):
+        captured["returns_type"] = returns_type
+        captured["benchmark_assignments"] = benchmark_assignments
+        return pd.DataFrame({"P1": [0.1]}, index=[2024])
+
+    monkeypatch.setattr(portopt, "calculate_calendar_year_returns", _fake_calendar_year_returns)
+
+    grid = portopt.po_render_calendar(
+        {"P1": {"run_inputs": {"selected_series": []}}},
+        "calendar",
+        "P1",
+        "daily",
+        "annual",
+        None,
+        "excess",
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Year"
+    assert captured["returns_type"] == "excess"
+    assert captured["benchmark_assignments"] == '{"P1":"__bm__P1"}'
+
+
+def test_po_render_drawdown_passes_returns_basis_to_shared_helper(monkeypatch, page_modules):
+    _, portopt = page_modules
+    idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    captured = {}
+
+    monkeypatch.setattr(
+        portopt,
+        "_po_get_performance_frames",
+        lambda *_args, **_kwargs: {
+            "source_df": pd.DataFrame({"P1": [0.01, 0.02], "__bm__P1": [0.005, 0.01]}, index=idx),
+            "total_df": pd.DataFrame({"P1": [0.01, 0.02]}, index=idx),
+            "excess_df": pd.DataFrame({"P1": [0.005, 0.01]}, index=idx),
+            "display_cols": ["P1"],
+            "benchmark_map": {"P1": "__bm__P1"},
+            "periodicity": "daily",
+        },
+    )
+
+    def _fake_drawdown(raw_data, periodicity, selected_series, returns_type, benchmark_assignments, *_args, **_kwargs):
+        captured["returns_type"] = returns_type
+        captured["benchmark_assignments"] = benchmark_assignments
+        return pd.DataFrame({"P1": [0.0, -0.02]}, index=[pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-31")])
+
+    monkeypatch.setattr(portopt, "calculate_drawdown", _fake_drawdown)
+
+    grid = portopt.po_render_drawdown(
+        {"P1": {"run_inputs": {"selected_series": []}}},
+        "drawdown",
+        "P1",
+        "daily",
+        "table",
+        "excess",
+        "raw-json",
+        {},
+        {},
+        None,
+        0,
+        {},
+        "light",
+    )
+
+    assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
+    assert captured["returns_type"] == "excess"
+    assert captured["benchmark_assignments"] == '{"P1":"__bm__P1"}'
 
 
 def test_po_populate_frontier_windows_disables_for_ex_ante_model(page_modules):
@@ -1582,6 +1758,9 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
         0,
         {},
         None,
+        None,
+        None,
+        "excess",
     )
 
     workbook = BytesIO(payload["content"])
@@ -1610,7 +1789,7 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
     assert settings_map["Benchmark Assignments"] == "{}"
     assert settings_map["Reporting Basis"] == "match_optimization"
     assert settings_map["Use BCTBill13 for Sharpe/Sortino"] == True
-    assert settings_map["Returns Type (Export)"] == "total"
+    assert settings_map["Returns Type (Export)"] == "excess"
 
     weights_df = pd.read_excel(BytesIO(payload["content"]), sheet_name="Weights")
     assert list(weights_df.columns) == ["Apply Start", "Apply End", "Asset_A", "Asset_B"]
