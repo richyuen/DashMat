@@ -52,6 +52,7 @@ from utils.regression import run_regression, RegressionWindowResult
 from utils.saved_series import normalize_saved_series_store, save_series_to_raw_data
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
+from utils.help_links import REGRESSION_HELP_URL
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
 from utils.dashmat_welcome_modal import (
     PagePrefixConfig,
@@ -689,529 +690,30 @@ def _reg_prefixed(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
 # Layout builders
 # ---------------------------------------------------------------------------
 
+def _build_help_control() -> dmc.Anchor | dmc.Button:
+    help_button = dmc.Button(
+        "Help",
+        id="reg-menu-help-guide",
+        variant="gradient",
+        gradient={"from": "teal", "to": "cyan", "deg": 90},
+        size="sm",
+        radius="xl",
+        className="dashmat-menu-trigger",
+        leftSection=DashIconify(icon="tabler:help-circle", width=14),
+        disabled=not REGRESSION_HELP_URL.strip(),
+    )
+    if not REGRESSION_HELP_URL.strip():
+        return help_button
+    return dmc.Anchor(
+        help_button,
+        href=REGRESSION_HELP_URL.strip(),
+        target="_blank",
+        style={"textDecoration": "none"},
+    )
+
+
 def build_reg_welcome_screen():
     return build_shared_welcome_screen(REG_CONFIG)
-
-
-def build_reg_help_modal():
-    return dmc.Modal(
-        id="reg-help-modal",
-        title=dmc.Group(
-            gap="xs",
-            children=[
-                dmc.ThemeIcon(DashIconify(icon="tabler:help-circle"), color="blue", variant="light", size="sm"),
-                dmc.Text("Regression Analysis - User Guide", fw=600, size="sm"),
-            ],
-        ),
-        size="lg",
-        centered=False,
-        withCloseButton=True,
-        radius="lg",
-        className="dashmat-modal",
-        overlayProps={"blur": 2, "opacity": 0.45},
-        styles={"inner": {"alignItems": "flex-start", "paddingTop": "4vh"}},
-        children=[
-            dmc.Stack(
-                gap="md",
-                children=[
-                    dmc.Paper(
-                        withBorder=True,
-                        radius="md",
-                        p="sm",
-                        bg="var(--mantine-color-body)",
-                        children=dmc.Group(
-                            justify="flex-start",
-                            align="center",
-                            children=[
-                                dmc.Group(
-                                    gap="xs",
-                                    children=[
-                                        dmc.ThemeIcon(DashIconify(icon="tabler:help-circle"), variant="light", color="blue", size="md"),
-                                        dmc.Stack(
-                                            gap=0,
-                                            children=[
-                                                dmc.Text("Regression Analysis Guide", fw=600, size="sm"),
-                                                dmc.Text(
-                                                    "Use Basic for setup, Advanced for controls, and Model Deep Dive for model-level guidance.",
-                                                    size="xs",
-                                                    c="dimmed",
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                            ],
-                        ),
-                    ),
-                    dmc.Tabs(
-                        value="basic",
-                        variant="outline",
-                        color="blue",
-                        children=[
-                            dmc.TabsList(
-                                children=[
-                                    dmc.TabsTab([DashIconify(icon="tabler:compass", width=14), "Basic Guide"], value="basic"),
-                                    dmc.TabsTab([DashIconify(icon="tabler:settings-cog", width=14), "Advanced Guide"], value="advanced"),
-                                    dmc.TabsTab([DashIconify(icon="tabler:book-2", width=14), "Model Deep Dive"], value="models"),
-                                ],
-                            ),
-                            dmc.TabsPanel(
-                                value="basic",
-                                pt="sm",
-                                children=dmc.Accordion(
-                                    variant="separated",
-                                    children=[
-                    dmc.AccordionItem(
-                        value="overview",
-                        children=[
-                            dmc.AccordionControl("Overview and Workflow"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text(
-                                            "This module runs return-based regressions with model diagnostics, rolling windows, and chart outputs.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text(
-                                            "Typical flow: load data, open Series Selection, assign one Y and one or more X, configure model and windows, run, then review tabs.",
-                                            size="sm",
-                                        ),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="menus",
-                        children=[
-                            dmc.AccordionControl("Navigation and Menus"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("File menu: New session, Load session, Save session, Download Excel, Exit.", size="sm"),
-                                        dmc.Text("Add menu: Add AA Tool indices, portfolio imports, raw imports, add series from file.", size="sm"),
-                                        dmc.Text("Edit menu: Clear server cache.", size="sm"),
-                                        dmc.Text("Switch buttons: move directly to Analytics Tool or Portfolio Optimization.", size="sm"),
-                                        dmc.Text("Help opens this guide.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="data-sources",
-                        children=[
-                            dmc.AccordionControl("Data Sources and Import"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("AA Tool indices: select one or more core categories and append to current dataset.", size="sm"),
-                                        dmc.Text("Portfolio imports: peer-relative, index-relative, and alternative portfolio streams.", size="sm"),
-                                        dmc.Text("Raw imports: factor, funds, and performance with staged rows before import.", size="sm"),
-                                        dmc.Text(
-                                            "Raw options include table choice, fee type, include benchmark, and factor convert-to-returns/divide-by controls.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text(
-                                            "File imports support CSV/XLS/XLSX, plus multi-sheet selection using the sheet-select modal.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text("Sample daily and monthly files are available from the welcome card area.", size="sm"),
-                                        dmc.Text("Duplicate series names are blocked across all import paths.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="series-selection",
-                        children=[
-                            dmc.AccordionControl("Series Selection Modal"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("Set exactly one dependent variable (Y) and one or more independent variables (X).", size="sm"),
-                                        dmc.Text("Assign optional benchmark, long/short flag, and per-series volatility scaling toggle.", size="sm"),
-                                        dmc.Text("Set per-series lag and constrained beta bounds (Min Beta, Max Beta, Enable).", size="sm"),
-                                        dmc.Text("If Y is also selected as X, set lag to at least 1; early periods without lag history are excluded from modeled dates.", size="sm"),
-                                        dmc.Text("Use row drag to reorder series. You can also mark rows for deletion.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="controls",
-                        children=[
-                            dmc.AccordionControl("Controls and Time Settings"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("Periodicity: pick from available frequencies based on loaded data.", size="sm"),
-                                        dmc.Text("Vol scaler: apply global volatility scaling percentage.", size="sm"),
-                                        dmc.Text("Date range: Start Date, End Date, Common Range, and Max Range shortcuts.", size="sm"),
-                                        dmc.Text("Missing data handling: Fill NA or Fill 0.", size="sm"),
-                                        dmc.Text("Fill in-sample toggle controls forecasting treatment in rolling/expanding workflows.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="regression-types",
-                        children=[
-                            dmc.AccordionControl("Regression Types Explained"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text(
-                                            "OLS: baseline linear regression. Use when you want an unconstrained reference model with standard diagnostics.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text(
-                                            "Constrained OLS: OLS with coefficient limits and optional linear constraints. Use when exposures must stay within policy bounds.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text(
-                                            "Style Analysis: constrained exposure decomposition where factor weights are bounded and sum to one. Use to estimate style mix.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text(
-                                            "Ridge: L2-regularized regression that shrinks coefficients but usually keeps all predictors. Use for collinearity and stability.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text(
-                                            "Lasso: L1-regularized regression that can push some coefficients to zero. Use for variable selection and sparse models.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text(
-                                            "Elastic Net: blend of Ridge and Lasso using alpha and l1-ratio. Use when you want both shrinkage and sparsity control.",
-                                            size="sm",
-                                        ),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="advanced",
-                        children=[
-                            dmc.AccordionControl("Advanced Model Inputs"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("Force Zero Intercept and Robust SE are available where supported by model choice.", size="sm"),
-                                        dmc.Text("Exponential weighting uses Exp Wt plus Half-Life.", size="sm"),
-                                        dmc.Text("Window controls: Full, Expanding, Rolling, with Window Size and Opt Step/Unit.", size="sm"),
-                                        dmc.Text("Regularization controls: alpha for Ridge/Lasso/Elastic Net and l1-ratio for Elastic Net.", size="sm"),
-                                        dmc.Text(
-                                            "ARIMA(p,d,q) and GARCH(p,q) are residual-model overlays for OLS and Constrained OLS results.",
-                                            size="sm",
-                                        ),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="constraints",
-                        children=[
-                            dmc.AccordionControl("Linear Constraints"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("Use Add Constraint to append rows and Clear Constraints to reset the grid.", size="sm"),
-                                        dmc.Text("Each row supports constraint coefficients plus Min/Max bounds.", size="sm"),
-                                        dmc.Text("Blank linear-constraint rows are ignored safely.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="results",
-                        children=[
-                            dmc.AccordionControl("Run, Result Management, and Output Tabs"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("Run Regression executes using the current configuration and selected series.", size="sm"),
-                                        dmc.Text("Results are saved by name, selectable from the result dropdown, and can be deleted.", size="sm"),
-                                        dmc.Text(
-                                            "Output tabs include ANOVA, Rolling Summary, Scatter, Weights, Statistics, Returns, Rolling, Calendar Year, Growth of $1, and Drawdown.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text("Rolling tab supports Total Return, Volatility, Sharpe Ratio, and Sortino Ratio metrics.", size="sm"),
-                                        dmc.Text("Scatter supports residual-vs-predicted, actual-vs-predicted, and X-variable comparisons.", size="sm"),
-                                        dmc.Text("Status text reports success and common input errors like missing Y/X/data.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="session-export",
-                        children=[
-                            dmc.AccordionControl("Session, Export, and Utilities"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("Save session exports current session storage to JSON.", size="sm"),
-                                        dmc.Text("Load session imports a saved JSON and restores page state.", size="sm"),
-                                        dmc.Text("New session clears session storage and reloads the page.", size="sm"),
-                                        dmc.Text(
-                                            "Download Excel exports summary, coefficients, diagnostics, predicted/residual, and tab data sheets for returns, growth, rolling, calendar year, and drawdown.",
-                                            size="sm",
-                                        ),
-                                        dmc.Text("Clear server cache resets memoized server-side caches for refreshed data pulls.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                    dmc.AccordionItem(
-                        value="troubleshooting",
-                        children=[
-                            dmc.AccordionControl("Troubleshooting"),
-                            dmc.AccordionPanel(
-                                dmc.Stack(
-                                    gap="xs",
-                                    children=[
-                                        dmc.Text("If Run fails, first check dependent variable, independent variables, and date coverage.", size="sm"),
-                                        dmc.Text("If imports fail, check duplicate names, option staging rows, and source availability.", size="sm"),
-                                        dmc.Text("If periodicity options look incorrect, verify original data frequency and store sync state.", size="sm"),
-                                    ],
-                                )
-                            ),
-                        ],
-                    ),
-                                    ],
-                                ),
-                            ),
-                            dmc.TabsPanel(
-                                value="advanced",
-                                pt="sm",
-                                children=dmc.Accordion(
-                                    variant="separated",
-                                    children=[
-                                        dmc.AccordionItem(
-                                            value="adv-setup",
-                                            children=[
-                                                dmc.AccordionControl("Advanced Setup and Utilities"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("File menu includes New session, Load session, Save session, Download Excel, and Exit.", size="sm"),
-                                                            dmc.Text("Add menu includes imports.", size="sm"),
-                                                            dmc.Text("Edit menu includes Clear server cache.", size="sm"),
-                                                            dmc.Text("Switch buttons move directly to Analytics Tool and Portfolio Optimization.", size="sm"),
-                                                            dmc.Text(
-                                                                "Download Excel exports summary, coefficients, diagnostics, predicted/residual, and tab data sheets for returns, growth, rolling, calendar year, and drawdown.",
-                                                                size="sm",
-                                                            ),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="adv-model-controls",
-                                            children=[
-                                                dmc.AccordionControl("Advanced Model Controls"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("Force Zero Intercept and Robust SE are available where supported by model choice.", size="sm"),
-                                                            dmc.Text("Exponential weighting uses Exp Wt plus Half-Life.", size="sm"),
-                                                            dmc.Text("Window controls: Full, Expanding, Rolling, with Window Size and Opt Step/Unit.", size="sm"),
-                                                            dmc.Text("Regularization controls: alpha for Ridge/Lasso/Elastic Net and l1-ratio for Elastic Net.", size="sm"),
-                                                            dmc.Text("ARIMA(p,d,q) and GARCH(p,q) are residual-model overlays for OLS and Constrained OLS results.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="adv-constraints",
-                                            children=[
-                                                dmc.AccordionControl("Constraints and Feasibility"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("Per-series Min Beta, Max Beta, and Enable control constrained coefficient behavior.", size="sm"),
-                                                            dmc.Text("Linear constraints support row coefficients with Min/Max bounds.", size="sm"),
-                                                            dmc.Text("If constrained models fail, relax bounds or simplify linear constraints.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="adv-troubleshooting",
-                                            children=[
-                                                dmc.AccordionControl("Troubleshooting"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("If Run fails, confirm Y, X, and date coverage first.", size="sm"),
-                                                            dmc.Text("If imports fail, check duplicate names, staged rows, and source availability.", size="sm"),
-                                                            dmc.Text("If periodicity options look incorrect, verify original periodicity and load-sync state.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                            ),
-                            dmc.TabsPanel(
-                                value="models",
-                                pt="sm",
-                                children=dmc.Accordion(
-                                    variant="separated",
-                                    children=[
-                                        dmc.AccordionItem(
-                                            value="model-ols",
-                                            children=[
-                                                dmc.AccordionControl("OLS"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("What it is: baseline linear regression with unconstrained coefficients.", size="sm"),
-                                                            dmc.Text("When to use: reference model for coefficient interpretation and diagnostics.", size="sm"),
-                                                            dmc.Text("Key controls: intercept, robust SE, periodicity, date range, and windowing.", size="sm"),
-                                                            dmc.Text("Watch out for multicollinearity and unstable coefficients in noisy factor sets.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="model-constrained-ols",
-                                            children=[
-                                                dmc.AccordionControl("Constrained OLS"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("What it is: OLS with per-variable beta limits and optional linear constraints.", size="sm"),
-                                                            dmc.Text("When to use: exposure policy rules or mandate limits are required.", size="sm"),
-                                                            dmc.Text("Key controls: Min Beta, Max Beta, Enable, and linear-constraint rows.", size="sm"),
-                                                            dmc.Text("Too many hard constraints can make the problem infeasible.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="model-style-analysis",
-                                            children=[
-                                                dmc.AccordionControl("Style Analysis"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("What it is: constrained style decomposition where exposures are bounded and sum to one.", size="sm"),
-                                                            dmc.Text("When to use: estimate style mix of a portfolio or strategy.", size="sm"),
-                                                            dmc.Text("Key controls: selected factors, date window, and style-specific constraints.", size="sm"),
-                                                            dmc.Text("Missing style proxies can force misleading allocations across available factors.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="model-ridge",
-                                            children=[
-                                                dmc.AccordionControl("Ridge"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("What it is: L2-regularized regression that shrinks coefficients toward zero.", size="sm"),
-                                                            dmc.Text("When to use: multicollinearity is high and stability matters more than sparsity.", size="sm"),
-                                                            dmc.Text("Key controls: alpha regularization strength plus standard preprocessing controls.", size="sm"),
-                                                            dmc.Text("High alpha can over-shrink and hide meaningful exposures.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="model-lasso",
-                                            children=[
-                                                dmc.AccordionControl("Lasso"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("What it is: L1-regularized regression that can zero out coefficients.", size="sm"),
-                                                            dmc.Text("When to use: feature selection with many candidate factors.", size="sm"),
-                                                            dmc.Text("Key controls: alpha strength and common preprocessing settings.", size="sm"),
-                                                            dmc.Text("Selection can be unstable when factors are highly correlated.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="model-elastic-net",
-                                            children=[
-                                                dmc.AccordionControl("Elastic Net"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("What it is: combined L1 and L2 regularization.", size="sm"),
-                                                            dmc.Text("When to use: correlated factors with need for both sparsity and stability.", size="sm"),
-                                                            dmc.Text("Key controls: alpha and l1-ratio along with window and missing-data controls.", size="sm"),
-                                                            dmc.Text("Tune alpha and l1-ratio together; extreme settings collapse to Lasso or Ridge behavior.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        dmc.AccordionItem(
-                                            value="model-arima-garch",
-                                            children=[
-                                                dmc.AccordionControl("ARIMA and GARCH Residual Overlay"),
-                                                dmc.AccordionPanel(
-                                                    dmc.Stack(
-                                                        gap="xs",
-                                                        children=[
-                                                            dmc.Text("What it is: ARIMA and GARCH fit on residuals from OLS-family regressions.", size="sm"),
-                                                            dmc.Text("When to use: residuals show serial correlation or volatility clustering.", size="sm"),
-                                                            dmc.Text("Key controls: ARIMA p,d,q and GARCH p,q orders.", size="sm"),
-                                                            dmc.Text("Interpret as residual diagnostics and forecasts, not a replacement for factor model choice.", size="sm"),
-                                                        ],
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
 
 
 def build_reg_main_layout():
@@ -2069,16 +1571,7 @@ layout = dmc.Container(
                             leftSection=DashIconify(icon="grommet-icons:optimize", width=16),
                         ),
                         dmc.Box(style={"flexGrow": 1}),
-                        dmc.Button(
-                            "Help",
-                            id="reg-menu-help-guide",
-                            variant="gradient",
-                            gradient={"from": "teal", "to": "cyan", "deg": 90},
-                            size="sm",
-                            radius="xl",
-                            className="dashmat-menu-trigger",
-                            leftSection=DashIconify(icon="tabler:help-circle", width=14),
-                        ),
+                        _build_help_control(),
                     ],
                 ),
             ],
@@ -2105,9 +1598,6 @@ layout = dmc.Container(
         build_raw_db_add_modal("reg", AG_GRID_LICENSE_KEY),
         build_series_selection_modal(REG_CONFIG),
         build_sheet_select_modal(REG_CONFIG.prefix),
-
-        # Help modal
-        build_reg_help_modal(),
 
         # ---- Stores ----
         dcc.Store(id="reg-series-select", data=[], storage_type="session"),
@@ -2233,13 +1723,6 @@ clientside_callback(
     Output("reg-main-container", "style"),
     Input("reg-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-store", "data"),
-)
-
-clientside_callback(
-    "function(n) { return true; }",
-    Output("reg-help-modal", "opened"),
-    Input("reg-menu-help-guide", "n_clicks"),
-    prevent_initial_call=True,
 )
 
 clientside_callback(

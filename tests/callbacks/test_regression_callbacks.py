@@ -853,36 +853,23 @@ def test_reg_render_scatter_qq_requires_enough_residual_data(regression_page):
 
 
 def test_reg_help_modal_covers_three_sections_and_model_explainers(regression_page):
-    modal = regression_page.build_reg_help_modal()
-    text_blob = " ".join(_collect_component_text(modal)).lower()
+    help_control = _find_component_by_id(regression_page.layout, "reg-menu-help-guide")
+    assert help_control is not None
+    assert _find_component_by_id(regression_page.layout, "reg-help-modal") is None
+    text_blob = Path("docs/help/regression.md").read_text(encoding="utf-8").lower()
 
     required_phrases = [
-        "basic guide",
-        "advanced guide",
-        "model deep dive",
-        "what it is: baseline linear regression with unconstrained coefficients",
-        "what it is: ols with per-variable beta limits and optional linear constraints",
-        "what it is: constrained style decomposition where exposures are bounded and sum to one",
-        "what it is: l2-regularized regression that shrinks coefficients toward zero",
-        "what it is: l1-regularized regression that can zero out coefficients",
-        "what it is: combined l1 and l2 regularization",
-        "series selection modal",
+        "regression analysis",
+        "series selection",
         "periodicity",
         "vol scaler",
         "date range",
-        "common range",
-        "max range",
-        "fill in-sample",
-        "linear constraints",
-        "run regression",
-        "anova, rolling summary, scatter, weights, statistics, returns, rolling, calendar year, growth of $1, and drawdown",
-        "save session",
-        "load session",
-        "download excel",
-        "clear server cache",
-        "arima(p,d,q)",
-        "garch(p,q)",
-        "arima and garch residual overlay",
+        "ols",
+        "constrained ols",
+        "style analysis",
+        "ridge",
+        "lasso",
+        "elastic net",
     ]
     for phrase in required_phrases:
         assert phrase in text_blob

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from io import StringIO
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -1852,12 +1853,11 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
 
 def test_help_modal_mentions_factor_analysis(page_modules):
     analyticstool, _ = page_modules
-    modal = _find_component_by_id(analyticstool.layout, "at-help-modal")
-    assert modal is not None
+    help_control = _find_component_by_id(analyticstool.layout, "at-menu-help-guide")
+    assert help_control is not None
+    assert _find_component_by_id(analyticstool.layout, "at-help-modal") is None
 
-    text_blob = " ".join(_collect_component_text(modal)).lower()
-    assert "basic guide" in text_blob
-    assert "advanced guide" in text_blob
-    assert "factor analysis page" in text_blob
-    assert "ignores excess mode" in text_blob
-    assert "regime analysis page" in text_blob
+    text_blob = Path("docs/help/analyticstool.md").read_text(encoding="utf-8").lower()
+    assert "analytics tool" in text_blob
+    assert "factor analysis" in text_blob
+    assert "regime analysis" in text_blob

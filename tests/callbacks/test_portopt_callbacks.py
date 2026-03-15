@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -1628,25 +1629,26 @@ def test_po_download_excel_respects_tab_order_and_frontier_weights(monkeypatch, 
 
 def test_po_help_modal_has_three_guide_sections(page_modules):
     _, portopt = page_modules
-    modal = _find_component_by_id(portopt.layout, "po-help-modal")
-    assert modal is not None
+    help_control = _find_component_by_id(portopt.layout, "po-menu-help-guide")
+    assert help_control is not None
+    assert _find_component_by_id(portopt.layout, "po-help-modal") is None
 
-    text_blob = " ".join(_collect_component_text(modal)).lower()
-    assert "basic guide" in text_blob
-    assert "advanced guide" in text_blob
-    assert "model deep dive" in text_blob
+    text_blob = Path("docs/help/portopt.md").read_text(encoding="utf-8").lower()
+    assert "portfolio optimization" in text_blob
+    assert "typical workflow" in text_blob
+    assert "model guide" in text_blob
 
 
 def test_po_help_modal_model_deep_dive_covers_all_models(page_modules):
     _, portopt = page_modules
-    modal = _find_component_by_id(portopt.layout, "po-help-modal")
-    assert modal is not None
+    help_control = _find_component_by_id(portopt.layout, "po-menu-help-guide")
+    assert help_control is not None
 
-    text_blob = " ".join(_collect_component_text(modal)).lower()
+    text_blob = Path("docs/help/portopt.md").read_text(encoding="utf-8").lower()
     required_models = [
         "risk parity",
         "factor risk parity",
-        "hierarchical rp",
+        "hierarchical risk parity",
         "maximize sharpe ratio",
         "minimize variance",
         "minimize cvar",
