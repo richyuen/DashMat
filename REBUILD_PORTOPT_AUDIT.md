@@ -27,6 +27,16 @@ This note tracks the PortOpt parity audit for the `main-rebuild-from-50c2337` br
   - Analytics `1025 ms`
   - PortOpt `1479 / 1986 / 2264 ms`
   - Regression `660 ms`
+- Merge-readiness 5-run confirmation on 2026-03-15 against `f254ec0`
+  - First pass: `warm_switch_2026-03-15T15-36-00_rebuild-merge-ready_f254ec05_p8060.json`
+    - Analytics `1029 ms`
+    - PortOpt `1555 / 2047 / 2330 ms`
+    - Regression `632 ms`
+  - Rerun for edge-case confirmation: `warm_switch_2026-03-15T15-37-02_rebuild-merge-ready-rerun_f254ec05_p8060.json`
+    - Analytics `1136 ms`
+    - PortOpt `1505 / 1969 / 2279 ms`
+    - Regression `630 ms`
+  - Interpretation: PortOpt remained inside the target band on rerun; small Analytics drift between the two 5-run passes looked like environment noise rather than a PortOpt-specific regression.
 
 ## Stable Rebuild Rules
 
