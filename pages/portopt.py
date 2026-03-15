@@ -165,6 +165,14 @@ _PO_MODEL_DEFAULT_NAME = {
     "black_litterman": "BL",
 }
 
+_PO_SPLIT_REPORTING_MODELS = {
+    "risk_parity",
+    "factor_risk_parity",
+    "hierarchical_risk_parity",
+    "minimize_variance",
+    "minimize_cvar",
+}
+
 
 def _po_default_name_for_model(model: str) -> str:
     return _PO_MODEL_DEFAULT_NAME.get(model, "Port")
@@ -179,6 +187,13 @@ def _mapping_payload(value) -> str:
 
 def _date_range_payload(value) -> str:
     return date_range_payload_for_cache(value)
+
+
+def _po_supports_split_reporting(opt_model, selected_series, long_short_assignments) -> bool:
+    if opt_model not in _PO_SPLIT_REPORTING_MODELS:
+        return False
+    ls_map = long_short_assignments or {}
+    return any(bool(ls_map.get(series, False)) for series in (selected_series or []))
 
 
 @dataclass(frozen=True)
@@ -1890,6 +1905,28 @@ def build_po_main_layout():
                                                 disabled=False,
                                             ),
                                         ]),
+                                        html.Div([
+                                            dmc.Text("Portfolio Reporting", size="sm", mb=3, fw=500),
+                                            html.Div(
+                                                dmc.SegmentedControl(
+                                                    id="po-reporting-basis-control",
+                                                    data=[
+                                                        {"value": "match", "label": "Match Opt"},
+                                                        {"value": "split", "label": "Long-Only"},
+                                                    ],
+                                                    value="match",
+                                                    size="sm",
+                                                ),
+                                                style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                            ),
+                                            dmc.Text(
+                                                id="po-reporting-basis-help",
+                                                size="xs",
+                                                c="dimmed",
+                                                mt=4,
+                                                children="Uses long-only returns for portfolio performance while keeping optimization on the selected basis.",
+                                            ),
+                                        ]),
                                         dmc.NumberInput(
                                             id="po-window-size-input",
                                             label="Window Size (Periods)",
@@ -3449,6 +3486,7 @@ layout = dmc.Container(
         dcc.Store(id="po-periodicity-value-store", data="daily_trading", storage_type="session"),
         dcc.Store(id="po-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="po-vol-scaler-value-store", data=0, storage_type="session"),
+        dcc.Store(id="po-reporting-basis-store", data="match", storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
@@ -4629,6 +4667,39 @@ clientside_callback(
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
 )
+
+# Store sync: reporting basis
+clientside_callback(
+    "function(value) { return value || 'match'; }",
+    Output("po-reporting-basis-store", "data"),
+    Input("po-reporting-basis-control", "value"),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output("po-reporting-basis-control", "disabled"),
+    Output("po-reporting-basis-control", "value", allow_duplicate=True),
+    Output("po-reporting-basis-help", "children"),
+    Input("po-opt-model-select", "value"),
+    Input("po-series-select", "data"),
+    Input("po-long-short-store", "data"),
+    State("po-reporting-basis-control", "value"),
+    prevent_initial_call="initial_duplicate",
+)
+def po_sync_reporting_basis_control(opt_model, selected_series, long_short_assignments, current_value):
+    eligible = _po_supports_split_reporting(opt_model or "risk_parity", selected_series or [], long_short_assignments or {})
+    if eligible:
+        return (
+            False,
+            no_update,
+            "Uses long-only returns for portfolio performance while keeping optimization on the selected basis.",
+        )
+    return (
+        True,
+        "match",
+        "Available only for supported risk-based models when at least one selected series is marked Long/Short.",
+    )
 
 
 @callback(
@@ -6084,6 +6155,18 @@ clientside_callback(
     Input("po-page-load-trigger", "n_intervals"),
     State("po-ex-ante-mode-store", "data"),
     State("po-objective-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n, reportingBasis) {
+        return reportingBasis || "match";
+    }
+    """,
+    Output("po-reporting-basis-control", "value", allow_duplicate=True),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-reporting-basis-store", "data"),
     prevent_initial_call=True,
 )
 

@@ -176,6 +176,36 @@ def test_po_open_modal_raw_data_adds_only_generic_new_series(monkeypatch, page_m
     assert result[11] is True
 
 
+def test_po_sync_reporting_basis_control_allows_split_for_eligible_models(page_modules):
+    _, portopt = page_modules
+
+    disabled, value, help_text = portopt.po_sync_reporting_basis_control(
+        "risk_parity",
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": True},
+        "split",
+    )
+
+    assert disabled is False
+    assert value is no_update
+    assert "long-only returns" in help_text
+
+
+def test_po_sync_reporting_basis_control_disables_when_ineligible(page_modules):
+    _, portopt = page_modules
+
+    disabled, value, help_text = portopt.po_sync_reporting_basis_control(
+        "maximize_sharpe",
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": True},
+        "split",
+    )
+
+    assert disabled is True
+    assert value == "match"
+    assert "supported risk-based models" in help_text
+
+
 def test_build_po_working_bundle_normalizes_inputs(page_modules, raw_json):
     _, portopt = page_modules
 
