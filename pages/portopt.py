@@ -3148,6 +3148,20 @@ layout = dmc.Container(
             ],
         ),
 
+        # Welcome screen (Hydration gates visibility)
+        html.Div(
+            id="po-welcome-screen",
+            children=build_po_welcome_screen(),
+            style={"display": "none"},
+        ),
+
+        # Main container (Hydration gates visibility)
+        html.Div(
+            id="po-main-container",
+            children=build_po_main_layout(),
+            style={"display": "none"},
+        ),
+
         # Temp modal stores
         dcc.Store(id="po-temp-series-select", data=[]),
         dcc.Store(id="po-temp-series-order-store", data=[]),

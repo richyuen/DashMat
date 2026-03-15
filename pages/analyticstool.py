@@ -4295,6 +4295,50 @@ layout = dmc.Container(
             ],
         ),
 
+        # Welcome Screen (Hydration gates visibility)
+        html.Div(
+            id="at-welcome-screen-container",
+            children=build_welcome_screen(),
+            style={"display": "none"},
+        ),
+
+        # Main App Container (Initially Hidden)
+        html.Div(
+            id="at-main-app-container",
+            children=build_main_layout(
+                periodicity_options=[{"value": "daily", "label": "Daily"}],
+                periodicity_value="daily",
+                returns_type="total",
+                vol_scaler=0,
+                use_risk_free_value="tbill",
+                active_tab="statistics",
+                rolling_window="1y",
+                rolling_metric="total_return",
+                rolling_return_type="annualized",
+                rolling_chart_switch="chart",
+                drawdown_chart_switch="chart",
+                growth_chart_switch="chart",
+                monthly_view="annual",
+                monthly_series=None,
+                monthly_series_options=[],
+                monthly_select_disabled=True,
+                factor_mode="box",
+                factor_quantiles=5,
+                factor_transform="raw",
+                factor_series_options=[],
+                factor_series_value=None,
+                factor_qq_reference="normal",
+                conditional_view="forward",
+                conditional_comparator="le",
+                conditional_threshold=0,
+                conditional_window_conversion="compound",
+                conditional_step=1,
+                conditional_step_unit="months",
+                conditional_display_mode="summary",
+            ),
+            style={"display": "none"},
+        ),
+
         # Hidden stores for state management (using local storage for persistence)
         # dashmat-raw-data-store and dashmat-original-periodicity-store are defined in app.py (shared across pages)
         dcc.Store(id="at-benchmark-assignments-store", data={}, storage_type="session"),
