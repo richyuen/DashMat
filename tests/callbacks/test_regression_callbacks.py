@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -576,6 +577,98 @@ def test_reg_toggle_welcome_uses_original_periodicity(monkeypatch, regression_pa
     assert value == "monthly"
 
 
+def test_regression_layout_includes_common_daily_and_risk_free_controls():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'id="reg-common-daily-button"' in page_text
+    assert 'id="reg-use-risk-free-switch"' in page_text
+    assert 'dcc.Store(id="reg-common-daily-candidates-store", data=None, storage_type="memory")' in page_text
+    assert 'dcc.Store(id="reg-use-risk-free-store", data=True, storage_type="session")' in page_text
+
+
+def test_regression_common_daily_candidates_combine_x_and_dependent_var(monkeypatch, regression_page):
+    captured = {}
+
+    def _fake_compute_common_daily_candidates(raw_data, selected_series):
+        captured["raw_data"] = raw_data
+        captured["selected_series"] = tuple(selected_series)
+        return {"common_daily_start": "2020-01-01", "common_daily_end": "2020-12-31"}
+
+    monkeypatch.setattr(regression_page, "compute_common_daily_candidates", _fake_compute_common_daily_candidates)
+
+    result = regression_page.reg_update_common_daily_candidates(
+        "raw-json",
+        ["X2", "X1"],
+        "Y",
+    )
+
+    assert result == {"common_daily_start": "2020-01-01", "common_daily_end": "2020-12-31"}
+    assert captured["raw_data"] == "raw-json"
+    assert captured["selected_series"] == ("X1", "X2", "Y")
+
+
+def test_reg_init_date_range_does_not_depend_on_common_daily_store():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'Input("reg-range-candidates-store", "data")' in page_text
+    assert 'Input("reg-common-daily-candidates-store", "data")' in page_text
+    init_block = page_text.split("def reg_init_date_range", 1)[0]
+    init_callback = init_block.rsplit("@callback(", 1)[-1]
+    assert 'Input("reg-common-daily-candidates-store", "data")' not in init_callback
+
+
+def test_reg_date_range_common_daily_sets_daily_trading(monkeypatch, regression_page):
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        type("Ctx", (), {"triggered": [{"prop_id": "reg-common-daily-button.n_clicks"}]})(),
+    )
+
+    result = regression_page.reg_date_range_button(
+        None,
+        1,
+        None,
+        {"available_series": ("X1", "Y"), "max_start": "2020-01-01", "max_end": "2020-12-31"},
+        {"common_daily_start": "2020-02-01", "common_daily_end": "2020-11-30"},
+    )
+
+    assert result == (
+        "2020-02-01",
+        "2020-11-30",
+        {"start": "2020-02-01", "end": "2020-11-30"},
+        "daily_trading",
+        "daily_trading",
+    )
+
+
+def test_reg_date_range_common_range_preserves_periodicity(monkeypatch, regression_page):
+    monkeypatch.setattr(
+        regression_page,
+        "callback_context",
+        type("Ctx", (), {"triggered": [{"prop_id": "reg-common-range-button.n_clicks"}]})(),
+    )
+
+    result = regression_page.reg_date_range_button(
+        1,
+        None,
+        None,
+        {
+            "available_series": ("X1", "Y"),
+            "common_start": "2020-03-01",
+            "common_end": "2020-10-31",
+            "max_start": "2020-01-01",
+            "max_end": "2020-12-31",
+        },
+        {"common_daily_start": "2020-02-01", "common_daily_end": "2020-11-30"},
+    )
+
+    assert result[:3] == (
+        "2020-03-01",
+        "2020-10-31",
+        {"start": "2020-03-01", "end": "2020-10-31"},
+    )
+    assert result[3] is no_update
+    assert result[4] is no_update
+
+
 def test_reg_sync_grid_to_temp_handles_list_cell_change_payload(regression_page):
     row_data = [
         {"Series": "A", "Y": True, "X": True},
@@ -679,6 +772,65 @@ def test_reg_toggle_welcome_no_data_shows_top_aligned_welcome(regression_page):
     options, value = regression_page.reg_toggle_welcome(None, None, None)
     assert options == [{"value": "daily", "label": "Daily"}]
     assert value == "daily"
+
+
+def test_reg_sync_scatter_x_options_disables_x_for_qq_mode(regression_page):
+    results = {"R1": {"independent_vars": ["X1", "X2"]}}
+
+    options, value, disabled = regression_page.reg_sync_scatter_x_options("R1", results, "qq", "X1")
+
+    assert [opt["value"] for opt in options] == ["X1", "X2"]
+    assert value == "X1"
+    assert disabled is True
+
+
+def test_reg_render_scatter_renders_residual_qq_plot(regression_page):
+    idx = pd.date_range("2024-01-01", periods=6, freq="D")
+    entry = {
+        "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.01, 0.0, 0.02, -0.01, 0.01, 0.015]}, index=idx)),
+        "residuals_json": df_to_json(pd.DataFrame({"residuals": [0.002, -0.001, 0.0, 0.0015, -0.0005, 0.0008]}, index=idx)),
+        "dependent_var": "Y",
+        "independent_vars": ["X1"],
+        "window_type": "full",
+    }
+    raw_df = pd.DataFrame({"Y": [0.012, -0.001, 0.02, -0.008, 0.009, 0.015], "X1": [1, 2, 3, 4, 5, 6]}, index=idx)
+
+    graph = regression_page.reg_render_scatter(
+        "R1",
+        {"R1": entry},
+        "qq",
+        None,
+        df_to_json(raw_df),
+        "light",
+    )
+
+    assert getattr(graph, "figure", None) is not None
+    assert graph.figure.layout.title.text == "Residual Q-Q Plot"
+    assert graph.figure.layout.xaxis.title.text == "Theoretical Quantiles"
+    assert graph.figure.layout.yaxis.title.text == "Residual Quantiles"
+
+
+def test_reg_render_scatter_qq_requires_enough_residual_data(regression_page):
+    idx = pd.date_range("2024-01-01", periods=2, freq="D")
+    entry = {
+        "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.01, 0.0]}, index=idx)),
+        "residuals_json": df_to_json(pd.DataFrame({"residuals": [0.002, -0.001]}, index=idx)),
+        "dependent_var": "Y",
+        "independent_vars": ["X1"],
+        "window_type": "full",
+    }
+    raw_df = pd.DataFrame({"Y": [0.012, -0.001], "X1": [1, 2]}, index=idx)
+
+    text = regression_page.reg_render_scatter(
+        "R1",
+        {"R1": entry},
+        "qq",
+        None,
+        df_to_json(raw_df),
+        "light",
+    )
+
+    assert "not enough residual data" in "".join(str(part).lower() for part in text.children)
 
 
 def test_reg_help_modal_covers_three_sections_and_model_explainers(regression_page):
@@ -1144,6 +1296,8 @@ def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, reg
         "annualized",
         "total_return",
         "table",
+        None,
+        True,
         "light",
     )
 

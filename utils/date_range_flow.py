@@ -1,4 +1,4 @@
-"""Shared date-range helper flows for analytics and portopt pages."""
+"""Shared date-range helper flows for analytics, portopt, and regression pages."""
 
 from __future__ import annotations
 
@@ -17,9 +17,25 @@ _EMPTY_CANDIDATES = {
     "common_daily_end": None,
 }
 
+_EMPTY_COMMON_DAILY_CANDIDATES = {
+    "common_daily_start": None,
+    "common_daily_end": None,
+}
+
+
+def _normalize_selected_series(selected_series) -> tuple[str, ...]:
+    seen = set()
+    normalized = []
+    for series in selected_series or ():
+        if series in seen:
+            continue
+        seen.add(series)
+        normalized.append(series)
+    return tuple(sorted(normalized))
+
 
 @cache_config.cache.memoize(timeout=0)
-def compute_date_range_candidates(raw_data: str, periodicity: str, selected_series: tuple[str, ...]) -> dict:
+def _compute_date_range_candidates_cached(raw_data: str, periodicity: str, selected_series: tuple[str, ...]) -> dict:
     """Compute reusable range candidates for selected series.
 
     This function is memoized so repeat callbacks with identical inputs reuse
@@ -54,6 +70,39 @@ def compute_date_range_candidates(raw_data: str, periodicity: str, selected_seri
     return result
 
 
+@cache_config.cache.memoize(timeout=0)
+def _compute_common_daily_candidates_cached(raw_data: str, selected_series: tuple[str, ...]) -> dict:
+    if not raw_data or not selected_series:
+        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+
+    daily_df = resample_returns_cached(raw_data, "daily_trading")
+    if daily_df.empty:
+        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+
+    daily_available = [series for series in selected_series if series in daily_df.columns]
+    if not daily_available:
+        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+
+    common_daily = get_common_daily_range(daily_df, daily_available)
+    if not common_daily:
+        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+
+    return {
+        "common_daily_start": common_daily[0].strftime("%Y-%m-%d"),
+        "common_daily_end": common_daily[1].strftime("%Y-%m-%d"),
+    }
+
+
+def compute_date_range_candidates(raw_data: str, periodicity: str, selected_series: tuple[str, ...]) -> dict:
+    normalized_series = _normalize_selected_series(selected_series)
+    return _compute_date_range_candidates_cached(raw_data, periodicity, normalized_series)
+
+
+def compute_common_daily_candidates(raw_data: str, selected_series: tuple[str, ...]) -> dict:
+    normalized_series = _normalize_selected_series(selected_series)
+    return _compute_common_daily_candidates_cached(raw_data, normalized_series)
+
+
 def resolve_initial_range(candidates: dict, stored_range) -> tuple[str | None, str | None]:
     """Resolve initial picker start/end from candidates and stored range."""
     max_start = candidates.get("max_start")
@@ -70,12 +119,17 @@ def resolve_initial_range(candidates: dict, stored_range) -> tuple[str | None, s
     return max_start, max_end
 
 
-def resolve_button_range(candidates: dict, button_id: str) -> tuple[str | None, str | None, bool]:
+def resolve_button_range(
+    candidates: dict,
+    button_id: str,
+    common_daily_candidates: dict | None = None,
+) -> tuple[str | None, str | None, bool]:
     """Resolve range + whether periodicity should switch to daily_trading."""
     if button_id.endswith("common-range-button"):
         return candidates.get("common_start"), candidates.get("common_end"), False
     if button_id.endswith("common-daily-button"):
-        return candidates.get("common_daily_start"), candidates.get("common_daily_end"), True
+        source = common_daily_candidates if isinstance(common_daily_candidates, dict) else candidates
+        return source.get("common_daily_start"), source.get("common_daily_end"), True
     if button_id.endswith("maximum-range-button"):
         return candidates.get("max_start"), candidates.get("max_end"), False
     return None, None, False

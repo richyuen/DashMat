@@ -21,6 +21,7 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import get_sheet_names
 from utils.date_range_flow import (
+    compute_common_daily_candidates,
     compute_date_range_candidates,
     resolve_button_range,
     resolve_initial_range,
@@ -45,6 +46,7 @@ from utils.statistics import (
     calculate_growth_of_dollar,
     calculate_statistics_cached,
 )
+from utils.qq import build_normal_qq_series, build_qq_figure
 from utils.charting import apply_chart_theme
 from utils.regression import run_regression, RegressionWindowResult
 from utils.saved_series import normalize_saved_series_store, save_series_to_raw_data
@@ -1247,6 +1249,21 @@ def build_reg_main_layout():
                                                 ),
                                             ),
                                         ]),
+                                        html.Div([
+                                            dmc.Text("Sharpe/Sortino RF", size="sm", mb=3, fw=500),
+                                            html.Div(
+                                                dmc.SegmentedControl(
+                                                    id="reg-use-risk-free-switch",
+                                                    data=[
+                                                        {"value": "zero", "label": "Zero"},
+                                                        {"value": "tbill", "label": "T-Bill"},
+                                                    ],
+                                                    value="tbill",
+                                                    size="sm",
+                                                ),
+                                                style={"height": "36px", "display": "flex", "alignItems": "center"},
+                                            ),
+                                        ]),
                                     ],
                                 ),
                                 html.Div(
@@ -1274,6 +1291,16 @@ def build_reg_main_layout():
                                             dmc.Button(
                                                 "Common Range",
                                                 id="reg-common-range-button",
+                                                size="xs",
+                                                variant="outline",
+                                                disabled=True,
+                                                w=120,
+                                            ),
+                                        ], style={"marginRight": "10px", "alignSelf": "flex-end", "marginBottom": "2px"}),
+                                        html.Div([
+                                            dmc.Button(
+                                                "Common Daily",
+                                                id="reg-common-daily-button",
                                                 size="xs",
                                                 variant="outline",
                                                 disabled=True,
@@ -1869,6 +1896,7 @@ def build_reg_main_layout():
                                                     {"value": "actual_vs_predicted", "label": "Actual vs Predicted"},
                                                     {"value": "actual_vs_x", "label": "Actual vs X"},
                                                     {"value": "predicted_vs_x", "label": "Predicted vs X"},
+                                                    {"value": "qq", "label": "Q-Q Plot"},
                                                 ],
                                                 value="residual_vs_predicted",
                                                 w=220,
@@ -2109,7 +2137,9 @@ layout = dmc.Container(
         dcc.Store(id="reg-periodicity-value-store", data="daily", storage_type="session"),
         dcc.Store(id="reg-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="reg-vol-scaler-value-store", data=0, storage_type="session"),
+        dcc.Store(id="reg-use-risk-free-store", data=True, storage_type="session"),
         dcc.Store(id="reg-date-range-store", data=None, storage_type="session"),
+        dcc.Store(id="reg-common-daily-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-series-select-value-store", data=[], storage_type="session"),
         # Regression settings
         dcc.Store(id="reg-model-store", data="ols", storage_type="session"),
@@ -2487,6 +2517,12 @@ clientside_callback("function(v){return v;}",
     Output("reg-periodicity-select","value", allow_duplicate=True), Input("reg-periodicity-load-sync-dummy","data"), prevent_initial_call=True)
 clientside_callback("function(v){return v??0;}",
     Output("reg-vol-scaler-value-store","data"), Input("reg-vol-scaler-input","value"), prevent_initial_call=True)
+clientside_callback(
+    "function(v){return v === 'zero' ? false : true;}",
+    Output("reg-use-risk-free-store", "data"),
+    Input("reg-use-risk-free-switch", "value"),
+    prevent_initial_call=True,
+)
 clientside_callback("function(v){return v || 'ols';}",
     Output("reg-model-store","data"), Input("reg-model-select","value"), prevent_initial_call=True)
 clientside_callback("function(v){return v;}",
@@ -2517,6 +2553,20 @@ clientside_callback("function(v){return v??0.5;}",
     Output("reg-l1-ratio-store","data"), Input("reg-l1-ratio-input","value"), prevent_initial_call=True)
 clientside_callback("function(v){return v;}",
     Output("reg-active-tab-store","data"), Input("reg-tabs","value"), prevent_initial_call=True)
+clientside_callback(
+    """
+    function(n, storedValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        return storedValue === false ? "zero" : "tbill";
+    }
+    """,
+    Output("reg-use-risk-free-switch", "value"),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("reg-use-risk-free-store", "data"),
+    prevent_initial_call=True,
+)
 
 
 # ===========================================================================
@@ -2600,6 +2650,8 @@ def reg_sync_scatter_x_options(selected, results, mode, current_x):
     entry = results[selected] or {}
     indep_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
     options = [{"value": x, "label": x} for x in indep_vars]
+    if mode == "qq":
+        return options, current_x if current_x in indep_vars else None, True
     needs_x = mode in {"actual_vs_x", "predicted_vs_x"}
     if not needs_x:
         return options, current_x if current_x in indep_vars else None, True
@@ -4250,6 +4302,21 @@ def reg_on_modal_cancel(n_clicks):
 # ---------------------------------------------------------------------------
 
 @callback(
+    Output("reg-common-daily-candidates-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-series-select", "data"),
+    Input("reg-dependent-var-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def reg_update_common_daily_candidates(raw_data, x_series, dep_var):
+    all_series = tuple(sorted(dict.fromkeys((x_series or []) + ([dep_var] if dep_var else []))))
+    return compute_common_daily_candidates(
+        raw_data,
+        all_series,
+    )
+
+
+@callback(
     Output("reg-start-date-picker", "value"),
     Output("reg-end-date-picker", "value"),
     Output("reg-date-picker-wrapper", "style"),
@@ -4282,32 +4349,66 @@ def reg_init_date_range(raw_data, periodicity, x_series, dep_var, stored_range):
         return None, None, disabled_style, True, True, None
 
 
+clientside_callback(
+    """
+    function(candidates, commonDailyCandidates, periodicityOptions) {
+        const hasSeries = !!(candidates && candidates.available_series && candidates.available_series.length);
+        if (!hasSeries) {
+            return true;
+        }
+        const hasCommonDaily = !!(
+            commonDailyCandidates &&
+            commonDailyCandidates.common_daily_start &&
+            commonDailyCandidates.common_daily_end
+        );
+        if (!hasCommonDaily) {
+            return true;
+        }
+        const supportsDailyTrading = Array.isArray(periodicityOptions)
+            && periodicityOptions.some((option) => option && option.value === "daily_trading");
+        return !supportsDailyTrading;
+    }
+    """,
+    Output("reg-common-daily-button", "disabled"),
+    Input("reg-range-candidates-store", "data"),
+    Input("reg-common-daily-candidates-store", "data"),
+    Input("reg-periodicity-select", "data"),
+    prevent_initial_call=False,
+)
+
+
 @callback(
     Output("reg-start-date-picker", "value", allow_duplicate=True),
     Output("reg-end-date-picker", "value", allow_duplicate=True),
     Output("reg-date-range-store", "data", allow_duplicate=True),
+    Output("reg-periodicity-select", "value", allow_duplicate=True),
+    Output("reg-periodicity-value-store", "data", allow_duplicate=True),
     Input("reg-common-range-button", "n_clicks"),
+    Input("reg-common-daily-button", "n_clicks"),
     Input("reg-maximum-range-button", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
-    State("reg-periodicity-select", "value"),
-    State("reg-series-select", "data"),
-    State("reg-dependent-var-store", "data"),
+    State("reg-range-candidates-store", "data"),
+    State("reg-common-daily-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def reg_date_range_button(n_common, n_max, raw_data, periodicity, x_series, dep_var):
-    all_series = list(set((x_series or []) + ([dep_var] if dep_var else [])))
-    if not raw_data or not all_series:
+def reg_date_range_button(n_common, n_common_daily, n_max, candidates, common_daily_candidates):
+    if not isinstance(candidates, dict) or not candidates.get("available_series"):
         raise PreventUpdate
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     try:
-        candidates = compute_date_range_candidates(raw_data, periodicity or "daily", tuple(all_series))
-        start, end, _ = resolve_button_range(candidates, button_id)
+        start, end, force_daily = resolve_button_range(candidates, button_id, common_daily_candidates)
         if not start or not end:
             raise PreventUpdate
-        return str(start)[:10], str(end)[:10], {"start": str(start)[:10], "end": str(end)[:10]}
+        periodicity_value = "daily_trading" if force_daily else no_update
+        return (
+            str(start)[:10],
+            str(end)[:10],
+            {"start": str(start)[:10], "end": str(end)[:10]},
+            periodicity_value,
+            periodicity_value,
+        )
     except Exception:
         raise PreventUpdate
 
@@ -4434,6 +4535,8 @@ def reg_toggle_file_menu_actions(raw_data, results):
     State("reg-rolling-metric-select", "value"),
     State("reg-calendar-view-select", "value"),
     State("reg-calendar-series-select", "value"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
 )
 def reg_download_excel(
@@ -4447,6 +4550,8 @@ def reg_download_excel(
     rolling_metric=None,
     calendar_view=None,
     calendar_series=None,
+    saved_series_store=None,
+    use_risk_free=True,
 ):
     if n_clicks is None or not results:
         raise PreventUpdate
@@ -4502,6 +4607,7 @@ def reg_download_excel(
         {"Parameter": "Opt Step Unit", "Value": config.get("opt_step_unit", "")},
         {"Parameter": "Fill In-Sample", "Value": bool(config.get("fill_in_sample", False))},
         {"Parameter": "Missing Data", "Value": config.get("missing_data", "")},
+        {"Parameter": "Use BCTBill13 for Sharpe/Sortino", "Value": bool(use_risk_free)},
         {"Parameter": "Force Zero Intercept", "Value": bool(config.get("force_zero_intercept", False))},
         {"Parameter": "Robust SE", "Value": bool(config.get("robust_se", False))},
         {"Parameter": "Exponential Weighting", "Value": bool(config.get("exp_wt", False))},
@@ -4647,6 +4753,9 @@ def reg_download_excel(
                     "null",
                     0,
                     "{}",
+                    risk_free_json_from_store(saved_series_store),
+                    spx_json_from_store(saved_series_store),
+                    bool(use_risk_free),
                 )
                 normalized = _normalize_stats_payload(stats_payload)
                 if normalized:
@@ -4712,6 +4821,8 @@ def reg_download_excel(
                 metric,
                 0,
                 "{}",
+                risk_free_json_from_store(saved_series_store),
+                bool(use_risk_free),
             )
             if rolling_calc is not None and not rolling_calc.empty:
                 rolling_df = rolling_calc.reset_index()
@@ -5463,6 +5574,8 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme):
     Input("reg-rolling-return-type-select", "value"),
     Input("reg-rolling-metric-select", "value"),
     Input("reg-rolling-chart-switch", "value"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-use-risk-free-store", "data"),
     Input("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=False,
 )
@@ -5474,6 +5587,8 @@ def reg_render_rolling_returns(
     rolling_return_type,
     rolling_metric,
     view_mode,
+    saved_series_store,
+    use_risk_free,
     theme,
 ):
     _name, entry = _reg_get_selected_result_entry(selected, results)
@@ -5529,6 +5644,8 @@ def reg_render_rolling_returns(
         metric,
         0,
         "{}",
+        risk_free_json_from_store(saved_series_store),
+        bool(use_risk_free),
     )
     if rolling_df is None or rolling_df.empty:
         return dmc.Text("No rolling values available for selected window.", size="sm", c="dimmed")
@@ -6016,9 +6133,10 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme):
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-use-risk-free-store", "data"),
     prevent_initial_call=False,
 )
-def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None):
+def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, use_risk_free=True):
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
 
@@ -6165,6 +6283,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
             "{}",
             risk_free_json_from_store(saved_series_store),
             spx_json_from_store(saved_series_store),
+            bool(use_risk_free),
         )
     except Exception as exc:
         return dmc.Text(f"Statistics error: {exc}", size="sm", c="dimmed")
@@ -6207,6 +6326,18 @@ def reg_render_scatter(selected, results, mode, x_var, raw_data, theme):
     predicted = display_df["Predicted"] if "Predicted" in display_df.columns else pd.Series(dtype=float)
     actual = display_df["Actual (Y)"] if "Actual (Y)" in display_df.columns else pd.Series(dtype=float)
     residual = display_df["Residual"] if "Residual" in display_df.columns else pd.Series(dtype=float)
+    if mode == "qq":
+        qq_data = build_normal_qq_series(residual)
+        if qq_data is None:
+            return dmc.Text("Not enough residual data to render the Q-Q plot.", size="sm", c="dimmed")
+        fig = build_qq_figure(
+            qq_data,
+            title="Residual Q-Q Plot",
+            xlabel="Theoretical Quantiles",
+            ylabel="Residual Quantiles",
+            theme=theme,
+        )
+        return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
     if mode in {"actual_vs_x", "predicted_vs_x"}:
         if not x_var or x_var not in display_df.columns:
