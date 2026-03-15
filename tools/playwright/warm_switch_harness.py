@@ -425,6 +425,50 @@ def set_component_props(page, component_id: str, props: dict) -> None:
     )
 
 
+def try_set_component_props(page, component_id: str, props: dict) -> bool:
+    return bool(
+        page.evaluate(
+            """
+            ([componentId, nextProps]) => {
+              try {
+                window.dash_clientside.set_props(componentId, nextProps);
+                return true;
+              } catch (err) {
+                return false;
+              }
+            }
+            """,
+            [component_id, props],
+        )
+    )
+
+
+def replay_store_data(page, component_id: str) -> bool:
+    return bool(
+        page.evaluate(
+            """
+            (componentId) => {
+              const storages = [window.sessionStorage, window.localStorage];
+              for (const storage of storages) {
+                const raw = storage.getItem(componentId);
+                if (raw === null) {
+                  continue;
+                }
+                try {
+                  window.dash_clientside.set_props(componentId, { data: JSON.parse(raw) });
+                  return true;
+                } catch (err) {
+                  return false;
+                }
+              }
+              return false;
+            }
+            """,
+            component_id,
+        )
+    )
+
+
 def wait_plotly_content(page, container_selector: str, timeout: int = 30000) -> None:
     wait_visible(page, container_selector, timeout=timeout)
     page.wait_for_function(
@@ -486,13 +530,23 @@ def warm_portopt_results(page, base_url: str, db_series: list[str], restore_tab:
     while time.perf_counter() < deadline and not modal_ok.is_visible():
         page.wait_for_timeout(200)
 
+    modal_seeded = False
     if modal_ok.is_visible():
-        set_component_props(page, "po-temp-series-select", {"data": opt_series})
-        modal_ok.click()
+        if not try_set_component_props(page, "po-temp-series-select", {"data": opt_series}):
+            raise RuntimeError("PortOpt harness could not seed po-temp-series-select during modal flow.")
+        wait_ready(page, "#po-modal-ok-button")
+        modal_ok.click(force=True)
         page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
+        modal_seeded = True
 
-    set_component_props(page, "po-series-select", {"data": opt_series})
-    set_component_props(page, "po-series-select-value-store", {"data": opt_series})
+    seeded = try_set_component_props(page, "po-series-select", {"data": opt_series})
+    mirrored = try_set_component_props(page, "po-series-select-value-store", {"data": opt_series})
+    if not seeded and mirrored:
+        replay_store_data(page, "dashmat-raw-data-store")
+    if not modal_seeded and not seeded and not mirrored:
+        raise RuntimeError(
+            "PortOpt harness could not seed selected series. Expected modal flow or selected-series store."
+        )
     wait_ready(page, "#po-run-button")
     page.locator("#po-run-button").click()
     page.wait_for_selector("#po-close-completion-button", state="visible", timeout=120000)
