@@ -285,13 +285,20 @@ def test_restore_application_state_accepts_saved_series_dict(page_modules, raw_j
         5,
         "raw",
         "normal",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
+        "summary",
         "annual",
         None,
         {"SavedPort": {"origin_page": "portopt", "origin_result": "SavedPort", "series_type": "portfolio"}},
     )
 
-    assert out[19] == ["Asset_A"]
-    assert out[20] is False
+    assert out[26] == ["Asset_A"]
+    assert out[27] is False
 
 
 def test_at_get_series_page_state_excludes_saved_result_series(page_modules, raw_json):
@@ -559,6 +566,51 @@ def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules)
     analyticstool, _ = page_modules
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "growth") is no_update
     assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "correlogram") == {"num_series": 2}
+
+
+def test_sync_at_returns_type_from_mirrors_updates_canonical(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    monkeypatch.setattr(
+        analyticstool,
+        "callback_context",
+        type("Ctx", (), {"triggered_id": "at-returns-type-select-factor"})(),
+    )
+
+    result = analyticstool.sync_at_returns_type_from_mirrors(
+        "total",
+        "total",
+        "total",
+        "total",
+        "excess",
+        "total",
+        "total",
+        "total",
+    )
+
+    assert result == "excess"
+
+
+def test_sync_at_returns_type_mirrors_only_updates_mismatched(page_modules):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.sync_at_returns_type_mirrors(
+        "excess",
+        "excess",
+        "total",
+        "excess",
+        "total",
+        "total",
+        "total",
+        "excess",
+    )
+
+    assert result[0] is no_update
+    assert result[1] == "excess"
+    assert result[2] is no_update
+    assert result[3] == "excess"
+    assert result[4] == "excess"
+    assert result[5] == "excess"
+    assert result[6] is no_update
 
 
 def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules):
@@ -876,7 +928,7 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
 def test_update_factor_series_select_includes_unselected_series(page_modules, raw_json):
     analyticstool, _ = page_modules
 
-    options, value = analyticstool.update_factor_series_select(
+    options, value, conditional_options, conditional_value = analyticstool.update_factor_series_select(
         raw_json,
         ["Asset_C", "Asset_A"],
         [],
@@ -889,12 +941,14 @@ def test_update_factor_series_select_includes_unselected_series(page_modules, ra
     assert ordered_values[:2] == ["raw::Asset_C", "raw::Asset_A"]
     assert set(ordered_values) == {"raw::Asset_A", "raw::Asset_B", "raw::Asset_C", "raw::Asset_D"}
     assert value == "raw::Asset_C"
+    assert conditional_options == options
+    assert conditional_value == value
 
 
 def test_update_factor_series_select_includes_saved_and_session_definitions(page_modules, raw_json):
     analyticstool, _ = page_modules
 
-    options, _value = analyticstool.update_factor_series_select(
+    options, _value, conditional_options, _conditional_value = analyticstool.update_factor_series_select(
         raw_json,
         ["Asset_A"],
         [{"FactorName": "SavedFactor"}],
@@ -906,6 +960,7 @@ def test_update_factor_series_select_includes_saved_and_session_definitions(page
     option_map = {opt["value"]: opt["label"] for opt in options}
     assert "def::SavedFactor" in option_map
     assert "def::SessionFactor" in option_map
+    assert conditional_options == options
     assert option_map["def::SavedFactor"].startswith("[DB]")
     assert option_map["def::SessionFactor"].startswith("[Session]")
 
@@ -1287,6 +1342,13 @@ def test_restore_application_state_restores_factor_analysis_qq_controls(page_mod
         7,
         "zscore",
         "reference",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
+        "summary",
         "monthly",
         None,
         {},
@@ -1296,6 +1358,82 @@ def test_restore_application_state_restores_factor_analysis_qq_controls(page_mod
     assert restored[15] == 7
     assert restored[16] == "zscore"
     assert restored[17] == "reference"
+
+
+def test_conditional_window_specs_include_1w_for_daily_and_weekly(page_modules):
+    analyticstool, _ = page_modules
+
+    daily_labels = [spec["label"] for spec in analyticstool._conditional_window_specs("daily_trading")]
+    weekly_labels = [spec["label"] for spec in analyticstool._conditional_window_specs("weekly_friday")]
+    monthly_labels = [spec["label"] for spec in analyticstool._conditional_window_specs("monthly")]
+
+    assert daily_labels[0] == "1W"
+    assert weekly_labels[0] == "1W"
+    assert "1W" not in monthly_labels
+
+
+def test_compute_conditional_returns_cached_builds_coincident_and_forward_frames(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    payload = analyticstool._compute_conditional_returns_cached(
+        raw_json,
+        "daily_trading",
+        ("Asset_B", "Asset_C"),
+        "total",
+        analyticstool._mapping_payload({}),
+        analyticstool._mapping_payload({}),
+        analyticstool._date_range_payload({"start": "2023-01-02", "end": "2024-03-31"}),
+        0,
+        analyticstool._mapping_payload({}),
+        "raw::Asset_A",
+        "zscore",
+        "",
+        "le",
+        0.0,
+        "compound",
+        1,
+        "months",
+    )
+
+    assert list(payload.coincident_mean_df.index) == ["1W", "1M", "3M", "6M", "9M", "12M"]
+    assert list(payload.coincident_mean_df.columns) == ["Asset_B", "Asset_C"]
+    assert set(payload.forward_mean_by_series) == {"Asset_B", "Asset_C"}
+    assert list(payload.forward_mean_by_series["Asset_B"].columns) == ["1W", "1M", "3M", "6M", "9M", "12M"]
+    assert payload.factor_label.endswith("(Z-Score)")
+
+
+def test_compute_conditional_returns_cached_builds_detail_frames_when_requested(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    payload = analyticstool._compute_conditional_returns_cached(
+        raw_json,
+        "daily_trading",
+        ("Asset_B", "Asset_C"),
+        "total",
+        analyticstool._mapping_payload({}),
+        analyticstool._mapping_payload({}),
+        analyticstool._date_range_payload({"start": "2023-01-02", "end": "2024-03-31"}),
+        0,
+        analyticstool._mapping_payload({}),
+        "raw::Asset_A",
+        "zscore",
+        "",
+        "le",
+        0.0,
+        "compound",
+        1,
+        "months",
+        True,
+    )
+
+    assert list(payload.coincident_detail_df.columns[:4]) == ["Lookback", "End Date", "Factor Value", "Condition Met"]
+    assert list(payload.forward_detail_df.columns[:5]) == ["Lookback", "Forward Period", "End Date", "Factor Value", "Condition Met"]
+    assert {"Asset_B", "Asset_C"}.issubset(payload.coincident_detail_df.columns)
+    assert {"Asset_B", "Asset_C"}.issubset(payload.forward_detail_df.columns)
+    assert payload.coincident_row_count > 0
+    assert payload.forward_row_count > payload.coincident_row_count
+    first_forward = payload.forward_detail_df[["Lookback", "Forward Period"]].drop_duplicates().iloc[0].to_dict()
+    assert first_forward == {"Lookback": "1W", "Forward Period": "1W"}
 
 
 def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_modules):
@@ -1406,6 +1544,12 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
         "Factor_X",
         5,
         "raw",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
         None,
         None,
         "def::SavedRegime",
@@ -1417,6 +1561,10 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     xl = pd.ExcelFile(BytesIO(payload["content"]))
     assert "Factor Analysis - Box" in xl.sheet_names
     assert "Factor Analysis - Scatter" in xl.sheet_names
+    assert "Conditional Coincident" in xl.sheet_names
+    assert "Conditional Forward" in xl.sheet_names
+    assert "Cond Coincident Detail" in xl.sheet_names
+    assert "Cond Forward Detail" in xl.sheet_names
     assert "Regime - Settings" in xl.sheet_names
     assert "Regime - Statistics" in xl.sheet_names
     assert "Regime - Timeline" in xl.sheet_names
