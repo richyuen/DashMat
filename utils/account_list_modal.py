@@ -107,6 +107,7 @@ def build_account_list_modal_components() -> list:
             title="Account Lists",
             size="xl",
             centered=True,
+            keepMounted=False,
             className=ACCOUNT_LIST_MODAL_BASE_CLASS,
             styles={"content": {"maxWidth": "1120px"}},
             children=[
@@ -234,6 +235,7 @@ def build_account_list_modal_components() -> list:
                                             id="dashmat-account-list-send-controls",
                                             gap="sm",
                                             align="flex-end",
+                                            style={"display": "none"},
                                             children=[
                                                 dmc.Select(
                                                     id="dashmat-account-list-send-user-select",
@@ -241,6 +243,7 @@ def build_account_list_modal_components() -> list:
                                                     placeholder="Select a user",
                                                     data=[],
                                                     value=None,
+                                                    disabled=True,
                                                     searchable=True,
                                                     clearable=True,
                                                     style={"flex": "1 1 0"},
@@ -249,6 +252,7 @@ def build_account_list_modal_components() -> list:
                                                     "Send",
                                                     id="dashmat-account-list-send-button",
                                                     variant="light",
+                                                    disabled=True,
                                                 ),
                                             ],
                                         ),
@@ -276,14 +280,20 @@ def build_account_list_modal_components() -> list:
                                             id="dashmat-account-list-delete-button",
                                             color="red",
                                             variant="light",
+                                            disabled=True,
+                                            style={"display": "none"},
                                         ),
                                         dmc.Button(
                                             "Load",
                                             id="dashmat-account-list-load-button",
+                                            disabled=True,
+                                            style={"display": "none"},
                                         ),
                                         dmc.Button(
                                             "Save",
                                             id="dashmat-account-list-save-button",
+                                            disabled=True,
+                                            style={"display": "none"},
                                         ),
                                     ],
                                 ),
@@ -579,7 +589,7 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-load-overlay", "visible"),
         Output("dashmat-account-list-load-overlay-shell", "style"),
         Input("dashmat-account-list-load-state-store", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _sync_account_list_load_overlay(load_state):
         return account_list_loader_visible(load_state), account_list_loader_wrapper_style(load_state)
@@ -637,7 +647,7 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal-mode-store", "data"),
         Input("dashmat-account-list-save-button", "disabled"),
         State("dashmat-account-list-save-button", "n_clicks"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
 
     app.clientside_callback(
@@ -683,7 +693,7 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-focus-dummy", "data"),
         Input("dashmat-account-list-modal", "opened"),
         Input("dashmat-account-list-modal-mode-store", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
 
     @app.callback(
@@ -698,7 +708,7 @@ def register_account_list_callbacks(
     @app.callback(
         Output("dashmat-account-list-notice-container", "children"),
         Input("dashmat-account-list-notice-store", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _render_account_list_notice(notice):
         return render_account_list_notice(notice)
@@ -778,7 +788,7 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal", "opened"),
         Input("dashmat-account-list-modal-mode-store", "data"),
         State("userinfo", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _refresh_account_list_send_users(opened, mode, userinfo):
         if not opened or str(mode or "load") != "load":
@@ -800,7 +810,7 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-send-user-select", "value"),
         Input("dashmat-account-list-modal", "opened"),
         Input("dashmat-account-list-selected-id-store", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _reset_account_list_send_user(opened, selected_id):
         if not opened:
@@ -816,7 +826,7 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-selected-id-store", "data"),
         Input("dashmat-account-list-send-user-select", "data"),
         Input("dashmat-account-list-send-user-select", "value"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _sync_account_list_send_controls(mode, selected_id, recipient_options, recipient_value):
         return account_list_send_controls_state(mode, selected_id, recipient_options, recipient_value)
@@ -838,7 +848,7 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal-mode-store", "data"),
         Input("dashmat-account-list-rows-store", "data"),
         Input("dashmat-account-list-selected-id-store", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _render_account_list_modal_view(opened, mode, rows, selected_id):
         return render_account_list_modal_view(opened, mode, rows, selected_id)
@@ -850,7 +860,7 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-name-input", "value"),
         Input("dashmat-account-list-rows-store", "data"),
         Input("dashmat-db-import-provenance-store", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _sync_account_list_save_state(mode, name_value, rows, provenance_store):
         return sync_account_list_save_state(mode, name_value, rows, provenance_store)

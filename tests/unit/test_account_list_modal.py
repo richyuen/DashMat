@@ -198,3 +198,10 @@ def test_account_list_send_user_options_and_control_state():
     assert hidden_state[0] == {"display": "none"}
     assert empty_state == ({}, True, True, "No other users available")
     assert ready_state == ({}, False, False, "Select a user")
+
+
+def test_account_list_modal_unmounts_when_closed():
+    components = modal_module.build_account_list_modal_components()
+    modal = next(component for component in components if getattr(component, "id", None) == "dashmat-account-list-modal")
+
+    assert modal.keepMounted is False
