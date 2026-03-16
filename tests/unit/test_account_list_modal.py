@@ -200,6 +200,26 @@ def test_account_list_send_user_options_and_control_state():
     assert ready_state == ({}, False, False, "Select a user")
 
 
+def test_current_db_import_provenance_prunes_to_cached_raw_columns(monkeypatch):
+    monkeypatch.setattr(modal_module, "get_dataset_key", lambda raw_data: "dataset-1")
+
+    class _Frame:
+        columns = ["A", "B"]
+
+    monkeypatch.setattr(modal_module, "get_raw_dataset_df", lambda dataset_key: _Frame())
+
+    pruned = modal_module.current_db_import_provenance(
+        {"dataset_key": "dataset-1"},
+        {
+            "keep": {"loader_type": "db", "loader_args": {}, "emitted_series": ["A"], "primary_series": "A"},
+            "drop": {"loader_type": "db", "loader_args": {}, "emitted_series": ["C"], "primary_series": "C"},
+        },
+    )
+
+    assert list(pruned) == ["keep"]
+    assert pruned["keep"]["emitted_series"] == ["A"]
+
+
 def test_account_list_modal_unmounts_when_closed():
     components = modal_module.build_account_list_modal_components()
     modal = next(component for component in components if getattr(component, "id", None) == "dashmat-account-list-modal")

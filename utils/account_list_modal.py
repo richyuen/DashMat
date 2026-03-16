@@ -23,6 +23,7 @@ from utils.account_lists import (
     send_account_list,
     users_table_available,
 )
+from utils.raw_dataset import get_dataset_key, get_raw_dataset_df
 
 
 ACCOUNT_LIST_MODAL_BASE_CLASS = "dashmat-modal dashmat-account-list-modal"
@@ -64,12 +65,13 @@ def load_selected_account_list_session(
     row = load_account_list_by_id(db_engine, selected_id, _account_list_username(userinfo))
     if row is None:
         return no_update, {"message": "Saved account list no longer exists.", "color": "red"}, build_account_list_load_state("error")
+    current_provenance = current_db_import_provenance(raw_data, provenance_store)
     try:
         session_payload, _stats = build_account_list_session_payload(
             payload=row.get("ConfigJson"),
             current_raw_data=raw_data,
             current_original_periodicity=original_periodicity,
-            current_provenance=provenance_store,
+            current_provenance=current_provenance,
             current_session_snapshot=session_snapshot,
             apply_settings=bool(apply_settings),
             db_engine=db_engine,
@@ -83,6 +85,17 @@ def load_selected_account_list_session(
             build_account_list_load_state("error"),
         )
     return session_payload, no_update, build_account_list_load_state("success")
+
+
+def current_db_import_provenance(raw_data, provenance_store):
+    dataset_key = get_dataset_key(raw_data) if raw_data else None
+    if not dataset_key:
+        return prune_db_import_provenance(provenance_store, [])
+    try:
+        columns = list(get_raw_dataset_df(dataset_key).columns)
+    except (KeyError, ValueError):
+        columns = []
+    return prune_db_import_provenance(provenance_store, columns)
 
 
 def build_account_list_modal_components() -> list:
@@ -331,11 +344,6 @@ def _account_list_row_data(rows: list[dict[str, object]] | None) -> list[dict[st
     return row_data
 
 
-def refresh_db_import_provenance(raw_meta, provenance_store):
-    columns = list((raw_meta or {}).get("columns") or [])
-    return prune_db_import_provenance(provenance_store, columns)
-
-
 def render_account_list_notice(notice):
     if not isinstance(notice, dict) or not str(notice.get("message") or "").strip():
         return []
@@ -492,7 +500,7 @@ def render_account_list_modal_view(opened, mode, rows, selected_id):
     )
 
 
-def sync_account_list_save_state(mode, name_value, rows, provenance_store):
+def sync_account_list_save_state(mode, name_value, rows, raw_data, provenance_store):
     if str(mode or "load") != "save":
         return "", True
     rows = rows if isinstance(rows, list) else []
@@ -503,7 +511,9 @@ def sync_account_list_save_state(mode, name_value, rows, provenance_store):
         else 0
     )
     helper = f"{duplicate_count} existing list(s) already use this name." if duplicate_count else "Duplicate names are allowed."
-    disabled = not clean_name or not normalize_db_import_provenance_store(provenance_store)
+    disabled = not clean_name or not normalize_db_import_provenance_store(
+        current_db_import_provenance(raw_data, provenance_store)
+    )
     return helper, disabled
 
 
@@ -697,15 +707,6 @@ def register_account_list_callbacks(
     )
 
     @app.callback(
-        Output("dashmat-db-import-provenance-store", "data"),
-        Input("dashmat-raw-data-meta-store", "data"),
-        State("dashmat-db-import-provenance-store", "data"),
-        prevent_initial_call=False,
-    )
-    def _refresh_db_import_provenance(raw_meta, provenance_store):
-        return refresh_db_import_provenance(raw_meta, provenance_store)
-
-    @app.callback(
         Output("dashmat-account-list-notice-container", "children"),
         Input("dashmat-account-list-notice-store", "data"),
         prevent_initial_call=True,
@@ -729,6 +730,7 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-name-input", "value"),
         Output("dashmat-account-list-selected-id-store", "data"),
         Output("dashmat-account-list-apply-settings-switch", "checked"),
+        Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
         Input("at-menu-save-account-list", "n_clicks", allow_optional=True),
         Input("at-menu-load-account-list", "n_clicks", allow_optional=True),
         Input("at-welcome-load-account-list-btn", "n_clicks", allow_optional=True),
@@ -739,6 +741,8 @@ def register_account_list_callbacks(
         Input("reg-menu-load-account-list", "n_clicks", allow_optional=True),
         Input("reg-welcome-load-account-list-btn", "n_clicks", allow_optional=True),
         Input("dashmat-account-list-close-button", "n_clicks"),
+        State("dashmat-raw-data-store", "data"),
+        State("dashmat-db-import-provenance-store", "data"),
         prevent_initial_call=True,
     )
     def _toggle_account_list_modal(
@@ -752,10 +756,12 @@ def register_account_list_callbacks(
         reg_load,
         reg_welcome_load,
         close_clicks,
+        raw_data,
+        provenance_store,
     ):
         from dash import callback_context
 
-        return toggle_account_list_modal(
+        opened, mode, name_value, selected_id, apply_settings = toggle_account_list_modal(
             at_save,
             at_load,
             at_welcome_load,
@@ -768,6 +774,8 @@ def register_account_list_callbacks(
             close_clicks,
             triggered_id=callback_context.triggered_id,
         )
+        next_provenance = current_db_import_provenance(raw_data, provenance_store) if opened else no_update
+        return opened, mode, name_value, selected_id, apply_settings, next_provenance
 
     @app.callback(
         Output("dashmat-account-list-rows-store", "data"),
@@ -859,11 +867,12 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal-mode-store", "data"),
         Input("dashmat-account-list-name-input", "value"),
         Input("dashmat-account-list-rows-store", "data"),
-        Input("dashmat-db-import-provenance-store", "data"),
+        State("dashmat-raw-data-store", "data"),
+        State("dashmat-db-import-provenance-store", "data"),
         prevent_initial_call=True,
     )
-    def _sync_account_list_save_state(mode, name_value, rows, provenance_store):
-        return sync_account_list_save_state(mode, name_value, rows, provenance_store)
+    def _sync_account_list_save_state(mode, name_value, rows, raw_data, provenance_store):
+        return sync_account_list_save_state(mode, name_value, rows, raw_data, provenance_store)
 
     @app.callback(
         Output("dashmat-account-list-modal", "opened", allow_duplicate=True),
@@ -871,16 +880,17 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-save-button", "n_clicks"),
         State("dashmat-account-list-name-input", "value"),
         State("dashmat-account-list-session-snapshot-store", "data"),
+        State("dashmat-raw-data-store", "data"),
         State("dashmat-db-import-provenance-store", "data"),
         State("userinfo", "data"),
         prevent_initial_call=True,
     )
-    def _save_current_account_list(n_clicks, name_value, session_snapshot, provenance_store, userinfo):
+    def _save_current_account_list(n_clicks, name_value, session_snapshot, raw_data, provenance_store, userinfo):
         if not n_clicks:
             raise PreventUpdate
         if not account_list_tables_available(db_engine):
             return no_update, {"message": "Account-list tables are unavailable.", "color": "red"}
-        payload = build_account_list_payload(provenance_store, session_snapshot)
+        payload = build_account_list_payload(current_db_import_provenance(raw_data, provenance_store), session_snapshot)
         ok, message, _saved = save_account_list(
             db_engine,
             username=_account_list_username(userinfo),
