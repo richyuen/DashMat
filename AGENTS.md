@@ -47,6 +47,8 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 ## Performance
 
 - Judge warm-switch performance with a browser timing pass, not only unit tests.
+- Use `5-run` warm-switch passes for timing evidence and decision-making; shorter runs are too noisy to be the acceptance signal.
+- Keep clear `5-run` warm-switch improvements even if they do not solve the whole regression, as long as they do not materially regress the other tracked metrics.
 - PortOpt startup and PortOpt warm-switch are different problems. Measure them separately.
 - PortOpt warm-switch baseline on March 13, 2026 was about `1970 ms` ready and `2870 ms` weight-chart ready in non-debug mode; treat that as the rollback reference when testing new warm-switch ideas.
 - Do not assume PortOpt warm-switch is server-bound. The weight-chart callback was only about `15-18 ms` in timing runs, so callback math and result projection are not the first place to optimize.
