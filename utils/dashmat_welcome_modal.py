@@ -9,6 +9,7 @@ import dash_mantine_components as dmc
 from dash import dcc, html, no_update
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
+from utils.ag_grid import literal_field_dash_grid_options
 
 from utils.add_series_flow import find_duplicate_series
 from utils.constants import (
@@ -665,13 +666,13 @@ def build_portfolio_add_modal(prefix: str, ag_grid_license_key: str):
                             "headerClass": "dashmat-center-header",
                         },
                         style={"height": "230px"},
-                        dashGridOptions={
+                        dashGridOptions=literal_field_dash_grid_options({
                             "rowSelection": "single",
                             "suppressRowClickSelection": False,
                             "animateRows": True,
                             "suppressExcelExport": True,
                             "suppressCsvExport": True,
-                        },
+                        }),
                     ),
                     dmc.Group(
                         mt="sm",
@@ -808,13 +809,13 @@ def build_underlying_add_modal(prefix: str, ag_grid_license_key: str):
                             "headerClass": "dashmat-center-header",
                         },
                         style={"height": "230px"},
-                        dashGridOptions={
+                        dashGridOptions=literal_field_dash_grid_options({
                             "rowSelection": "single",
                             "suppressRowClickSelection": False,
                             "animateRows": True,
                             "suppressExcelExport": True,
                             "suppressCsvExport": True,
-                        },
+                        }),
                     ),
                     dmc.Group(
                         mt="sm",
@@ -1022,13 +1023,13 @@ def build_raw_db_add_modal(prefix: str, ag_grid_license_key: str):
                             "headerClass": "dashmat-center-header",
                         },
                         style={"height": "220px"},
-                        dashGridOptions={
+                        dashGridOptions=literal_field_dash_grid_options({
                             "rowSelection": "single",
                             "suppressRowClickSelection": False,
                             "animateRows": True,
                             "suppressExcelExport": True,
                             "suppressCsvExport": True,
-                        },
+                        }),
                     ),
                     dmc.Stack(
                         gap=4,

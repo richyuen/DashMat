@@ -593,6 +593,9 @@ def test_at_result_grids_treat_series_fields_as_literal_keys(page_modules):
     for grid_id in grid_ids:
         grid = _find_component_by_id(analyticstool.layout, grid_id)
         assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
+        assert getattr(grid, "dashGridOptions", {})["processCellForClipboard"] == {
+            "function": "dashmatProcessCellForClipboard(params)"
+        }
 
 
 def test_conditional_factor_window_uses_tooltip_help_target(page_modules):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from io import BytesIO
 import json
 import re
@@ -251,6 +252,61 @@ def _annualization_for_periodicity(periodicity) -> int:
     return 252
 
 
+def _reg_grid_options(options: dict | None = None) -> dict:
+    merged = literal_field_dash_grid_options(options)
+    merged["enableRangeSelection"] = True
+    merged["processCellForClipboard"] = {"function": "dashmatProcessFormattedCellForClipboard(params)"}
+    return merged
+
+
+def _reg_ag_grid(**kwargs):
+    kwargs.setdefault("enableEnterpriseModules", True)
+    kwargs.setdefault("licenseKey", AG_GRID_LICENSE_KEY)
+    return dag.AgGrid(**kwargs)
+
+
+def _reg_merge_cell_style(base_style, updates: Mapping[str, str]) -> dict:
+    merged = dict(base_style) if isinstance(base_style, Mapping) else {}
+    merged.update(updates)
+    return merged
+
+
+def _reg_result_default_col_def(overrides: dict | None = None) -> dict:
+    merged = {
+        "resizable": True,
+        "sortable": True,
+        "suppressHeaderMenuButton": True,
+        "cellStyle": {"textAlign": "center"},
+        "headerClass": "dashmat-center-header",
+    }
+    for key, value in (overrides or {}).items():
+        if key == "cellStyle" and isinstance(value, Mapping):
+            merged[key] = _reg_merge_cell_style(merged.get(key), value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _reg_result_ag_grid(**kwargs):
+    kwargs["defaultColDef"] = _reg_result_default_col_def(kwargs.get("defaultColDef"))
+    return _reg_ag_grid(**kwargs)
+
+
+def _reg_left_aligned_col(col_def: dict) -> dict:
+    merged = dict(col_def)
+    merged["cellStyle"] = _reg_merge_cell_style(merged.get("cellStyle"), {"textAlign": "left"})
+    merged["headerClass"] = "dashmat-left-header"
+    return merged
+
+
+def _reg_value_formatter(spec: str) -> dict[str, str]:
+    return {"function": f"dashmatFormatNumber(params.value, '{spec}')"}
+
+
+def _reg_dynamic_value_formatter(spec_expr: str) -> dict[str, str]:
+    return {"function": f"dashmatFormatNumber(params.value, {spec_expr})"}
+
+
 def _fmt(v, decimals=6):
     """Format a numeric value for display."""
     if v is None or (isinstance(v, float) and not np.isfinite(v)):
@@ -414,12 +470,13 @@ def _reg_build_table_coldefs(fields: list[str], header_overrides: dict[str, str]
             col_def.update({"width": 130, "minWidth": 120})
         elif field.endswith("_Error"):
             col_def.update({"minWidth": 180, "flex": 1})
+            col_def = _reg_left_aligned_col(col_def)
         else:
             col_def.update(
                 {
                     "width": 120,
                     "minWidth": 110,
-                    "valueFormatter": {"function": "params.value != null && typeof params.value === 'number' ? d3.format('.4f')(params.value) : (params.value ?? '')"},
+                    "valueFormatter": _reg_value_formatter(".4f"),
                 }
             )
         col_defs.append(col_def)
@@ -920,18 +977,18 @@ def build_reg_main_layout():
                                         ),
                                     ],
                                 ),
-                                dag.AgGrid(
+                                _reg_ag_grid(
                                     id="reg-linear-constraints-grid",
                                     className="ag-theme-alpine",
                                     columnDefs=[
                                         {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
-                                        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
-                                        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", "headerClass": "dashmat-center-header"},
+                                        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", "valueFormatter": _reg_value_formatter(".4f"), "headerClass": "dashmat-center-header"},
+                                        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", "valueFormatter": _reg_value_formatter(".4f"), "headerClass": "dashmat-center-header"},
                                     ],
                                     rowData=[],
-                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}},
+                                    defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                     style={"height": "160px"},
-                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "suppressCsvExport": True},
+                                    dashGridOptions=_reg_grid_options({"singleClickEdit": True, "suppressExcelExport": True, "suppressCsvExport": True}),
                                 ),
                             ]),
                         ],
@@ -3574,7 +3631,7 @@ def reg_update_series_grid(raw_data, raw_meta, selected_x, series_order, deleted
             "Enable": bool(enable_assign.get(series, False)),
             "Delete": series in deleted_set,
         })
-    grid = dag.AgGrid(
+    grid = _reg_ag_grid(
         id="reg-series-selection-grid",
         className="ag-theme-alpine dashmat-series-modal-grid",
         getRowId="params.data.__row_key",
@@ -3605,11 +3662,11 @@ def reg_update_series_grid(raw_data, raw_meta, selected_x, series_order, deleted
              "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
             {"field": "MinBeta", "headerName": "Min Beta", "editable": {"function": "params.data.Enable"},
              "width": 100, "valueParser": {"function": "var n=Number(params.newValue); return isFinite(n)?n:-999;"},
-             "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
+             "valueFormatter": _reg_value_formatter(".2f"),
              "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
             {"field": "MaxBeta", "headerName": "Max Beta", "editable": {"function": "params.data.Enable"},
              "width": 100, "valueParser": {"function": "var n=Number(params.newValue); return isFinite(n)?n:999;"},
-             "valueFormatter": {"function": "params.value != null ? params.value.toFixed(2) : ''"},
+             "valueFormatter": _reg_value_formatter(".2f"),
              "cellClass": "dashmat-series-center-cell", "headerClass": "dashmat-center-header"},
             {"field": "Enable", "headerName": "Enable", "editable": True,
              "cellRenderer": "agCheckboxCellRenderer", "cellEditor": "agCheckboxCellEditor",
@@ -3628,7 +3685,7 @@ def reg_update_series_grid(raw_data, raw_meta, selected_x, series_order, deleted
             "cellStyle": {"textAlign": "center"},
             "headerClass": "dashmat-center-header",
         },
-        dashGridOptions={
+        dashGridOptions=_reg_grid_options({
             "suppressMovableColumns": True,
             "rowDragManaged": True,
             "animateRows": True,
@@ -3636,7 +3693,7 @@ def reg_update_series_grid(raw_data, raw_meta, selected_x, series_order, deleted
             "stopEditingWhenCellsLoseFocus": True,
             "suppressExcelExport": True,
             "suppressCsvExport": True,
-        },
+        }),
         style={"height": "400px"},
     )
     return [grid], series_order, no_update
@@ -4871,20 +4928,20 @@ def reg_render_anova(selected, results, selected_window, active_tab="anova", ini
     blocks = []
 
     if anova_rows:
-        anova_grid = dag.AgGrid(
+        anova_grid = _reg_result_ag_grid(
             className="ag-theme-alpine",
             columnDefs=[
-                {"field": "Source", "width": 100, "minWidth": 90},
+                _reg_left_aligned_col({"field": "Source", "width": 100, "minWidth": 90}),
                 {"field": "df", "width": 70, "minWidth": 60},
-                {"field": "SS", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
-                {"field": "MS", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
-                {"field": "F", "width": 85, "minWidth": 75, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
-                {"field": "p-value", "width": 95, "minWidth": 85, "valueFormatter": {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}},
+                {"field": "SS", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
+                {"field": "MS", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
+                {"field": "F", "width": 85, "minWidth": 75, "valueFormatter": _reg_value_formatter(".4f")},
+                {"field": "p-value", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
             ],
             rowData=anova_rows,
             defaultColDef={"resizable": True, "sortable": False},
             style={"height": "132px"},
-            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
         blocks.extend([dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"), anova_grid])
     else:
@@ -4898,21 +4955,21 @@ def reg_render_anova(selected, results, selected_window, active_tab="anova", ini
     if param_rows:
         param_df = pd.DataFrame(param_rows)
         param_df = _reg_drop_empty_columns(param_df, keep_fields=["Parameter", "Coefficient"])
-        param_grid = dag.AgGrid(
+        param_grid = _reg_result_ag_grid(
             className="ag-theme-alpine",
             columnDefs=[
-                {"field": "Parameter", "width": 220, "minWidth": 170, "maxWidth": 280},
-                {"field": "Coefficient", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
-                {"field": "Std Error", "width": 110, "minWidth": 100, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
-                {"field": "t-stat", "width": 100, "minWidth": 90, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
-                {"field": "p-value", "width": 100, "minWidth": 90, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
-                {"field": "CI Low (95%)", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
-                {"field": "CI High (95%)", "width": 120, "minWidth": 110, "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"}},
+                _reg_left_aligned_col({"field": "Parameter", "width": 220, "minWidth": 170, "maxWidth": 280}),
+                {"field": "Coefficient", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
+                {"field": "Std Error", "width": 110, "minWidth": 100, "valueFormatter": _reg_value_formatter(".6f")},
+                {"field": "t-stat", "width": 100, "minWidth": 90, "valueFormatter": _reg_value_formatter(".6f")},
+                {"field": "p-value", "width": 100, "minWidth": 90, "valueFormatter": _reg_value_formatter(".6f")},
+                {"field": "CI Low (95%)", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
+                {"field": "CI High (95%)", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
             ],
             rowData=param_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": f"{max(150, 36 + 30 * len(param_df))}px"},
-            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
         blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), param_grid])
     else:
@@ -5071,13 +5128,13 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
                       legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
     apply_chart_theme(fig, theme)
 
-    table = dag.AgGrid(
+    table = _reg_result_ag_grid(
         className="ag-theme-alpine",
         columnDefs=_reg_build_table_coldefs(table_fields, header_overrides=header_overrides),
         rowData=df_display[table_fields].to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "380px"},
-        dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+        dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
     )
     if view_mode == "table":
         return table
@@ -5189,18 +5246,16 @@ def reg_render_rolling_returns(
                         "field": c,
                         "width": 120,
                         "minWidth": 110,
-                        "valueFormatter": {
-                            "function": f"params.value != null ? d3.format('{fmt}')(params.value) : ''"
-                        },
+                        "valueFormatter": _reg_value_formatter(fmt),
                     }
                 )
-        return dag.AgGrid(
+        return _reg_result_ag_grid(
             className="ag-theme-alpine",
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "440px"},
-            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5285,13 +5340,13 @@ def reg_render_weights(selected, results, view_mode, theme, active_tab="weights"
             gap="sm",
             p="sm",
             children=[
-            dag.AgGrid(
+            _reg_result_ag_grid(
                 className="ag-theme-alpine",
                 columnDefs=_reg_build_table_coldefs(table_fields),
                 rowData=table_df[table_fields].to_dict("records"),
                 defaultColDef={"resizable": True, "sortable": True},
                 style={"height": "420px"},
-                dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+                dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
             )
             ],
         )
@@ -5355,19 +5410,17 @@ def reg_render_returns(selected, results, raw_data, active_tab="returns", initia
                 "field": c,
                 "width": 112,
                 "minWidth": 102,
-                "valueFormatter": {
-                    "function": "params.value != null ? d3.format('.6f')(params.value) : ''"
-                },
+                "valueFormatter": _reg_value_formatter(".6f"),
             }
         )
 
-    return dag.AgGrid(
+    return _reg_result_ag_grid(
         className="ag-theme-alpine",
         columnDefs=cols,
         rowData=df_reset.to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "500px"},
-        dashGridOptions=literal_field_dash_grid_options({
+        dashGridOptions=_reg_grid_options({
             "pagination": False,
             "suppressExcelExport": True,
             "suppressCsvExport": True,
@@ -5422,16 +5475,16 @@ def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab=
                         "field": c,
                         "width": 120,
                         "minWidth": 110,
-                        "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"},
+                        "valueFormatter": _reg_value_formatter(".6f"),
                     }
                 )
-        return dag.AgGrid(
+        return _reg_result_ag_grid(
             className="ag-theme-alpine",
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "460px"},
-            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5528,13 +5581,13 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
         )
         if not monthly_rows:
             return dmc.Text("No complete monthly history available.", size="sm", c="dimmed")
-        return dag.AgGrid(
+        return _reg_result_ag_grid(
             className="ag-theme-alpine",
             columnDefs=monthly_col_defs,
             rowData=monthly_rows,
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "460px"},
-            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     cal_df = calculate_calendar_year_returns(
@@ -5563,16 +5616,16 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
                     "field": c,
                     "width": 122,
                     "minWidth": 108,
-                    "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                    "valueFormatter": _reg_value_formatter(".2%"),
                 }
             )
-    return dag.AgGrid(
+    return _reg_result_ag_grid(
         className="ag-theme-alpine",
         columnDefs=cols,
         rowData=table_df.to_dict("records"),
         defaultColDef={"resizable": True, "sortable": True},
         style={"height": "460px"},
-        dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+        dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
     )
 
 
@@ -5625,16 +5678,16 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
                         "field": c,
                         "width": 120,
                         "minWidth": 110,
-                        "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                        "valueFormatter": _reg_value_formatter(".2%"),
                     }
                 )
-        return dag.AgGrid(
+        return _reg_result_ag_grid(
             className="ag-theme-alpine",
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "440px"},
-            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     fig = go.Figure()
@@ -5784,18 +5837,16 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
                 row[series_name] = value
             row_data.append(row)
 
-        return dag.AgGrid(
+        return _reg_result_ag_grid(
             className="ag-theme-alpine",
             columnDefs=[
-                {"field": "Statistic", "pinned": "left", "width": 190, "minWidth": 170},
+                _reg_left_aligned_col({"field": "Statistic", "pinned": "left", "width": 190, "minWidth": 170}),
                 *[
                     {
                         "field": c,
                         "width": 118,
                         "minWidth": 105,
-                        "valueFormatter": {
-                            "function": "(!params.data._format || params.value == null) ? params.value : d3.format(params.data._format)(params.value)"
-                        },
+                        "valueFormatter": _reg_dynamic_value_formatter("params.data._format"),
                     }
                     for c in series_order
                 ],
@@ -5803,7 +5854,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
             rowData=row_data,
             defaultColDef={"resizable": True, "sortable": True},
             style={"height": "600px"},
-            dashGridOptions=literal_field_dash_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
     entry = results[selected]

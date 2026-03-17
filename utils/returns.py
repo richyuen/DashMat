@@ -5,7 +5,6 @@ from io import StringIO
 import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
-
 from utils.parsing import detect_periodicity
 from utils.constants import WINDOW_MAP_DAYS, WINDOW_DAYS_MAP, WINDOW_YEARS_MAP
 from utils.serialization import (

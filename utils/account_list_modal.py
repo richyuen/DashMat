@@ -7,6 +7,7 @@ import dash_mantine_components as dmc
 from dash import Input, Output, State, clientside_callback, html, no_update
 from dash.exceptions import PreventUpdate
 from sqlalchemy.engine import Engine
+from utils.ag_grid import literal_field_dash_grid_options
 
 from utils.account_lists import (
     ACCOUNT_LIST_CAPTURE_STORE_IDS,
@@ -168,11 +169,11 @@ def build_account_list_modal_components() -> list:
                                                         "resizable": True,
                                                         "suppressHeaderMenuButton": True,
                                                     },
-                                                    dashGridOptions={
+                                                    dashGridOptions=literal_field_dash_grid_options({
                                                         "rowSelection": "single",
                                                         "animateRows": False,
                                                         "overlayNoRowsTemplate": "No saved account lists found.",
-                                                    },
+                                                    }),
                                                     getRowId="params.data.AccountListID",
                                                     style={"height": "100%", "width": "100%"},
                                                 ),
@@ -216,10 +217,10 @@ def build_account_list_modal_components() -> list:
                                                         "resizable": True,
                                                         "suppressHeaderMenuButton": True,
                                                     },
-                                                    dashGridOptions={
+                                                    dashGridOptions=literal_field_dash_grid_options({
                                                         "animateRows": False,
                                                         "overlayNoRowsTemplate": "Select a saved account list to preview included series.",
-                                                    },
+                                                    }),
                                                     style={"height": "100%", "width": "100%"},
                                                 ),
                                             ],

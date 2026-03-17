@@ -2689,7 +2689,7 @@ def build_po_main_layout():
                                         rowData=[],
                                         defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                         style={"height": "200px"},
-                                        dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                        dashGridOptions=literal_field_dash_grid_options({"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}),
                                     ),
                                 ],
                             ),
@@ -3013,7 +3013,7 @@ def build_po_main_layout():
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "200px"},
-                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                                    dashGridOptions=literal_field_dash_grid_options({"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}),
                                                 ),
                                             ],
                                             style={"marginBottom": "12px"},
@@ -3080,7 +3080,7 @@ def build_po_main_layout():
                                                     defaultColDef={"resizable": True, "sortable": False, "editable": True, "width": 100, "suppressHeaderMenuButton": True,
                                                     "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format('.4f')(Number(params.value)) : ''"}, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "300px"},
-                                                    dashGridOptions={"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                                    dashGridOptions=literal_field_dash_grid_options({"singleClickEdit": True, "stopEditingWhenCellsLoseFocus": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}),
                                                 ),
                                             ],
                                             style={"marginBottom": "12px"},
@@ -3149,7 +3149,7 @@ def build_po_main_layout():
                                                     rowData=[],
                                                     defaultColDef={"resizable": True, "sortable": False, "suppressHeaderMenuButton": True, "cellStyle": {"textAlign": "center"}, "headerClass": "dashmat-center-header"},
                                                     style={"height": "200px"},
-                                                    dashGridOptions={"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True},
+                                                    dashGridOptions=literal_field_dash_grid_options({"singleClickEdit": True, "suppressExcelExport": True, "enableRangeSelection": True, "suppressCsvExport": True, "enterNavigatesVertically": True, "enterNavigatesVerticallyAfterEdit": True}),
                                                 ),
                                                 dmc.NumberInput(
                                                     id="po-bl-tau-input",
@@ -7655,7 +7655,7 @@ def po_update_series_selectors(
             "headerClass": "dashmat-center-header",
         },
         style={"height": "46vh", "width": "100%"},
-        dashGridOptions={
+        dashGridOptions=literal_field_dash_grid_options({
             "suppressMovableColumns": True,
             "rowDragManaged": True,
             "animateRows": False,
@@ -7663,7 +7663,7 @@ def po_update_series_selectors(
             "stopEditingWhenCellsLoseFocus": True,
             "suppressExcelExport": True,
             "suppressCsvExport": True,
-        },
+        }),
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )
@@ -8888,7 +8888,17 @@ def po_render_growth_chart(
         table_df = growth_df.reset_index()
         table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
         table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
-        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
+        cols = [
+            {
+                "field": "Date",
+                "pinned": "left",
+                "width": 112,
+                "minWidth": 106,
+                "maxWidth": 122,
+                "cellStyle": {"textAlign": "center"},
+                "headerClass": "dashmat-center-header",
+            }
+        ]
         for c in ordered_cols:
             if c in table_df.columns:
                 cols.append(
@@ -8897,15 +8907,31 @@ def po_render_growth_chart(
                         "width": 120,
                         "minWidth": 110,
                         "valueFormatter": {"function": "params.value != null ? d3.format('.6f')(params.value) : ''"},
+                        "cellStyle": {"textAlign": "center"},
+                        "headerClass": "dashmat-center-header",
                     }
                 )
         return dag.AgGrid(
             className="ag-theme-alpine",
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
-            defaultColDef={"resizable": True, "sortable": True, "suppressHeaderMenuButton": True},
+            defaultColDef={
+                "resizable": True,
+                "sortable": True,
+                "suppressHeaderMenuButton": True,
+                "cellStyle": {"textAlign": "center"},
+                "headerClass": "dashmat-center-header",
+            },
             style={"height": "460px", "width": "100%"},
-            dashGridOptions=literal_field_dash_grid_options({"animateRows": True, "pagination": False, "suppressExcelExport": True, "suppressCsvExport": True}),
+            dashGridOptions=literal_field_dash_grid_options(
+                {
+                    "animateRows": True,
+                    "pagination": False,
+                    "enableRangeSelection": True,
+                    "suppressExcelExport": True,
+                    "suppressCsvExport": True,
+                }
+            ),
         )
 
     fig = go.Figure()

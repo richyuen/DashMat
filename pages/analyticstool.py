@@ -8294,7 +8294,7 @@ def update_series_selectors(
             "headerClass": "dashmat-center-header",
         },
         style={"height": "46vh", "width": "100%"},
-        dashGridOptions={
+        dashGridOptions=literal_field_dash_grid_options({
             "suppressMovableColumns": True,
             "rowDragManaged": True,
             "animateRows": False,
@@ -8302,7 +8302,7 @@ def update_series_selectors(
             "stopEditingWhenCellsLoseFocus": True,
             "suppressExcelExport": True,
             "suppressCsvExport": True,
-        },
+        }),
         enableEnterpriseModules=True,
         licenseKey=AG_GRID_LICENSE_KEY,
     )

@@ -927,6 +927,12 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
     assert opts.get("suppressMovableColumns") is True
     assert opts.get("stopEditingWhenCellsLoseFocus") is True
     assert opts.get("singleClickEdit") is True
+    assert opts.get("enableRangeSelection") is True
+    assert opts.get("processCellForClipboard") == {
+        "function": "dashmatProcessFormattedCellForClipboard(params)"
+    }
+    assert getattr(grid, "enableEnterpriseModules", None) is True
+    assert getattr(grid, "licenseKey", None) == regression_page.AG_GRID_LICENSE_KEY
 
     cols = getattr(grid, "columnDefs", []) or []
     y_col = next((c for c in cols if c.get("field") == "YDisplay"), None)
@@ -947,6 +953,29 @@ def test_reg_series_grid_uses_stable_checkbox_interaction_options(regression_pag
     assert x_col.get("lockPosition") == "left"
     assert scale_col.get("cellRenderer") == "agCheckboxCellRenderer"
     assert delete_col.get("editable", {}).get("function") == "!params.data.Y"
+
+
+def test_reg_linear_constraints_grid_uses_at_po_visual_defaults(regression_page):
+    grid = _find_component_by_id(regression_page.layout, "reg-linear-constraints-grid")
+    assert grid is not None
+
+    assert getattr(grid, "enableEnterpriseModules", None) is True
+    assert getattr(grid, "licenseKey", None) == regression_page.AG_GRID_LICENSE_KEY
+    assert getattr(grid, "dashGridOptions", {})["enableRangeSelection"] is True
+    assert getattr(grid, "dashGridOptions", {})["processCellForClipboard"] == {
+        "function": "dashmatProcessFormattedCellForClipboard(params)"
+    }
+
+    default_col_def = getattr(grid, "defaultColDef", {}) or {}
+    assert default_col_def["suppressHeaderMenuButton"] is True
+    assert default_col_def["headerClass"] == "dashmat-center-header"
+    assert default_col_def["cellStyle"] == {"textAlign": "center"}
+
+    col_defs = getattr(grid, "columnDefs", []) or []
+    min_col = next(c for c in col_defs if c.get("field") == "Min")
+    max_col = next(c for c in col_defs if c.get("field") == "Max")
+    assert min_col["valueFormatter"] == {"function": "dashmatFormatNumber(params.value, '.4f')"}
+    assert max_col["valueFormatter"] == {"function": "dashmatFormatNumber(params.value, '.4f')"}
 
 
 def _collect_component_text(node):
@@ -1062,6 +1091,18 @@ def test_reg_render_statistics_uses_current_stats_signature_and_list_shape(monke
     assert captured["args"][6] == 0
     assert getattr(comp, "rowData", None)
     assert any(row.get("Statistic") == "Cumulative Return" for row in comp.rowData)
+    default_col_def = getattr(comp, "defaultColDef", {}) or {}
+    assert default_col_def["suppressHeaderMenuButton"] is True
+    assert default_col_def["headerClass"] == "dashmat-center-header"
+    assert default_col_def["cellStyle"] == {"textAlign": "center"}
+
+    col_defs = getattr(comp, "columnDefs", []) or []
+    assert col_defs[0]["field"] == "Statistic"
+    assert col_defs[0]["headerClass"] == "dashmat-left-header"
+    assert col_defs[0]["cellStyle"] == {"textAlign": "left"}
+    assert col_defs[1]["valueFormatter"] == {
+        "function": "dashmatFormatNumber(params.value, params.data._format)"
+    }
 
 
 def test_reg_session_actions_use_shared_workspace_helpers():
@@ -1566,6 +1607,12 @@ def test_reg_render_rolling_returns_table_uses_wide_date_column(monkeypatch, reg
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert getattr(grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
+    assert getattr(grid, "columnDefs", [])[1]["valueFormatter"] == {
+        "function": "dashmatFormatNumber(params.value, '.2%')"
+    }
 
 
 def test_reg_render_drawdown_table_uses_wide_date_column(monkeypatch, regression_page):
@@ -1592,6 +1639,12 @@ def test_reg_render_drawdown_table_uses_wide_date_column(monkeypatch, regression
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert getattr(grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
+    assert getattr(grid, "columnDefs", [])[1]["valueFormatter"] == {
+        "function": "dashmatFormatNumber(params.value, '.2%')"
+    }
 
 
 def test_reg_render_growth_table_mode_returns_grid_with_wide_date_column(regression_page):
@@ -1611,6 +1664,12 @@ def test_reg_render_growth_table_mode_returns_grid_with_wide_date_column(regress
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
     assert len(getattr(grid, "rowData", [])) == 4
+    assert getattr(grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
+    assert getattr(grid, "columnDefs", [])[1]["valueFormatter"] == {
+        "function": "dashmatFormatNumber(params.value, '.6f')"
+    }
 
 
 def test_reg_render_returns_preserves_dotted_series_fields(monkeypatch, regression_page):
@@ -1629,6 +1688,18 @@ def test_reg_render_returns_preserves_dotted_series_fields(monkeypatch, regressi
 
     assert getattr(grid, "columnDefs", [])[1]["field"] == dotted_name
     assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
+    assert getattr(grid, "dashGridOptions", {})["enableRangeSelection"] is True
+    assert getattr(grid, "dashGridOptions", {})["processCellForClipboard"] == {
+        "function": "dashmatProcessFormattedCellForClipboard(params)"
+    }
+    assert getattr(grid, "enableEnterpriseModules", None) is True
+    assert getattr(grid, "licenseKey", None) == regression_page.AG_GRID_LICENSE_KEY
+    assert getattr(grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
+    assert getattr(grid, "columnDefs", [])[1]["valueFormatter"] == {
+        "function": "dashmatFormatNumber(params.value, '.6f')"
+    }
     assert getattr(grid, "rowData", [])[0][dotted_name] == pytest.approx(0.01)
 
 
@@ -1655,6 +1726,9 @@ def test_reg_render_weights_table_mode_returns_grid_with_wide_date_column(regres
 
     date_col = next(c for c in getattr(grid, "columnDefs", []) if c.get("field") == "Date")
     assert date_col["width"] == 112
+    assert getattr(grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
 
 
 def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regression_page):
@@ -1709,6 +1783,12 @@ def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regres
     )
     assert anova_grid is not None
     assert (getattr(anova_grid, "style", {}) or {}).get("height") == "132px"
+    assert getattr(anova_grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    assert getattr(anova_grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(anova_grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
+    source_col = next(c for c in getattr(anova_grid, "columnDefs", []) if c.get("field") == "Source")
+    assert source_col["headerClass"] == "dashmat-left-header"
+    assert source_col["cellStyle"] == {"textAlign": "left"}
     anova_sources = [row.get("Source") for row in (getattr(anova_grid, "rowData", []) or [])]
     assert set(anova_sources) == {"Model", "Residual", "Total"}
 
@@ -1717,6 +1797,10 @@ def test_reg_render_anova_uses_three_block_layout_with_arima_garch_params(regres
         None,
     )
     assert param_grid is not None
+    assert getattr(param_grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    param_col = next(c for c in getattr(param_grid, "columnDefs", []) if c.get("field") == "Parameter")
+    assert param_col["headerClass"] == "dashmat-left-header"
+    assert param_col["cellStyle"] == {"textAlign": "left"}
     param_names = [row.get("Parameter") for row in (getattr(param_grid, "rowData", []) or [])]
     assert "intercept" in param_names
     assert "X1" in param_names
@@ -1764,6 +1848,9 @@ def test_reg_render_rolling_table_merges_arima_garch_columns(regression_page):
     fields = [c.get("field") for c in getattr(grid, "columnDefs", [])]
     assert "ARIMA_AIC" in fields
     assert "ARIMA_ar_L1" in fields
+    assert getattr(grid, "defaultColDef", {})["suppressHeaderMenuButton"] is True
+    assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
 
     rows = getattr(grid, "rowData", []) or []
     assert rows[0].get("ARIMA_ar_L1") == 0.2

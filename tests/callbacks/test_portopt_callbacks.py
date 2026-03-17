@@ -696,6 +696,9 @@ def test_po_render_returns_preserves_dotted_series_fields(monkeypatch, page_modu
 
     assert getattr(grid, "columnDefs", [])[1]["field"] == dotted_name
     assert getattr(grid, "dashGridOptions", {})["suppressFieldDotNotation"] is True
+    assert getattr(grid, "dashGridOptions", {})["processCellForClipboard"] == {
+        "function": "dashmatProcessCellForClipboard(params)"
+    }
     assert getattr(grid, "rowData", [])[0][dotted_name] == pytest.approx(0.01)
 
 
@@ -796,6 +799,11 @@ def test_po_render_growth_chart_table_mode_returns_grid_with_wide_date_column(mo
 
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Date"
     assert getattr(grid, "columnDefs", [])[0]["width"] == 112
+    assert getattr(grid, "columnDefs", [])[0]["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "columnDefs", [])[0]["cellStyle"] == {"textAlign": "center"}
+    assert getattr(grid, "dashGridOptions", {})["enableRangeSelection"] is True
+    assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
+    assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
     assert len(getattr(grid, "rowData", [])) == 3
 
 
