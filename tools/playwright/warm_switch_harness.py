@@ -521,6 +521,7 @@ def warm_portopt_results(page, base_url: str, db_series: list[str], restore_tab:
     page.goto(base_url + "/portopt", wait_until="domcontentloaded")
     wait_visible(page, "#po-main-container")
     wait_ready(page, "#po-periodicity-select")
+    wait_dash_hydrated(page)
     opt_series = resolve_portopt_series(db_series)
     if len(opt_series) < 2:
         raise RuntimeError(f"Need at least 2 series for PortOpt harness solve, got: {opt_series}")

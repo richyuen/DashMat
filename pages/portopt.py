@@ -7680,6 +7680,67 @@ clientside_callback(
 )
 
 
+def _po_build_modal_rows_from_temp_state(
+    raw_data,
+    temp_select,
+    temp_order,
+    temp_deleted,
+    temp_bench,
+    temp_cmabench,
+    temp_ls,
+    temp_vol_scaling,
+    temp_min_wt,
+    temp_max_wt,
+    temp_force_max,
+):
+    if not raw_data:
+        return []
+
+    df = _raw_df(raw_data)
+    all_series = list(df.columns)
+    if not all_series:
+        return []
+
+    series_order = list(temp_order or []) or list(all_series)
+    for series in all_series:
+        if series not in series_order:
+            series_order.append(series)
+    series_order = [series for series in series_order if series in all_series]
+
+    selected_set = set(temp_select or [])
+    deleted_set = set(temp_deleted or [])
+    temp_bench = dict(temp_bench or {})
+    temp_cmabench = dict(temp_cmabench or {})
+    temp_ls = dict(temp_ls or {})
+    temp_vol_scaling = dict(temp_vol_scaling or {})
+    temp_min_wt = dict(temp_min_wt or {})
+    temp_max_wt = dict(temp_max_wt or {})
+    temp_force_max = dict(temp_force_max or {})
+    core_cmabench_defaults = _po_resolve_cmabench_defaults(selected_set, temp_cmabench)
+
+    rows = []
+    for series in series_order:
+        bench_val = temp_bench.get(series, "None")
+        if bench_val not in all_series and bench_val != "None":
+            bench_val = "None"
+        rows.append(
+            {
+                "__row_key": series,
+                "Selected": series in selected_set and series not in deleted_set,
+                "Series": series,
+                "Benchmark": bench_val,
+                "CMABench": temp_cmabench.get(series, core_cmabench_defaults.get(series, "")),
+                "LongShort": bool(temp_ls.get(series, False)),
+                "ScaleVol": bool(temp_vol_scaling.get(series, True)),
+                "MinWt": temp_min_wt.get(series, 0),
+                "MaxWt": temp_max_wt.get(series, 100),
+                "ForceMax": bool(temp_force_max.get(series, False)),
+                "Delete": series in deleted_set,
+            }
+        )
+    return rows
+
+
 
 
 
@@ -7720,6 +7781,16 @@ clientside_callback(
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
     State("dashmat-db-import-provenance-store", "data"),
+    State("po-temp-series-select", "data"),
+    State("po-temp-series-order-store", "data"),
+    State("po-temp-deleted-series-store", "data"),
+    State("po-temp-benchmark-assignments-store", "data"),
+    State("po-temp-cmabench-assignments-store", "data"),
+    State("po-temp-long-short-store", "data"),
+    State("po-temp-vol-scaling-assignments-store", "data"),
+    State("po-temp-min-wt-store", "data"),
+    State("po-temp-max-wt-store", "data"),
+    State("po-temp-force-max-store", "data"),
     prevent_initial_call=True,
 )
 def po_on_modal_ok(
@@ -7736,10 +7807,34 @@ def po_on_modal_ok(
     current_max_wt,
     current_force_max,
     current_provenance,
+    temp_select=None,
+    temp_order=None,
+    temp_deleted=None,
+    temp_bench=None,
+    temp_cmabench=None,
+    temp_ls=None,
+    temp_vol_scaling=None,
+    temp_min_wt=None,
+    temp_max_wt=None,
+    temp_force_max=None,
 ):
     rows = []
     if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
         rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
+    if not rows:
+        rows = _po_build_modal_rows_from_temp_state(
+            raw_data,
+            temp_select,
+            temp_order,
+            temp_deleted,
+            temp_bench,
+            temp_cmabench,
+            temp_ls,
+            temp_vol_scaling,
+            temp_min_wt,
+            temp_max_wt,
+            temp_force_max,
+        )
     if not rows or not raw_data:
         raise PreventUpdate
 
@@ -8612,19 +8707,30 @@ clientside_callback(
     Input("po-results-store", "data"),
     State("po-weight-portfolio-select", "value"),
     State("po-growth-portfolio-multiselect", "value"),
+    State("po-opt-status-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_portfolio_dropdowns(results, current_select, current_multi):
+def po_update_portfolio_dropdowns(results, current_select, current_multi, opt_status):
     if not results:
         return [], None, [], [], True
     names = list(results.keys())
     options = [{"value": n, "label": n} for n in names]
-    # Always select the newest portfolio (last added)
-    sel = names[-1] if names else None
+    newest_result_name = None
+    if isinstance(opt_status, dict) and opt_status.get("status") == "complete":
+        candidate = str(opt_status.get("name") or "").strip()
+        if candidate in names:
+            newest_result_name = candidate
+
+    if newest_result_name and newest_result_name != current_select:
+        sel = newest_result_name
+    elif current_select in names:
+        sel = current_select
+    else:
+        sel = names[-1] if names else None
+
     multi = [v for v in (current_multi or []) if v in names]
-    newest = names[-1] if names else None
-    if newest and newest not in multi:
-        multi.append(newest)
+    if newest_result_name and newest_result_name not in multi:
+        multi.append(newest_result_name)
     return options, sel, options, multi, not bool(sel)
 
 
@@ -8759,16 +8865,24 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     Input("po-weight-portfolio-select", "value"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-chart-switch", "value"),
-    Input("po-bootstrap-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-bootstrap-store", "data"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_weight_chart_callback(selected_portfolio, active_tab, switch_value, bootstrap_state, theme, results):
-    return po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state)
+def _po_render_weight_chart_callback(selected_portfolio, active_tab, switch_value, theme, bootstrap_state, results):
+    return po_render_weight_chart(
+        selected_portfolio,
+        results,
+        active_tab,
+        switch_value,
+        theme,
+        bootstrap_state,
+        trigger_id=callback_context.triggered_id,
+    )
 
 
-def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state):
+def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
     if not selected_portfolio or not results:
@@ -8776,13 +8890,31 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     if selected_portfolio not in results:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
-    window_weights = portfolio_data.get("window_weights", [])
+    bootstrap_phase = _po_bootstrap_state(bootstrap_state)["phase"]
+    with timed_block(
+        "portopt.performance_frames",
+        portfolio=selected_portfolio,
+        trigger=trigger_id,
+        active_tab=active_tab,
+        view=switch_value or "chart",
+        bootstrap_phase=bootstrap_phase,
+        source="weight_chart",
+    ):
+        portfolio_data = results[selected_portfolio]
+        window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights:
         return dmc.Text("No weight data available.", c="dimmed")
 
-    timing_ctx = timed_block("portopt.render_weight_chart", portfolio=selected_portfolio, window_count=len(window_weights))
+    timing_ctx = timed_block(
+        "portopt.render_weight_chart",
+        portfolio=selected_portfolio,
+        window_count=len(window_weights),
+        trigger=trigger_id,
+        active_tab=active_tab,
+        view=switch_value or "chart",
+        bootstrap_phase=bootstrap_phase,
+    )
     timing_ctx.__enter__()
     try:
         # Get asset names from first window
@@ -9540,7 +9672,6 @@ def po_render_drawdown(
     Input("po-weight-portfolio-select", "value"),
     Input("po-vis-tabs", "value"),
     Input("po-attribution-chart-switch", "value"),
-    Input("po-bootstrap-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
@@ -9550,6 +9681,7 @@ def po_render_drawdown(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("po-bootstrap-store", "data"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
@@ -9557,7 +9689,6 @@ def _po_render_attribution_chart_callback(
     selected_portfolio,
     active_tab,
     switch_value,
-    bootstrap_state,
     raw_data,
     orig_periodicity,
     periodicity,
@@ -9567,6 +9698,7 @@ def _po_render_attribution_chart_callback(
     vol_scaler,
     vol_scaling,
     theme,
+    bootstrap_state,
     results,
 ):
     return po_render_attribution_chart(
@@ -9680,10 +9812,17 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
     prevent_initial_call=True,
 )
 def _po_render_weight_table_callback(selected_portfolio, active_tab, switch_value, bootstrap_state, results):
-    return po_render_weight_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state)
+    return po_render_weight_table(
+        selected_portfolio,
+        results,
+        active_tab,
+        switch_value,
+        bootstrap_state,
+        trigger_id=callback_context.triggered_id,
+    )
 
 
-def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state):
+def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "table":
         raise PreventUpdate
     if not selected_portfolio or not results:
@@ -9697,30 +9836,39 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
     if not window_weights:
         return html.Div()
 
-    asset_names = list(window_weights[0]["weights"].keys())
+    with timed_block(
+        "portopt.render_weight_table",
+        portfolio=selected_portfolio,
+        window_count=len(window_weights),
+        trigger=trigger_id,
+        active_tab=active_tab,
+        view=switch_value or "table",
+        bootstrap_phase=_po_bootstrap_state(bootstrap_state)["phase"],
+    ):
+        asset_names = list(window_weights[0]["weights"].keys())
 
-    column_defs = [
-        {"field": "Apply Start", "pinned": "left", "width": 120},
-        {"field": "Apply End", "pinned": "left", "width": 120},
-    ]
-    for a in asset_names:
-        column_defs.append({
-            "field": a,
-            "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
-            "width": 100,
-        })
-
-    row_data = []
-    for ww in window_weights:
-        row = {
-            "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
-            "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
-        }
+        column_defs = [
+            {"field": "Apply Start", "pinned": "left", "width": 120},
+            {"field": "Apply End", "pinned": "left", "width": 120},
+        ]
         for a in asset_names:
-            row[a] = ww["weights"].get(a, 0)
-        row_data.append(row)
+            column_defs.append({
+                "field": a,
+                "valueFormatter": {"function": "params.value != null ? d3.format('.2%')(params.value) : ''"},
+                "width": 100,
+            })
 
-    return _po_build_result_grid("po-weight-grid", column_defs, row_data)
+        row_data = []
+        for ww in window_weights:
+            row = {
+                "Apply Start": pd.Timestamp(ww["apply_start"]).strftime("%Y-%m-%d"),
+                "Apply End": pd.Timestamp(ww["apply_end"]).strftime("%Y-%m-%d"),
+            }
+            for a in asset_names:
+                row[a] = ww["weights"].get(a, 0)
+            row_data.append(row)
+
+        return _po_build_result_grid("po-weight-grid", column_defs, row_data)
 
 
 # ---------------------------------------------------------------------------

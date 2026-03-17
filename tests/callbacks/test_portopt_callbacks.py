@@ -375,7 +375,8 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-turnover-grid-container", "children")' in page_text
     assert 'po-turnover-chart-content' not in page_text
     assert 'po-turnover-grid-content' not in page_text
-    assert page_text.count('Input("po-bootstrap-store", "data")') >= 7
+    assert page_text.count('Input("po-bootstrap-store", "data")') >= 9
+    assert page_text.count('State("po-bootstrap-store", "data")') >= 1
 
 
 def test_po_shell_visibility_uses_raw_data_presence_and_page_load_tick():
@@ -726,7 +727,7 @@ def test_po_render_statistics_requires_active_tab(page_modules):
 def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
     _, portopt = page_modules
 
-    empty = portopt.po_update_portfolio_dropdowns(None, None, None)
+    empty = portopt.po_update_portfolio_dropdowns(None, None, None, None)
     assert empty == ([], None, [], [], True)
 
     results = {"P1": {"x": 1}, "P2": {"x": 2}}
@@ -734,6 +735,25 @@ def test_po_update_portfolio_dropdowns_sets_delete_disabled_state(page_modules):
         results,
         "P1",
         ["P1"],
+        None,
+    )
+
+    assert [o["value"] for o in options] == ["P1", "P2"]
+    assert selected == "P1"
+    assert [o["value"] for o in multi_options] == ["P1", "P2"]
+    assert multi_value == ["P1"]
+    assert delete_disabled is False
+
+
+def test_po_update_portfolio_dropdowns_selects_new_result_when_optimization_completes(page_modules):
+    _, portopt = page_modules
+
+    results = {"P1": {"x": 1}, "P2": {"x": 2}}
+    options, selected, multi_options, multi_value, delete_disabled = portopt.po_update_portfolio_dropdowns(
+        results,
+        "P1",
+        ["P1"],
+        {"status": "complete", "name": "P2"},
     )
 
     assert [o["value"] for o in options] == ["P1", "P2"]
@@ -2795,6 +2815,42 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
     assert result[11] is no_update
     assert result[12] is no_update
     assert result[13] is no_update
+
+
+def test_po_modal_ok_falls_back_to_temp_store_rows_when_snapshot_missing(page_modules, raw_json):
+    _, portopt = page_modules
+
+    result = portopt.po_on_modal_ok(
+        None,
+        raw_json,
+        {},
+        [],
+        {},
+        {},
+        {},
+        ["Asset_A", "Asset_B"],
+        {},
+        {"Asset_A": 0.0, "Asset_B": 0.0},
+        {"Asset_A": 100.0, "Asset_B": 100.0},
+        {"Asset_A": False, "Asset_B": False},
+        {},
+        ["Asset_A"],
+        ["Asset_A", "Asset_B"],
+        [],
+        {"Asset_A": "None", "Asset_B": "None"},
+        {"Asset_A": "Bench_A"},
+        {"Asset_A": False, "Asset_B": False},
+        {"Asset_A": True, "Asset_B": True},
+        {"Asset_A": 0.0, "Asset_B": 0.0},
+        {"Asset_A": 100.0, "Asset_B": 100.0},
+        {"Asset_A": False, "Asset_B": False},
+    )
+
+    assert result[0] == ["Asset_A"]
+    assert result[1] == {"Asset_A": "None", "Asset_B": "None", "Asset_C": "None", "Asset_D": "None"}
+    assert result[2] == {"Asset_A": "Bench_A", "Asset_B": "", "Asset_C": "", "Asset_D": ""}
+    assert result[5] is False
+    assert result[6] == ["Asset_A"]
 
 
 def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
