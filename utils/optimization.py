@@ -210,24 +210,25 @@ def _compute_windows_monthly(df, window_type, window_size, opt_step_months, fill
     if anchor_pos < 0 or anchor_pos >= n:
         raise ValueError("Cannot find a valid month-end anchor within the data range.")
 
-    # Build list of anchor positions (index positions where rebalancing occurs)
+    # Build all candidate month-end anchor dates at once, then map to index positions
+    last_date = idx[-1]
+    candidate_dates = pd.date_range(
+        start=anchor_date, end=last_date, freq=f"{opt_step_months}ME",
+    )
+    if candidate_dates.empty:
+        candidate_dates = pd.DatetimeIndex([anchor_date])
+
+    # Vectorized searchsorted to find index positions for all candidates at once
+    raw_positions = idx.searchsorted(candidate_dates, side="right") - 1
+    raw_positions = np.clip(raw_positions, 0, n - 1)
+
+    # Deduplicate while preserving order
+    seen = set()
     anchors = []
-    current_anchor_date = anchor_date
-    while True:
-        pos = idx.searchsorted(current_anchor_date, side="right") - 1
-        if pos >= n:
-            pos = n - 1
-        if pos < 0:
-            break
-        # Avoid duplicate anchors
-        if not anchors or pos > anchors[-1]:
+    for pos in raw_positions:
+        if pos not in seen:
+            seen.add(pos)
             anchors.append(pos)
-        # Step forward by opt_step_months
-        current_anchor_date = current_anchor_date + pd.DateOffset(months=opt_step_months)
-        # Snap to month-end
-        current_anchor_date = current_anchor_date + pd.offsets.MonthEnd(0)
-        if pos >= n - 1:
-            break
 
     if not anchors:
         raise ValueError("No valid rebalance points found for the given data and step size.")

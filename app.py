@@ -5,7 +5,7 @@ import os
 
 import dash
 import dash_mantine_components as dmc
-from dash import Dash, Input, Output, dcc, html, page_container
+from dash import ClientsideFunction, Dash, Input, Output, dcc, html, page_container
 from dash_iconify import DashIconify
 from dash.exceptions import PreventUpdate
 from cache_config import init_cache
@@ -19,8 +19,8 @@ from utils.returns import build_raw_data_metadata
 
 
 def _compression_enabled() -> bool:
-    value = str(os.getenv("DASHMAT_ENABLE_COMPRESSION", "")).strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    value = str(os.getenv("DASHMAT_ENABLE_COMPRESSION", "1")).strip().lower()
+    return value not in {"0", "false", "no", "off"}
 
 
 def _maybe_enable_compression(server) -> None:
@@ -179,6 +179,15 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
 ]}
 _provider_kwargs["defaultColorScheme"] = "light"
 app.layout = dmc.MantineProvider(**_provider_kwargs)
+
+
+# Client-side theme patching: instantly relayout all Plotly charts on toggle
+app.clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="patchPlotlyTheme"),
+    Output("global-color-scheme-toggle", "title"),
+    Input("global-color-scheme-toggle", "computedColorScheme"),
+    prevent_initial_call=True,
+)
 
 
 @app.callback(

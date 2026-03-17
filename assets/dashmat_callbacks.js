@@ -1523,8 +1523,32 @@
       .concat(renderState(frontierView));
   }
 
+  function patchPlotlyTheme(colorScheme) {
+    var isDark = colorScheme === "dark";
+    var template = isDark ? "plotly_dark" : "plotly_white";
+    var hoverBg = isDark ? "#25262b" : "#ffffff";
+    var hoverFont = isDark ? "#f8f9fa" : "#1f2933";
+    var hoverBorder = isDark ? "#5c5f66" : "#ced4da";
+    var update = {
+      template: template,
+      "paper_bgcolor": "rgba(0,0,0,0)",
+      "plot_bgcolor": "rgba(0,0,0,0)",
+      "hoverlabel.bgcolor": hoverBg,
+      "hoverlabel.bordercolor": hoverBorder,
+      "hoverlabel.font.color": hoverFont
+    };
+    var plots = document.querySelectorAll(".js-plotly-plot");
+    for (var i = 0; i < plots.length; i++) {
+      if (plots[i].data && typeof Plotly !== "undefined") {
+        try { Plotly.relayout(plots[i], update); } catch (e) { /* skip */ }
+      }
+    }
+    return noUpdate();
+  }
+
   window.dash_clientside = Object.assign({}, window.dash_clientside, {
     dashmat_callbacks: {
+      patchPlotlyTheme: patchPlotlyTheme,
       analyticsControlSync: analyticsControlSync,
       bulkUpdateSeriesSelection: bulkUpdateSeriesSelection,
       captureAnalyticsSeriesSnapshot: captureAnalyticsSeriesSnapshot,

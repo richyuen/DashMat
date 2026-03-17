@@ -4902,7 +4902,7 @@ def reg_delete_result(n_clicks, selected, results):
     Input("reg-anova-window-select", "value"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_anova(selected, results, selected_window, active_tab="anova", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "anova", initial_tab_ready):
@@ -5048,10 +5048,10 @@ def reg_render_anova(selected, results, selected_window, active_tab="anova", ini
     Input("reg-results-store", "data"),
     Input("reg-rolling-summary-chart-switch", "value"),
     Input("reg-rolling-summary-detail-switch", "value"),
-    Input("global-color-scheme-toggle", "computedColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_tab="rolling", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "rolling", initial_tab_ready):
@@ -5152,10 +5152,10 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
     Input("reg-rolling-chart-switch", "value"),
     Input("dashmat-saved-series-cache-store", "data"),
     Input("reg-use-risk-free-store", "data"),
-    Input("global-color-scheme-toggle", "computedColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_rolling_returns(
     selected,
@@ -5297,10 +5297,10 @@ def reg_render_rolling_returns(
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
     Input("reg-weights-chart-switch", "value"),
-    Input("global-color-scheme-toggle", "computedColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_weights(selected, results, view_mode, theme, active_tab="weights", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "weights", initial_tab_ready):
@@ -5386,7 +5386,7 @@ def reg_render_weights(selected, results, view_mode, theme, active_tab="weights"
     Input("dashmat-raw-data-store", "data"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_returns(selected, results, raw_data, active_tab="returns", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "returns", initial_tab_ready):
@@ -5438,10 +5438,10 @@ def reg_render_returns(selected, results, raw_data, active_tab="returns", initia
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-growth-chart-switch", "value"),
-    Input("global-color-scheme-toggle", "computedColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab="growth", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "growth", initial_tab_ready):
@@ -5550,7 +5550,7 @@ def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, 
     Input("reg-calendar-series-select", "value"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "calendar", initial_tab_ready):
@@ -5635,10 +5635,10 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
     Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-drawdown-chart-switch", "value"),
-    Input("global-color-scheme-toggle", "computedColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_tab="drawdown", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "drawdown", initial_tab_ready):
@@ -5735,7 +5735,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
     Input("reg-use-risk-free-store", "data"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, use_risk_free=True, active_tab="statistics", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "statistics", initial_tab_ready):
@@ -5912,10 +5912,10 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
     Input("reg-scatter-mode-select", "value"),
     Input("reg-scatter-x-select", "value"),
     Input("dashmat-raw-data-store", "data"),
-    Input("global-color-scheme-toggle", "computedColorScheme"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def reg_render_scatter(selected, results, mode, x_var, raw_data, theme, active_tab="scatter", initial_tab_ready=True):
     if not _reg_tab_render_ready(active_tab, "scatter", initial_tab_ready):
