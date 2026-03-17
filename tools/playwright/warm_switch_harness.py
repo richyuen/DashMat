@@ -27,6 +27,7 @@ DEFAULT_DB_SERIES = [
 ]
 
 TIMING_EVENT_NAMES = (
+    "portopt.performance_frames",
     "portopt.project_results",
     "portopt.render_weight_chart",
     "portopt.render_attribution_chart",
@@ -497,10 +498,26 @@ def resolve_portopt_series(db_series: list[str]) -> list[str]:
 
 
 PORTOPT_RESTORE_TAB_CONFIG = {
-    "weight": {"content": "#po-weight-chart-content", "switch": "po-weight-chart-switch"},
-    "frontier": {"content": "#po-frontier-chart-container", "switch": "po-frontier-chart-switch"},
-    "risk": {"content": "#po-risk-chart-container", "switch": "po-risk-chart-switch"},
-    "attribution": {"content": "#po-attribution-chart-container", "switch": "po-attribution-chart-switch"},
+    "weight": {
+        "content": "#po-weight-chart-content",
+        "switch": "po-weight-chart-switch",
+        "switch_store": "po-weight-chart-switch-store",
+    },
+    "frontier": {
+        "content": "#po-frontier-chart-container",
+        "switch": "po-frontier-chart-switch",
+        "switch_store": "po-frontier-chart-switch-store",
+    },
+    "risk": {
+        "content": "#po-risk-chart-container",
+        "switch": "po-risk-chart-switch",
+        "switch_store": "po-risk-chart-switch-store",
+    },
+    "attribution": {
+        "content": "#po-attribution-chart-container",
+        "switch": "po-attribution-chart-switch",
+        "switch_store": "po-attribution-chart-switch-store",
+    },
 }
 
 
@@ -509,11 +526,42 @@ def normalize_portopt_restore_tab(value: str) -> str:
     return normalized if normalized in PORTOPT_RESTORE_TAB_CONFIG else "weight"
 
 
+def get_persisted_store_value(page, component_id: str):
+    return page.evaluate(
+        """
+        (componentId) => {
+          const storages = [window.sessionStorage, window.localStorage];
+          for (const storage of storages) {
+            const raw = storage.getItem(componentId);
+            if (raw === null) {
+              continue;
+            }
+            try {
+              return JSON.parse(raw);
+            } catch (err) {
+              return raw;
+            }
+          }
+          return null;
+        }
+        """,
+        component_id,
+    )
+
+
+def set_component_value_if_needed(page, component_id: str, value, *, store_id: str | None = None) -> bool:
+    current_value = get_persisted_store_value(page, store_id or component_id)
+    if current_value == value:
+        return False
+    set_component_value(page, component_id, value)
+    return True
+
+
 def seed_portopt_restore_tab(page, restore_tab: str) -> None:
     resolved_restore_tab = normalize_portopt_restore_tab(restore_tab)
     cfg = PORTOPT_RESTORE_TAB_CONFIG[resolved_restore_tab]
-    set_component_value(page, "po-vis-tabs", resolved_restore_tab)
-    set_component_value(page, cfg["switch"], "chart")
+    set_component_value_if_needed(page, "po-vis-tabs", resolved_restore_tab, store_id="po-active-tab-store")
+    set_component_value_if_needed(page, cfg["switch"], "chart", store_id=cfg["switch_store"])
     wait_plotly_content(page, cfg["content"], timeout=60000)
 
 
@@ -561,9 +609,14 @@ def warm_portopt_results(page, base_url: str, db_series: list[str], restore_tab:
 
 def select_portopt_tab_and_measure(page, tab_value: str, content_selector: str, switch_id: str | None = None) -> int:
     start = time.perf_counter()
-    set_component_value(page, "po-vis-tabs", tab_value)
+    set_component_value_if_needed(page, "po-vis-tabs", tab_value, store_id="po-active-tab-store")
     if switch_id:
-        set_component_value(page, switch_id, "chart")
+        switch_store_id = None
+        for cfg in PORTOPT_RESTORE_TAB_CONFIG.values():
+            if cfg["switch"] == switch_id:
+                switch_store_id = cfg["switch_store"]
+                break
+        set_component_value_if_needed(page, switch_id, "chart", store_id=switch_store_id)
     wait_plotly_content(page, content_selector)
     return round((time.perf_counter() - start) * 1000)
 
@@ -593,8 +646,8 @@ def measure_portopt(page, cfg: dict[str, str], restore_tab: str, entry_only: boo
             "restoredTabReadyMs": restored_tab_ready_ms,
         }
 
-    set_component_value(page, "po-vis-tabs", "weight")
-    set_component_value(page, "po-weight-chart-switch", "chart")
+    set_component_value_if_needed(page, "po-vis-tabs", "weight", store_id="po-active-tab-store")
+    set_component_value_if_needed(page, "po-weight-chart-switch", "chart", store_id="po-weight-chart-switch-store")
     wait_plotly_content(page, "#po-weight-chart-content")
     weights_ready_ms = round((time.perf_counter() - start) * 1000)
 

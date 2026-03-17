@@ -6159,6 +6159,12 @@ clientside_callback(
     State("po-use-risk-free-store", "data"),
     State("po-returns-basis-store", "data"),
     State("po-reporting-basis-store", "data"),
+    State("po-vis-tabs", "value"),
+    State("po-weight-chart-switch", "value"),
+    State("po-attribution-chart-switch", "value"),
+    State("po-risk-chart-switch", "value"),
+    State("po-turnover-chart-switch", "value"),
+    State("po-frontier-chart-switch", "value"),
     prevent_initial_call=True,
 )
 
@@ -9716,12 +9722,13 @@ def _po_render_attribution_chart_callback(
         vol_scaler,
         vol_scaling,
         theme,
+        trigger_id=callback_context.triggered_id,
     )
 
 
 def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                                  raw_data, orig_periodicity, periodicity, bench, ls,
-                                 date_range, vol_scaler, vol_scaling, theme):
+                                 date_range, vol_scaler, vol_scaling, theme, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "attribution", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
     if not selected_portfolio or not results:
@@ -9744,6 +9751,10 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
         "portopt.render_attribution_chart",
         portfolio=selected_portfolio,
         series_count=len(opt_series),
+        trigger=trigger_id,
+        active_tab=active_tab,
+        view=switch_value or "chart",
+        bootstrap_phase=_po_bootstrap_state(bootstrap_state)["phase"],
     )
     timing_ctx.__enter__()
     try:
@@ -10815,12 +10826,13 @@ def _po_render_risk_chart_callback(
         vol_scaling,
         series_select,
         theme,
+        trigger_id=callback_context.triggered_id,
     )
 
 
 def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                          raw_data, periodicity, bench, ls, date_range,
-                         vol_scaler, vol_scaling, series_select, theme):
+                         vol_scaler, vol_scaling, series_select, theme, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "risk", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
     if not selected_portfolio or not results:
@@ -10843,6 +10855,10 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value, 
         "portopt.render_risk_chart",
         portfolio=selected_portfolio,
         series_count=len(opt_series),
+        trigger=trigger_id,
+        active_tab=active_tab,
+        view=switch_value or "chart",
+        bootstrap_phase=_po_bootstrap_state(bootstrap_state)["phase"],
     )
     timing_ctx.__enter__()
     try:
@@ -11295,6 +11311,7 @@ def _po_render_frontier_chart_callback(
         series_select,
         theme,
         linear_constraints,
+        trigger_id=callback_context.triggered_id,
     )
 
 
@@ -11302,7 +11319,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, use_risk_free, series_select, theme,
-                             linear_constraints):
+                             linear_constraints, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
     if not selected_portfolio or not results:
@@ -11327,6 +11344,10 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
         portfolio=selected_portfolio,
         series_count=len(opt_series),
         risk_measure=rm,
+        trigger=trigger_id,
+        active_tab=active_tab,
+        view=switch_value or "chart",
+        bootstrap_phase=_po_bootstrap_state(bootstrap_state)["phase"],
     )
     timing_ctx.__enter__()
     try:

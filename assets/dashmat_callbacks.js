@@ -1311,7 +1311,13 @@
     storedObjective,
     storedUseRiskFree,
     storedReturnsBasis,
-    storedReportingBasis
+    storedReportingBasis,
+    currentActiveTab,
+    currentWeightView,
+    currentAttributionView,
+    currentRiskView,
+    currentTurnoverView,
+    currentFrontierView
   ) {
     const nu = noUpdate();
     const idleState = { phase: "idle", loadedTabs: defaultPortoptLoadedTabs() };
@@ -1356,6 +1362,10 @@
 
     function normalizeView(viewMode) {
       return viewMode === "table" ? "table" : "chart";
+    }
+
+    function resolvedOutput(nextValue, currentValue) {
+      return currentValue === nextValue ? nu : nextValue;
     }
 
     const validWindowTypes = ["rolling", "expanding", "full"];
@@ -1429,17 +1439,23 @@
       loadedTabs[resolvedActiveTab] = true;
     }
 
+    const resolvedWeightView = normalizeView(storedWeightView);
+    const resolvedAttributionView = normalizeView(storedAttributionView);
+    const resolvedRiskView = normalizeView(storedRiskView);
+    const resolvedTurnoverView = normalizeView(storedTurnoverView);
+    const resolvedFrontierView = normalizeView(storedFrontierView);
+
     return [
       periodicityOptions,
       resolvedPeriodicity,
       resolvedVolScaler,
       selectedSeries,
-      resolvedActiveTab,
-      normalizeView(storedWeightView),
-      normalizeView(storedAttributionView),
-      normalizeView(storedRiskView),
-      normalizeView(storedTurnoverView),
-      normalizeView(storedFrontierView),
+      resolvedOutput(resolvedActiveTab, currentActiveTab),
+      resolvedOutput(resolvedWeightView, currentWeightView),
+      resolvedOutput(resolvedAttributionView, currentAttributionView),
+      resolvedOutput(resolvedRiskView, currentRiskView),
+      resolvedOutput(resolvedTurnoverView, currentTurnoverView),
+      resolvedOutput(resolvedFrontierView, currentFrontierView),
       resolvedOptWindow,
       resolvedWindowSize,
       resolvedOptStep,

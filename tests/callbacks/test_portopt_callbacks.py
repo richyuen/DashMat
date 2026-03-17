@@ -407,8 +407,11 @@ def test_po_bootstrap_reducer_reads_stored_controls_and_marks_loaded_tabs():
     assert 'Input("dashmat-raw-data-meta-store", "data")' in bootstrap_callback
     assert 'State("po-active-tab-store", "data")' in bootstrap_callback
     assert 'State("po-frontier-chart-switch-store", "data")' in bootstrap_callback
+    assert 'State("po-vis-tabs", "value")' in bootstrap_callback
+    assert 'State("po-weight-chart-switch", "value")' in bootstrap_callback
     assert 'Output("po-bootstrap-store", "data")' in bootstrap_callback
     assert "defaultPortoptLoadedTabs" in js_text
+    assert "function resolvedOutput(nextValue, currentValue)" in js_text
     assert 'phase: "ready"' in js_text
 
 
@@ -418,6 +421,11 @@ def test_po_init_date_range_no_longer_depends_on_common_daily_store():
     init_callback = init_block.rsplit("@callback(", 1)[-1]
     assert 'Input("po-range-candidates-store", "data")' in init_callback
     assert 'Input("po-common-daily-candidates-store", "data")' not in init_callback
+
+
+def test_warm_switch_harness_tracks_portopt_performance_frames():
+    harness_text = Path("tools/playwright/warm_switch_harness.py").read_text(encoding="utf-8")
+    assert '"portopt.performance_frames"' in harness_text
 
 
 def test_po_common_daily_button_uses_shared_clientside_helper():
