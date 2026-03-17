@@ -5410,7 +5410,7 @@ def reg_render_returns(selected, results, raw_data, active_tab="returns", initia
                 "field": c,
                 "width": 112,
                 "minWidth": 102,
-                "valueFormatter": _reg_value_formatter(".6f"),
+                "valueFormatter": _reg_value_formatter(".2%"),
             }
         )
 

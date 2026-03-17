@@ -1698,7 +1698,7 @@ def test_reg_render_returns_preserves_dotted_series_fields(monkeypatch, regressi
     assert getattr(grid, "defaultColDef", {})["headerClass"] == "dashmat-center-header"
     assert getattr(grid, "defaultColDef", {})["cellStyle"] == {"textAlign": "center"}
     assert getattr(grid, "columnDefs", [])[1]["valueFormatter"] == {
-        "function": "dashmatFormatNumber(params.value, '.6f')"
+        "function": "dashmatFormatNumber(params.value, '.2%')"
     }
     assert getattr(grid, "rowData", [])[0][dotted_name] == pytest.approx(0.01)
 
