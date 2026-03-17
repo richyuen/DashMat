@@ -58,6 +58,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Prefer short Python Playwright scripts over long CLI one-liners.
 - For A/B runs, use separate ports instead of editing `app.py`.
 - Validate local SQLite files under `data/` before DB-backed browser runs.
+- New worktrees do not inherit local SQLite files; copy `data/dashmat_local.db`, `data/MRD.db`, and `data/Performance.db` into the worktree before DB-backed browser runs.
 - Use `python -u app.py` when timing logs matter.
 - For strict PortOpt first-entry timing, parse only the measured entry window after warmup.
 - If the warm-switch harness stalls on `#po-run-button`, verify the canonical PortOpt series-config stores first.
