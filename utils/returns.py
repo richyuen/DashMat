@@ -1042,6 +1042,50 @@ def calculate_calendar_year_returns(dataset_key, original_periodicity, selected_
 
         benchmark_dict = parse_mapping_payload(benchmark_assignments)
         long_short_dict = parse_mapping_payload(long_short_assignments)
+        current_periodicity = selected_periodicity or "daily"
+
+        def annualize_returns(series_returns: pd.Series) -> pd.Series:
+            series_returns_df = series_returns.to_frame(name='returns')
+            series_returns_df['year'] = series_returns.index.year
+            annual_returns = series_returns_df.groupby('year')['returns'].apply(
+                lambda x: (1 + x).prod(min_count=1) - 1
+            )
+
+            if len(annual_returns) == 0 or keep_partial:
+                return annual_returns
+
+            first_year = annual_returns.index.min()
+            last_year = annual_returns.index.max()
+
+            first_year_data = series_returns[series_returns.index.year == first_year]
+            if len(first_year_data) > 0:
+                if is_daily(current_periodicity):
+                    first_date = first_year_data.index.min()
+                    if not (first_date.month == 1 and first_date.day <= 4):
+                        annual_returns = annual_returns.drop(first_year, errors='ignore')
+                elif current_periodicity == "monthly" and len(first_year_data) < 12:
+                    annual_returns = annual_returns.drop(first_year, errors='ignore')
+
+            last_year_data = series_returns[series_returns.index.year == last_year]
+            if len(last_year_data) > 0:
+                last_date = last_year_data.index.max()
+                if is_daily(current_periodicity):
+                    if not (last_date.month == 12 and last_date.day >= 28):
+                        annual_returns = annual_returns.drop(last_year, errors='ignore')
+                elif current_periodicity == "monthly" and last_date.month != 12:
+                    annual_returns = annual_returns.drop(last_year, errors='ignore')
+
+            return annual_returns
+
+        benchmark_annual_returns: dict[str, pd.Series] = {}
+        for benchmark in {
+            benchmark_dict.get(series, "None")
+            for series in selected_series
+            if returns_type == "excess" and not long_short_dict.get(series, False)
+        }:
+            if benchmark != "None" and benchmark in working_df.columns:
+                bench_series = working_df[benchmark].dropna()
+                benchmark_annual_returns[benchmark] = annualize_returns(bench_series)
 
         calendar_returns = {}
 
@@ -1055,68 +1099,15 @@ def calculate_calendar_year_returns(dataset_key, original_periodicity, selected_
             if series_returns.empty:
                 continue
 
-            # Group by year and compound returns
-            series_returns_df = series_returns.to_frame(name='returns')
-            series_returns_df['year'] = series_returns.index.year
-
-            # Calculate annual returns
-            annual_returns = series_returns_df.groupby('year')['returns'].apply(
-                lambda x: (1 + x).prod(min_count=1) - 1
-            )
-            
-            # Filter out partial years (exclude first and last year if partial)
-            if len(annual_returns) > 0 and not keep_partial:
-                first_year = annual_returns.index.min()
-                last_year = annual_returns.index.max()
-
-                # Check if first year is complete
-                first_year_data = series_returns[series_returns.index.year == first_year]
-                if len(first_year_data) > 0:
-                    current_periodicity = selected_periodicity or "daily"
-                    if is_daily(current_periodicity):
-                        # For daily data, check if it starts in January (up to 4th)
-                        first_date = first_year_data.index.min()
-                        if not (first_date.month == 1 and first_date.day <= 4):
-                            annual_returns = annual_returns.drop(first_year, errors='ignore')
-                    elif current_periodicity == "monthly":
-                        # For monthly data, check if all 12 months are present
-                        if len(first_year_data) < 12:
-                            annual_returns = annual_returns.drop(first_year, errors='ignore')
-
-                # Check if last year is complete
-                last_year_data = series_returns[series_returns.index.year == last_year]
-                if len(last_year_data) > 0:
-                    last_date = last_year_data.index.max()
-                    current_periodicity = selected_periodicity or "daily"
-
-                    if is_daily(current_periodicity):
-                        if not (last_date.month == 12 and last_date.day >= 28):
-                            annual_returns = annual_returns.drop(last_year, errors='ignore')
-                    elif current_periodicity == "monthly":
-                        # For monthly data, check if all 12 months are present (implied by ending in Dec)
-                        if last_date.month != 12:
-                            annual_returns = annual_returns.drop(last_year, errors='ignore')
+            annual_returns = annualize_returns(series_returns)
             
             # If Excess Return requested (and not L/S), subtract Annual Benchmark Return
             is_ls = long_short_dict.get(series, False)
             if returns_type == "excess" and not is_ls:
                 benchmark = benchmark_dict.get(series, "None")
-                if benchmark != "None" and benchmark in working_df.columns:
-                    # Calculate annual returns for benchmark
-                    # Use benchmark from working_df
-                    bench_series = working_df[benchmark].dropna()
-                    
-                    bench_df = bench_series.to_frame(name='returns')
-                    bench_df['year'] = bench_series.index.year
-                    
-                    annual_bench = bench_df.groupby('year')['returns'].apply(
-                        lambda x: (1 + x).prod(min_count=1) - 1
-                    )
-                    
-                    # Align to series annual returns (years match)
+                annual_bench = benchmark_annual_returns.get(benchmark)
+                if annual_bench is not None:
                     annual_bench = annual_bench.reindex(annual_returns.index)
-                    
-                    # Subtract
                     annual_returns = annual_returns - annual_bench
 
             calendar_returns[series] = annual_returns

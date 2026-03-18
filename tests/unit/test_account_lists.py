@@ -63,6 +63,36 @@ def test_build_account_list_payload_filters_to_db_backed_series():
     assert normalized["control_values"][REG_STORE_IDS["dep"]] == "UploadedOnly"
 
 
+def test_build_account_list_payload_replaces_latest_end_with_sentinel(monkeypatch):
+    provenance = add_db_import_provenance_entry(
+        {},
+        loader_type="cma_bench",
+        loader_args={"selected_benches": ["SPX_TRIndex"]},
+        emitted_series=["SPX_TRIndex"],
+    )
+    snapshot = {
+        AT_STORE_IDS["selected"]: ["SPX_TRIndex"],
+        "at-periodicity-value-store": "daily_trading",
+        "at-date-range-store": {"start": "2024-01-15", "end": "2024-03-29"},
+    }
+    raw_data_store = {"dataset_key": "raw-key"}
+
+    monkeypatch.setattr(account_lists, "resolve_dataset_key", lambda _raw_data: "raw-key")
+    monkeypatch.setattr(
+        account_lists,
+        "compute_date_range_candidates",
+        lambda dataset_key, periodicity, selected: {
+            "max_start": "2024-01-01",
+            "max_end": "2024-03-29",
+        },
+    )
+
+    payload = build_account_list_payload(provenance, snapshot, raw_data_store)
+
+    assert payload["control_values"]["at-date-range-store"]["start"] == "2024-01-15"
+    assert payload["control_values"]["at-date-range-store"]["end"] == account_lists.ACCOUNT_LIST_MAX_END_SENTINEL
+
+
 def test_save_list_load_and_delete_account_list_support_duplicate_names():
     db_engine = _seed_db_engine()
     with db_engine.begin() as conn:
@@ -240,6 +270,7 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
             AT_STORE_IDS["long_short"]: {"C": False},
             AT_STORE_IDS["vol"]: {"C": True},
             "at-periodicity-value-store": "monthly",
+            "at-partial-period-store": "full",
             REG_STORE_IDS["dep"]: "C",
         },
     }
@@ -279,6 +310,7 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
     assert session_payload[AT_STORE_IDS["bench"]]["C"] == "B"
     assert session_payload[REG_STORE_IDS["dep"]] == "A"
     assert session_payload["at-periodicity-value-store"] == "monthly"
+    assert session_payload["at-partial-period-store"] == "full"
     normalized_provenance = normalize_db_import_provenance_store(session_payload["dashmat-db-import-provenance-store"])
     assert any("C" in entry["emitted_series"] for entry in normalized_provenance.values())
 

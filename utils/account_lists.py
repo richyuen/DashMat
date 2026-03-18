@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 from utils.core_categories import load_cma_returns_for_benches_with_meta
 from utils.portfolio_series import load_portfolio_series
 from utils.raw_data_imports import load_factor_series, load_fund_series, load_performance_series
-from utils.date_range_flow import compute_date_range_candidates
+from utils.date_range_flow import ACCOUNT_LIST_MAX_END_SENTINEL, compute_date_range_candidates
 from utils.raw_dataset import build_raw_data_store_payload, get_dataset_key, get_raw_dataset_df, resolve_dataset_key
 from utils.returns import (
     align_monthly_index_to_month_end,
@@ -24,8 +24,6 @@ from utils.underlying_category_imports import load_underlying_category_series
 
 
 ACCOUNT_LIST_SCHEMA_VERSION = 2
-
-ACCOUNT_LIST_MAX_END_SENTINEL = "3999-12-31"
 
 _DATE_RANGE_SENTINEL_CONFIG = {
     "at-date-range-store": {
@@ -90,6 +88,7 @@ AT_EXTRA_CONTROL_STORE_IDS = [
     "at-growth-chart-switch-store",
     "at-use-risk-free-store",
     "at-monthly-view-store",
+    "at-partial-period-store",
     "at-monthly-series-store",
     "at-factor-mode-store",
     "at-factor-quantiles-store",
@@ -114,6 +113,7 @@ PO_EXTRA_CONTROL_STORE_IDS = [
     "po-use-risk-free-store",
     "po-returns-basis-store",
     "po-reporting-basis-store",
+    "po-partial-period-store",
     "po-date-range-store",
     "po-opt-window-store",
     "po-window-size-store",
@@ -142,6 +142,7 @@ REG_EXTRA_CONTROL_STORE_IDS = [
     "reg-periodicity-value-store",
     "reg-vol-scaler-value-store",
     "reg-use-risk-free-store",
+    "reg-partial-period-store",
     "reg-date-range-store",
     "reg-model-store",
     "reg-regression-name-store",

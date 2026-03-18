@@ -6,15 +6,37 @@
   const flexStyle = { display: "flex", flexDirection: "column", flex: "1", overflow: "hidden" };
   const flexScrollStyle = { display: "flex", flexDirection: "column", flex: "1", overflow: "auto" };
   const hiddenStyle = { display: "none" };
+  const deferredModalOpenHandles = {};
+
+  function cancelDeferredModalOpen(modalId) {
+    const pending = deferredModalOpenHandles[modalId];
+    if (!pending) {
+      return;
+    }
+    if (pending.type === "idle" && typeof cancelIdleCallback === "function") {
+      cancelIdleCallback(pending.handle);
+    } else {
+      clearTimeout(pending.handle);
+    }
+    delete deferredModalOpenHandles[modalId];
+  }
 
   function deferModalOpen(modalId) {
     var fn = function () {
+      delete deferredModalOpenHandles[modalId];
       window.dash_clientside.set_props(modalId, { opened: true });
     };
+    cancelDeferredModalOpen(modalId);
     if (typeof requestIdleCallback === "function") {
-      requestIdleCallback(fn, { timeout: 500 });
+      deferredModalOpenHandles[modalId] = {
+        type: "idle",
+        handle: requestIdleCallback(fn, { timeout: 500 })
+      };
     } else {
-      setTimeout(fn, 300);
+      deferredModalOpenHandles[modalId] = {
+        type: "timeout",
+        handle: setTimeout(fn, 300)
+      };
     }
   }
 
@@ -193,6 +215,9 @@
   function uiBlockerRelease(dbErrorHidden, rawErrorHidden, portfolioErrorHidden, underlyingErrorHidden, seriesSelectionOpened) {
     const trigger = triggeredId() || "";
     if (trigger.indexOf("series-selection-modal") !== -1) {
+      if (seriesSelectionOpened === false) {
+        cancelDeferredModalOpen(trigger);
+      }
       return seriesSelectionOpened === false ? false : noUpdate();
     }
     if (trigger.indexOf("raw-db-add-") !== -1) {
@@ -317,9 +342,11 @@
     const selectedValid = selected.filter(function (series) {
       return columnSet.has(series);
     });
-    const knownColumns = new Set(resolveStoredList(currentOrder, "po-series-order-store").filter(function (series) {
-      return columnSet.has(series);
-    }));
+    const knownColumns = new Set(
+      (selectedValid.length ? resolveStoredList(currentOrder, "po-series-order-store") : []).filter(function (series) {
+        return columnSet.has(series);
+      })
+    );
     selectedValid.forEach(function (series) {
       knownColumns.add(series);
     });
@@ -617,13 +644,6 @@
       ];
     }
 
-    if (trigger === "dashmat-raw-data-meta-store") {
-      return [
-        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
-        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
-      ];
-    }
-
     if (trigger === "po-open-modal-button") {
       if (!nClicks) {
         return [
@@ -675,9 +695,11 @@
     const selectedValid = selected.filter(function (series) {
       return columnSet.has(series);
     });
-    const knownColumns = new Set(resolveStoredList(currentOrder, "po-series-order-store").filter(function (series) {
-      return columnSet.has(series);
-    }));
+    const knownColumns = new Set(
+      (selectedValid.length ? resolveStoredList(currentOrder, "po-series-order-store") : []).filter(function (series) {
+        return columnSet.has(series);
+      })
+    );
     selectedValid.forEach(function (series) {
       knownColumns.add(series);
     });
@@ -690,20 +712,39 @@
 
     let shouldOpen = false;
     let tempSelect = noUpdate();
-    if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {
-      tempSelect = columns.filter(function (series) {
-        return !poOriginSet.has(series);
-      });
-      shouldOpen = tempSelect.length > 0;
-    } else if (trigger !== "dashmat-raw-data-meta-store" && genericNew.length) {
-      shouldOpen = true;
-      const selectedSet = new Set(selectedValid);
-      genericNew.forEach(function (series) {
-        selectedSet.add(series);
-      });
-      tempSelect = columns.filter(function (series) {
-        return selectedSet.has(series);
-      });
+    if (trigger === "dashmat-raw-data-meta-store") {
+      if (!resolveStoredBool(pageVisited, "po-page-visited-store")) {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
+      shouldOpen = genericNew.length > 0;
+      if (shouldOpen) {
+        const selectedSet = new Set(selectedValid);
+        genericNew.forEach(function (series) {
+          selectedSet.add(series);
+        });
+        tempSelect = columns.filter(function (series) {
+          return selectedSet.has(series);
+        });
+      }
+    } else {
+      if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {
+        tempSelect = columns.filter(function (series) {
+          return !poOriginSet.has(series);
+        });
+        shouldOpen = tempSelect.length > 0;
+      } else if (genericNew.length) {
+        shouldOpen = true;
+        const selectedSet = new Set(selectedValid);
+        genericNew.forEach(function (series) {
+          selectedSet.add(series);
+        });
+        tempSelect = columns.filter(function (series) {
+          return selectedSet.has(series);
+        });
+      }
     }
 
     if (!shouldOpen) {
@@ -713,9 +754,27 @@
       ];
     }
 
-    deferModalOpen("po-series-selection-modal");
+    if (trigger === "po-page-load-trigger") {
+      deferModalOpen("po-series-selection-modal");
+      return [
+        noUpdate(),
+        tempSelect,
+        currentBench,
+        currentCmabench,
+        currentLs,
+        currentOrder,
+        [],
+        currentVolScaling,
+        currentMinWt,
+        currentMaxWt,
+        currentForceMax,
+        true,
+        true
+      ];
+    }
+
     return [
-      noUpdate(),
+      true,
       tempSelect,
       currentBench,
       currentCmabench,

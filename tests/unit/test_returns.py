@@ -13,6 +13,7 @@ from utils.returns import (
     align_monthly_series_to_month_end,
     annualization_factor,
     build_raw_data_metadata,
+    calculate_calendar_year_returns,
     calculate_excess_returns,
     calculate_rolling_returns,
     df_to_json,
@@ -261,6 +262,91 @@ def test_annualization_factor_defaults_to_daily():
     assert annualization_factor("daily") == 252
     assert annualization_factor("monthly") == 12
     assert annualization_factor("unknown") == 252
+
+
+def test_calculate_calendar_year_returns_reuses_shared_benchmark_output(monkeypatch):
+    idx = pd.to_datetime([
+        "2024-01-31",
+        "2024-02-29",
+        "2024-03-31",
+        "2024-04-30",
+        "2024-05-31",
+        "2024-06-30",
+        "2024-07-31",
+        "2024-08-31",
+        "2024-09-30",
+        "2024-10-31",
+        "2024-11-30",
+        "2024-12-31",
+    ])
+    working_df = pd.DataFrame(
+        {
+            "A": np.full(len(idx), 0.01),
+            "B": np.full(len(idx), 0.02),
+            "Bench": np.full(len(idx), 0.005),
+        },
+        index=idx,
+    )
+    working_df.index.name = "Date"
+
+    monkeypatch.setattr(returns_module, "get_working_returns_by_key", lambda *_args, **_kwargs: working_df.copy())
+
+    result = calculate_calendar_year_returns(
+        "dataset-key",
+        "monthly",
+        "monthly",
+        ("A", "B"),
+        "excess",
+        {"A": "Bench", "B": "Bench"},
+        {"A": False, "B": False},
+        None,
+        0,
+        {},
+        keep_partial=False,
+    )
+
+    bench_annual = (1.005 ** 12) - 1
+    assert list(result.index) == [2024]
+    assert result.loc[2024, "A"] == pytest.approx((1.01 ** 12) - 1 - bench_annual)
+    assert result.loc[2024, "B"] == pytest.approx((1.02 ** 12) - 1 - bench_annual)
+
+
+def test_calculate_calendar_year_returns_respects_keep_partial(monkeypatch):
+    idx = pd.to_datetime(["2024-02-29", "2024-03-31", "2024-04-30"])
+    working_df = pd.DataFrame({"A": [0.01, 0.02, 0.03]}, index=idx)
+    working_df.index.name = "Date"
+
+    monkeypatch.setattr(returns_module, "get_working_returns_by_key", lambda *_args, **_kwargs: working_df.copy())
+
+    full_only = calculate_calendar_year_returns(
+        "dataset-key",
+        "monthly",
+        "monthly",
+        ("A",),
+        "total",
+        {},
+        {},
+        None,
+        0,
+        {},
+        keep_partial=False,
+    )
+    keep_partial = calculate_calendar_year_returns(
+        "dataset-key",
+        "monthly",
+        "monthly",
+        ("A",),
+        "total",
+        {},
+        {},
+        None,
+        0,
+        {},
+        keep_partial=True,
+    )
+
+    assert full_only.empty
+    assert keep_partial.loc[2024, "A"] == pytest.approx((1.01 * 1.02 * 1.03) - 1)
 
 
 def test_align_monthly_index_to_month_end_shifts_and_compounds_duplicates():
