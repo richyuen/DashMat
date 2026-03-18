@@ -794,6 +794,20 @@ def _reg_build_display_series(entry, raw_data):
     return display_df, ordered_cols
 
 
+def _reg_resolve_display_bundle(selected, results, raw_data, *, trigger_id=None, active_tab=None):
+    selected_name, entry = _reg_get_selected_result_entry(selected, results)
+    if not entry:
+        return None, None, pd.DataFrame(), []
+    with timed_block(
+        "regression.display_series",
+        result=selected_name,
+        trigger=trigger_id,
+        active_tab=active_tab,
+    ):
+        display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    return selected_name, entry, display_df, ordered_cols
+
+
 def _reg_prefixed(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
@@ -1840,17 +1854,19 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(n, storedTab) {
+    function(n, storedTab, currentTab) {
         if (!n) {
             return window.dash_clientside.no_update;
         }
         const allowed = ["anova", "rolling", "scatter", "weights", "statistics", "returns", "rolling_returns", "calendar", "growth", "drawdown"];
-        return allowed.includes(storedTab) ? storedTab : "anova";
+        const resolved = allowed.includes(storedTab) ? storedTab : "anova";
+        return resolved === currentTab ? window.dash_clientside.no_update : resolved;
     }
     """,
     Output("reg-tabs", "value"),
     Input("reg-page-load-trigger", "n_intervals"),
     State("reg-active-tab-store", "data"),
+    State("reg-tabs", "value"),
     prevent_initial_call=True,
 )
 
@@ -4763,15 +4779,25 @@ def reg_run_regression(
     Output("reg-delete-result-btn", "disabled"),
     Input("reg-results-store", "data"),
     State("reg-result-select", "value"),
+    State("reg-result-select", "data"),
+    State("reg-delete-result-btn", "disabled"),
     prevent_initial_call=False,
 )
-def reg_sync_result_options(results, current_val):
-    results = results or {}
-    options = [{"value": k, "label": k} for k in results]
-    if not options:
-        return options, None, True
-    val = current_val if (current_val and current_val in results) else list(results.keys())[-1]
-    return options, val, False
+def reg_sync_result_options(results, current_val, current_options, current_disabled):
+    with timed_block("regression.sync_result_options", result_count=len(results or {}), current=current_val):
+        results = results or {}
+        options = [{"value": k, "label": k} for k in results]
+        next_disabled = not bool(options)
+        if not options:
+            next_value = None
+        else:
+            next_value = current_val if (current_val and current_val in results) else list(results.keys())[-1]
+
+        return (
+            no_update if current_options == options else options,
+            no_update if current_val == next_value else next_value,
+            no_update if current_disabled == next_disabled else next_disabled,
+        )
 
 
 @callback(
@@ -4779,16 +4805,24 @@ def reg_sync_result_options(results, current_val):
     Output("reg-save-series-status-text", "children"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    State("reg-save-series-button", "disabled"),
+    State("reg-save-series-status-text", "children"),
     prevent_initial_call=False,
 )
-def reg_sync_save_series_ui(selected, results):
-    if not selected or not results or selected not in results:
-        return True, ""
-
-    saved_name = ((results or {}).get(selected) or {}).get("saved_series_name")
-    if not saved_name:
-        return False, ""
-    return False, f"Saved as {saved_name}."
+def reg_sync_save_series_ui(selected, results, current_disabled, current_status):
+    with timed_block("regression.sync_save_series_ui", result=selected):
+        if not selected or not results or selected not in results:
+            next_disabled, next_status = True, ""
+        else:
+            saved_name = ((results or {}).get(selected) or {}).get("saved_series_name")
+            if not saved_name:
+                next_disabled, next_status = False, ""
+            else:
+                next_disabled, next_status = False, f"Saved as {saved_name}."
+        return (
+            no_update if current_disabled == next_disabled else next_disabled,
+            no_update if current_status == next_status else next_status,
+        )
 
 
 @callback(
@@ -4797,30 +4831,39 @@ def reg_sync_save_series_ui(selected, results):
     Output("reg-anova-window-select", "disabled"),
     Input("reg-result-select", "value"),
     Input("reg-results-store", "data"),
+    State("reg-anova-window-select", "data"),
     State("reg-anova-window-select", "value"),
+    State("reg-anova-window-select", "disabled"),
     prevent_initial_call=False,
 )
-def reg_sync_anova_window_options(selected, results, current_window):
-    if not selected or not results or selected not in results:
-        return [], None, True
+def reg_sync_anova_window_options(selected, results, current_options, current_window, current_disabled):
+    with timed_block("regression.sync_anova_window_options", result=selected):
+        if not selected or not results or selected not in results:
+            next_options, next_value, next_disabled = [], None, True
+        else:
+            wrs = (results[selected] or {}).get("window_results") or []
+            if not wrs:
+                next_options, next_value, next_disabled = [], None, True
+            else:
+                next_options = []
+                for idx, wr in enumerate(wrs):
+                    apply_start = str((wr or {}).get("apply_start") or "")[:10]
+                    apply_end = str((wr or {}).get("apply_end") or "")[:10]
+                    next_options.append(
+                        {
+                            "value": str(idx),
+                            "label": f"Window {idx + 1}: {apply_start} to {apply_end}",
+                        }
+                    )
+                valid_values = {opt["value"] for opt in next_options}
+                next_value = current_window if current_window in valid_values else str(len(wrs) - 1)
+                next_disabled = False
 
-    wrs = (results[selected] or {}).get("window_results") or []
-    if not wrs:
-        return [], None, True
-
-    options = []
-    for idx, wr in enumerate(wrs):
-        apply_start = str((wr or {}).get("apply_start") or "")[:10]
-        apply_end = str((wr or {}).get("apply_end") or "")[:10]
-        options.append(
-            {
-                "value": str(idx),
-                "label": f"Window {idx + 1}: {apply_start} to {apply_end}",
-            }
+        return (
+            no_update if current_options == next_options else next_options,
+            no_update if current_window == next_value else next_value,
+            no_update if current_disabled == next_disabled else next_disabled,
         )
-
-    latest_val = str(len(wrs) - 1)
-    return options, latest_val, False
 
 
 @callback(
@@ -4898,144 +4941,155 @@ def reg_delete_result(n_clicks, selected, results):
 @callback(
     Output("reg-anova-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("reg-anova-window-select", "value"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_anova(selected, results, selected_window, active_tab="anova", initial_tab_ready=True):
+def _reg_render_anova_callback(selected, selected_window, active_tab="anova", initial_tab_ready=True, results=None):
+    return reg_render_anova(
+        selected,
+        results,
+        selected_window,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_anova(selected, results, selected_window, active_tab="anova", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "anova", initial_tab_ready):
         raise PreventUpdate
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
+    with timed_block("regression.render_anova", result=selected, trigger=trigger_id):
+        entry = results[selected]
+        wrs = entry.get("window_results", [])
+        if not wrs:
+            return dmc.Text("No results.", size="sm", c="dimmed")
 
-    entry = results[selected]
-    wrs = entry.get("window_results", [])
-    if not wrs:
-        return dmc.Text("No results.", size="sm", c="dimmed")
+        try:
+            window_idx = int(selected_window) if selected_window is not None else (len(wrs) - 1)
+        except (TypeError, ValueError):
+            window_idx = len(wrs) - 1
+        window_idx = max(0, min(window_idx, len(wrs) - 1))
+        wr = wrs[window_idx] if isinstance(wrs[window_idx], dict) else {}
+        anova_rows = _reg_build_anova_decomposition_rows(wr)
+        param_rows = _reg_build_anova_parameter_rows(entry, wr)
+        fit_rows = _reg_build_anova_fit_rows(entry, wr)
 
-    try:
-        window_idx = int(selected_window) if selected_window is not None else (len(wrs) - 1)
-    except (TypeError, ValueError):
-        window_idx = len(wrs) - 1
-    window_idx = max(0, min(window_idx, len(wrs) - 1))
-    wr = wrs[window_idx] if isinstance(wrs[window_idx], dict) else {}
-    anova_rows = _reg_build_anova_decomposition_rows(wr)
-    param_rows = _reg_build_anova_parameter_rows(entry, wr)
-    fit_rows = _reg_build_anova_fit_rows(entry, wr)
+        blocks = []
 
-    blocks = []
+        if anova_rows:
+            anova_grid = _reg_result_ag_grid(
+                className="ag-theme-alpine",
+                columnDefs=[
+                    _reg_left_aligned_col({"field": "Source", "width": 100, "minWidth": 90}),
+                    {"field": "df", "width": 70, "minWidth": 60},
+                    {"field": "SS", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
+                    {"field": "MS", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
+                    {"field": "F", "width": 85, "minWidth": 75, "valueFormatter": _reg_value_formatter(".4f")},
+                    {"field": "p-value", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
+                ],
+                rowData=anova_rows,
+                defaultColDef={"resizable": True, "sortable": False},
+                style={"height": "132px"},
+                dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            )
+            blocks.extend([dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"), anova_grid])
+        else:
+            blocks.extend(
+                [
+                    dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"),
+                    dmc.Text("ANOVA decomposition unavailable for this model/window.", size="sm", c="dimmed"),
+                ]
+            )
 
-    if anova_rows:
-        anova_grid = _reg_result_ag_grid(
-            className="ag-theme-alpine",
-            columnDefs=[
-                _reg_left_aligned_col({"field": "Source", "width": 100, "minWidth": 90}),
-                {"field": "df", "width": 70, "minWidth": 60},
-                {"field": "SS", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
-                {"field": "MS", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
-                {"field": "F", "width": 85, "minWidth": 75, "valueFormatter": _reg_value_formatter(".4f")},
-                {"field": "p-value", "width": 95, "minWidth": 85, "valueFormatter": _reg_value_formatter(".4f")},
-            ],
-            rowData=anova_rows,
-            defaultColDef={"resizable": True, "sortable": False},
-            style={"height": "132px"},
-            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
-        )
-        blocks.extend([dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"), anova_grid])
-    else:
-        blocks.extend(
-            [
-                dmc.Text("ANOVA Table", size="sm", fw=600, mb="xs"),
-                dmc.Text("ANOVA decomposition unavailable for this model/window.", size="sm", c="dimmed"),
-            ]
-        )
+        if param_rows:
+            param_df = pd.DataFrame(param_rows)
+            param_df = _reg_drop_empty_columns(param_df, keep_fields=["Parameter", "Coefficient"])
+            param_grid = _reg_result_ag_grid(
+                className="ag-theme-alpine",
+                columnDefs=[
+                    _reg_left_aligned_col({"field": "Parameter", "width": 220, "minWidth": 170, "maxWidth": 280}),
+                    {"field": "Coefficient", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
+                    {"field": "Std Error", "width": 110, "minWidth": 100, "valueFormatter": _reg_value_formatter(".6f")},
+                    {"field": "t-stat", "width": 100, "minWidth": 90, "valueFormatter": _reg_value_formatter(".6f")},
+                    {"field": "p-value", "width": 100, "minWidth": 90, "valueFormatter": _reg_value_formatter(".6f")},
+                    {"field": "CI Low (95%)", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
+                    {"field": "CI High (95%)", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
+                ],
+                rowData=param_df.to_dict("records"),
+                defaultColDef={"resizable": True, "sortable": True},
+                style={"height": f"{max(150, 36 + 30 * len(param_df))}px"},
+                dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            )
+            blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), param_grid])
+        else:
+            blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), dmc.Text("No parameter rows available.", size="sm", c="dimmed")])
 
-    if param_rows:
-        param_df = pd.DataFrame(param_rows)
-        param_df = _reg_drop_empty_columns(param_df, keep_fields=["Parameter", "Coefficient"])
-        param_grid = _reg_result_ag_grid(
-            className="ag-theme-alpine",
-            columnDefs=[
-                _reg_left_aligned_col({"field": "Parameter", "width": 220, "minWidth": 170, "maxWidth": 280}),
-                {"field": "Coefficient", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
-                {"field": "Std Error", "width": 110, "minWidth": 100, "valueFormatter": _reg_value_formatter(".6f")},
-                {"field": "t-stat", "width": 100, "minWidth": 90, "valueFormatter": _reg_value_formatter(".6f")},
-                {"field": "p-value", "width": 100, "minWidth": 90, "valueFormatter": _reg_value_formatter(".6f")},
-                {"field": "CI Low (95%)", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
-                {"field": "CI High (95%)", "width": 120, "minWidth": 110, "valueFormatter": _reg_value_formatter(".6f")},
-            ],
-            rowData=param_df.to_dict("records"),
-            defaultColDef={"resizable": True, "sortable": True},
-            style={"height": f"{max(150, 36 + 30 * len(param_df))}px"},
-            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
-        )
-        blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), param_grid])
-    else:
-        blocks.extend([dmc.Divider(my="sm"), dmc.Text("Parameters", size="sm", fw=600, mb="xs"), dmc.Text("No parameter rows available.", size="sm", c="dimmed")])
+        if fit_rows:
+            section_title_map = {
+                "Window": "Window",
+                "Regression": "Regression Fit",
+                "Diagnostics": "Diagnostics",
+                "ARIMA": "ARIMA Fit",
+                "GARCH": "GARCH Fit",
+                "VIF": "VIF",
+            }
+            section_order = ["Window", "Regression", "Diagnostics", "ARIMA", "GARCH", "VIF"]
+            grouped_rows: dict[str, list[dict]] = {}
+            for row in fit_rows:
+                section = str(row.get("Section") or "").strip() or "Other"
+                grouped_rows.setdefault(section, []).append(row)
 
-    if fit_rows:
-        section_title_map = {
-            "Window": "Window",
-            "Regression": "Regression Fit",
-            "Diagnostics": "Diagnostics",
-            "ARIMA": "ARIMA Fit",
-            "GARCH": "GARCH Fit",
-            "VIF": "VIF",
-        }
-        section_order = ["Window", "Regression", "Diagnostics", "ARIMA", "GARCH", "VIF"]
-        grouped_rows: dict[str, list[dict]] = {}
-        for row in fit_rows:
-            section = str(row.get("Section") or "").strip() or "Other"
-            grouped_rows.setdefault(section, []).append(row)
-
-        section_blocks = []
-        for section in section_order + [s for s in grouped_rows if s not in section_order]:
-            rows_for_section = grouped_rows.get(section) or []
-            if not rows_for_section:
-                continue
-            fit_items = []
-            for row in rows_for_section:
-                metric = str(row.get("Metric") or "").strip() or "Metric"
-                value = row.get("Value")
-                value_comp = (
-                    dmc.Text(_fmt(value), size="sm", fw=600)
-                    if isinstance(value, (int, float, np.floating))
-                    else dmc.Text(str(value) if value not in (None, "") else "—", size="sm", fw=600)
-                )
-                fit_items.append(
+            section_blocks = []
+            for section in section_order + [s for s in grouped_rows if s not in section_order]:
+                rows_for_section = grouped_rows.get(section) or []
+                if not rows_for_section:
+                    continue
+                fit_items = []
+                for row in rows_for_section:
+                    metric = str(row.get("Metric") or "").strip() or "Metric"
+                    value = row.get("Value")
+                    value_comp = (
+                        dmc.Text(_fmt(value), size="sm", fw=600)
+                        if isinstance(value, (int, float, np.floating))
+                        else dmc.Text(str(value) if value not in (None, "") else "—", size="sm", fw=600)
+                    )
+                    fit_items.append(
+                        dmc.Stack(
+                            gap=2,
+                            children=[
+                                dmc.Text(metric, size="xs", c="dimmed"),
+                                value_comp,
+                            ],
+                        )
+                    )
+                section_blocks.append(
                     dmc.Stack(
-                        gap=2,
+                        gap=4,
                         children=[
-                            dmc.Text(metric, size="xs", c="dimmed"),
-                            value_comp,
+                            dmc.Text(section_title_map.get(section, section), size="xs", fw=700, c="dimmed"),
+                            dmc.SimpleGrid(
+                                cols={"base": 1, "sm": 3, "lg": 6},
+                                spacing="sm",
+                                verticalSpacing=6,
+                                children=fit_items,
+                            ),
                         ],
                     )
                 )
-            section_blocks.append(
-                dmc.Stack(
-                    gap=4,
-                    children=[
-                        dmc.Text(section_title_map.get(section, section), size="xs", fw=700, c="dimmed"),
-                        dmc.SimpleGrid(
-                            cols={"base": 1, "sm": 3, "lg": 6},
-                            spacing="sm",
-                            verticalSpacing=6,
-                            children=fit_items,
-                        ),
-                    ],
-                )
+            blocks.extend(
+                [
+                    dmc.Divider(my="sm"),
+                    dmc.Text("Overall Fit", size="sm", fw=600, mb="xs"),
+                    dmc.Stack(gap=8, children=section_blocks),
+                ]
             )
-        blocks.extend(
-            [
-                dmc.Divider(my="sm"),
-                dmc.Text("Overall Fit", size="sm", fw=600, mb="xs"),
-                dmc.Stack(gap=8, children=section_blocks),
-            ]
-        )
 
-    return dmc.Stack(gap="xs", children=blocks, p="sm")
+        return dmc.Stack(gap="xs", children=blocks, p="sm")
 
 
 # ---------------------------------------------------------------------------
@@ -5045,15 +5099,28 @@ def reg_render_anova(selected, results, selected_window, active_tab="anova", ini
 @callback(
     Output("reg-rolling-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("reg-rolling-summary-chart-switch", "value"),
     Input("reg-rolling-summary-detail-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_tab="rolling", initial_tab_ready=True):
+def _reg_render_rolling_callback(selected, view_mode, detail_mode, theme, active_tab="rolling", initial_tab_ready=True, results=None):
+    return reg_render_rolling(
+        selected,
+        results,
+        view_mode,
+        detail_mode,
+        theme,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_tab="rolling", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "rolling", initial_tab_ready):
         raise PreventUpdate
     if not selected or not results or selected not in results:
@@ -5065,86 +5132,86 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
     if len(wrs) == 1:
         return dmc.Alert("Rolling Summary requires rolling or expanding window.", color="blue", title="Info", p="md")
 
-    use_run_level_fallback = len(wrs) == 1
-    rows = []
-    for wr in wrs:
-        row = {
-            "Date": wr["apply_start"],
-            "R²": wr.get("r_squared"),
-            "Adj R²": wr.get("adj_r_squared"),
-            "Residual Std": wr.get("residual_std"),
-            "N Obs": wr.get("n_obs"),
-        }
-        for k, v in (wr.get("coefficients") or {}).items():
-            row[f"β_{k}"] = v
-        oos = wr.get("oos_metrics") or {}
-        if oos:
-            row.update({"OOS R²": oos.get("oos_r2"), "OOS RMSE": oos.get("oos_rmse"), "OOS MAE": oos.get("oos_mae")})
-        _reg_apply_arima_garch_columns(
-            row,
-            _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
-        )
-        rows.append(row)
-
-    df_roll = pd.DataFrame(rows)
-    df_roll["Date"] = pd.to_datetime(df_roll["Date"])
-    df_roll = df_roll.sort_values("Date")
-
-    df_display = df_roll.assign(Date=df_roll["Date"].dt.strftime("%Y-%m-%d"))
-    df_display = _reg_drop_empty_columns(df_display, keep_fields=["Date"])
-    fields = list(df_display.columns)
-    if (detail_mode or "basic") == "basic":
-        table_fields = _reg_visible_summary_cols(fields)
-    else:
-        table_fields = fields
-    header_overrides = _reg_collect_arima_param_headers(wrs, entry, allow_run_level_fallback=use_run_level_fallback)
-
-    fig = go.Figure()
-    chart_fields = []
-    for col in table_fields:
-        if col == "Date" or col not in df_roll.columns:
-            continue
-        try:
-            if not pd.api.types.is_numeric_dtype(df_roll[col]):
-                continue
-        except Exception:
-            continue
-        if df_roll[col].notna().any():
-            chart_fields.append(col)
-
-    visible_default = "R²" if "R²" in chart_fields else (chart_fields[0] if chart_fields else None)
-    for col in chart_fields:
-        fig.add_trace(
-            go.Scatter(
-                x=df_roll["Date"],
-                y=df_roll[col],
-                mode="lines",
-                name=col,
-                line={"width": 1.5},
-                visible=True if col == visible_default else "legendonly",
+    with timed_block("regression.render_rolling", result=selected, trigger=trigger_id):
+        use_run_level_fallback = len(wrs) == 1
+        rows = []
+        for wr in wrs:
+            row = {
+                "Date": wr["apply_start"],
+                "R²": wr.get("r_squared"),
+                "Adj R²": wr.get("adj_r_squared"),
+                "Residual Std": wr.get("residual_std"),
+                "N Obs": wr.get("n_obs"),
+            }
+            for k, v in (wr.get("coefficients") or {}).items():
+                row[f"β_{k}"] = v
+            oos = wr.get("oos_metrics") or {}
+            if oos:
+                row.update({"OOS R²": oos.get("oos_r2"), "OOS RMSE": oos.get("oos_rmse"), "OOS MAE": oos.get("oos_mae")})
+            _reg_apply_arima_garch_columns(
+                row,
+                _reg_get_window_arima_garch(entry, wr, allow_run_level_fallback=use_run_level_fallback),
             )
-        )
-    fig.update_layout(height=380, title="Rolling Summary", margin={"l": 50, "r": 20, "t": 30, "b": 50},
-                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
-    apply_chart_theme(fig, theme)
+            rows.append(row)
 
-    table = _reg_result_ag_grid(
-        className="ag-theme-alpine",
-        columnDefs=_reg_build_table_coldefs(table_fields, header_overrides=header_overrides),
-        rowData=df_display[table_fields].to_dict("records"),
-        defaultColDef={"resizable": True, "sortable": True},
-        style={"height": "380px"},
-        dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
-    )
-    if view_mode == "table":
-        return table
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+        df_roll = pd.DataFrame(rows)
+        df_roll["Date"] = pd.to_datetime(df_roll["Date"])
+        df_roll = df_roll.sort_values("Date")
+
+        df_display = df_roll.assign(Date=df_roll["Date"].dt.strftime("%Y-%m-%d"))
+        df_display = _reg_drop_empty_columns(df_display, keep_fields=["Date"])
+        fields = list(df_display.columns)
+        if (detail_mode or "basic") == "basic":
+            table_fields = _reg_visible_summary_cols(fields)
+        else:
+            table_fields = fields
+        header_overrides = _reg_collect_arima_param_headers(wrs, entry, allow_run_level_fallback=use_run_level_fallback)
+
+        fig = go.Figure()
+        chart_fields = []
+        for col in table_fields:
+            if col == "Date" or col not in df_roll.columns:
+                continue
+            try:
+                if not pd.api.types.is_numeric_dtype(df_roll[col]):
+                    continue
+            except Exception:
+                continue
+            if df_roll[col].notna().any():
+                chart_fields.append(col)
+
+        visible_default = "R²" if "R²" in chart_fields else (chart_fields[0] if chart_fields else None)
+        for col in chart_fields:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_roll["Date"],
+                    y=df_roll[col],
+                    mode="lines",
+                    name=col,
+                    line={"width": 1.5},
+                    visible=True if col == visible_default else "legendonly",
+                )
+            )
+        fig.update_layout(height=380, title="Rolling Summary", margin={"l": 50, "r": 20, "t": 30, "b": 50},
+                          legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
+        apply_chart_theme(fig, theme)
+
+        table = _reg_result_ag_grid(
+            className="ag-theme-alpine",
+            columnDefs=_reg_build_table_coldefs(table_fields, header_overrides=header_overrides),
+            rowData=df_display[table_fields].to_dict("records"),
+            defaultColDef={"resizable": True, "sortable": True},
+            style={"height": "380px"},
+            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+        )
+        if view_mode == "table":
+            return table
+        return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
 
 @callback(
     Output("reg-rolling-returns-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-rolling-window-select", "value"),
     Input("reg-rolling-return-type-select", "value"),
@@ -5155,8 +5222,40 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
     State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
+def _reg_render_rolling_returns_callback(
+    selected,
+    raw_data,
+    rolling_window,
+    rolling_return_type,
+    rolling_metric,
+    view_mode,
+    saved_series_store,
+    use_risk_free,
+    theme,
+    active_tab="rolling_returns",
+    initial_tab_ready=True,
+    results=None,
+):
+    return reg_render_rolling_returns(
+        selected,
+        results,
+        raw_data,
+        rolling_window,
+        rolling_return_type,
+        rolling_metric,
+        view_mode,
+        saved_series_store,
+        use_risk_free,
+        theme,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
 def reg_render_rolling_returns(
     selected,
     results,
@@ -5170,14 +5269,19 @@ def reg_render_rolling_returns(
     theme,
     active_tab="rolling_returns",
     initial_tab_ready=True,
+    trigger_id=None,
 ):
     if not _reg_tab_render_ready(active_tab, "rolling_returns", initial_tab_ready):
         raise PreventUpdate
-    _name, entry = _reg_get_selected_result_entry(selected, results)
+    selected_name, entry, display_df, ordered_cols = _reg_resolve_display_bundle(
+        selected,
+        results,
+        raw_data,
+        trigger_id=trigger_id,
+        active_tab=active_tab,
+    )
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-
-    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
     if display_df.empty or not ordered_cols:
         return dmc.Text("No rolling data available.", size="sm", c="dimmed")
 
@@ -5213,7 +5317,7 @@ def reg_render_rolling_returns(
     else:
         title = f"Rolling {window_label} {metric_label}"
     series_df = display_df[ordered_cols]
-    with timed_block("regression.render_rolling_returns", result=selected, series_count=len(ordered_cols)):
+    with timed_block("regression.render_rolling_returns", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
         rolling_df = calculate_rolling_returns(
             _frame_dataset_key(series_df),
             periodicity,
@@ -5295,84 +5399,97 @@ def reg_render_rolling_returns(
 @callback(
     Output("reg-weights-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("reg-weights-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_weights(selected, results, view_mode, theme, active_tab="weights", initial_tab_ready=True):
+def _reg_render_weights_callback(selected, view_mode, theme, active_tab="weights", initial_tab_ready=True, results=None):
+    return reg_render_weights(
+        selected,
+        results,
+        view_mode,
+        theme,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_weights(selected, results, view_mode, theme, active_tab="weights", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "weights", initial_tab_ready):
         raise PreventUpdate
     if not selected or not results or selected not in results:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-    entry = results[selected]
-    wrs = entry.get("window_results", [])
-    config = entry.get("config", {})
-    model = config.get("model", "ols")
-    if not wrs:
-        return dmc.Text("No results.", size="sm", c="dimmed")
+    with timed_block("regression.render_weights", result=selected, trigger=trigger_id):
+        entry = results[selected]
+        wrs = entry.get("window_results", [])
+        config = entry.get("config", {})
+        model = config.get("model", "ols")
+        if not wrs:
+            return dmc.Text("No results.", size="sm", c="dimmed")
 
-    dates = [pd.Timestamp(wr["apply_start"]) for wr in wrs]
-    coef_keys = []
-    for wr in wrs:
-        for key in (wr.get("coefficients") or {}).keys():
-            if key not in coef_keys:
-                coef_keys.append(key)
+        dates = [pd.Timestamp(wr["apply_start"]) for wr in wrs]
+        coef_keys = []
+        for wr in wrs:
+            for key in (wr.get("coefficients") or {}).keys():
+                if key not in coef_keys:
+                    coef_keys.append(key)
 
-    if (view_mode or "chart") == "table":
-        table_rows = []
-        for idx, wr in enumerate(wrs, start=1):
-            row = {
-                "Window": idx,
-                "Date": str((wr or {}).get("apply_start") or "")[:10],
-            }
+        if (view_mode or "chart") == "table":
+            table_rows = []
+            for idx, wr in enumerate(wrs, start=1):
+                row = {
+                    "Window": idx,
+                    "Date": str((wr or {}).get("apply_start") or "")[:10],
+                }
+                for key in coef_keys:
+                    row[key] = (wr.get("coefficients") or {}).get(key)
+                table_rows.append(row)
+
+            table_df = pd.DataFrame(table_rows)
+            table_df = _reg_drop_empty_columns(table_df, keep_fields=["Window", "Date"])
+            table_fields = list(table_df.columns)
+
+            return dmc.Stack(
+                gap="sm",
+                p="sm",
+                children=[
+                _reg_result_ag_grid(
+                    className="ag-theme-alpine",
+                    columnDefs=_reg_build_table_coldefs(table_fields),
+                    rowData=table_df[table_fields].to_dict("records"),
+                    defaultColDef={"resizable": True, "sortable": True},
+                    style={"height": "420px"},
+                    dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+                )
+                ],
+            )
+
+        fig = go.Figure()
+        if len(wrs) > 1 and coef_keys:
             for key in coef_keys:
-                row[key] = (wr.get("coefficients") or {}).get(key)
-            table_rows.append(row)
+                vals = [wr.get("coefficients", {}).get(key) for wr in wrs]
+                fig.add_trace(go.Scatter(x=dates, y=vals, mode="lines", name=key,
+                                         stackgroup="w" if model == "style_analysis" else None,
+                                         line={"width": 1.5}))
+        elif wrs:
+            coefs = wrs[0].get("coefficients") or {}
+            fig.add_trace(go.Bar(x=list(coefs.keys()), y=list(coefs.values()), name="Coefficients"))
 
-        table_df = pd.DataFrame(table_rows)
-        table_df = _reg_drop_empty_columns(table_df, keep_fields=["Window", "Date"])
-        table_fields = list(table_df.columns)
+        chart_title = "Style Weights" if model == "style_analysis" else "Regression Weights / Coefficients"
+        fig.update_layout(height=380, title=chart_title, margin={"l": 50, "r": 20, "t": 30, "b": 50},
+                          yaxis_title="Weight / Coefficient",
+                          legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
+        apply_chart_theme(fig, theme)
 
         return dmc.Stack(
             gap="sm",
             p="sm",
-            children=[
-            _reg_result_ag_grid(
-                className="ag-theme-alpine",
-                columnDefs=_reg_build_table_coldefs(table_fields),
-                rowData=table_df[table_fields].to_dict("records"),
-                defaultColDef={"resizable": True, "sortable": True},
-                style={"height": "420px"},
-                dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
-            )
-            ],
+            children=[dcc.Graph(figure=fig, config={"displayModeBar": False})],
         )
-
-    fig = go.Figure()
-    if len(wrs) > 1 and coef_keys:
-        for key in coef_keys:
-            vals = [wr.get("coefficients", {}).get(key) for wr in wrs]
-            fig.add_trace(go.Scatter(x=dates, y=vals, mode="lines", name=key,
-                                     stackgroup="w" if model == "style_analysis" else None,
-                                     line={"width": 1.5}))
-    elif wrs:
-        coefs = wrs[0].get("coefficients") or {}
-        fig.add_trace(go.Bar(x=list(coefs.keys()), y=list(coefs.values()), name="Coefficients"))
-
-    chart_title = "Style Weights" if model == "style_analysis" else "Regression Weights / Coefficients"
-    fig.update_layout(height=380, title=chart_title, margin={"l": 50, "r": 20, "t": 30, "b": 50},
-                      yaxis_title="Weight / Coefficient",
-                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
-    apply_chart_theme(fig, theme)
-
-    return dmc.Stack(
-        gap="sm",
-        p="sm",
-        children=[dcc.Graph(figure=fig, config={"displayModeBar": False})],
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -5382,50 +5499,65 @@ def reg_render_weights(selected, results, view_mode, theme, active_tab="weights"
 @callback(
     Output("reg-returns-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_returns(selected, results, raw_data, active_tab="returns", initial_tab_ready=True):
+def _reg_render_returns_callback(selected, raw_data, active_tab="returns", initial_tab_ready=True, results=None):
+    return reg_render_returns(
+        selected,
+        results,
+        raw_data,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_returns(selected, results, raw_data, active_tab="returns", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "returns", initial_tab_ready):
         raise PreventUpdate
-    _name, entry = _reg_get_selected_result_entry(selected, results)
+    selected_name, entry, df, ordered_cols = _reg_resolve_display_bundle(
+        selected,
+        results,
+        raw_data,
+        trigger_id=trigger_id,
+        active_tab=active_tab,
+    )
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-
-    df, ordered_cols = _reg_build_display_series(entry, raw_data)
     if df.empty:
         return dmc.Text("No returns available.", size="sm", c="dimmed")
+    with timed_block("regression.render_returns", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
+        df.index.name = "Date"
+        df_reset = df.reset_index()
+        df_reset["Date"] = df_reset["Date"].astype(str).str[:10]
 
-    df.index.name = "Date"
-    df_reset = df.reset_index()
-    df_reset["Date"] = df_reset["Date"].astype(str).str[:10]
+        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
+        for c in ordered_cols:
+            cols.append(
+                {
+                    "field": c,
+                    "width": 112,
+                    "minWidth": 102,
+                    "valueFormatter": _reg_value_formatter(".2%"),
+                }
+            )
 
-    cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
-    for c in ordered_cols:
-        cols.append(
-            {
-                "field": c,
-                "width": 112,
-                "minWidth": 102,
-                "valueFormatter": _reg_value_formatter(".2%"),
-            }
+        return _reg_result_ag_grid(
+            className="ag-theme-alpine",
+            columnDefs=cols,
+            rowData=df_reset.to_dict("records"),
+            defaultColDef={"resizable": True, "sortable": True},
+            style={"height": "500px"},
+            dashGridOptions=_reg_grid_options({
+                "pagination": False,
+                "suppressExcelExport": True,
+                "suppressCsvExport": True,
+            }),
         )
-
-    return _reg_result_ag_grid(
-        className="ag-theme-alpine",
-        columnDefs=cols,
-        rowData=df_reset.to_dict("records"),
-        defaultColDef={"resizable": True, "sortable": True},
-        style={"height": "500px"},
-        dashGridOptions=_reg_grid_options({
-            "pagination": False,
-            "suppressExcelExport": True,
-            "suppressCsvExport": True,
-        }),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -5435,80 +5567,97 @@ def reg_render_returns(selected, results, raw_data, active_tab="returns", initia
 @callback(
     Output("reg-growth-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-growth-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab="growth", initial_tab_ready=True):
+def _reg_render_growth_callback(selected, raw_data, view_mode, theme, active_tab="growth", initial_tab_ready=True, results=None):
+    return reg_render_growth(
+        selected,
+        results,
+        raw_data,
+        view_mode,
+        theme,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab="growth", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "growth", initial_tab_ready):
         raise PreventUpdate
-    _name, entry = _reg_get_selected_result_entry(selected, results)
+    selected_name, entry, display_df, ordered_cols = _reg_resolve_display_bundle(
+        selected,
+        results,
+        raw_data,
+        trigger_id=trigger_id,
+        active_tab=active_tab,
+    )
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-
-    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
     if display_df.empty:
         return dmc.Text("No growth series available.", size="sm", c="dimmed")
+    with timed_block("regression.render_growth", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
+        growth_df = pd.DataFrame(index=display_df.index)
+        for label in ordered_cols:
+            s = display_df[label].dropna()
+            if s.empty:
+                continue
+            growth_df[label] = (1 + s).cumprod()
+        if growth_df.empty:
+            return dmc.Text("No growth series available.", size="sm", c="dimmed")
 
-    growth_df = pd.DataFrame(index=display_df.index)
-    for label in ordered_cols:
-        s = display_df[label].dropna()
-        if s.empty:
-            continue
-        growth_df[label] = (1 + s).cumprod()
-    if growth_df.empty:
-        return dmc.Text("No growth series available.", size="sm", c="dimmed")
-
-    if (view_mode or "chart") == "table":
-        table_df = growth_df.reset_index()
-        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
-        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
-        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
-        for c in ordered_cols:
-            if c in table_df.columns:
-                cols.append(
-                    {
-                        "field": c,
-                        "width": 120,
-                        "minWidth": 110,
-                        "valueFormatter": _reg_value_formatter(".6f"),
-                    }
-                )
-        return _reg_result_ag_grid(
-            className="ag-theme-alpine",
-            columnDefs=cols,
-            rowData=table_df.to_dict("records"),
-            defaultColDef={"resizable": True, "sortable": True},
-            style={"height": "460px"},
-            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
-        )
-
-    fig = go.Figure()
-    for label in ordered_cols:
-        s = growth_df[label].dropna() if label in growth_df.columns else pd.Series(dtype=float)
-        if s.empty:
-            continue
-        fig.add_trace(
-            go.Scatter(
-                x=s.index,
-                y=s.values,
-                mode="lines",
-                name=label,
-                line={"width": 1.5},
-                visible=_reg_default_chart_visibility(label),
+        if (view_mode or "chart") == "table":
+            table_df = growth_df.reset_index()
+            table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+            table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+            cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
+            for c in ordered_cols:
+                if c in table_df.columns:
+                    cols.append(
+                        {
+                            "field": c,
+                            "width": 120,
+                            "minWidth": 110,
+                            "valueFormatter": _reg_value_formatter(".6f"),
+                        }
+                    )
+            return _reg_result_ag_grid(
+                className="ag-theme-alpine",
+                columnDefs=cols,
+                rowData=table_df.to_dict("records"),
+                defaultColDef={"resizable": True, "sortable": True},
+                style={"height": "460px"},
+                dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
             )
-        )
 
-    fig.update_layout(height=400, margin={"l": 50, "r": 20, "t": 30, "b": 50},
-                      title="Growth of $1",
-                      xaxis_title="Date", yaxis_title="Growth of $1",
-                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
-    apply_chart_theme(fig, theme)
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+        fig = go.Figure()
+        for label in ordered_cols:
+            s = growth_df[label].dropna() if label in growth_df.columns else pd.Series(dtype=float)
+            if s.empty:
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=s.index,
+                    y=s.values,
+                    mode="lines",
+                    name=label,
+                    line={"width": 1.5},
+                    visible=_reg_default_chart_visibility(label),
+                )
+            )
+
+        fig.update_layout(height=400, margin={"l": 50, "r": 20, "t": 30, "b": 50},
+                          title="Growth of $1",
+                          xaxis_title="Date", yaxis_title="Growth of $1",
+                          legend={"orientation": "h", "yanchor": "bottom", "y": 1.02})
+        apply_chart_theme(fig, theme)
+        return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
 
 # ---------------------------------------------------------------------------
@@ -5544,140 +5693,95 @@ def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, 
 @callback(
     Output("reg-calendar-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-calendar-view-select", "value"),
     Input("reg-calendar-series-select", "value"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True):
+def _reg_render_calendar_callback(selected, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True, results=None):
+    return reg_render_calendar(
+        selected,
+        results,
+        raw_data,
+        calendar_view,
+        calendar_series,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "calendar", initial_tab_ready):
         raise PreventUpdate
-    _name, entry = _reg_get_selected_result_entry(selected, results)
+    selected_name, entry, display_df, ordered_cols = _reg_resolve_display_bundle(
+        selected,
+        results,
+        raw_data,
+        trigger_id=trigger_id,
+        active_tab=active_tab,
+    )
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-
-    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
     if display_df.empty or not ordered_cols:
         return dmc.Text("No calendar data available.", size="sm", c="dimmed")
-
-    periodicity = entry.get("periodicity", "daily")
-    if (calendar_view or "annual") == "monthly":
-        target_series = calendar_series if calendar_series in ordered_cols else ordered_cols[0]
-        monthly_col_defs, monthly_rows = create_monthly_view(
-            _frame_dataset_key(display_df[ordered_cols]),
-            target_series,
-            periodicity,
-            periodicity,
-            "total",
-            {},
-            {},
-            tuple(ordered_cols),
-            None,
-            0,
-            {},
-        )
-        if not monthly_rows:
-            return dmc.Text("No complete monthly history available.", size="sm", c="dimmed")
-        return _reg_result_ag_grid(
-            className="ag-theme-alpine",
-            columnDefs=monthly_col_defs,
-            rowData=monthly_rows,
-            defaultColDef={"resizable": True, "sortable": True},
-            style={"height": "460px"},
-            dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
-        )
-
-    cal_df = calculate_calendar_year_returns(
-        _frame_dataset_key(display_df[ordered_cols]),
-        periodicity,
-        periodicity,
-        tuple(ordered_cols),
-        "total",
-        "{}",
-        "{}",
-        "null",
-        0,
-        "{}",
-    )
-    if cal_df is None or cal_df.empty:
-        return dmc.Text("No complete calendar years available.", size="sm", c="dimmed")
-
-    table_df = cal_df.reset_index()
-    table_df = table_df.rename(columns={table_df.columns[0]: "Year"})
-    table_df["Year"] = table_df["Year"].astype(str)
-    cols = [{"field": "Year", "pinned": "left", "width": 92, "minWidth": 86}]
-    for c in ordered_cols:
-        if c in table_df.columns:
-            cols.append(
-                {
-                    "field": c,
-                    "width": 122,
-                    "minWidth": 108,
-                    "valueFormatter": _reg_value_formatter(".2%"),
-                }
+    with timed_block("regression.render_calendar", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
+        periodicity = entry.get("periodicity", "daily")
+        if (calendar_view or "annual") == "monthly":
+            target_series = calendar_series if calendar_series in ordered_cols else ordered_cols[0]
+            monthly_col_defs, monthly_rows = create_monthly_view(
+                _frame_dataset_key(display_df[ordered_cols]),
+                target_series,
+                periodicity,
+                periodicity,
+                "total",
+                {},
+                {},
+                tuple(ordered_cols),
+                None,
+                0,
+                {},
             )
-    return _reg_result_ag_grid(
-        className="ag-theme-alpine",
-        columnDefs=cols,
-        rowData=table_df.to_dict("records"),
-        defaultColDef={"resizable": True, "sortable": True},
-        style={"height": "460px"},
-        dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
-    )
+            if not monthly_rows:
+                return dmc.Text("No complete monthly history available.", size="sm", c="dimmed")
+            return _reg_result_ag_grid(
+                className="ag-theme-alpine",
+                columnDefs=monthly_col_defs,
+                rowData=monthly_rows,
+                defaultColDef={"resizable": True, "sortable": True},
+                style={"height": "460px"},
+                dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            )
 
+        cal_df = calculate_calendar_year_returns(
+            _frame_dataset_key(display_df[ordered_cols]),
+            periodicity,
+            periodicity,
+            tuple(ordered_cols),
+            "total",
+            "{}",
+            "{}",
+            "null",
+            0,
+            "{}",
+        )
+        if cal_df is None or cal_df.empty:
+            return dmc.Text("No complete calendar years available.", size="sm", c="dimmed")
 
-@callback(
-    Output("reg-drawdown-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-drawdown-chart-switch", "value"),
-    State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=True,
-)
-def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_tab="drawdown", initial_tab_ready=True):
-    if not _reg_tab_render_ready(active_tab, "drawdown", initial_tab_ready):
-        raise PreventUpdate
-    _name, entry = _reg_get_selected_result_entry(selected, results)
-    if not entry:
-        return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-
-    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
-    if display_df.empty or not ordered_cols:
-        return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
-
-    periodicity = entry.get("periodicity", "daily")
-    drawdown_df = calculate_drawdown(
-        _frame_dataset_key(display_df[ordered_cols]),
-        periodicity,
-        tuple(ordered_cols),
-        "total",
-        "{}",
-        "{}",
-        "null",
-        0,
-        "{}",
-    )
-    if drawdown_df is None or drawdown_df.empty:
-        return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
-
-    if (view_mode or "chart") == "table":
-        table_df = drawdown_df.reset_index()
-        table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
-        table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
-        cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
+        table_df = cal_df.reset_index()
+        table_df = table_df.rename(columns={table_df.columns[0]: "Year"})
+        table_df["Year"] = table_df["Year"].astype(str)
+        cols = [{"field": "Year", "pinned": "left", "width": 92, "minWidth": 86}]
         for c in ordered_cols:
             if c in table_df.columns:
                 cols.append(
                     {
                         "field": c,
-                        "width": 120,
-                        "minWidth": 110,
+                        "width": 122,
+                        "minWidth": 108,
                         "valueFormatter": _reg_value_formatter(".2%"),
                     }
                 )
@@ -5686,40 +5790,119 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
             columnDefs=cols,
             rowData=table_df.to_dict("records"),
             defaultColDef={"resizable": True, "sortable": True},
-            style={"height": "440px"},
+            style={"height": "460px"},
             dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
-    fig = go.Figure()
-    for c in ordered_cols:
-        if c not in drawdown_df.columns:
-            continue
-        s = drawdown_df[c].dropna()
-        if s.empty:
-            continue
-        fig.add_trace(
-            go.Scatter(
-                x=s.index,
-                y=s.values,
-                mode="lines",
-                name=c,
-                fill="tozeroy",
-                opacity=0.9,
-                visible=_reg_default_chart_visibility(c),
-            )
-        )
-    if not fig.data:
-        return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
-    fig.update_layout(
-        height=420,
-        title="Drawdown",
-        margin={"l": 50, "r": 20, "t": 50, "b": 40},
-        xaxis_title="Date",
-        yaxis_title="Drawdown",
+
+@callback(
+    Output("reg-drawdown-content", "children"),
+    Input("reg-result-select", "value"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("reg-drawdown-chart-switch", "value"),
+    State("global-color-scheme-toggle", "computedColorScheme"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
+    prevent_initial_call=True,
+)
+def _reg_render_drawdown_callback(selected, raw_data, view_mode, theme, active_tab="drawdown", initial_tab_ready=True, results=None):
+    return reg_render_drawdown(
+        selected,
+        results,
+        raw_data,
+        view_mode,
+        theme,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
     )
-    fig.update_yaxes(tickformat=".2%")
-    apply_chart_theme(fig, theme)
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
+def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_tab="drawdown", initial_tab_ready=True, trigger_id=None):
+    if not _reg_tab_render_ready(active_tab, "drawdown", initial_tab_ready):
+        raise PreventUpdate
+    selected_name, entry, display_df, ordered_cols = _reg_resolve_display_bundle(
+        selected,
+        results,
+        raw_data,
+        trigger_id=trigger_id,
+        active_tab=active_tab,
+    )
+    if not entry:
+        return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
+    if display_df.empty or not ordered_cols:
+        return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
+    with timed_block("regression.render_drawdown", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
+        periodicity = entry.get("periodicity", "daily")
+        drawdown_df = calculate_drawdown(
+            _frame_dataset_key(display_df[ordered_cols]),
+            periodicity,
+            tuple(ordered_cols),
+            "total",
+            "{}",
+            "{}",
+            "null",
+            0,
+            "{}",
+        )
+        if drawdown_df is None or drawdown_df.empty:
+            return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
+
+        if (view_mode or "chart") == "table":
+            table_df = drawdown_df.reset_index()
+            table_df["Date"] = pd.to_datetime(table_df.iloc[:, 0]).dt.strftime("%Y-%m-%d")
+            table_df = table_df.rename(columns={table_df.columns[0]: "Date"})
+            cols = [{"field": "Date", "pinned": "left", "width": 112, "minWidth": 106, "maxWidth": 122}]
+            for c in ordered_cols:
+                if c in table_df.columns:
+                    cols.append(
+                        {
+                            "field": c,
+                            "width": 120,
+                            "minWidth": 110,
+                            "valueFormatter": _reg_value_formatter(".2%"),
+                        }
+                    )
+            return _reg_result_ag_grid(
+                className="ag-theme-alpine",
+                columnDefs=cols,
+                rowData=table_df.to_dict("records"),
+                defaultColDef={"resizable": True, "sortable": True},
+                style={"height": "440px"},
+                dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
+            )
+
+        fig = go.Figure()
+        for c in ordered_cols:
+            if c not in drawdown_df.columns:
+                continue
+            s = drawdown_df[c].dropna()
+            if s.empty:
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=s.index,
+                    y=s.values,
+                    mode="lines",
+                    name=c,
+                    fill="tozeroy",
+                    opacity=0.9,
+                    visible=_reg_default_chart_visibility(c),
+                )
+            )
+        if not fig.data:
+            return dmc.Text("No drawdown data available.", size="sm", c="dimmed")
+        fig.update_layout(
+            height=420,
+            title="Drawdown",
+            margin={"l": 50, "r": 20, "t": 50, "b": 40},
+            xaxis_title="Date",
+            yaxis_title="Drawdown",
+        )
+        fig.update_yaxes(tickformat=".2%")
+        apply_chart_theme(fig, theme)
+        return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
 
 # ---------------------------------------------------------------------------
@@ -5729,15 +5912,28 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
 @callback(
     Output("reg-statistics-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
     Input("reg-use-risk-free-store", "data"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, use_risk_free=True, active_tab="statistics", initial_tab_ready=True):
+def _reg_render_statistics_callback(selected, raw_data=None, saved_series_store=None, use_risk_free=True, active_tab="statistics", initial_tab_ready=True, results=None):
+    return reg_render_statistics(
+        selected,
+        results,
+        raw_data,
+        saved_series_store,
+        use_risk_free,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_statistics(selected, results, raw_data=None, saved_series_store=None, use_risk_free=True, active_tab="statistics", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "statistics", initial_tab_ready):
         raise PreventUpdate
     if not selected or not results or selected not in results:
@@ -5857,14 +6053,16 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
             dashGridOptions=_reg_grid_options({"suppressExcelExport": True, "suppressCsvExport": True}),
         )
 
-    entry = results[selected]
-    periodicity = entry.get("periodicity", "daily")
-    dependent_var = entry.get("dependent_var")
-    independent_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
-
-    # Use the same canonical, window-clipped display series used by Returns/Growth/etc.
-    # This ensures statistics for X variables align with the model application window.
-    display_df, display_order = _reg_build_display_series(entry, raw_data)
+    selected_name, entry, display_df, display_order = _reg_resolve_display_bundle(
+        selected,
+        results,
+        raw_data,
+        trigger_id=trigger_id,
+        active_tab=active_tab,
+    )
+    periodicity = entry.get("periodicity", "daily") if entry else "daily"
+    dependent_var = entry.get("dependent_var") if entry else None
+    independent_vars = list(dict.fromkeys((entry or {}).get("independent_vars") or []))
     if display_df.empty or not display_order:
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
 
@@ -5873,7 +6071,7 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
 
     try:
-        with timed_block("regression.render_statistics", result=selected, series_count=len(display_order)):
+        with timed_block("regression.render_statistics", result=selected_name, series_count=len(display_order), trigger=trigger_id):
             stats_payload = calculate_statistics_cached(
                 _frame_dataset_key(stats_input),
                 periodicity,
@@ -5908,23 +6106,41 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
 @callback(
     Output("reg-scatter-content", "children"),
     Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
     Input("reg-scatter-mode-select", "value"),
     Input("reg-scatter-x-select", "value"),
     Input("dashmat-raw-data-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def reg_render_scatter(selected, results, mode, x_var, raw_data, theme, active_tab="scatter", initial_tab_ready=True):
+def _reg_render_scatter_callback(selected, mode, x_var, raw_data, theme, active_tab="scatter", initial_tab_ready=True, results=None):
+    return reg_render_scatter(
+        selected,
+        results,
+        mode,
+        x_var,
+        raw_data,
+        theme,
+        active_tab,
+        initial_tab_ready,
+        trigger_id=callback_context.triggered_id,
+    )
+
+
+def reg_render_scatter(selected, results, mode, x_var, raw_data, theme, active_tab="scatter", initial_tab_ready=True, trigger_id=None):
     if not _reg_tab_render_ready(active_tab, "scatter", initial_tab_ready):
         raise PreventUpdate
-    _name, entry = _reg_get_selected_result_entry(selected, results)
+    selected_name, entry, display_df, _ordered = _reg_resolve_display_bundle(
+        selected,
+        results,
+        raw_data,
+        trigger_id=trigger_id,
+        active_tab=active_tab,
+    )
     if not entry:
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
-
-    display_df, _ordered = _reg_build_display_series(entry, raw_data)
     if display_df.empty:
         return dmc.Text("No scatter data available.", size="sm", c="dimmed")
 
@@ -5968,39 +6184,40 @@ def reg_render_scatter(selected, results, mode, x_var, raw_data, theme, active_t
     if x_vals.empty or y_vals.empty:
         return dmc.Text("No overlapping data for selected scatter mode.", size="sm", c="dimmed")
 
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=x_vals.values,
-            y=y_vals.values,
-            mode="markers",
-            marker={"size": 5, "opacity": 0.7},
-            name=title,
-        )
-    )
-    paired = pd.DataFrame({"x": x_vals.values, "y": y_vals.values}).replace([np.inf, -np.inf], np.nan).dropna()
-    if len(paired) >= 2 and paired["x"].nunique() > 1:
-        slope, intercept = np.polyfit(paired["x"].to_numpy(), paired["y"].to_numpy(), 1)
-        x_line = np.linspace(float(paired["x"].min()), float(paired["x"].max()), 100)
-        y_line = slope * x_line + intercept
+    with timed_block("regression.render_scatter", result=selected_name, trigger=trigger_id):
+        fig = go.Figure()
         fig.add_trace(
             go.Scatter(
-                x=x_line,
-                y=y_line,
-                mode="lines",
-                name="Trend Line",
-                line={"width": 2},
+                x=x_vals.values,
+                y=y_vals.values,
+                mode="markers",
+                marker={"size": 5, "opacity": 0.7},
+                name=title,
             )
         )
-    if mode == "residual_vs_predicted":
-        fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
+        paired = pd.DataFrame({"x": x_vals.values, "y": y_vals.values}).replace([np.inf, -np.inf], np.nan).dropna()
+        if len(paired) >= 2 and paired["x"].nunique() > 1:
+            slope, intercept = np.polyfit(paired["x"].to_numpy(), paired["y"].to_numpy(), 1)
+            x_line = np.linspace(float(paired["x"].min()), float(paired["x"].max()), 100)
+            y_line = slope * x_line + intercept
+            fig.add_trace(
+                go.Scatter(
+                    x=x_line,
+                    y=y_line,
+                    mode="lines",
+                    name="Trend Line",
+                    line={"width": 2},
+                )
+            )
+        if mode == "residual_vs_predicted":
+            fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
 
-    fig.update_layout(
-        height=400,
-        title=title,
-        margin={"l": 50, "r": 20, "t": 50, "b": 50},
-        xaxis_title=xlabel,
-        yaxis_title=ylabel,
-    )
-    apply_chart_theme(fig, theme)
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+        fig.update_layout(
+            height=400,
+            title=title,
+            margin={"l": 50, "r": 20, "t": 50, "b": 50},
+            xaxis_title=xlabel,
+            yaxis_title=ylabel,
+        )
+        apply_chart_theme(fig, theme)
+        return dcc.Graph(figure=fig, config={"displayModeBar": False})
