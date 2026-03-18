@@ -21,9 +21,13 @@ $args = @(
   '--base-url', $BaseUrl,
   '--runs', $Runs.ToString(),
   '--startup-timeout', $StartupTimeout.ToString(),
-  '--label', $Label,
-  '--git-ref', $GitRef
+  '--label', $Label
 )
+
+if ($GitRef) {
+  $args += '--git-ref'
+  $args += $GitRef
+}
 
 if ($Headed) {
   $args += '--headed'

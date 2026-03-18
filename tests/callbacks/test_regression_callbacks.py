@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO, StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import numpy as np
@@ -1471,7 +1472,7 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     assert "GARCH.mu" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
 
 
-def test_reg_sync_anova_window_options_defaults_to_latest_on_result_change(monkeypatch, regression_page):
+def test_reg_sync_anova_window_options_preserves_current_window_when_valid(monkeypatch, regression_page):
     idx = pd.date_range("2024-01-01", periods=3, freq="D")
     results = {
         "R1": {
@@ -1484,14 +1485,14 @@ def test_reg_sync_anova_window_options_defaults_to_latest_on_result_change(monke
     }
     monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-result-select"})())
 
-    options, value, disabled = regression_page.reg_sync_anova_window_options("R1", results, "0")
+    options, value, disabled = regression_page.reg_sync_anova_window_options("R1", results, [], "1", True)
 
     assert len(options) == 3
-    assert value == "2"
+    assert value is no_update
     assert disabled is False
 
 
-def test_reg_sync_anova_window_options_defaults_to_latest_on_results_refresh(monkeypatch, regression_page):
+def test_reg_sync_anova_window_options_defaults_to_latest_when_current_invalid(monkeypatch, regression_page):
     idx = pd.date_range("2024-01-01", periods=3, freq="D")
     results = {
         "R1": {
@@ -1504,7 +1505,7 @@ def test_reg_sync_anova_window_options_defaults_to_latest_on_results_refresh(mon
     }
     monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-results-store"})())
 
-    _options, value, _disabled = regression_page.reg_sync_anova_window_options("R1", results, "1")
+    _options, value, _disabled = regression_page.reg_sync_anova_window_options("R1", results, [], "99", True)
 
     assert value == "2"
 
@@ -1517,6 +1518,119 @@ def test_reg_sync_scatter_x_options_disables_x_for_qq_mode(regression_page):
     assert [opt["value"] for opt in options] == ["X1", "X2"]
     assert value == "X1"
     assert disabled is True
+
+
+def test_reg_render_callbacks_read_results_store_as_state():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    render_callbacks = [
+        "_reg_render_anova_callback",
+        "_reg_render_rolling_callback",
+        "_reg_render_rolling_returns_callback",
+        "_reg_render_weights_callback",
+        "_reg_render_returns_callback",
+        "_reg_render_growth_callback",
+        "_reg_render_calendar_callback",
+        "_reg_render_drawdown_callback",
+        "_reg_render_statistics_callback",
+        "_reg_render_scatter_callback",
+    ]
+
+    for callback_name in render_callbacks:
+        callback_block = page_text.split(f"def {callback_name}", 1)[0].rsplit("@callback(", 1)[-1]
+        assert 'State("reg-results-store", "data")' in callback_block
+        assert 'Input("reg-results-store", "data")' not in callback_block
+
+
+def test_warm_switch_harness_tracks_regression_render_timing():
+    harness_text = Path("tools/playwright/warm_switch_harness.py").read_text(encoding="utf-8")
+
+    assert '"regression.sync_result_options"' in harness_text
+    assert '"regression.sync_anova_window_options"' in harness_text
+    assert '"regression.display_series"' in harness_text
+    assert '"regression.render_returns"' in harness_text
+    assert '"regression.render_statistics"' in harness_text
+    assert "def measure_regression" in harness_text
+    assert "def wait_for_regression_restore_state" in harness_text
+    assert "def is_regression_restored_timing_line" in harness_text
+    assert "def wait_for_timing_event" in harness_text
+    assert "warm_regression_results(page, base_url, db_series)" in harness_text
+    assert 'measure_regression(page, pages["regression"], server_log)' in harness_text
+
+
+def test_warm_switch_harness_recognizes_restored_regression_timing_lines():
+    import tools.playwright.warm_switch_harness as harness
+
+    assert harness.is_regression_restored_timing_line(
+        "timing name=regression.sync_result_options elapsed_ms=0.00 result_count=2 current=R1"
+    )
+    assert harness.is_regression_restored_timing_line(
+        "timing name=regression.render_anova elapsed_ms=4.52 result=R1 trigger=reg-result-select"
+    )
+    assert not harness.is_regression_restored_timing_line(
+        "timing name=regression.sync_result_options elapsed_ms=0.00 result_count=0 current="
+    )
+    assert not harness.is_regression_restored_timing_line(
+        "timing name=regression.sync_anova_window_options elapsed_ms=0.00 result=None"
+    )
+
+
+def test_warm_switch_harness_regression_restore_state_ready_predicate():
+    import tools.playwright.warm_switch_harness as harness
+
+    assert harness.regression_restore_state_ready(
+        {
+            "resultCount": 1,
+            "selectedInStore": True,
+            "anovaWindowValue": "Window 1: 2020-01-01 to 2020-12-31",
+            "anovaWindowDisabled": False,
+            "activeContentText": "ANOVA table",
+            "activeContentEmptyState": False,
+        }
+    )
+    assert harness.regression_restore_state_ready(
+        {
+            "resultCount": 1,
+            "selectedInStore": False,
+            "anovaWindowValue": "",
+            "anovaWindowDisabled": False,
+            "activeContentText": "Returns grid",
+            "activeContentEmptyState": False,
+        }
+    )
+    assert not harness.regression_restore_state_ready(
+        {
+            "resultCount": 2,
+            "selectedInStore": False,
+            "anovaWindowValue": "Window 1",
+            "anovaWindowDisabled": False,
+            "activeContentText": "ANOVA table",
+            "activeContentEmptyState": False,
+        }
+    )
+    assert not harness.regression_restore_state_ready(
+        {
+            "resultCount": 1,
+            "selectedInStore": True,
+            "anovaWindowValue": "Window 1",
+            "anovaWindowDisabled": False,
+            "activeContentText": "Run a regression to see results.",
+            "activeContentEmptyState": True,
+        }
+    )
+
+
+def test_warm_switch_harness_regression_timing_preflight_requires_restored_events():
+    import tools.playwright.warm_switch_harness as harness
+
+    with TemporaryDirectory() as tmpdir:
+        server_log = Path(tmpdir) / "server.log"
+        server_log.write_text("Dash is running\n", encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="Regression timing preflight failed"):
+            harness.validate_regression_timing_preflight({"timingValidated": False}, server_log)
+
+        harness.validate_regression_timing_preflight({"timingValidated": True}, server_log)
+    harness.validate_regression_timing_preflight({"timingValidated": False}, None)
 
 
 def test_reg_render_scatter_renders_residual_qq_plot(regression_page):

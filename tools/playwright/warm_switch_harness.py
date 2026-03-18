@@ -37,6 +37,25 @@ TIMING_EVENT_NAMES = (
     "portopt.render_attribution_table",
     "portopt.render_risk_table",
     "portopt.render_frontier_table",
+    "regression.sync_result_options",
+    "regression.sync_save_series_ui",
+    "regression.sync_anova_window_options",
+    "regression.display_series",
+    "regression.render_anova",
+    "regression.render_rolling",
+    "regression.render_rolling_returns",
+    "regression.render_weights",
+    "regression.render_returns",
+    "regression.render_growth",
+    "regression.render_calendar",
+    "regression.render_drawdown",
+    "regression.render_statistics",
+    "regression.render_scatter",
+)
+
+REGRESSION_EMPTY_STATE_TEXTS = (
+    "Run a regression to see results.",
+    "No results.",
 )
 
 
@@ -191,10 +210,205 @@ def parse_timing_log(server_log: Path | None, start_offset: int = 0) -> dict[str
     if not matched_lines:
         summary["warning"] = (
             "No timing events were found in the provided server log during the measured window. "
-            "If the app was launched with `conda run`, prefer `conda run --no-capture-output -n dashmat "
-            "python -u ...` so stdout reaches the log file while the server is still running."
+            "Use tools/playwright/start_timed_server.ps1 so DASHMAT_TIMING_ENABLED=1 and "
+            "`conda run --no-capture-output -n dashmat python -u ...` are applied consistently."
         )
     return summary
+
+
+def current_log_offset(server_log: Path | None) -> int:
+    if not server_log or not server_log.exists():
+        return 0
+    return server_log.stat().st_size
+
+
+def wait_for_timing_event(server_log: Path | None, start_offset: int, name_prefix: str, timeout_ms: int = 15000) -> None:
+    if not server_log or not server_log.exists():
+        raise RuntimeError("Regression timing validation requires a live --server-log path.")
+
+    needle = f"timing name={name_prefix}"
+    deadline = time.time() + max(timeout_ms, 1000) / 1000.0
+    while time.time() < deadline:
+        raw_text = server_log.read_text(encoding="utf-8", errors="replace")
+        if start_offset:
+            raw_text = raw_text[start_offset:]
+        if needle in raw_text:
+            return
+        time.sleep(0.2)
+
+    raise RuntimeError(
+        f"Expected timing events with prefix '{name_prefix}' during the measured window, "
+        "but none were found in the server log."
+    )
+
+
+def parse_timing_fields(line: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for token in str(line or "").split():
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        fields[key] = value
+    return fields
+
+
+def is_regression_restored_timing_line(line: str) -> bool:
+    fields = parse_timing_fields(line)
+    name = str(fields.get("name", "")).strip()
+    if not name.startswith("regression."):
+        return False
+    if name == "regression.sync_result_options":
+        try:
+            return int(fields.get("result_count", "0")) > 0
+        except ValueError:
+            return False
+    result = str(fields.get("result", "")).strip()
+    return bool(result and result.lower() not in {"none", "null"})
+
+
+def has_regression_restored_timing_event(server_log: Path | None, start_offset: int = 0) -> bool:
+    if not server_log or not server_log.exists():
+        return False
+    raw_text = server_log.read_text(encoding="utf-8", errors="replace")
+    if start_offset:
+        raw_text = raw_text[start_offset:]
+    return any(is_regression_restored_timing_line(line) for line in raw_text.splitlines())
+
+
+def wait_for_regression_restored_timing_event(
+    server_log: Path | None,
+    start_offset: int,
+    timeout_ms: int = 3000,
+) -> bool:
+    deadline = time.time() + max(timeout_ms, 1000) / 1000.0
+    while time.time() < deadline:
+        if has_regression_restored_timing_event(server_log, start_offset):
+            return True
+        time.sleep(0.2)
+    return has_regression_restored_timing_event(server_log, start_offset)
+
+
+def get_regression_restore_state(page) -> dict[str, object]:
+    return page.evaluate(
+        """
+        (emptyTexts) => {
+          const storages = [window.sessionStorage, window.localStorage];
+          const readPersisted = (componentId) => {
+            for (const storage of storages) {
+              const raw = storage.getItem(componentId);
+              if (raw === null) {
+                continue;
+              }
+              try {
+                return JSON.parse(raw);
+              } catch (err) {
+                return raw;
+              }
+            }
+            return null;
+          };
+          const normalizeText = (el) => (el ? ((el.innerText || el.textContent || "").trim()) : "");
+          const results = readPersisted("reg-results-store");
+          const resultKeys = results && typeof results === "object" && !Array.isArray(results)
+            ? Object.keys(results)
+            : [];
+          const activeTab = String(readPersisted("reg-active-tab-store") || "anova");
+          const contentSelectorMap = {
+            anova: "#reg-anova-content",
+            rolling: "#reg-rolling-content",
+            scatter: "#reg-scatter-content",
+            weights: "#reg-weights-content",
+            statistics: "#reg-statistics-content",
+            returns: "#reg-returns-content",
+            rolling_returns: "#reg-rolling-returns-content",
+            calendar: "#reg-calendar-content",
+            growth: "#reg-growth-content",
+            drawdown: "#reg-drawdown-content",
+          };
+          const resultInput = document.querySelector("#reg-result-select input");
+          const windowInput = document.querySelector("#reg-anova-window-select input");
+          const contentRoot = document.querySelector(contentSelectorMap[activeTab] || "#reg-anova-content");
+          const selectedResult = resultInput ? (resultInput.value || "").trim() : "";
+          const anovaWindowValue = windowInput ? (windowInput.value || "").trim() : "";
+          const activeContentText = normalizeText(contentRoot);
+          return {
+            resultCount: resultKeys.length,
+            resultKeys,
+            activeTab,
+            selectedResult,
+            selectedInStore: !!selectedResult && resultKeys.includes(selectedResult),
+            anovaWindowValue,
+            anovaWindowDisabled: !!(windowInput && windowInput.disabled),
+            activeContentText,
+            activeContentEmptyState: emptyTexts.includes(activeContentText),
+          };
+        }
+        """,
+        list(REGRESSION_EMPTY_STATE_TEXTS),
+    )
+
+
+def regression_restore_state_ready(state: dict[str, object] | None) -> bool:
+    state = state or {}
+    result_count = int(state.get("resultCount") or 0)
+    selected_in_store = bool(state.get("selectedInStore"))
+    return bool(
+        result_count > 0
+        and (selected_in_store or result_count == 1)
+        and str(state.get("activeContentText") or "").strip()
+        and not bool(state.get("activeContentEmptyState"))
+    )
+
+
+def wait_for_regression_restore_state(page, timeout: int = 120000) -> dict[str, object]:
+    deadline = time.time() + max(timeout, 1000) / 1000.0
+    last_state: dict[str, object] = {}
+    while time.time() < deadline:
+        last_state = get_regression_restore_state(page)
+        if regression_restore_state_ready(last_state):
+            return last_state
+        time.sleep(0.2)
+    raise RuntimeError(f"Regression restore state did not become ready: {last_state}")
+
+
+def ensure_regression_timing_event(page, server_log: Path | None) -> bool:
+    persisted_results = get_persisted_store_value(page, "reg-results-store")
+    if isinstance(persisted_results, dict) and persisted_results:
+        store_offset = current_log_offset(server_log)
+        set_component_props(page, "reg-results-store", {"data": {}})
+        set_component_props(page, "reg-results-store", {"data": persisted_results})
+        try:
+            wait_for_timing_event(server_log, store_offset, "regression.sync_result_options", timeout_ms=1500)
+            return True
+        except RuntimeError:
+            pass
+
+    current_result = ""
+    try:
+        current_result = page.locator("#reg-result-select input").input_value(timeout=5000).strip()
+    except Exception:
+        current_result = ""
+
+    if current_result:
+        result_offset = current_log_offset(server_log)
+        set_component_value(page, "reg-result-select", current_result)
+        try:
+            wait_for_timing_event(server_log, result_offset, "regression.", timeout_ms=1500)
+            return True
+        except RuntimeError:
+            pass
+
+    tab_offset = current_log_offset(server_log)
+    try:
+        set_component_value(page, "reg-tabs", "returns")
+        wait_for_persisted_store_value(page, "reg-active-tab-store", "returns")
+        wait_for_timing_event(server_log, tab_offset, "regression.", timeout_ms=3000)
+        set_component_value(page, "reg-tabs", "anova")
+        wait_for_persisted_store_value(page, "reg-active-tab-store", "anova")
+        wait_content_ready(page, REGRESSION_TAB_CONFIG["anova"]["content"])
+        return True
+    except RuntimeError:
+        return False
 
 
 def copy_server_log(server_log: Path | None, out_dir: Path, stem: str) -> str | None:
@@ -426,6 +640,22 @@ def set_component_props(page, component_id: str, props: dict) -> None:
     )
 
 
+def wait_hidden_or_absent(page, selector: str, timeout: int = 30000) -> None:
+    page.wait_for_function(
+        """
+        (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return true;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0;
+        }
+        """,
+        arg=selector,
+        timeout=timeout,
+    )
+
+
 def try_set_component_props(page, component_id: str, props: dict) -> bool:
     return bool(
         page.evaluate(
@@ -497,6 +727,14 @@ def resolve_portopt_series(db_series: list[str]) -> list[str]:
     return db_series[: min(len(db_series), 3)]
 
 
+def resolve_regression_series(db_series: list[str]) -> tuple[str, list[str]]:
+    preferred = [series for series in db_series if "BCTBill13" not in series]
+    selected = preferred[:3] if len(preferred) >= 2 else db_series[: min(len(db_series), 3)]
+    if len(selected) < 2:
+        raise RuntimeError(f"Need at least 2 series for Regression harness solve, got: {selected}")
+    return selected[0], selected[1:]
+
+
 PORTOPT_RESTORE_TAB_CONFIG = {
     "weight": {
         "content": "#po-weight-chart-content",
@@ -547,6 +785,15 @@ def get_persisted_store_value(page, component_id: str):
         """,
         component_id,
     )
+
+
+def wait_for_persisted_store_value(page, component_id: str, expected, timeout: int = 10000) -> None:
+    deadline = time.time() + max(timeout, 1000) / 1000.0
+    while time.time() < deadline:
+        if get_persisted_store_value(page, component_id) == expected:
+            return
+        time.sleep(0.1)
+    raise RuntimeError(f"Timed out waiting for {component_id} to become {expected!r}")
 
 
 def set_component_value_if_needed(page, component_id: str, value, *, store_id: str | None = None) -> bool:
@@ -619,6 +866,112 @@ def select_portopt_tab_and_measure(page, tab_value: str, content_selector: str, 
         set_component_value_if_needed(page, switch_id, "chart", store_id=switch_store_id)
     wait_plotly_content(page, content_selector)
     return round((time.perf_counter() - start) * 1000)
+
+
+REGRESSION_TAB_CONFIG = {
+    "anova": {"content": "#reg-anova-content", "label": "ANOVA"},
+    "returns": {"content": "#reg-returns-content", "label": "Returns"},
+    "rolling": {"content": "#reg-rolling-content", "label": "Rolling Summary", "switch": "reg-rolling-summary-chart-switch", "switch_value": "chart"},
+    "growth": {"content": "#reg-growth-content", "label": "Growth of $1", "switch": "reg-growth-chart-switch", "switch_value": "chart"},
+    "drawdown": {"content": "#reg-drawdown-content", "label": "Drawdown", "switch": "reg-drawdown-chart-switch", "switch_value": "chart"},
+}
+
+
+def warm_regression_results(page, base_url: str, db_series: list[str]) -> None:
+    page.goto(base_url + "/regression", wait_until="domcontentloaded")
+    wait_visible(page, "#reg-main-container")
+    wait_ready(page, "#reg-periodicity-select")
+    wait_dash_hydrated(page)
+
+    dep_var, x_series = resolve_regression_series(db_series)
+    series_order = [dep_var] + x_series
+
+    try_set_component_props(page, "reg-page-visited-store", {"data": True})
+    try_set_component_props(page, "reg-series-select", {"data": x_series})
+    try_set_component_props(page, "reg-series-select-value-store", {"data": x_series})
+    try_set_component_props(page, "reg-series-order-store", {"data": series_order})
+    try_set_component_props(page, "reg-dependent-var-store", {"data": dep_var})
+    try_set_component_props(page, "reg-active-tab-store", {"data": "anova"})
+    try_set_component_props(page, "reg-series-selection-modal", {"opened": False})
+    try_set_component_props(page, "reg-ui-blocker-store", {"data": False})
+
+    wait_hidden_or_absent(page, "#reg-ui-blocker-overlay", timeout=60000)
+    wait_visible(page, "#reg-run-button")
+    set_component_props(page, "reg-run-button", {"n_clicks": 1})
+    wait_ready(page, "#reg-result-select", timeout=120000)
+    wait_for_regression_restore_state(page, timeout=120000)
+    wait_content_ready(page, "#reg-anova-content", timeout=120000)
+
+
+def click_regression_tab(page, tab_value: str) -> None:
+    cfg = REGRESSION_TAB_CONFIG[tab_value]
+    page.get_by_role("tab", name=cfg["label"], exact=True).click(force=True)
+
+
+def select_regression_tab_and_measure(page, tab_value: str) -> int:
+    cfg = REGRESSION_TAB_CONFIG[tab_value]
+    start = time.perf_counter()
+    set_component_value(page, "reg-tabs", tab_value)
+    wait_for_persisted_store_value(page, "reg-active-tab-store", tab_value)
+    if cfg.get("switch"):
+        set_component_value(page, cfg["switch"], cfg["switch_value"])
+    wait_content_ready(page, cfg["content"])
+    return round((time.perf_counter() - start) * 1000)
+
+
+def measure_regression(page, cfg: dict[str, str], server_log: Path | None = None) -> dict[str, object]:
+    start = time.perf_counter()
+    nav_log_offset = current_log_offset(server_log)
+    page.evaluate("(path) => { window.location.pathname = path; }", cfg["path"])
+    page.wait_for_function(
+        "(path) => window.location.pathname === path",
+        arg=cfg["path"],
+        timeout=30000,
+    )
+    wait_visible(page, cfg["shell"])
+    shell_ms = round((time.perf_counter() - start) * 1000)
+    wait_ready(page, cfg["ready"])
+    ready_ms = round((time.perf_counter() - start) * 1000)
+    wait_ready(page, "#reg-result-select")
+    restore_state = wait_for_regression_restore_state(page, timeout=120000)
+    restore_state_ready_ms = round((time.perf_counter() - start) * 1000)
+    timing_validated = wait_for_regression_restored_timing_event(server_log, nav_log_offset, timeout_ms=3000)
+    diagnostic_timing_validated = False
+
+    returns_open_ms = select_regression_tab_and_measure(page, "returns")
+    rolling_open_ms = select_regression_tab_and_measure(page, "rolling")
+    growth_open_ms = select_regression_tab_and_measure(page, "growth")
+    drawdown_open_ms = select_regression_tab_and_measure(page, "drawdown")
+    set_component_value(page, "reg-tabs", "anova")
+    set_component_props(page, "reg-active-tab-store", {"data": "anova"})
+    if not timing_validated:
+        diagnostic_timing_validated = ensure_regression_timing_event(page, server_log)
+
+    return {
+        "shellMs": shell_ms,
+        "readyMs": ready_ms,
+        "restoreStateReadyMs": restore_state_ready_ms,
+        "resultReadyMs": restore_state_ready_ms,
+        "timingValidated": timing_validated,
+        "timingDiagnosticValidated": diagnostic_timing_validated,
+        "restoreState": restore_state,
+        "returnsOpenMs": returns_open_ms,
+        "rollingOpenMs": rolling_open_ms,
+        "growthOpenMs": growth_open_ms,
+        "drawdownOpenMs": drawdown_open_ms,
+    }
+
+
+def validate_regression_timing_preflight(metrics: dict[str, object], server_log: Path | None) -> None:
+    if not server_log:
+        return
+    if metrics.get("timingValidated"):
+        return
+    raise RuntimeError(
+        "Regression timing preflight failed: no restored-result regression timing events were found. "
+        "Start the app with tools/playwright/start_timed_server.ps1 and pass its STDOUT log path to "
+        "--server-log."
+    )
 
 
 def measure_portopt(page, cfg: dict[str, str], restore_tab: str, entry_only: bool) -> dict[str, int]:
@@ -718,8 +1071,10 @@ def run_harness(
 
         renderer_mode = warm_analytics_db(page, base_url, db_series)
         warm_portopt_results(page, base_url, db_series, restore_tab)
-        measure(page, pages["portopt"])
-        measure(page, pages["regression"])
+        warm_regression_results(page, base_url, db_series)
+        measure_portopt(page, pages["portopt"], restore_tab, entry_only)
+        regression_preflight = measure_regression(page, pages["regression"], server_log)
+        validate_regression_timing_preflight(regression_preflight, server_log)
         timing_start_offset = server_log.stat().st_size if server_log and server_log.exists() else 0
 
         results = {
@@ -741,10 +1096,27 @@ def run_harness(
                     "attributionOpenMs": [],
                 }
             )
+        results["regression"].update(
+            {
+                "restoreStateReadyMs": [],
+                "resultReadyMs": [],
+                "timingValidated": [],
+                "timingDiagnosticValidated": [],
+                "returnsOpenMs": [],
+                "rollingOpenMs": [],
+                "growthOpenMs": [],
+                "drawdownOpenMs": [],
+            }
+        )
         order = ["analytics", "portopt", "regression"]
         for _ in range(runs):
             for name in order:
-                metrics = measure_portopt(page, pages[name], restore_tab, entry_only) if name == "portopt" else measure(page, pages[name])
+                if name == "portopt":
+                    metrics = measure_portopt(page, pages[name], restore_tab, entry_only)
+                elif name == "regression":
+                    metrics = measure_regression(page, pages[name], server_log)
+                else:
+                    metrics = measure(page, pages[name])
                 results[name]["runs"] += 1
                 results[name]["shellMs"].append(metrics["shellMs"])
                 results[name]["readyMs"].append(metrics["readyMs"])
@@ -755,6 +1127,15 @@ def run_harness(
                         results[name]["frontierOpenMs"].append(metrics["frontierOpenMs"])
                         results[name]["riskOpenMs"].append(metrics["riskOpenMs"])
                         results[name]["attributionOpenMs"].append(metrics["attributionOpenMs"])
+                elif name == "regression":
+                    results[name]["restoreStateReadyMs"].append(metrics["restoreStateReadyMs"])
+                    results[name]["resultReadyMs"].append(metrics["resultReadyMs"])
+                    results[name]["timingValidated"].append(metrics["timingValidated"])
+                    results[name]["timingDiagnosticValidated"].append(metrics["timingDiagnosticValidated"])
+                    results[name]["returnsOpenMs"].append(metrics["returnsOpenMs"])
+                    results[name]["rollingOpenMs"].append(metrics["rollingOpenMs"])
+                    results[name]["growthOpenMs"].append(metrics["growthOpenMs"])
+                    results[name]["drawdownOpenMs"].append(metrics["drawdownOpenMs"])
 
         for data in results.values():
             data["shellMedian"] = round(median(data["shellMs"]))
@@ -765,6 +1146,18 @@ def run_harness(
             results["portopt"]["frontierOpenMedian"] = round(median(results["portopt"]["frontierOpenMs"]))
             results["portopt"]["riskOpenMedian"] = round(median(results["portopt"]["riskOpenMs"]))
             results["portopt"]["attributionOpenMedian"] = round(median(results["portopt"]["attributionOpenMs"]))
+        results["regression"]["restoreStateReadyMedian"] = round(median(results["regression"]["restoreStateReadyMs"]))
+        results["regression"]["resultReadyMedian"] = round(median(results["regression"]["resultReadyMs"]))
+        results["regression"]["timingValidatedCount"] = sum(1 for ok in results["regression"]["timingValidated"] if ok)
+        results["regression"]["timingValidatedAll"] = all(results["regression"]["timingValidated"])
+        results["regression"]["timingDiagnosticValidatedCount"] = sum(
+            1 for ok in results["regression"]["timingDiagnosticValidated"] if ok
+        )
+        results["regression"]["timingDiagnosticValidatedAll"] = all(results["regression"]["timingDiagnosticValidated"])
+        results["regression"]["returnsOpenMedian"] = round(median(results["regression"]["returnsOpenMs"]))
+        results["regression"]["rollingOpenMedian"] = round(median(results["regression"]["rollingOpenMs"]))
+        results["regression"]["growthOpenMedian"] = round(median(results["regression"]["growthOpenMs"]))
+        results["regression"]["drawdownOpenMedian"] = round(median(results["regression"]["drawdownOpenMs"]))
 
         browser.close()
 
@@ -776,7 +1169,7 @@ def run_harness(
         "portoptRestoreTab": normalize_portopt_restore_tab(restore_tab),
         "portoptEntryOnly": bool(entry_only),
         "runs": runs,
-        "warmupFlow": "analyticstool-aa-db-import+series-selection-confirm+portopt-risk-parity-solve",
+        "warmupFlow": "analyticstool-aa-db-import+series-selection-confirm+portopt-risk-parity-solve+regression-ols-solve",
         "rendererMode": renderer_mode,
         "results": results,
         "consoleMessages": console_messages,
