@@ -12,7 +12,8 @@ from sqlalchemy.engine import Engine
 from utils.core_categories import load_cma_returns_for_benches_with_meta
 from utils.portfolio_series import load_portfolio_series
 from utils.raw_data_imports import load_factor_series, load_fund_series, load_performance_series
-from utils.raw_dataset import build_raw_data_store_payload, get_dataset_key, get_raw_dataset_df
+from utils.date_range_flow import compute_date_range_candidates
+from utils.raw_dataset import build_raw_data_store_payload, get_dataset_key, get_raw_dataset_df, resolve_dataset_key
 from utils.returns import (
     align_monthly_index_to_month_end,
     merge_returns,
@@ -23,6 +24,23 @@ from utils.underlying_category_imports import load_underlying_category_series
 
 
 ACCOUNT_LIST_SCHEMA_VERSION = 2
+
+ACCOUNT_LIST_MAX_END_SENTINEL = "3999-12-31"
+
+_DATE_RANGE_SENTINEL_CONFIG = {
+    "at-date-range-store": {
+        "periodicity": "at-periodicity-value-store",
+        "series": "at-series-select",
+    },
+    "po-date-range-store": {
+        "periodicity": "po-periodicity-value-store",
+        "series": "po-series-select",
+    },
+    "reg-date-range-store": {
+        "periodicity": "reg-periodicity-value-store",
+        "series": "reg-series-select",
+    },
+}
 
 AT_STORE_IDS = {
     "selected": "at-series-select",
@@ -386,6 +404,27 @@ def _saved_control_values(value: Any) -> dict[str, Any]:
     }
 
 
+def _apply_max_end_sentinel(control_values: dict, raw_data_store: Any) -> dict:
+    """Replace end dates that match max available with sentinel."""
+    dataset_key = resolve_dataset_key(raw_data_store)
+    if not dataset_key:
+        return control_values
+    result = dict(control_values)
+    for store_id, cfg in _DATE_RANGE_SENTINEL_CONFIG.items():
+        dr = result.get(store_id)
+        if not isinstance(dr, dict) or not dr.get("end"):
+            continue
+        periodicity = result.get(cfg["periodicity"]) or "daily"
+        selected = result.get(cfg["series"]) or ()
+        if not selected:
+            continue
+        candidates = compute_date_range_candidates(dataset_key, periodicity, tuple(selected))
+        max_end = candidates.get("max_end")
+        if max_end and dr["end"] == max_end:
+            result[store_id] = {**dr, "end": ACCOUNT_LIST_MAX_END_SENTINEL}
+    return result
+
+
 def _series_names_from_entries(entries: list[dict[str, Any]]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -399,13 +438,20 @@ def _series_names_from_entries(entries: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def build_account_list_payload(provenance_store: Any, session_snapshot: Any) -> dict[str, Any]:
+def build_account_list_payload(
+    provenance_store: Any,
+    session_snapshot: Any,
+    raw_data_store: Any = None,
+) -> dict[str, Any]:
     entries = list(normalize_db_import_provenance_store(provenance_store).values())
+    control_values = _saved_control_values(session_snapshot)
+    if raw_data_store is not None:
+        control_values = _apply_max_end_sentinel(control_values, raw_data_store)
     return {
         "schema_version": ACCOUNT_LIST_SCHEMA_VERSION,
         "captured_at": _now_utc().strftime("%Y-%m-%d %H:%M:%S"),
         "series_entries": entries,
-        "control_values": _saved_control_values(session_snapshot),
+        "control_values": control_values,
     }
 
 

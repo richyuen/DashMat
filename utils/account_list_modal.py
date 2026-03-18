@@ -864,14 +864,16 @@ def register_account_list_callbacks(
         State("dashmat-account-list-session-snapshot-store", "data"),
         State("dashmat-db-import-provenance-store", "data"),
         State("userinfo", "data"),
+        State("dashmat-raw-data-store", "data"),
         prevent_initial_call=True,
     )
-    def _save_current_account_list(n_clicks, name_value, session_snapshot, provenance_store, userinfo):
+    def _save_current_account_list(n_clicks, name_value, session_snapshot, provenance_store, userinfo,
+                                    raw_data_store):
         if not n_clicks:
             raise PreventUpdate
         if not account_list_tables_available(db_engine):
             return no_update, {"message": "Account-list tables are unavailable.", "color": "red"}
-        payload = build_account_list_payload(provenance_store, session_snapshot)
+        payload = build_account_list_payload(provenance_store, session_snapshot, raw_data_store)
         ok, message, _saved = save_account_list(
             db_engine,
             username=_account_list_username(userinfo),
