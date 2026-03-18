@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from utils.date_range_flow import (
+    ACCOUNT_LIST_MAX_END_SENTINEL,
     compute_common_daily_candidates,
     compute_date_range_candidates,
     resolve_button_range,
@@ -63,6 +64,26 @@ def test_resolve_initial_range_prefers_stored_when_in_bounds():
     }
     stored = {"start": "2024-02-01", "end": "2024-03-01"}
     assert resolve_initial_range(candidates, stored) == ("2024-02-01", "2024-03-01")
+
+
+def test_resolve_initial_range_maps_latest_sentinel_to_max_end():
+    candidates = {
+        "max_start": "2024-01-01",
+        "max_end": "2024-12-31",
+    }
+    stored = {"start": "2024-02-01", "end": ACCOUNT_LIST_MAX_END_SENTINEL}
+
+    assert resolve_initial_range(candidates, stored) == ("2024-02-01", "2024-12-31")
+
+
+def test_resolve_initial_range_falls_back_when_sentinel_start_is_out_of_bounds():
+    candidates = {
+        "max_start": "2024-03-01",
+        "max_end": "2024-12-31",
+    }
+    stored = {"start": "2024-02-01", "end": ACCOUNT_LIST_MAX_END_SENTINEL}
+
+    assert resolve_initial_range(candidates, stored) == ("2024-03-01", "2024-12-31")
 
 
 def test_resolve_button_range_switches_daily_for_common_daily():

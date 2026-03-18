@@ -20,6 +20,8 @@ _EMPTY_COMMON_DAILY_CANDIDATES = {
     "common_daily_end": None,
 }
 
+ACCOUNT_LIST_MAX_END_SENTINEL = "3999-12-31"
+
 
 def _normalize_selected_series(selected_series) -> tuple[str, ...]:
     seen = set()
@@ -121,7 +123,7 @@ def resolve_initial_range(candidates: dict, stored_range) -> tuple[str | None, s
 
     if stored_range and stored_range.get("start") and stored_range.get("end"):
         stored_start = stored_range["start"]
-        stored_end = stored_range["end"]
+        stored_end = max_end if stored_range["end"] == ACCOUNT_LIST_MAX_END_SENTINEL else stored_range["end"]
         if stored_start >= max_start and stored_end <= max_end:
             return stored_start, stored_end
 

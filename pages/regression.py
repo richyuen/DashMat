@@ -1768,6 +1768,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-periodicity-load-sync-dummy", data=None),
         dcc.Store(id="reg-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="reg-use-risk-free-store", data=True, storage_type="session"),
+        dcc.Store(id="reg-partial-period-store", data="partial", storage_type="session"),
         dcc.Store(id="reg-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="reg-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-common-daily-candidates-store", data=None, storage_type="memory"),
@@ -2051,6 +2052,34 @@ clientside_callback(
     Input("reg-l1-ratio-input", "value"),
     Input("reg-tabs", "value"),
     Input("reg-use-risk-free-switch", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(value) {
+        return value === "full" ? "full" : "partial";
+    }
+    """,
+    Output("reg-partial-period-store", "data"),
+    Input("reg-partial-period-select", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n, storedValue, currentValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        const resolved = storedValue === "full" ? "full" : "partial";
+        return resolved === currentValue ? window.dash_clientside.no_update : resolved;
+    }
+    """,
+    Output("reg-partial-period-select", "value", allow_duplicate=True),
+    Input("reg-page-load-trigger", "n_intervals"),
+    State("reg-partial-period-store", "data"),
+    State("reg-partial-period-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -4115,7 +4144,7 @@ def reg_toggle_file_menu_actions(raw_data, results):
     State("reg-rolling-metric-select", "value"),
     State("reg-calendar-view-select", "value"),
     State("reg-calendar-series-select", "value"),
-    State("reg-partial-period-select", "value"),
+    State("reg-partial-period-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
@@ -5710,7 +5739,7 @@ def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, 
     Input("dashmat-raw-data-store", "data"),
     Input("reg-calendar-view-select", "value"),
     Input("reg-calendar-series-select", "value"),
-    Input("reg-partial-period-select", "value"),
+    Input("reg-partial-period-store", "data"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
     State("reg-results-store", "data"),

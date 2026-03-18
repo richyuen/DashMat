@@ -4856,6 +4856,7 @@ layout = dmc.Container(
         dcc.Store(id="at-growth-chart-switch-store", data="chart", storage_type="session"),
         dcc.Store(id="at-use-risk-free-store", data=True, storage_type="session"),
         dcc.Store(id="at-monthly-view-store", data="annual", storage_type="session"),
+        dcc.Store(id="at-partial-period-store", data="partial", storage_type="session"),
         dcc.Store(id="at-monthly-series-store", data=None, storage_type="session"),
         dcc.Store(id="at-factor-mode-store", data="box", storage_type="session"),
         dcc.Store(id="at-factor-quantiles-store", data=5, storage_type="session"),
@@ -5771,6 +5772,34 @@ clientside_callback(
     Input("at-monthly-view-checkbox", "value"),
     Input("at-monthly-series-select", "value"),
     Input("at-use-risk-free-switch", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(value) {
+        return value === "full" ? "full" : "partial";
+    }
+    """,
+    Output("at-partial-period-store", "data"),
+    Input("at-partial-period-select", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n, storedValue, currentValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        const resolved = storedValue === "full" ? "full" : "partial";
+        return resolved === currentValue ? window.dash_clientside.no_update : resolved;
+    }
+    """,
+    Output("at-partial-period-select", "value"),
+    Input("at-page-load-trigger", "n_intervals"),
+    State("at-partial-period-store", "data"),
+    State("at-partial-period-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -9101,7 +9130,7 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
     Input("at-monthly-series-select", "value"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-partial-period-select", "value"),
+    Input("at-partial-period-store", "data"),
     prevent_initial_call=True,
 )
 def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, partial_mode):
@@ -12203,7 +12232,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-regime-definitions-local-store", "data"),
     State("at-regime-series-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
-    State("at-partial-period-select", "value"),
+    State("at-partial-period-store", "data"),
     prevent_initial_call=True,
 )
 def download_excel(

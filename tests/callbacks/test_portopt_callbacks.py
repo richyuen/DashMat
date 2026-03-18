@@ -284,7 +284,7 @@ def test_po_open_modal_js_preserves_first_visit_and_generic_new_behavior():
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     assert "function openPortoptSeriesModal(" in js_text
     assert 'const selected = resolveStoredList(currentSelect, "po-series-select");' in js_text
-    assert 'const knownColumns = new Set(resolveStoredList(currentOrder, "po-series-order-store").filter(function (series) {' in js_text
+    assert '(selectedValid.length ? resolveStoredList(currentOrder, "po-series-order-store") : []).filter(function (series) {' in js_text
     assert 'if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {' in js_text
     assert "genericNew.length" in js_text
     assert 'const poOriginSet = new Set(resolveStoredNames(poOriginSeries, "dashmat-pending-new-series-store").filter(function (series) {' in js_text
@@ -292,6 +292,12 @@ def test_po_open_modal_js_preserves_first_visit_and_generic_new_behavior():
     assert 'if (trigger === "dashmat-raw-data-meta-store") {' in js_text
     assert 'if (trigger === "po-url-location") {' in js_text
     assert 'if (trigger === "po-page-load-trigger"' in js_text
+
+
+def test_po_open_modal_js_ignores_seeded_order_when_no_series_selected():
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert js_text.count('(selectedValid.length ? resolveStoredList(currentOrder, "po-series-order-store") : []).filter(function (series) {') >= 2
+    assert "selectedValid.forEach(function (series) {" in js_text
 
 
 def test_po_open_modal_js_keeps_manual_open_and_blocker_seed():
@@ -2825,40 +2831,35 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
     assert result[13] is no_update
 
 
-def test_po_modal_ok_falls_back_to_temp_store_rows_when_snapshot_missing(page_modules, raw_json):
+def test_po_modal_ok_requires_a_real_grid_snapshot(page_modules, raw_json):
     _, portopt = page_modules
 
-    result = portopt.po_on_modal_ok(
-        None,
-        raw_json,
-        {},
-        [],
-        {},
-        {},
-        {},
-        ["Asset_A", "Asset_B"],
-        {},
-        {"Asset_A": 0.0, "Asset_B": 0.0},
-        {"Asset_A": 100.0, "Asset_B": 100.0},
-        {"Asset_A": False, "Asset_B": False},
-        {},
-        ["Asset_A"],
-        ["Asset_A", "Asset_B"],
-        [],
-        {"Asset_A": "None", "Asset_B": "None"},
-        {"Asset_A": "Bench_A"},
-        {"Asset_A": False, "Asset_B": False},
-        {"Asset_A": True, "Asset_B": True},
-        {"Asset_A": 0.0, "Asset_B": 0.0},
-        {"Asset_A": 100.0, "Asset_B": 100.0},
-        {"Asset_A": False, "Asset_B": False},
-    )
-
-    assert result[0] == ["Asset_A"]
-    assert result[1] == {"Asset_A": "None", "Asset_B": "None", "Asset_C": "None", "Asset_D": "None"}
-    assert result[2] == {"Asset_A": "Bench_A", "Asset_B": "", "Asset_C": "", "Asset_D": ""}
-    assert result[5] is False
-    assert result[6] == ["Asset_A"]
+    with pytest.raises(PreventUpdate):
+        portopt.po_on_modal_ok(
+            None,
+            raw_json,
+            {},
+            [],
+            {},
+            {},
+            {},
+            ["Asset_A", "Asset_B"],
+            {},
+            {"Asset_A": 0.0, "Asset_B": 0.0},
+            {"Asset_A": 100.0, "Asset_B": 100.0},
+            {"Asset_A": False, "Asset_B": False},
+            {},
+            ["Asset_A"],
+            ["Asset_A", "Asset_B"],
+            [],
+            {"Asset_A": "None", "Asset_B": "None"},
+            {"Asset_A": "Bench_A"},
+            {"Asset_A": False, "Asset_B": False},
+            {"Asset_A": True, "Asset_B": True},
+            {"Asset_A": 0.0, "Asset_B": 0.0},
+            {"Asset_A": 100.0, "Asset_B": 100.0},
+            {"Asset_A": False, "Asset_B": False},
+        )
 
 
 def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):

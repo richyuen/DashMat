@@ -4016,6 +4016,7 @@ layout = dmc.Container(
         dcc.Store(id="po-use-risk-free-store", data=True, storage_type="session"),
         dcc.Store(id="po-returns-basis-store", data="total", storage_type="session"),
         dcc.Store(id="po-reporting-basis-store", data=False, storage_type="session"),
+        dcc.Store(id="po-partial-period-store", data="partial", storage_type="session"),
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="po-common-daily-candidates-store", data=None, storage_type="memory"),
@@ -4961,6 +4962,34 @@ clientside_callback(
     Input("po-use-risk-free-switch", "value"),
     Input("po-returns-basis-control", "value"),
     Input("po-reporting-basis-control", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(value) {
+        return value === "full" ? "full" : "partial";
+    }
+    """,
+    Output("po-partial-period-store", "data"),
+    Input("po-partial-period-select", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(n, storedValue, currentValue) {
+        if (!n) {
+            return window.dash_clientside.no_update;
+        }
+        const resolved = storedValue === "full" ? "full" : "partial";
+        return resolved === currentValue ? window.dash_clientside.no_update : resolved;
+    }
+    """,
+    Output("po-partial-period-select", "value"),
+    Input("po-page-load-trigger", "n_intervals"),
+    State("po-partial-period-store", "data"),
+    State("po-partial-period-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -7836,20 +7865,6 @@ def po_on_modal_ok(
     rows = []
     if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
         rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
-    if not rows:
-        rows = _po_build_modal_rows_from_temp_state(
-            raw_data,
-            temp_select,
-            temp_order,
-            temp_deleted,
-            temp_bench,
-            temp_cmabench,
-            temp_ls,
-            temp_vol_scaling,
-            temp_min_wt,
-            temp_max_wt,
-            temp_force_max,
-        )
     if not rows or not raw_data:
         raise PreventUpdate
 
@@ -9371,7 +9386,7 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     Input("po-calendar-view-select", "value"),
     Input("po-calendar-series-select", "value"),
     Input("po-returns-basis-store", "data"),
-    Input("po-partial-period-select", "value"),
+    Input("po-partial-period-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -10292,7 +10307,7 @@ def po_render_returns(
     State("po-use-risk-free-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-weight-portfolio-select", "value"),
-    State("po-partial-period-select", "value"),
+    State("po-partial-period-store", "data"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
