@@ -299,7 +299,7 @@ def mask_partial_periods(resampled_df: pd.DataFrame, original_df: pd.DataFrame, 
     return result
 
 
-def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
+def resample_returns(df: pd.DataFrame, periodicity: str, keep_partial: bool = False) -> pd.DataFrame:
     """Resample returns to a different periodicity.
 
     Args:
@@ -340,10 +340,11 @@ def resample_returns(df: pd.DataFrame, periodicity: str) -> pd.DataFrame:
     resampled = resampled.dropna(how="all")
 
     # Apply strict partial period filtering
-    resampled = mask_partial_periods(resampled, df, periodicity)
-    
-    # Drop rows that might have become all-NaN after masking
-    resampled = resampled.dropna(how="all")
+    if not keep_partial:
+        resampled = mask_partial_periods(resampled, df, periodicity)
+
+        # Drop rows that might have become all-NaN after masking
+        resampled = resampled.dropna(how="all")
 
     return resampled
 
@@ -1023,7 +1024,7 @@ def calculate_rolling_returns(
 
 
 @cache_config.cache.memoize(timeout=0)
-def calculate_calendar_year_returns(dataset_key, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+def calculate_calendar_year_returns(dataset_key, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = "", keep_partial: bool = False):
     """Calculate calendar year returns for Excel export."""
     try:
         # Use get_working_returns for data prep
@@ -1064,7 +1065,7 @@ def calculate_calendar_year_returns(dataset_key, original_periodicity, selected_
             )
             
             # Filter out partial years (exclude first and last year if partial)
-            if len(annual_returns) > 0:
+            if len(annual_returns) > 0 and not keep_partial:
                 first_year = annual_returns.index.min()
                 last_year = annual_returns.index.max()
 
@@ -1146,7 +1147,7 @@ def calculate_calendar_year_returns(dataset_key, original_periodicity, selected_
 
 # Monthly view creation
 
-def create_monthly_view(dataset_key, series_name, original_periodicity, selected_periodicity, returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = ""):
+def create_monthly_view(dataset_key, series_name, original_periodicity, selected_periodicity, returns_type, benchmark_assignments, long_short_assignments, selected_series, date_range, vol_scaler: float = 0, vol_scaling_assignments: str = "", keep_partial: bool = False):
     """Create monthly view with Jan-Dec columns plus Year column."""
     # Use get_working_returns for data prep
     working_df = get_working_returns_by_key(
@@ -1192,7 +1193,7 @@ def create_monthly_view(dataset_key, series_name, original_periodicity, selected
             try:
                 # Rename column to match expected input (though resample_returns handles any col name)
                 # Pass 'monthly' to get strict monthly checks
-                resampled = resample_returns(s_data, "monthly")
+                resampled = resample_returns(s_data, "monthly", keep_partial=keep_partial)
                 
                 monthly_data = pd.DataFrame({
                     'year': resampled.index.year,
@@ -1246,10 +1247,10 @@ def create_monthly_view(dataset_key, series_name, original_periodicity, selected
     month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     pivot_data.columns = [month_names[m-1] if m <= 12 else f'M{m}' for m in pivot_data.columns]
 
-    # Helper for annual calc (requires full year)
+    # Helper for annual calc
     def calc_annual(row):
-        # Must have data for all 12 months
-        if row.count() < 12: return None
+        if not keep_partial and row.count() < 12: return None
+        if row.count() == 0: return None
         return (1 + row.dropna()).prod() - 1
 
     # Calculate Annual column

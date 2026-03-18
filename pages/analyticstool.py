@@ -3561,6 +3561,15 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                             children=[
                                 _build_at_returns_type_control("at-returns-type-select-calendar", returns_type, show_label=False),
                                 dmc.SegmentedControl(
+                                    id="at-partial-period-select",
+                                    data=[
+                                        {"value": "full", "label": "Full Only"},
+                                        {"value": "partial", "label": "Keep Partial"},
+                                    ],
+                                    value="partial",
+                                    size="sm",
+                                ),
+                                dmc.SegmentedControl(
                                     id="at-monthly-view-checkbox",
                                     data=[
                                         {"value": "annual", "label": "Annual"},
@@ -9092,9 +9101,10 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
     Input("at-monthly-series-select", "value"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-partial-period-select", "value"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments):
+def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, partial_mode):
     """Update the Calendar Year Returns grid (lazy loaded)."""
     # Lazy loading: only calculate when calendar tab is active
     if active_tab != "calendar" or not state_ready or not _has_complete_date_range(date_range):
@@ -9108,6 +9118,7 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
         # Weekly data - don't calculate calendar year returns
         return [], []
 
+    keep_partial = partial_mode == "partial"
     try:
         if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
             # Handle monthly view if selected
@@ -9122,7 +9133,8 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 selected_series,
                 _date_range_payload(date_range),
                 vol_scaler or 0,
-                _mapping_payload(vol_scaling_assignments)
+                _mapping_payload(vol_scaling_assignments),
+                keep_partial=keep_partial,
             )
 
         else:
@@ -9137,7 +9149,8 @@ def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_pe
                 _mapping_payload(long_short_assignments),
                 _date_range_payload(date_range),
                 vol_scaler or 0,
-                _mapping_payload(vol_scaling_assignments)
+                _mapping_payload(vol_scaling_assignments),
+                keep_partial=keep_partial,
             )
 
             if calendar_returns.empty:
@@ -10608,6 +10621,7 @@ def _build_calendar_export_sheet(
     returns_type,
     monthly_view,
     monthly_series,
+    keep_partial: bool = False,
 ) -> _ExcelSheetSpec | None:
     if original_periodicity not in {"daily", "monthly"}:
         return None
@@ -10627,6 +10641,7 @@ def _build_calendar_export_sheet(
                     bundle.date_range_payload,
                     bundle.vol_scaler,
                     bundle.vol_scaling_payload,
+                    keep_partial=keep_partial,
                 )
 
                 if not row_data:
@@ -10646,6 +10661,7 @@ def _build_calendar_export_sheet(
                     bundle.date_range_payload,
                     bundle.vol_scaler,
                     bundle.vol_scaling_payload,
+                    keep_partial=keep_partial,
                 )
                 if calendar_df.empty:
                     return None
@@ -10725,6 +10741,7 @@ def _build_core_export_sheets(
     correlation_shrinkage,
     correlation_shrinkage_target,
     saved_series_store,
+    keep_partial: bool = False,
 ) -> list[_ExcelSheetSpec]:
     artifacts = _compute_analytics_export_artifacts(
         bundle,
@@ -10746,7 +10763,7 @@ def _build_core_export_sheets(
 
     for optional_sheet in (
         _build_rolling_export_sheet(bundle, returns_type, rolling_window, rolling_return_type),
-        _build_calendar_export_sheet(bundle, original_periodicity, returns_type, monthly_view, monthly_series),
+        _build_calendar_export_sheet(bundle, original_periodicity, returns_type, monthly_view, monthly_series, keep_partial=keep_partial),
         _build_growth_export_sheet(bundle),
         _build_drawdown_export_sheet(bundle, returns_type),
     ):
@@ -11021,6 +11038,7 @@ def _resolve_export_sheet_specs(
     regime_series_store,
     vol_scaling_assignments,
     saved_series_store,
+    keep_partial: bool = False,
 ) -> list[_ExcelSheetSpec]:
     sheet_specs = _build_core_export_sheets(
         bundle,
@@ -11036,6 +11054,7 @@ def _resolve_export_sheet_specs(
         correlation_shrinkage,
         correlation_shrinkage_target,
         saved_series_store,
+        keep_partial=keep_partial,
     )
     if not sheet_specs:
         return []
@@ -12184,6 +12203,7 @@ def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selec
     State("at-regime-definitions-local-store", "data"),
     State("at-regime-series-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
+    State("at-partial-period-select", "value"),
     prevent_initial_call=True,
 )
 def download_excel(
@@ -12223,6 +12243,7 @@ def download_excel(
     regime_definitions_local=None,
     regime_series_store=None,
     saved_series_store=None,
+    partial_mode=None,
 ):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
     if n_clicks is None or raw_data is None or not selected_series:
@@ -12276,6 +12297,7 @@ def download_excel(
             regime_series_store,
             vol_scaling_assignments,
             saved_series_store,
+            keep_partial=(partial_mode == "partial"),
         )
         if not sheet_specs:
             raise PreventUpdate

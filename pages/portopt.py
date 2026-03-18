@@ -3562,6 +3562,15 @@ def build_po_main_layout():
                                 children=[
                                     _build_po_returns_basis_control("po-returns-basis-control-calendar", show_label=False),
                                     dmc.SegmentedControl(
+                                        id="po-partial-period-select",
+                                        data=[
+                                            {"value": "full", "label": "Full Only"},
+                                            {"value": "partial", "label": "Keep Partial"},
+                                        ],
+                                        value="partial",
+                                        size="sm",
+                                    ),
+                                    dmc.SegmentedControl(
                                         id="po-calendar-view-select",
                                         data=[
                                             {"value": "annual", "label": "Annual"},
@@ -9362,6 +9371,7 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     Input("po-calendar-view-select", "value"),
     Input("po-calendar-series-select", "value"),
     Input("po-returns-basis-store", "data"),
+    Input("po-partial-period-select", "value"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9378,6 +9388,7 @@ def _po_render_calendar_callback(
     view_mode,
     monthly_series,
     returns_basis,
+    partial_mode,
     raw_data,
     bench,
     ls,
@@ -9400,6 +9411,7 @@ def _po_render_calendar_callback(
         date_range,
         vol_scaler,
         vol_scaling,
+        partial_mode,
     )
 
 
@@ -9417,6 +9429,7 @@ def po_render_calendar(
     date_range,
     vol_scaler,
     vol_scaling,
+    partial_mode="partial",
 ):
     if active_tab != "calendar" or not results:
         return html.Div()
@@ -9436,6 +9449,7 @@ def po_render_calendar(
     ordered_cols = perf["display_cols"]
     benchmark_map = perf["benchmark_map"]
     returns_type = "excess" if returns_basis == "excess" else "total"
+    keep_partial = partial_mode == "partial"
     if source_df.empty or not ordered_cols:
         return dmc.Text("No calendar data available.", c="dimmed")
 
@@ -9453,6 +9467,7 @@ def po_render_calendar(
             None,
             0,
             {},
+            keep_partial=keep_partial,
         )
         if not monthly_rows:
             return dmc.Text("No complete monthly history available.", c="dimmed")
@@ -9484,6 +9499,7 @@ def po_render_calendar(
         "null",
         0,
         "{}",
+        keep_partial=keep_partial,
     )
     if cal_df.empty:
         return dmc.Text("No complete calendar years available.", c="dimmed")
@@ -10276,10 +10292,11 @@ def po_render_returns(
     State("po-use-risk-free-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
     State("po-weight-portfolio-select", "value"),
+    State("po-partial-period-select", "value"),
     prevent_initial_call=True,
 )
 def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench, ls,
-                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, returns_basis="total", use_risk_free=True, saved_series_store=None, selected_portfolio=None):
+                      date_range, vol_scaler, vol_scaling, rolling_window=None, rolling_return_type=None, rolling_metric=None, returns_basis="total", use_risk_free=True, saved_series_store=None, selected_portfolio=None, partial_mode=None):
     if n_clicks is None or not results:
         raise PreventUpdate
 
@@ -10571,6 +10588,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
         except Exception:
             rolling_df = pd.DataFrame()
 
+        keep_partial = partial_mode == "partial"
         try:
             calendar_df = calculate_calendar_year_returns(
                 _frame_dataset_key(source_df),
@@ -10583,6 +10601,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 "null",
                 0,
                 "{}",
+                keep_partial=keep_partial,
             )
         except Exception:
             calendar_df = pd.DataFrame()

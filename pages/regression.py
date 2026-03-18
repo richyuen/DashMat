@@ -1457,6 +1457,15 @@ def build_reg_main_layout():
                                         gap="md",
                                         children=[
                                             dmc.SegmentedControl(
+                                                id="reg-partial-period-select",
+                                                data=[
+                                                    {"value": "full", "label": "Full Only"},
+                                                    {"value": "partial", "label": "Keep Partial"},
+                                                ],
+                                                value="partial",
+                                                size="sm",
+                                            ),
+                                            dmc.SegmentedControl(
                                                 id="reg-calendar-view-select",
                                                 data=[
                                                     {"value": "annual", "label": "Annual"},
@@ -4106,6 +4115,7 @@ def reg_toggle_file_menu_actions(raw_data, results):
     State("reg-rolling-metric-select", "value"),
     State("reg-calendar-view-select", "value"),
     State("reg-calendar-series-select", "value"),
+    State("reg-partial-period-select", "value"),
     State("dashmat-saved-series-cache-store", "data"),
     State("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
@@ -4121,6 +4131,7 @@ def reg_download_excel(
     rolling_metric=None,
     calendar_view=None,
     calendar_series=None,
+    partial_mode=None,
     saved_series_store=None,
     use_risk_free=True,
 ):
@@ -4415,6 +4426,7 @@ def reg_download_excel(
     # ------------------------------------------------------------------
     # Calendar tab
     # ------------------------------------------------------------------
+    keep_partial = partial_mode == "partial"
     calendar_df = _info_df("No calendar data available.")
     if not display_df.empty and ordered_cols:
         if (calendar_view or "annual") == "monthly":
@@ -4432,6 +4444,7 @@ def reg_download_excel(
                     None,
                     0,
                     {},
+                    keep_partial=keep_partial,
                 )
                 if monthly_rows:
                     calendar_df = pd.DataFrame(monthly_rows).rename(columns={"Year_Label": "Year"})
@@ -4450,6 +4463,7 @@ def reg_download_excel(
                     "null",
                     0,
                     "{}",
+                    keep_partial=keep_partial,
                 )
                 if cal_calc is not None and not cal_calc.empty:
                     calendar_df = cal_calc.reset_index()
@@ -5696,12 +5710,13 @@ def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, 
     Input("dashmat-raw-data-store", "data"),
     Input("reg-calendar-view-select", "value"),
     Input("reg-calendar-series-select", "value"),
+    Input("reg-partial-period-select", "value"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
     State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_calendar_callback(selected, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True, results=None):
+def _reg_render_calendar_callback(selected, raw_data, calendar_view, calendar_series, partial_mode, active_tab="calendar", initial_tab_ready=True, results=None):
     return reg_render_calendar(
         selected,
         results,
@@ -5711,10 +5726,11 @@ def _reg_render_calendar_callback(selected, raw_data, calendar_view, calendar_se
         active_tab,
         initial_tab_ready,
         trigger_id=callback_context.triggered_id,
+        partial_mode=partial_mode,
     )
 
 
-def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True, trigger_id=None):
+def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_series, active_tab="calendar", initial_tab_ready=True, trigger_id=None, partial_mode="partial"):
     if not _reg_tab_render_ready(active_tab, "calendar", initial_tab_ready):
         raise PreventUpdate
     selected_name, entry, display_df, ordered_cols = _reg_resolve_display_bundle(
@@ -5728,6 +5744,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
         return dmc.Text("Run a regression to see results.", size="sm", c="dimmed", p="md")
     if display_df.empty or not ordered_cols:
         return dmc.Text("No calendar data available.", size="sm", c="dimmed")
+    keep_partial = partial_mode == "partial"
     with timed_block("regression.render_calendar", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
         periodicity = entry.get("periodicity", "daily")
         if (calendar_view or "annual") == "monthly":
@@ -5744,6 +5761,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
                 None,
                 0,
                 {},
+                keep_partial=keep_partial,
             )
             if not monthly_rows:
                 return dmc.Text("No complete monthly history available.", size="sm", c="dimmed")
@@ -5767,6 +5785,7 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
             "null",
             0,
             "{}",
+            keep_partial=keep_partial,
         )
         if cal_df is None or cal_df.empty:
             return dmc.Text("No complete calendar years available.", size="sm", c="dimmed")
