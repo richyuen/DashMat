@@ -42,6 +42,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 
 - Warm-switch decisions need browser timing, not just unit tests; use `5-run` passes.
 - Measure PortOpt startup and warm-switch separately.
+- For A/B warm-switch timing, run comparison cases in series, not in parallel, to avoid local resource contention skewing the result.
 - PortOpt warm-switch rollback reference on `2026-03-13`: about `1970 ms` ready and `2870 ms` weights ready in non-debug mode.
 - Do not assume PortOpt warm-switch is server-bound; the weight-chart callback was only about `15-18 ms`.
 - Favor bootstrap/store fan-out reduction for PortOpt warm-switch.
