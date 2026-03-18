@@ -7,6 +7,17 @@
   const flexScrollStyle = { display: "flex", flexDirection: "column", flex: "1", overflow: "auto" };
   const hiddenStyle = { display: "none" };
 
+  function deferModalOpen(modalId) {
+    var fn = function () {
+      window.dash_clientside.set_props(modalId, { opened: true });
+    };
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(fn, { timeout: 500 });
+    } else {
+      setTimeout(fn, 300);
+    }
+  }
+
   function triggeredId() {
     const ctx = window.dash_clientside.callback_context;
     const triggered = (ctx && ctx.triggered) ? ctx.triggered : [];
@@ -702,8 +713,9 @@
       ];
     }
 
+    deferModalOpen("po-series-selection-modal");
     return [
-      true,
+      noUpdate(),
       tempSelect,
       currentBench,
       currentCmabench,
