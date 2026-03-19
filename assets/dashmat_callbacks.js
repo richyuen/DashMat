@@ -1383,12 +1383,23 @@
     storedUseRiskFree,
     storedReturnsBasis,
     storedReportingBasis,
+    currentPeriodicityOptions,
+    currentPeriodicity,
+    currentVolScaler,
+    currentSeries,
     currentActiveTab,
     currentWeightView,
     currentAttributionView,
     currentRiskView,
     currentTurnoverView,
-    currentFrontierView
+    currentFrontierView,
+    currentOptWindow,
+    currentWindowSize,
+    currentOptStep,
+    currentOptStepUnit,
+    currentOptModel,
+    currentReturnsBasis,
+    currentReportingBasis
   ) {
     const nu = noUpdate();
     const idleState = { phase: "idle", loadedTabs: defaultPortoptLoadedTabs() };
@@ -1435,8 +1446,24 @@
       return viewMode === "table" ? "table" : "chart";
     }
 
+    function sameValue(left, right) {
+      if (left === right) {
+        return true;
+      }
+      const leftIsObject = left !== null && typeof left === "object";
+      const rightIsObject = right !== null && typeof right === "object";
+      if (leftIsObject || rightIsObject) {
+        try {
+          return JSON.stringify(left) === JSON.stringify(right);
+        } catch (_err) {
+          return false;
+        }
+      }
+      return false;
+    }
+
     function resolvedOutput(nextValue, currentValue) {
-      return currentValue === nextValue ? nu : nextValue;
+      return sameValue(currentValue, nextValue) ? nu : nextValue;
     }
 
     const validWindowTypes = ["rolling", "expanding", "full"];
@@ -1517,21 +1544,21 @@
     const resolvedFrontierView = normalizeView(storedFrontierView);
 
     return [
-      periodicityOptions,
-      resolvedPeriodicity,
-      resolvedVolScaler,
-      selectedSeries,
+      resolvedOutput(periodicityOptions, currentPeriodicityOptions),
+      resolvedOutput(resolvedPeriodicity, currentPeriodicity),
+      resolvedOutput(resolvedVolScaler, currentVolScaler),
+      resolvedOutput(selectedSeries, currentSeries),
       resolvedOutput(resolvedActiveTab, currentActiveTab),
       resolvedOutput(resolvedWeightView, currentWeightView),
       resolvedOutput(resolvedAttributionView, currentAttributionView),
       resolvedOutput(resolvedRiskView, currentRiskView),
       resolvedOutput(resolvedTurnoverView, currentTurnoverView),
       resolvedOutput(resolvedFrontierView, currentFrontierView),
-      resolvedOptWindow,
-      resolvedWindowSize,
-      resolvedOptStep,
-      resolvedOptStepUnit,
-      resolvedOptModel,
+      resolvedOutput(resolvedOptWindow, currentOptWindow),
+      resolvedOutput(resolvedWindowSize, currentWindowSize),
+      resolvedOutput(resolvedOptStep, currentOptStep),
+      resolvedOutput(resolvedOptStepUnit, currentOptStepUnit),
+      resolvedOutput(resolvedOptModel, currentOptModel),
       resolvedPortfolioName,
       expWeighted,
       resolvedHalflife,
@@ -1544,8 +1571,8 @@
       resolvedExAnteMode,
       resolvedObjective,
       resolvedUseRiskFree,
-      resolvedReturnsBasis,
-      resolvedReportingBasis,
+      resolvedOutput(resolvedReturnsBasis, currentReturnsBasis),
+      resolvedOutput(resolvedReportingBasis, currentReportingBasis),
       { phase: "ready", loadedTabs: loadedTabs }
     ];
   }

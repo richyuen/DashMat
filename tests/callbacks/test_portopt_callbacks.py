@@ -217,6 +217,16 @@ def test_po_bootstrap_helpers_default_to_idle_state(page_modules):
     assert portopt._po_bootstrap_ready(None) is False
 
 
+def test_po_results_meta_helper_stays_lightweight(page_modules):
+    _, portopt = page_modules
+
+    assert portopt._po_results_meta(None) == {"has_results": False, "count": 0}
+    assert portopt._po_results_meta({"RP": {"reporting_returns_json": "large"}}) == {
+        "has_results": True,
+        "count": 1,
+    }
+
+
 def test_po_bootstrap_tab_render_ready_requires_matching_loaded_tab(page_modules):
     _, portopt = page_modules
 
@@ -330,12 +340,14 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     blocker_store = _find_component_by_id(portopt.layout, "po-ui-blocker-store")
     blocker_overlay = _find_component_by_id(portopt.layout, "po-ui-blocker-overlay")
     bootstrap_store = _find_component_by_id(portopt.layout, "po-bootstrap-store")
+    results_meta_store = _find_component_by_id(portopt.layout, "po-results-meta-store")
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
     assert getattr(blocker_store, "data", None) is False
     assert getattr(blocker_overlay, "visible", None) is False
     assert getattr(blocker_overlay, "zIndex", None) == 2500
+    assert getattr(results_meta_store, "data", None) == {"has_results": False, "count": 0}
     assert getattr(bootstrap_store, "data", None) == {
         "phase": "idle",
         "loadedTabs": {
@@ -401,6 +413,8 @@ def test_po_toggle_ui_elements_uses_bootstrap_store():
     toggle_block = page_text.split("def po_toggle_ui_elements", 1)[0]
     toggle_callback = toggle_block.rsplit("@callback(", 1)[-1]
     assert 'Input("po-bootstrap-store", "data")' in toggle_callback
+    assert 'Input("po-results-meta-store", "data")' in toggle_callback
+    assert 'Input("po-results-store", "data")' not in toggle_callback
     assert 'po-restore-complete-store' not in toggle_callback
 
 
@@ -413,11 +427,16 @@ def test_po_bootstrap_reducer_reads_stored_controls_and_marks_loaded_tabs():
     assert 'Input("dashmat-raw-data-meta-store", "data")' in bootstrap_callback
     assert 'State("po-active-tab-store", "data")' in bootstrap_callback
     assert 'State("po-frontier-chart-switch-store", "data")' in bootstrap_callback
+    assert 'State("po-periodicity-select", "data")' in bootstrap_callback
+    assert 'State("po-series-select", "data")' in bootstrap_callback
+    assert 'State("po-opt-window-select", "value")' in bootstrap_callback
+    assert 'State("po-returns-basis-control", "value")' in bootstrap_callback
     assert 'State("po-vis-tabs", "value")' in bootstrap_callback
     assert 'State("po-weight-chart-switch", "value")' in bootstrap_callback
     assert 'Output("po-bootstrap-store", "data")' in bootstrap_callback
     assert "defaultPortoptLoadedTabs" in js_text
     assert "function resolvedOutput(nextValue, currentValue)" in js_text
+    assert "function sameValue(left, right)" in js_text
     assert 'phase: "ready"' in js_text
 
 
@@ -432,6 +451,14 @@ def test_po_init_date_range_no_longer_depends_on_common_daily_store():
 def test_warm_switch_harness_tracks_portopt_performance_frames():
     harness_text = Path("tools/playwright/warm_switch_harness.py").read_text(encoding="utf-8")
     assert '"portopt.performance_frames"' in harness_text
+
+
+def test_warm_switch_wrapper_forwards_restore_tab_and_entry_only():
+    wrapper_text = Path("tools/playwright/warm_switch_harness.ps1").read_text(encoding="utf-8")
+    assert '[string]$PortoptRestoreTab = \'weight\'' in wrapper_text
+    assert '[switch]$PortoptEntryOnly' in wrapper_text
+    assert "'--portopt-restore-tab', $PortoptRestoreTab" in wrapper_text
+    assert "$args += '--portopt-entry-only'" in wrapper_text
 
 
 def test_po_common_daily_button_uses_shared_clientside_helper():
@@ -1346,7 +1373,7 @@ def test_po_toggle_ui_elements_sets_validation_tooltip(page_modules):
             [],
             0.05,
             {"display": "none"},
-            {"P1": {}},
+            {"has_results": True, "count": 1},
         )
     )
 

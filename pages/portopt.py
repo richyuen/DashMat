@@ -370,6 +370,15 @@ def _po_result_returns_json(portfolio_data, basis: str = "reporting") -> str:
     )
 
 
+def _po_results_meta(results) -> dict:
+    if not isinstance(results, dict):
+        return {"has_results": False, "count": 0}
+    return {
+        "has_results": bool(results),
+        "count": len(results),
+    }
+
+
 def _po_result_run_inputs(
     portfolio_data,
     *,
@@ -4047,6 +4056,7 @@ layout = dmc.Container(
         dcc.Store(id="po-cma-load-target-store", data=None),
         # Results stores
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
+        dcc.Store(id="po-results-meta-store", data={"has_results": False, "count": 0}, storage_type="memory"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
         dcc.Store(
@@ -6197,12 +6207,23 @@ clientside_callback(
     State("po-use-risk-free-store", "data"),
     State("po-returns-basis-store", "data"),
     State("po-reporting-basis-store", "data"),
+    State("po-periodicity-select", "data"),
+    State("po-periodicity-select", "value"),
+    State("po-vol-scaler-input", "value"),
+    State("po-series-select", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-chart-switch", "value"),
     State("po-attribution-chart-switch", "value"),
     State("po-risk-chart-switch", "value"),
     State("po-turnover-chart-switch", "value"),
     State("po-frontier-chart-switch", "value"),
+    State("po-opt-window-select", "value"),
+    State("po-window-size-input", "value"),
+    State("po-opt-step-input", "value"),
+    State("po-opt-step-unit-select", "value"),
+    State("po-opt-model-select", "value"),
+    State("po-returns-basis-control", "value"),
+    State("po-reporting-basis-control", "value"),
     prevent_initial_call=True,
 )
 
@@ -6218,6 +6239,15 @@ clientside_callback(
 # ---------------------------------------------------------------------------
 # Run button enable/disable
 # ---------------------------------------------------------------------------
+
+@callback(
+    Output("po-results-meta-store", "data"),
+    Input("po-results-store", "data"),
+    prevent_initial_call=False,
+)
+def po_sync_results_meta(results):
+    return _po_results_meta(results)
+
 
 @callback(
     Output("po-run-button", "disabled"),
@@ -6249,7 +6279,7 @@ clientside_callback(
     Input("po-bl-views-store", "data"),
     Input("po-bl-tau-input", "value"),
     Input("po-welcome-screen", "style"),
-    Input("po-results-store", "data"),
+    Input("po-results-meta-store", "data"),
 )
 def po_toggle_ui_elements(
     bootstrap_state,
@@ -6276,10 +6306,10 @@ def po_toggle_ui_elements(
     bl_views,
     bl_tau,
     welcome_style,
-    results_data,
+    results_meta,
 ):
     save_disabled = not (welcome_style and welcome_style.get("display") == "none")
-    download_disabled = not bool(results_data and len(results_data) > 0)
+    download_disabled = not bool((results_meta or {}).get("has_results"))
     if not _po_bootstrap_ready(bootstrap_state):
         return True, "Loading controls...", False, save_disabled, download_disabled
 

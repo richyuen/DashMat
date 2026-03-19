@@ -7,6 +7,8 @@ param(
     [string]$Label = '',
     [string]$GitRef = '',
     [string]$ServerLog = '',
+    [string]$PortoptRestoreTab = 'weight',
+    [switch]$PortoptEntryOnly,
     [switch]$SkipDbBuild,
     [switch]$Headed
 )
@@ -21,7 +23,8 @@ $args = @(
   '--base-url', $BaseUrl,
   '--runs', $Runs.ToString(),
   '--startup-timeout', $StartupTimeout.ToString(),
-  '--label', $Label
+  '--label', $Label,
+  '--portopt-restore-tab', $PortoptRestoreTab
 )
 
 if ($GitRef) {
@@ -31,6 +34,9 @@ if ($GitRef) {
 
 if ($Headed) {
   $args += '--headed'
+}
+if ($PortoptEntryOnly) {
+  $args += '--portopt-entry-only'
 }
 if ($SkipDbBuild) {
   $args += '--skip-db-build'
