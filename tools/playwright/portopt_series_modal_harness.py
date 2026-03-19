@@ -67,15 +67,16 @@ def extract_dash_output_ids(post_data: str | None) -> list[str]:
 class DashUpdateRequestTracker:
     def __init__(self, page):
         self.page = page
-        self.active_window = False
         self.active_requests: dict[int, dict[str, object]] = {}
         self.records: list[dict[str, object]] = []
+        self.window_start_at: float | None = None
+        self.window_end_at: float | None = None
         page.on("request", self._on_request)
         page.on("requestfinished", self._on_request_finished)
         page.on("requestfailed", self._on_request_failed)
 
     def _on_request(self, request) -> None:
-        if not self.active_window or "/_dash-update-component" not in request.url:
+        if "/_dash-update-component" not in request.url:
             return
         post_data = request.post_data or ""
         self.active_requests[id(request)] = {
@@ -87,6 +88,11 @@ class DashUpdateRequestTracker:
     def _finalize_request(self, request) -> None:
         record = self.active_requests.pop(id(request), None)
         if record is None:
+            return
+        started_at = float(record.get("started_at", 0) or 0)
+        if self.window_start_at is None or started_at < self.window_start_at:
+            return
+        if self.window_end_at is not None and started_at > self.window_end_at:
             return
 
         response_bytes = 0
@@ -119,11 +125,11 @@ class DashUpdateRequestTracker:
 
     def start_window(self) -> None:
         self.records = []
-        self.active_requests = {}
-        self.active_window = True
+        self.window_start_at = time.perf_counter()
+        self.window_end_at = None
 
     def stop_window(self) -> None:
-        self.active_window = False
+        self.window_end_at = time.perf_counter()
 
     def wait_for_settle(self, timeout_ms: int = 5000) -> None:
         deadline = time.perf_counter() + (timeout_ms / 1000.0)
@@ -663,6 +669,7 @@ def measure_modal_run(page, opt_series: list[str], scenario: str, request_tracke
     wait_modal_grid_ready(page, expected_rows=len(opt_series), timeout=30000)
     _, scenario_rows = apply_ok_scenario(page, scenario)
 
+    request_tracker.wait_for_settle(timeout_ms=5000)
     request_tracker.start_window()
     arm_ok_timing_probe(page)
     ok_start = time.perf_counter()

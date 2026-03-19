@@ -61,6 +61,9 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - After hidden-tab gating, the next PortOpt wins came from trimming always-on shared-control churn on selection changes, especially clientside eligibility/help-text callbacks and server callbacks that can return `no_update` for unchanged UI state.
 - After hidden-tab and shared-control trimming, unchanged top-level PortOpt store rewrites can become the main remaining fan-out source; dedupe `portoptControlSync` outputs before attempting broader validator/store redesigns.
 - For PortOpt store-sync dedupe, reuse the existing clientside `sameValue` / `resolvedOutput` pattern and preserve first-load/session restore behavior for targeted stores.
+- When measuring PortOpt modal OK windows, start attribution only after pending modal-open Dash traffic has settled, and count requests by request start time so late modal-open responses do not bleed into OK-window totals.
+- On selection-driven callbacks, prefer metadata stores over full payload stores when only routing keys are needed; for PortOpt date-range fan-out, `dashmat-raw-data-meta-store.dataset_key` is sufficient and avoids pulling the full raw-data blob into the request.
+- If a PortOpt validator depends only on browser-visible state, it is a good clientside candidate, but keep the Python implementation as the reference and add Python-vs-Node parity tests before relying on the JS path for perf gains.
 - Hidden full-screen overlays must be gated with `display:none`.
 - Keep module-switch blockers separate from page-local upload/modal blockers.
 - Shared route callbacks must use `_pages_location.pathname`, must not mix always-mounted and page-local outputs, and must mark page-local inputs/states `allow_optional=True` when other pages may be active.

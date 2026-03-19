@@ -6475,7 +6475,8 @@ def po_sync_results_meta(results):
     return _po_results_meta(results)
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptToggleUiElements"),
     Output("po-run-button", "disabled"),
     Output("po-run-button-tooltip", "label"),
     Output("po-run-button-tooltip", "disabled"),
@@ -6507,6 +6508,8 @@ def po_sync_results_meta(results):
     Input("po-welcome-screen", "style"),
     Input("po-results-meta-store", "data"),
 )
+
+
 def po_toggle_ui_elements(
     bootstrap_state,
     name,
@@ -8027,13 +8030,13 @@ def po_on_modal_cancel(n_clicks):
 @callback(
     Output("po-range-candidates-store", "data"),
     Output("po-common-daily-candidates-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_update_selection_date_candidates(raw_data, periodicity, selected_series):
-    dataset_key = _dataset_key(raw_data)
+def po_update_selection_date_candidates(raw_meta, periodicity, selected_series):
+    dataset_key = resolve_dataset_key((raw_meta or {}).get("dataset_key"))
     selected_series_tuple = tuple(selected_series or ())
     return (
         compute_date_range_candidates(

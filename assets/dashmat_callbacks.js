@@ -303,6 +303,376 @@
     ];
   }
 
+  const portoptValidModels = [
+    "risk_parity",
+    "factor_risk_parity",
+    "equal_weight",
+    "hrp",
+    "maximize_sharpe",
+    "minimize_cvar",
+    "minimize_variance",
+    "ex_ante_mv",
+    "black_litterman"
+  ];
+  const portoptValidCovShrinkage = ["none", "ledoit_wolf", "oas"];
+  const portoptValidCovShrinkageTarget = ["scaled_identity", "constant_correlation"];
+
+  function portoptBootstrapReady(bootstrapState) {
+    return !!(bootstrapState && bootstrapState.phase === "ready");
+  }
+
+  function portoptCoerceFloat(value) {
+    const fval = Number(value);
+    return Number.isFinite(fval) ? fval : null;
+  }
+
+  function portoptValidateLinearConstraints(linearConstraints, selectedSeries) {
+    const assets = Array.isArray(selectedSeries) ? selectedSeries.map(function (series) { return String(series); }) : [];
+    const rows = Array.isArray(linearConstraints) ? linearConstraints : [];
+    for (let idx = 0; idx < rows.length; idx += 1) {
+      const row = rows[idx];
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return "Linear constraint row #" + (idx + 1) + " is invalid.";
+      }
+
+      let coeffCount = 0;
+      for (let assetIdx = 0; assetIdx < assets.length; assetIdx += 1) {
+        const asset = assets[assetIdx];
+        const value = row[asset];
+        if (value === null || value === undefined || value === "") {
+          continue;
+        }
+        const fval = portoptCoerceFloat(value);
+        if (fval === null) {
+          return "Linear constraint row #" + (idx + 1) + " has invalid coefficient for " + asset + ".";
+        }
+        if (Math.abs(fval) > 1e-12) {
+          coeffCount += 1;
+        }
+      }
+
+      const minRaw = row.Min;
+      const maxRaw = row.Max;
+      const minVal = (minRaw === null || minRaw === undefined || minRaw === "") ? null : portoptCoerceFloat(minRaw);
+      const maxVal = (maxRaw === null || maxRaw === undefined || maxRaw === "") ? null : portoptCoerceFloat(maxRaw);
+      if (minRaw !== null && minRaw !== undefined && minRaw !== "" && minVal === null) {
+        return "Linear constraint row #" + (idx + 1) + " has invalid Min value.";
+      }
+      if (maxRaw !== null && maxRaw !== undefined && maxRaw !== "" && maxVal === null) {
+        return "Linear constraint row #" + (idx + 1) + " has invalid Max value.";
+      }
+      if (minVal !== null && maxVal !== null && minVal > maxVal) {
+        return "Linear constraint row #" + (idx + 1) + " has Min greater than Max.";
+      }
+      if (coeffCount === 0 && (minVal !== null || maxVal !== null)) {
+        return "Linear constraint row #" + (idx + 1) + " needs at least one non-zero coefficient.";
+      }
+    }
+    return null;
+  }
+
+  function portoptValidateExAnteInputs(selectedSeries, exAnteMode, exAnteReturns, exAnteCov, exAnteVol, exAnteCorr) {
+    const assets = Array.isArray(selectedSeries) ? selectedSeries.map(function (series) { return String(series); }) : [];
+    if (!assets.length) {
+      return "Select at least one series.";
+    }
+
+    const mode = exAnteMode || "ret_cov";
+    const returnsMap = exAnteReturns && typeof exAnteReturns === "object" ? exAnteReturns : {};
+    const covMap = exAnteCov && typeof exAnteCov === "object" ? exAnteCov : {};
+    const volMap = exAnteVol && typeof exAnteVol === "object" ? exAnteVol : {};
+    const corrMap = exAnteCorr && typeof exAnteCorr === "object" ? exAnteCorr : {};
+
+    const missingReturns = assets.filter(function (asset) {
+      return portoptCoerceFloat(returnsMap[asset]) === null;
+    });
+    if (missingReturns.length) {
+      return "Missing expected return for: " + missingReturns.join(", ") + ".";
+    }
+
+    if (mode === "ret_vol_corr") {
+      const missingVols = assets.filter(function (asset) {
+        return portoptCoerceFloat(volMap[asset]) === null;
+      });
+      if (missingVols.length) {
+        return "Missing expected volatility for: " + missingVols.join(", ") + ".";
+      }
+
+      for (let rIdx = 0; rIdx < assets.length; rIdx += 1) {
+        const rowAsset = assets[rIdx];
+        const row = corrMap && typeof corrMap === "object" ? corrMap[rowAsset] : {};
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+          return "Correlation row for '" + rowAsset + "' is invalid.";
+        }
+        for (let cIdx = 0; cIdx < assets.length; cIdx += 1) {
+          const colAsset = assets[cIdx];
+          const corrVal = portoptCoerceFloat(row[colAsset]);
+          if (corrVal === null) {
+            return "Missing correlation value for (" + rowAsset + ", " + colAsset + ").";
+          }
+          if (corrVal < -1 || corrVal > 1) {
+            return "Correlation (" + rowAsset + ", " + colAsset + ") must be between -1 and 1.";
+          }
+        }
+      }
+      return null;
+    }
+
+    for (let rIdx = 0; rIdx < assets.length; rIdx += 1) {
+      const rowAsset = assets[rIdx];
+      const row = covMap && typeof covMap === "object" ? covMap[rowAsset] : {};
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return "Covariance row for '" + rowAsset + "' is invalid.";
+      }
+      for (let cIdx = 0; cIdx < assets.length; cIdx += 1) {
+        const colAsset = assets[cIdx];
+        if (portoptCoerceFloat(row[colAsset]) === null) {
+          return "Missing covariance value for (" + rowAsset + ", " + colAsset + ").";
+        }
+      }
+    }
+    return null;
+  }
+
+  function portoptValidateBlackLittermanInputs(selectedSeries, blViews, blTau) {
+    const tau = portoptCoerceFloat(blTau);
+    if (tau === null || tau <= 0) {
+      return "BL tau must be greater than 0.";
+    }
+
+    const assets = new Set(Array.isArray(selectedSeries) ? selectedSeries.map(function (series) { return String(series); }) : []);
+    const views = Array.isArray(blViews) ? blViews : [];
+    for (let idx = 0; idx < views.length; idx += 1) {
+      const view = views[idx];
+      const viewNumber = idx + 1;
+      if (!view || typeof view !== "object" || Array.isArray(view)) {
+        return "BL view #" + viewNumber + " is invalid.";
+      }
+      const viewType = String(view.type || "absolute").trim().toLowerCase();
+      if (viewType !== "absolute" && viewType !== "relative") {
+        return "BL view #" + viewNumber + " type must be absolute or relative.";
+      }
+      if (portoptCoerceFloat(view["return"]) === null) {
+        return "BL view #" + viewNumber + " return is invalid.";
+      }
+      const confidence = portoptCoerceFloat(view.confidence === undefined ? 1.0 : view.confidence);
+      if (confidence === null || confidence <= 0) {
+        return "BL view #" + viewNumber + " confidence must be greater than 0.";
+      }
+
+      const asset = String(view.asset || "").trim();
+      if (viewType === "absolute") {
+        if (!asset || !assets.has(asset)) {
+          return "BL view #" + viewNumber + " asset must be one of the selected series.";
+        }
+        continue;
+      }
+
+      const assetTo = String(view.asset_to || "").trim();
+      if (!asset || !assetTo) {
+        return "BL view #" + viewNumber + " relative pair is incomplete.";
+      }
+      if (!assets.has(asset) || !assets.has(assetTo)) {
+        return "BL view #" + viewNumber + " relative assets must be selected series.";
+      }
+      if (asset === assetTo) {
+        return "BL view #" + viewNumber + " relative assets must be different.";
+      }
+    }
+
+    return null;
+  }
+
+  function portoptValidateOptimizationInputs(
+    portfolioName,
+    selectedSeries,
+    optModel,
+    optWindow,
+    windowSize,
+    optStep,
+    optStepUnit,
+    expWtCov,
+    halflife,
+    covShrinkage,
+    covShrinkageTarget,
+    minWt,
+    maxWt,
+    forceMax,
+    linearConstraints,
+    exAnteMode,
+    exAnteReturns,
+    exAnteCov,
+    exAnteVol,
+    exAnteCorr,
+    blViews,
+    blTau
+  ) {
+    if (!portfolioName || !String(portfolioName).trim()) {
+      return "Enter a portfolio name.";
+    }
+
+    const seriesList = Array.isArray(selectedSeries) ? selectedSeries : [];
+    if (!seriesList.length) {
+      return "Select at least one series.";
+    }
+    if (seriesList.length < 2) {
+      return "Select at least two series.";
+    }
+
+    if (portoptValidModels.indexOf(optModel) === -1) {
+      return "Select a valid optimization model.";
+    }
+
+    if (optModel !== "ex_ante_mv" && optModel !== "black_litterman") {
+      if (["full", "rolling", "expanding"].indexOf(optWindow) === -1) {
+        return "Select a valid optimization window.";
+      }
+      if (optWindow !== "full") {
+        const ws = portoptCoerceFloat(windowSize);
+        if (ws === null || ws < 2 || Math.trunc(ws) !== ws) {
+          return "Window size must be an integer >= 2.";
+        }
+        const step = portoptCoerceFloat(optStep);
+        if (step === null || step < 1 || Math.trunc(step) !== step) {
+          return "Optimization step must be an integer >= 1.";
+        }
+        if (optStepUnit !== "periods" && optStepUnit !== "months") {
+          return "Optimization step unit must be periods or months.";
+        }
+      }
+    }
+
+    if (!!expWtCov) {
+      const hl = portoptCoerceFloat(halflife);
+      if (hl === null || hl <= 0) {
+        return "Decay input must be greater than 0 when exponential weighting is enabled.";
+      }
+    }
+
+    const rawShrinkage = (covShrinkage === null || covShrinkage === undefined || covShrinkage === "")
+      ? "none"
+      : String(covShrinkage).trim().toLowerCase();
+    if (portoptValidCovShrinkage.indexOf(rawShrinkage) === -1) {
+      return "Select a valid covariance shrinkage option.";
+    }
+    const rawTarget = (covShrinkageTarget === null || covShrinkageTarget === undefined || covShrinkageTarget === "")
+      ? "scaled_identity"
+      : String(covShrinkageTarget).trim().toLowerCase();
+    if (portoptValidCovShrinkageTarget.indexOf(rawTarget) === -1) {
+      return "Select a valid covariance shrinkage target.";
+    }
+
+    const minMap = minWt && typeof minWt === "object" ? minWt : {};
+    const maxMap = maxWt && typeof maxWt === "object" ? maxWt : {};
+    const forceMap = forceMax && typeof forceMax === "object" ? forceMax : {};
+    for (let idx = 0; idx < seriesList.length; idx += 1) {
+      const asset = seriesList[idx];
+      const mn = portoptCoerceFloat(Object.prototype.hasOwnProperty.call(minMap, asset) ? minMap[asset] : 0);
+      const mx = portoptCoerceFloat(Object.prototype.hasOwnProperty.call(maxMap, asset) ? maxMap[asset] : 100);
+      if (mn === null || mx === null) {
+        return "Invalid min/max bound for " + asset + ".";
+      }
+      if (mn < 0 || mx > 100) {
+        return "Bounds for " + asset + " must stay within 0-100%.";
+      }
+      if (mn > mx) {
+        return "Min bound cannot exceed max bound for " + asset + ".";
+      }
+      if (!!forceMap[asset] && mx <= 0) {
+        return "Force Max requires a positive max bound for " + asset + ".";
+      }
+    }
+
+    const linearError = portoptValidateLinearConstraints(linearConstraints, seriesList);
+    if (linearError) {
+      return linearError;
+    }
+
+    if (optModel === "ex_ante_mv") {
+      const exAnteError = portoptValidateExAnteInputs(
+        seriesList,
+        exAnteMode,
+        exAnteReturns,
+        exAnteCov,
+        exAnteVol,
+        exAnteCorr
+      );
+      if (exAnteError) {
+        return exAnteError;
+      }
+    }
+
+    if (optModel === "black_litterman") {
+      const blError = portoptValidateBlackLittermanInputs(seriesList, blViews, blTau);
+      if (blError) {
+        return blError;
+      }
+    }
+
+    return null;
+  }
+
+  function portoptToggleUiElements(
+    bootstrapState,
+    portfolioName,
+    selectedSeries,
+    optModel,
+    optWindow,
+    windowSize,
+    optStep,
+    optStepUnit,
+    expWtCov,
+    halflife,
+    covShrinkage,
+    covShrinkageTarget,
+    minWt,
+    maxWt,
+    forceMax,
+    linearConstraints,
+    exAnteMode,
+    exAnteReturns,
+    exAnteCov,
+    exAnteVol,
+    exAnteCorr,
+    blViews,
+    blTau,
+    welcomeStyle,
+    resultsMeta
+  ) {
+    const saveDisabled = !(welcomeStyle && welcomeStyle.display === "none");
+    const downloadDisabled = !((resultsMeta && resultsMeta.has_results) === true);
+    if (!portoptBootstrapReady(bootstrapState)) {
+      return [true, "Loading controls...", false, saveDisabled, downloadDisabled];
+    }
+
+    const validationError = portoptValidateOptimizationInputs(
+      portfolioName,
+      selectedSeries,
+      optModel,
+      optWindow,
+      windowSize,
+      optStep,
+      optStepUnit,
+      expWtCov,
+      halflife,
+      covShrinkage,
+      covShrinkageTarget,
+      minWt,
+      maxWt,
+      forceMax,
+      linearConstraints,
+      exAnteMode,
+      exAnteReturns,
+      exAnteCov,
+      exAnteVol,
+      exAnteCorr,
+      blViews,
+      blTau
+    );
+    const runDisabled = validationError !== null;
+    return [runDisabled, validationError || "Run optimization.", false, saveDisabled, downloadDisabled];
+  }
+
   function portoptLinearConstraintColumnDefs(selectedSeries) {
     if (!Array.isArray(selectedSeries) || !selectedSeries.length) {
       return [];
@@ -2135,6 +2505,7 @@
       openPortoptSeriesModal: openPortoptSeriesModal,
       portoptActiveVisTrigger: portoptActiveVisTrigger,
       portoptReportingBasisControl: portoptReportingBasisControl,
+      portoptToggleUiElements: portoptToggleUiElements,
       portoptLinearConstraintColumnDefs: portoptLinearConstraintColumnDefs,
       portoptMatrixGridData: portoptMatrixGridData,
       portoptReturnsGridData: portoptReturnsGridData,

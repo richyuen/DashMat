@@ -53,6 +53,12 @@ process.stdout.write(JSON.stringify(normalize(result)));
     return json.loads(completed.stdout)
 
 
+def _run_portopt_toggle_ui_js(*args):
+    return _run_dashmat_callbacks_js(
+        f"ns.portoptToggleUiElements.apply(null, {json.dumps(list(args))})"
+    )
+
+
 def _sample_window_weights() -> list[dict]:
     return [
         {
@@ -454,7 +460,10 @@ def test_po_shell_visibility_uses_raw_data_presence_and_page_load_tick():
 def test_po_toggle_ui_elements_uses_bootstrap_store():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     toggle_block = page_text.split("def po_toggle_ui_elements", 1)[0]
-    toggle_callback = toggle_block.rsplit("@callback(", 1)[-1]
+    toggle_callback = toggle_block.rsplit(
+        'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptToggleUiElements")',
+        1,
+    )[-1]
     assert 'Input("po-bootstrap-store", "data")' in toggle_callback
     assert 'Input("po-results-meta-store", "data")' in toggle_callback
     assert 'Input("po-results-store", "data")' not in toggle_callback
@@ -548,7 +557,12 @@ def test_po_require_active_vis_trigger_rejects_mismatched_tab(page_modules):
 def test_po_selection_date_candidates_callback_returns_both_payloads(monkeypatch, page_modules):
     _, portopt = page_modules
 
-    monkeypatch.setattr(portopt, "_dataset_key", lambda raw_data: f"dataset:{raw_data}")
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    callback_block = page_text.split("def po_update_selection_date_candidates", 1)[0]
+    callback_block = callback_block.rsplit("@callback(", 1)[-1]
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in callback_block
+    assert 'Input("dashmat-raw-data-store", "data")' not in callback_block
+
     monkeypatch.setattr(
         portopt,
         "compute_date_range_candidates",
@@ -570,22 +584,35 @@ def test_po_selection_date_candidates_callback_returns_both_payloads(monkeypatch
     )
 
     range_candidates, common_daily_candidates = portopt.po_update_selection_date_candidates(
-        "raw-payload",
+        {"dataset_key": "dataset:meta"},
         "monthly",
         ["Asset_A", "Asset_B"],
     )
 
     assert range_candidates == {
         "kind": "range",
-        "dataset": "dataset:raw-payload",
+        "dataset": "dataset:meta",
         "periodicity": "monthly",
         "selected": ["Asset_A", "Asset_B"],
     }
     assert common_daily_candidates == {
         "kind": "common_daily",
-        "dataset": "dataset:raw-payload",
+        "dataset": "dataset:meta",
         "selected": ["Asset_A", "Asset_B"],
     }
+
+
+def test_po_selection_date_candidates_callback_returns_empty_without_dataset_key(page_modules):
+    _, portopt = page_modules
+
+    range_candidates, common_daily_candidates = portopt.po_update_selection_date_candidates(
+        {},
+        "daily",
+        ["Asset_A"],
+    )
+
+    assert range_candidates == portopt.compute_date_range_candidates(None, "daily", ("Asset_A",))
+    assert common_daily_candidates == portopt.compute_common_daily_candidates(None, ("Asset_A",))
 
 
 def test_po_linear_constraints_columns_use_clientside_builder():
@@ -1780,6 +1807,388 @@ def test_po_toggle_ui_elements_ex_ante_requires_complete_expected_inputs(page_mo
 
     assert run_disabled is True
     assert "Missing expected return" in tooltip
+
+
+def test_po_toggle_ui_elements_uses_clientside_builder():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptToggleUiElements")' in page_text
+    assert "function portoptToggleUiElements(" in js_text
+
+
+@pytest.mark.parametrize(
+    ("case_name", "args"),
+    [
+        (
+            "bootstrap_loading",
+            [
+                {"phase": "idle", "loadedTabs": {}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {"has_results": True, "count": 1},
+            ],
+        ),
+        (
+            "missing_name",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "too_few_series",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A"],
+                "risk_parity",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_model",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "bad_model",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_rolling_window",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "rolling",
+                1,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_halflife",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "full",
+                252,
+                1,
+                "months",
+                True,
+                0,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_shrinkage",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "bad_value",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_bounds_force_max",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {"Asset_A": 60},
+                {"Asset_A": 0},
+                {"Asset_A": True},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_linear_constraints",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [{"Constraint": "LC1", "Min": 0, "Max": 1}],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_ex_ante",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "ex_ante_mv",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_vol_corr",
+                {"Asset_A": 0.08, "Asset_B": 0.09},
+                {},
+                {"Asset_A": 0.12},
+                {"Asset_A": {"Asset_A": 1.0, "Asset_B": 0.2}, "Asset_B": {"Asset_A": 0.2}},
+                [],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "invalid_black_litterman",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "black_litterman",
+                "full",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {},
+                {},
+                {},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [{"type": "relative", "asset": "Asset_A", "asset_to": "Asset_A", "return": 0.01, "confidence": 1.0}],
+                0.05,
+                {"display": "none"},
+                {},
+            ],
+        ),
+        (
+            "valid_ready_case",
+            [
+                {"phase": "ready", "loadedTabs": {"weight": True}},
+                "MyPortfolio",
+                ["Asset_A", "Asset_B"],
+                "risk_parity",
+                "rolling",
+                252,
+                1,
+                "months",
+                False,
+                63,
+                "none",
+                "scaled_identity",
+                {"Asset_A": 0, "Asset_B": 0},
+                {"Asset_A": 100, "Asset_B": 100},
+                {"Asset_A": False, "Asset_B": False},
+                [],
+                "ret_cov",
+                {},
+                {},
+                {},
+                {},
+                [],
+                0.05,
+                {"display": "none"},
+                {"has_results": True, "count": 1},
+            ],
+        ),
+    ],
+)
+def test_po_toggle_ui_elements_clientside_matches_python(case_name, args, page_modules):
+    _, portopt = page_modules
+
+    expected = list(portopt.po_toggle_ui_elements(*args))
+    actual = _run_portopt_toggle_ui_js(*args)
+
+    assert actual == expected, case_name
 
 
 def test_validate_optimization_inputs_accepts_lambda_decay(page_modules):
