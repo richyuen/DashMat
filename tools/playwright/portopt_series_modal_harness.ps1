@@ -7,6 +7,7 @@ param(
     [string]$Label = '',
     [string]$GitRef = '',
     [ValidateSet('synthetic', 'db')][string]$Mode = 'synthetic',
+    [ValidateSet('noop', 'selection', 'order', 'metadata', 'rename', 'delete')][string]$Scenario = 'selection',
     [string]$ServerLog = '',
     [switch]$SkipDbBuild,
     [switch]$Headed
@@ -23,7 +24,8 @@ $args = @(
   '--runs', $Runs.ToString(),
   '--startup-timeout', $StartupTimeout.ToString(),
   '--label', $Label,
-  '--mode', $Mode
+  '--mode', $Mode,
+  '--scenario', $Scenario
 )
 
 if ($GitRef) {

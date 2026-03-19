@@ -2773,6 +2773,7 @@ def test_po_cma_load_modal_accepts_imported_defaults_without_explicit_assignment
 
 def test_po_modal_ok_keeps_blank_cmabench_without_backfill(page_modules, raw_json):
     _, portopt = page_modules
+    raw_meta = {"columns": ["Asset_A"]}
 
     result = portopt.po_on_modal_ok(
         _series_snapshot(
@@ -2793,6 +2794,7 @@ def test_po_modal_ok_keeps_blank_cmabench_without_backfill(page_modules, raw_jso
             ]
         ),
         raw_json,
+        raw_meta,
         {},
         [],
         {},
@@ -2813,39 +2815,50 @@ def test_po_modal_ok_keeps_blank_cmabench_without_backfill(page_modules, raw_jso
 
 def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, raw_json):
     _, portopt = page_modules
+    raw_meta = {"columns": ["Asset_A"]}
 
-    result = portopt.po_on_modal_ok(
-        _series_snapshot(
-            [
-                {
-                    "__row_key": "Asset_A",
-                    "Selected": True,
-                    "Series": "Asset_A",
-                    "Benchmark": "None",
-                    "CMABench": "Bench_A",
-                    "LongShort": False,
-                    "ScaleVol": True,
-                    "MinWt": 0,
-                    "MaxWt": 100,
-                    "ForceMax": False,
-                    "Delete": False,
-                }
-            ]
-        ),
-        raw_json,
-        {},
-        ["Asset_A"],
-        {"Asset_A": "None"},
-        {"Asset_A": "Bench_A"},
-        {},
-        {"Asset_A": False},
-        ["Asset_A"],
-        {"Asset_A": True},
-        {"Asset_A": 0.0},
-        {"Asset_A": 100.0},
-        {"Asset_A": False},
-        {},
-    )
+    def _fail_raw_df(_raw_data):
+        raise AssertionError("noop modal OK path should not parse raw data")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(portopt, "_raw_df", _fail_raw_df)
+
+    try:
+        result = portopt.po_on_modal_ok(
+            _series_snapshot(
+                [
+                    {
+                        "__row_key": "Asset_A",
+                        "Selected": True,
+                        "Series": "Asset_A",
+                        "Benchmark": "None",
+                        "CMABench": "Bench_A",
+                        "LongShort": False,
+                        "ScaleVol": True,
+                        "MinWt": 0,
+                        "MaxWt": 100,
+                        "ForceMax": False,
+                        "Delete": False,
+                    }
+                ]
+            ),
+            raw_json,
+            raw_meta,
+            {},
+            ["Asset_A"],
+            {"Asset_A": "None"},
+            {"Asset_A": "Bench_A"},
+            {},
+            {"Asset_A": False},
+            ["Asset_A"],
+            {"Asset_A": True},
+            {"Asset_A": 0.0},
+            {"Asset_A": 100.0},
+            {"Asset_A": False},
+            {},
+        )
+    finally:
+        monkeypatch.undo()
 
     assert result[0] is no_update
     assert result[1] is no_update
@@ -2871,6 +2884,7 @@ def test_po_modal_ok_requires_a_real_grid_snapshot(page_modules, raw_json):
         portopt.po_on_modal_ok(
             None,
             raw_json,
+            {"columns": ["Asset_A", "Asset_B"]},
             {},
             [],
             {},
@@ -2933,6 +2947,7 @@ def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
             ]
         ),
         df_to_json(raw_df),
+        {"columns": ["Asset_A", "Port_1"]},
         {"Port_1": {"weights": []}},
         ["Asset_A", "Port_1"],
         {},
@@ -2988,6 +3003,7 @@ def test_po_modal_ok_renames_and_prunes_cmabench_defaults(page_modules, raw_json
             ]
         ),
         raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
         {},
         ["Asset_A", "Asset_B"],
         {},
@@ -3003,6 +3019,187 @@ def test_po_modal_ok_renames_and_prunes_cmabench_defaults(page_modules, raw_json
     )
 
     assert result[14] == {"Asset_Renamed": "Bench_A"}
+
+
+def test_po_modal_ok_selection_only_updates_only_selection_outputs(page_modules, raw_json, monkeypatch):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "_raw_df", lambda *_args, **_kwargs: pytest.fail("selection-only path should not parse raw data"))
+
+    result = portopt.po_on_modal_ok(
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+                {
+                    "__row_key": "Asset_B",
+                    "Selected": False,
+                    "Series": "Asset_B",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+            ]
+        ),
+        raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
+        {},
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": "None", "Asset_B": "None"},
+        {"Asset_A": "", "Asset_B": ""},
+        {},
+        {"Asset_A": False, "Asset_B": False},
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": True, "Asset_B": True},
+        {"Asset_A": 0.0, "Asset_B": 0.0},
+        {"Asset_A": 100.0, "Asset_B": 100.0},
+        {"Asset_A": False, "Asset_B": False},
+        {},
+    )
+
+    assert result[0] == ["Asset_A"]
+    assert result[6] == ["Asset_A"]
+    assert result[1] is no_update
+    assert result[4] is no_update
+    assert result[7] is no_update
+    assert result[12] is no_update
+    assert result[13] is no_update
+    assert result[14] is no_update
+
+
+def test_po_modal_ok_order_only_updates_only_order_outputs(page_modules, raw_json, monkeypatch):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "_raw_df", lambda *_args, **_kwargs: pytest.fail("order-only path should not parse raw data"))
+
+    result = portopt.po_on_modal_ok(
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_B",
+                    "Selected": True,
+                    "Series": "Asset_B",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+            ]
+        ),
+        raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
+        {},
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": "None", "Asset_B": "None"},
+        {"Asset_A": "", "Asset_B": ""},
+        {},
+        {"Asset_A": False, "Asset_B": False},
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": True, "Asset_B": True},
+        {"Asset_A": 0.0, "Asset_B": 0.0},
+        {"Asset_A": 100.0, "Asset_B": 100.0},
+        {"Asset_A": False, "Asset_B": False},
+        {},
+    )
+
+    assert result[4] == ["Asset_B", "Asset_A"]
+    assert result[0] is no_update
+    assert result[6] is no_update
+    assert result[7] is no_update
+    assert result[12] is no_update
+    assert result[13] is no_update
+    assert result[14] is no_update
+
+
+def test_po_modal_ok_metadata_only_updates_only_metadata_outputs(page_modules, raw_json, monkeypatch):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "_raw_df", lambda *_args, **_kwargs: pytest.fail("metadata-only path should not parse raw data"))
+
+    result = portopt.po_on_modal_ok(
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 55,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+                {
+                    "__row_key": "Asset_B",
+                    "Selected": True,
+                    "Series": "Asset_B",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+            ]
+        ),
+        raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
+        {},
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": "None", "Asset_B": "None"},
+        {"Asset_A": "", "Asset_B": ""},
+        {},
+        {"Asset_A": False, "Asset_B": False},
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": True, "Asset_B": True},
+        {"Asset_A": 0.0, "Asset_B": 0.0},
+        {"Asset_A": 100.0, "Asset_B": 100.0},
+        {"Asset_A": False, "Asset_B": False},
+        {},
+    )
+
+    assert result[10] == {"Asset_A": 55.0, "Asset_B": 100.0}
+    assert result[0] is no_update
+    assert result[4] is no_update
+    assert result[7] is no_update
+    assert result[12] is no_update
+    assert result[13] is no_update
+    assert result[14] is no_update
 
 
 def test_po_session_actions_use_shared_workspace_helpers():

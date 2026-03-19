@@ -32,18 +32,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-db-build", action="store_true")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--mode", choices=("synthetic", "db"), default="synthetic")
+    parser.add_argument(
+        "--scenario",
+        choices=("noop", "selection", "order", "metadata", "rename", "delete"),
+        default="selection",
+    )
     parser.add_argument("--db-series", nargs="+", default=warm.DEFAULT_DB_SERIES)
     parser.add_argument("--server-log", default="")
     return parser.parse_args()
 
 
-def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str, mode: str) -> str:
+def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str, mode: str, scenario: str) -> str:
     git_token = warm.sanitize_token((git_ref or "unknown")[:8], "unknown")
     label_token = warm.sanitize_token(label, "run")
     mode_token = warm.sanitize_token(mode, "synthetic")
+    scenario_token = warm.sanitize_token(scenario, "selection")
     port = urllib.parse.urlparse(base_url).port
     port_token = f"p{port}" if port else "punknown"
-    return f"portopt_series_modal_{timestamp}_{label_token}_{mode_token}_{git_token}_{port_token}"
+    return f"portopt_series_modal_{timestamp}_{label_token}_{mode_token}_{scenario_token}_{git_token}_{port_token}"
 
 
 def build_synthetic_raw_dataset(series_names: list[str]) -> tuple[dict[str, object], dict[str, object]]:
@@ -120,6 +126,35 @@ def grid_rows(page):
     )
 
 
+def wait_grid_rows(page, expected_rows, timeout: int = 15000) -> None:
+    page.wait_for_function(
+        """
+        async (expectedRows) => {
+          if (!window.dash_ag_grid || !window.dash_ag_grid.getApiAsync) {
+            return false;
+          }
+          try {
+            const api = await window.dash_ag_grid.getApiAsync("po-series-selection-grid");
+            if (!api) {
+              return false;
+            }
+            const rows = [];
+            api.forEachNodeAfterFilterAndSort(function (node) {
+              if (node && node.data) {
+                rows.push(Object.assign({}, node.data));
+              }
+            });
+            return JSON.stringify(rows) === JSON.stringify(expectedRows);
+          } catch (_err) {
+            return false;
+          }
+        }
+        """,
+        arg=expected_rows,
+        timeout=timeout,
+    )
+
+
 def wait_selected_state(page, expected: bool, expected_rows: int, timeout: int = 15000) -> None:
     page.wait_for_function(
         """
@@ -190,6 +225,138 @@ def set_first_row_selected(page, value: bool):
     )
 
 
+def set_grid_rows(page, rows: list[dict]) -> None:
+    applied = page.evaluate(
+        """
+        async (nextRows) => {
+          if (!window.dash_ag_grid || !window.dash_ag_grid.getApiAsync) {
+            return false;
+          }
+          try {
+            const api = await window.dash_ag_grid.getApiAsync("po-series-selection-grid");
+            if (!api) {
+              return false;
+            }
+            if (typeof api.setGridOption === "function") {
+              api.setGridOption("rowData", nextRows);
+            } else if (typeof api.setRowData === "function") {
+              api.setRowData(nextRows);
+            } else {
+              return false;
+            }
+            return true;
+          } catch (_err) {
+            return false;
+          }
+        }
+        """,
+        rows,
+    )
+    if not applied and not warm.try_set_component_props(page, "po-series-selection-grid", {"rowData": rows}):
+        raise RuntimeError("PortOpt modal harness could not set po-series-selection-grid rowData.")
+    wait_grid_rows(page, rows, timeout=15000)
+
+
+def install_ok_timing_probe(page) -> None:
+    page.wait_for_function(
+        """
+        () => !!(
+          window.dash_clientside &&
+          window.dash_clientside.dashmat_callbacks &&
+          typeof window.dash_clientside.dashmat_callbacks.capturePortoptSeriesSnapshot === "function"
+        )
+        """,
+        timeout=30000,
+    )
+    page.evaluate(
+        """
+        () => {
+          window.__poModalOkPerf = window.__poModalOkPerf || { clickStartedAt: null, snapshotSetAt: null };
+          if (window.__poModalOkPerfInstalled) {
+            return true;
+          }
+          const namespace = window.dash_clientside.dashmat_callbacks;
+          const original = namespace.capturePortoptSeriesSnapshot.bind(namespace);
+          namespace.capturePortoptSeriesSnapshot = async function (...args) {
+            const result = await original(...args);
+            window.__poModalOkPerf.snapshotSetAt = performance.now();
+            return result;
+          };
+          window.__poModalOkPerfInstalled = true;
+          return true;
+        }
+        """
+    )
+
+
+def arm_ok_timing_probe(page) -> None:
+    page.evaluate(
+        """
+        () => {
+          window.__poModalOkPerf = {
+            clickStartedAt: performance.now(),
+            snapshotSetAt: null,
+          };
+        }
+        """
+    )
+
+
+def wait_for_snapshot_capture(page, timeout: int = 15000) -> None:
+    page.wait_for_function(
+        """
+        () => {
+          const state = window.__poModalOkPerf;
+          return !!(
+            state &&
+            typeof state.clickStartedAt === "number" &&
+            typeof state.snapshotSetAt === "number" &&
+            state.snapshotSetAt >= state.clickStartedAt
+          );
+        }
+        """,
+        timeout=timeout,
+    )
+
+
+def apply_ok_scenario(page, scenario: str) -> tuple[list[dict], list[dict]]:
+    baseline_rows = [dict(row) for row in grid_rows(page)]
+    if not baseline_rows:
+        raise RuntimeError("PortOpt modal harness could not read baseline modal rows.")
+
+    next_rows = [dict(row) for row in baseline_rows]
+    live_indexes = [idx for idx, row in enumerate(next_rows) if not row.get("Delete")]
+    if not live_indexes:
+        raise RuntimeError("PortOpt modal harness found no live rows for OK scenario.")
+
+    first_idx = live_indexes[0]
+    if scenario == "noop":
+        return baseline_rows, next_rows
+    if scenario == "selection":
+        next_rows[first_idx]["Selected"] = not bool(next_rows[first_idx].get("Selected", False))
+    elif scenario == "order":
+        if len(live_indexes) < 2:
+            raise RuntimeError("PortOpt modal harness needs at least two live rows for order scenario.")
+        ordered = [next_rows[idx] for idx in live_indexes]
+        moved = ordered.pop(0)
+        ordered.append(moved)
+        for row_idx, row in zip(live_indexes, ordered, strict=False):
+            next_rows[row_idx] = row
+    elif scenario == "metadata":
+        current_max = next_rows[first_idx].get("MaxWt")
+        next_rows[first_idx]["MaxWt"] = 55 if str(current_max) != "55" else 65
+    elif scenario == "rename":
+        next_rows[first_idx]["Series"] = f"{next_rows[first_idx]['Series']}_Renamed"
+    elif scenario == "delete":
+        next_rows[first_idx]["Delete"] = True
+        next_rows[first_idx]["Selected"] = False
+    else:
+        raise RuntimeError(f"Unsupported PortOpt modal OK scenario: {scenario}")
+
+    set_grid_rows(page, next_rows)
+    return baseline_rows, next_rows
+
+
 def wait_session_store(page, component_id: str, expected_value, timeout: int = 15000) -> None:
     page.wait_for_function(
         """
@@ -253,6 +420,7 @@ def reset_modal_seed_state(page, opt_series: list[str]) -> None:
     warm.try_set_component_props(page, "po-temp-force-max-store", {"data": {}})
     warm.try_set_component_props(page, "po-series-selection-modal", {"opened": False})
     warm.try_set_component_props(page, "po-series-selection-grid", {"rowData": []})
+    warm.try_set_component_props(page, "po-series-grid-snapshot-store", {"data": None})
     warm.try_set_component_props(page, "po-ui-blocker-store", {"data": False})
     warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
@@ -273,10 +441,11 @@ def seed_portopt_page_synthetic(page, base_url: str, opt_series: list[str]) -> N
     warm.wait_ready(page, "#po-open-modal-button", timeout=30000)
     warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
 
-    page.locator("#po-open-modal-button").click()
+    page.locator("#po-open-modal-button").click(force=True)
     wait_modal_grid_ready(page, expected_rows=len(opt_series), timeout=30000)
     page.locator("#po-modal-cancel-button").click()
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
+    install_ok_timing_probe(page)
 
 
 def seed_portopt_page_db(page, base_url: str, opt_series: list[str]) -> None:
@@ -296,15 +465,19 @@ def seed_portopt_page_db(page, base_url: str, opt_series: list[str]) -> None:
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
     warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
     wait_session_store(page, "po-series-select", opt_series, timeout=30000)
+    install_ok_timing_probe(page)
 
 
-def measure_modal_run(page, opt_series: list[str]) -> dict[str, object]:
+def measure_modal_run(page, opt_series: list[str], scenario: str) -> dict[str, object]:
     reset_modal_seed_state(page, opt_series)
 
     open_start = time.perf_counter()
-    page.locator("#po-open-modal-button").click()
+    page.locator("#po-open-modal-button").click(force=True)
     wait_modal_grid_ready(page, expected_rows=len(opt_series), timeout=30000)
     modal_open_ms = round((time.perf_counter() - open_start) * 1000)
+    baseline_rows = [dict(row) for row in grid_rows(page)]
+    if not baseline_rows:
+        raise RuntimeError("PortOpt modal harness could not capture modal baseline rows.")
 
     first_series = set_first_row_selected(page, False)
     if not first_series:
@@ -320,23 +493,35 @@ def measure_modal_run(page, opt_series: list[str]) -> dict[str, object]:
     wait_selected_state(page, False, expected_rows=len(opt_series), timeout=15000)
     unselect_all_ms = round((time.perf_counter() - unselect_start) * 1000)
 
-    first_series = set_first_row_selected(page, True)
-    if not first_series:
-        raise RuntimeError("PortOpt modal harness could not reseed a selected row before OK.")
+    page.locator("#po-modal-cancel-button").click(force=True)
+    page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
+    warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
 
+    reset_modal_seed_state(page, opt_series)
+    page.locator("#po-open-modal-button").click(force=True)
+    wait_modal_grid_ready(page, expected_rows=len(opt_series), timeout=30000)
+    _, scenario_rows = apply_ok_scenario(page, scenario)
+
+    arm_ok_timing_probe(page)
     ok_start = time.perf_counter()
     page.locator("#po-modal-ok-button").click()
+    wait_for_snapshot_capture(page, timeout=30000)
+    snapshot_ms = round((time.perf_counter() - ok_start) * 1000)
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
     warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
     ok_confirm_ms = round((time.perf_counter() - ok_start) * 1000)
+    apply_ms = max(ok_confirm_ms - snapshot_ms, 0)
 
     return {
+        "scenario": scenario,
         "modalOpenMs": modal_open_ms,
         "selectAllMs": select_all_ms,
         "unselectAllMs": unselect_all_ms,
+        "snapshotMs": snapshot_ms,
+        "applyMs": apply_ms,
         "okConfirmMs": ok_confirm_ms,
-        "selectedAfterOk": [first_series],
-        "gridRowCount": len(grid_rows(page)),
+        "selectedAfterOk": [row["Series"] for row in scenario_rows if row.get("Selected") and not row.get("Delete")],
+        "gridRowCount": len(baseline_rows),
     }
 
 
@@ -346,39 +531,41 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=not args.headed)
-        page = browser.new_page(viewport={"width": 1440, "height": 960})
-        page.on(
-            "console",
-            lambda msg: console_messages.append({"type": msg.type, "text": msg.text})
-            if len(console_messages) < 120 and msg.type in {"error", "warning"}
-            else None,
-        )
-        page.on(
-            "pageerror",
-            lambda err: console_messages.append({"type": "pageerror", "text": str(err)})
-            if len(console_messages) < 120
-            else None,
-        )
-
         opt_series = warm.resolve_portopt_series(args.db_series)
-        if args.mode == "db":
-            seed_portopt_page_db(page, args.base_url, opt_series)
-        else:
-            seed_portopt_page_synthetic(page, args.base_url, opt_series)
         timing_start_offset = warm.current_log_offset(server_log_path)
-        warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
 
         run_results = []
         for run_index in range(1, args.runs + 1):
-            result = measure_modal_run(page, opt_series)
+            page = browser.new_page(viewport={"width": 1440, "height": 960})
+            page.on(
+                "console",
+                lambda msg: console_messages.append({"type": msg.type, "text": msg.text})
+                if len(console_messages) < 120 and msg.type in {"error", "warning"}
+                else None,
+            )
+            page.on(
+                "pageerror",
+                lambda err: console_messages.append({"type": "pageerror", "text": str(err)})
+                if len(console_messages) < 120
+                else None,
+            )
+            if args.mode == "db":
+                seed_portopt_page_db(page, args.base_url, opt_series)
+            else:
+                seed_portopt_page_synthetic(page, args.base_url, opt_series)
+            warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
+            result = measure_modal_run(page, opt_series, args.scenario)
             result["run"] = run_index
             run_results.append(result)
+            page.close()
 
         browser.close()
 
     modal_open_values = [run["modalOpenMs"] for run in run_results]
     select_all_values = [run["selectAllMs"] for run in run_results]
     unselect_all_values = [run["unselectAllMs"] for run in run_results]
+    snapshot_values = [run["snapshotMs"] for run in run_results]
+    apply_values = [run["applyMs"] for run in run_results]
     ok_confirm_values = [run["okConfirmMs"] for run in run_results]
 
     return {
@@ -387,6 +574,7 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
         "gitRef": resolved_git_ref,
         "baseUrl": args.base_url,
         "mode": args.mode,
+        "scenario": args.scenario,
         "dbSeries": args.db_series,
         "selectedSeries": opt_series,
         "runs": run_results,
@@ -394,6 +582,8 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
             "modalOpenMedian": round(median(modal_open_values)),
             "selectAllMedian": round(median(select_all_values)),
             "unselectAllMedian": round(median(unselect_all_values)),
+            "snapshotMedian": round(median(snapshot_values)),
+            "applyMedian": round(median(apply_values)),
             "okConfirmMedian": round(median(ok_confirm_values)),
         },
         "consoleMessages": console_messages,
@@ -414,7 +604,14 @@ def main() -> int:
     warm.wait_for_app(args.base_url, args.startup_timeout)
 
     timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    stem = build_artifact_stem(args.label or "portopt-series-modal", resolved_git_ref, args.base_url, timestamp, args.mode)
+    stem = build_artifact_stem(
+        args.label or "portopt-series-modal",
+        resolved_git_ref,
+        args.base_url,
+        timestamp,
+        args.mode,
+        args.scenario,
+    )
     out_dir = root / "output" / "playwright"
     fail_dir = out_dir / "failures"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -453,6 +650,7 @@ def main() -> int:
         "baseUrl": args.base_url,
         "repoRoot": str(root),
         "mode": args.mode,
+        "scenario": args.scenario,
         "dbSeries": args.db_series,
         "dbRebuilt": db_rebuilt,
         "dbRebuildReasons": db_rebuild_reasons,

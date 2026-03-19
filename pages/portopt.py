@@ -2530,6 +2530,34 @@ def _po_update_cmabench_defaults_store(
     return updated
 
 
+def _po_collect_modal_snapshot_rows(rows: list[dict], valid_series: set[str]):
+    active_rows = []
+    final_names = []
+    rename_map = {}
+    deleted_originals = []
+    deleted_final_names = []
+
+    for row in rows:
+        original = str(row.get("__row_key") or "").strip()
+        if not original or original not in valid_series:
+            continue
+        final_name = str(row.get("Series") or "").strip()
+        if not final_name or final_name in final_names:
+            raise PreventUpdate
+        final_names.append(final_name)
+        if final_name != original:
+            rename_map[original] = final_name
+        active_rows.append((original, final_name, row))
+        if bool(row.get("Delete", False)):
+            deleted_originals.append(original)
+            deleted_final_names.append(final_name)
+
+    if not active_rows:
+        raise PreventUpdate
+
+    return active_rows, rename_map, deleted_originals, deleted_final_names
+
+
 # ---------------------------------------------------------------------------
 # Layout helpers
 # ---------------------------------------------------------------------------
@@ -7842,6 +7870,7 @@ clientside_callback(
     Output("po-cmabench-defaults-store", "data", allow_duplicate=True),
     Input("po-series-grid-snapshot-store", "data"),
     State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     State("po-results-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -7869,6 +7898,7 @@ clientside_callback(
 def po_on_modal_ok(
     snapshot_data,
     raw_data,
+    raw_meta,
     current_results,
     current_select,
     current_bench,
@@ -7898,41 +7928,29 @@ def po_on_modal_ok(
     if not rows or not raw_data:
         raise PreventUpdate
 
-    df = _raw_df(raw_data)
-    existing_cols = list(df.columns)
+    existing_cols = list((raw_meta or {}).get("columns") or [])
+    if not existing_cols:
+        existing_cols = list(_raw_df(raw_data).columns)
     existing_set = set(existing_cols)
+    active_rows, rename_map, deleted_originals, deleted_final_names = _po_collect_modal_snapshot_rows(rows, existing_set)
+    structural_change = bool(rename_map or deleted_final_names)
+    remaining_cols = set(existing_cols)
+    updated_raw_data = no_update
+    updated_results = no_update
+    next_provenance_output = no_update
+    next_cmabench_defaults_output = no_update
 
-    active_rows = []
-    final_names = []
-    rename_map = {}
-    for row in rows:
-        original = str(row.get("__row_key") or "").strip()
-        if not original or original not in existing_set:
-            continue
-        final_name = str(row.get("Series") or "").strip()
-        if not final_name or final_name in final_names:
-            raise PreventUpdate
-        final_names.append(final_name)
-        if final_name != original:
-            rename_map[original] = final_name
-        active_rows.append((original, final_name, row))
-
-    if not active_rows:
-        raise PreventUpdate
-
-    if rename_map:
-        df = df.rename(columns=rename_map)
-
-    deleted_originals = []
-    deleted_final_names = []
-    for original, final_name, row in active_rows:
-        if bool(row.get("Delete", False)):
-            deleted_originals.append(original)
-            deleted_final_names.append(final_name)
-    if deleted_final_names:
-        df = df.drop(columns=[name for name in deleted_final_names if name in df.columns], errors="ignore")
-
-    remaining_cols = set(df.columns)
+    if structural_change:
+        df = _raw_df(raw_data)
+        existing_cols = list(df.columns)
+        existing_set = set(existing_cols)
+        active_rows, rename_map, deleted_originals, deleted_final_names = _po_collect_modal_snapshot_rows(rows, existing_set)
+        if rename_map:
+            df = df.rename(columns=rename_map)
+        if deleted_final_names:
+            df = df.drop(columns=[name for name in deleted_final_names if name in df.columns], errors="ignore")
+        remaining_cols = set(df.columns)
+        updated_raw_data = no_update if list(df.columns) == existing_cols else build_raw_data_store_payload(df)
     next_select = []
     next_bench = {}
     next_cmabench = {}
@@ -7982,16 +8000,8 @@ def po_on_modal_ok(
     current_min_wt = dict(current_min_wt or {})
     current_max_wt = dict(current_max_wt or {})
     current_force_max = dict(current_force_max or {})
-
-    updated_raw_data = no_update if list(df.columns) == existing_cols else build_raw_data_store_payload(df)
-    updated_results = no_update
-    current_results = dict(current_results or {})
-    deleted_result_names = {
-        name for name in deleted_originals + deleted_final_names
-        if name in current_results
-    }
-    if deleted_result_names:
-        updated_results = {k: v for k, v in current_results.items() if k not in deleted_result_names}
+    if not structural_change and set(next_select) == set(current_select) and len(next_select) == len(current_select):
+        next_select = list(current_select)
 
     next_series_select = no_update if next_select == current_select else next_select
     next_bench_output = no_update if next_bench == current_bench else next_bench
@@ -8003,19 +8013,38 @@ def po_on_modal_ok(
     next_min_output = no_update if next_min_wt == current_min_wt else next_min_wt
     next_max_output = no_update if next_max_wt == current_max_wt else next_max_wt
     next_force_output = no_update if next_force_max == current_force_max else next_force_max
-    updated_provenance = rename_db_import_provenance_series(current_provenance, rename_map) if rename_map else current_provenance
-    updated_provenance = remove_db_import_provenance_series(updated_provenance, deleted_final_names) if deleted_final_names else updated_provenance
-    updated_provenance = prune_db_import_provenance(updated_provenance, list(df.columns))
-    next_provenance_output = no_update if updated_provenance == (current_provenance or {}) else updated_provenance
-    next_cmabench_defaults = _po_update_cmabench_defaults_store(
-        current_cmabench_defaults,
-        rename_map,
-        deleted_final_names,
-        list(df.columns),
-    )
-    next_cmabench_defaults_output = (
-        no_update if next_cmabench_defaults == current_cmabench_defaults else next_cmabench_defaults
-    )
+    if structural_change:
+        current_results = dict(current_results or {})
+        deleted_result_names = {
+            name for name in deleted_originals + deleted_final_names
+            if name in current_results
+        }
+        if deleted_result_names:
+            updated_results = {k: v for k, v in current_results.items() if k not in deleted_result_names}
+
+        updated_provenance = (
+            rename_db_import_provenance_series(current_provenance, rename_map)
+            if rename_map
+            else current_provenance
+        )
+        updated_provenance = (
+            remove_db_import_provenance_series(updated_provenance, deleted_final_names)
+            if deleted_final_names
+            else updated_provenance
+        )
+        updated_provenance = prune_db_import_provenance(updated_provenance, list(remaining_cols))
+        next_provenance_output = (
+            no_update if updated_provenance == (current_provenance or {}) else updated_provenance
+        )
+        next_cmabench_defaults = _po_update_cmabench_defaults_store(
+            current_cmabench_defaults,
+            rename_map,
+            deleted_final_names,
+            list(remaining_cols),
+        )
+        next_cmabench_defaults_output = (
+            no_update if next_cmabench_defaults == current_cmabench_defaults else next_cmabench_defaults
+        )
 
     return (
         next_series_select,
