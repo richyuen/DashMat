@@ -1994,12 +1994,63 @@
     };
   }
 
-  function portoptControlSync(periodicity, volScaler, activeTab, seriesSelect, fillInSample, optStepUnit, optWindow, windowSize, optStep, optModel, portfolioName, expWtCov, halflife, covShrinkage, covShrinkageTarget, missingData, objective, blTau, exAnteMode, useRiskFree, returnsBasis, reportingBasis) {
+  function portoptControlSync(
+    periodicity,
+    volScaler,
+    activeTab,
+    seriesSelect,
+    fillInSample,
+    optStepUnit,
+    optWindow,
+    windowSize,
+    optStep,
+    optModel,
+    portfolioName,
+    expWtCov,
+    halflife,
+    covShrinkage,
+    covShrinkageTarget,
+    missingData,
+    objective,
+    blTau,
+    exAnteMode,
+    useRiskFree,
+    returnsBasis,
+    reportingBasis,
+    currentSeriesSelectStore,
+    currentBlTauStore,
+    currentExAnteModeStore,
+    currentUseRiskFreeStore,
+    currentReturnsBasisStore,
+    currentReportingBasisStore
+  ) {
+    const nu = noUpdate();
+
+    function sameValue(left, right) {
+      if (left === right) {
+        return true;
+      }
+      const leftIsObject = left !== null && typeof left === "object";
+      const rightIsObject = right !== null && typeof right === "object";
+      if (leftIsObject || rightIsObject) {
+        try {
+          return JSON.stringify(left) === JSON.stringify(right);
+        } catch (_err) {
+          return false;
+        }
+      }
+      return false;
+    }
+
+    function resolvedOutput(nextValue, currentValue) {
+      return sameValue(currentValue, nextValue) ? nu : nextValue;
+    }
+
     return [
       periodicity,
       volScaler,
       activeTab || "weight",
-      seriesSelect || [],
+      resolvedOutput(seriesSelect || [], currentSeriesSelectStore),
       fillInSample,
       optStepUnit,
       optWindow,
@@ -2013,11 +2064,11 @@
       covShrinkageTarget || "scaled_identity",
       missingData,
       objective,
-      blTau,
-      exAnteMode || "ret_cov",
-      useRiskFree === "zero" ? false : true,
-      returnsBasis === "excess" ? "excess" : "total",
-      reportingBasis === "split"
+      resolvedOutput(blTau, currentBlTauStore),
+      resolvedOutput(exAnteMode || "ret_cov", currentExAnteModeStore),
+      resolvedOutput(useRiskFree === "zero" ? false : true, currentUseRiskFreeStore),
+      resolvedOutput(returnsBasis === "excess" ? "excess" : "total", currentReturnsBasisStore),
+      resolvedOutput(reportingBasis === "split", currentReportingBasisStore)
     ];
   }
 

@@ -59,6 +59,8 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - When hidden tabs are expensive, first prevent their callbacks from being scheduled; optimizing the callback body is usually a smaller win.
 - The PortOpt hidden content-tab trigger pattern is a candidate for AnalyticsTool/Regression when inactive tab content is waking on shared control changes.
 - After hidden-tab gating, the next PortOpt wins came from trimming always-on shared-control churn on selection changes, especially clientside eligibility/help-text callbacks and server callbacks that can return `no_update` for unchanged UI state.
+- After hidden-tab and shared-control trimming, unchanged top-level PortOpt store rewrites can become the main remaining fan-out source; dedupe `portoptControlSync` outputs before attempting broader validator/store redesigns.
+- For PortOpt store-sync dedupe, reuse the existing clientside `sameValue` / `resolvedOutput` pattern and preserve first-load/session restore behavior for targeted stores.
 - Hidden full-screen overlays must be gated with `display:none`.
 - Keep module-switch blockers separate from page-local upload/modal blockers.
 - Shared route callbacks must use `_pages_location.pathname`, must not mix always-mounted and page-local outputs, and must mark page-local inputs/states `allow_optional=True` when other pages may be active.
@@ -74,6 +76,7 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - For harness timing correlation, pass the timed server `STDOUT` log path to `tools/playwright/warm_switch_harness.ps1` / `--server-log`; do not use the stderr log.
 - Use `tools/playwright/portopt_series_modal_harness.ps1` for PortOpt series-modal timing; it measures modal open, select all, unselect all, and OK confirm in `5-run` passes.
 - The PortOpt modal harness seeds a deterministic synthetic raw dataset and preloads the modal once before the measured window so modal timings stay isolated from welcome-screen/bootstrap noise.
+- Run PortOpt modal harness comparison cases in series, not in parallel on the same timed server; parallel runs can interfere through shared browser/server state and blocker timing.
 - Use harness request attribution to choose the next perf phase instead of guessing from medians alone.
 - The PortOpt modal harness now summarizes the most frequent OK-window Dash callback ids; use that list to decide whether the next phase should target shared-control churn or active-tab render work.
 - Prefer adding harness switches for active-tab / restore-tab scenarios rather than changing app code to force a perf case.

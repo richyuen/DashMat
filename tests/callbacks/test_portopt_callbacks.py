@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from io import BytesIO
 from io import StringIO
 from pathlib import Path
@@ -13,6 +15,42 @@ from dash.exceptions import PreventUpdate
 
 from utils.raw_dataset import get_raw_dataset_df, resolve_dataset_key
 from utils.returns import build_raw_data_metadata, df_to_json
+
+
+def _run_dashmat_callbacks_js(expression: str):
+    repo_root = Path(__file__).resolve().parents[2]
+    script = f"""
+const path = require("path");
+global.window = {{ dash_clientside: {{ no_update: {{ __dash_no_update__: true }} }} }};
+require(path.resolve("assets/dashmat_callbacks.js"));
+const ns = window.dash_clientside.dashmat_callbacks;
+function normalize(value) {{
+  if (value && value.__dash_no_update__) {{
+    return "__NO_UPDATE__";
+  }}
+  if (Array.isArray(value)) {{
+    return value.map(normalize);
+  }}
+  if (value && typeof value === "object") {{
+    const out = {{}};
+    for (const [key, nextValue] of Object.entries(value)) {{
+      out[key] = normalize(nextValue);
+    }}
+    return out;
+  }}
+  return value;
+}}
+const result = {expression};
+process.stdout.write(JSON.stringify(normalize(result)));
+"""
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def _sample_window_weights() -> list[dict]:
@@ -423,6 +461,22 @@ def test_po_toggle_ui_elements_uses_bootstrap_store():
     assert 'po-restore-complete-store' not in toggle_callback
 
 
+def test_portopt_control_sync_tracks_targeted_current_store_state():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    sync_block = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptControlSync")', 1)[1]
+    sync_callback = sync_block.split("prevent_initial_call=True,", 1)[0]
+
+    for store_id in (
+        "po-series-select-value-store",
+        "po-bl-tau-store",
+        "po-ex-ante-mode-store",
+        "po-use-risk-free-store",
+        "po-returns-basis-store",
+        "po-reporting-basis-store",
+    ):
+        assert f'State("{store_id}", "data")' in sync_callback
+
+
 def test_po_bootstrap_reducer_reads_stored_controls_and_marks_loaded_tabs():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
@@ -601,6 +655,94 @@ def test_po_reporting_basis_control_uses_clientside_callback():
     assert "function portoptSupportsSplitReporting(optModel, selectedSeries, longShortAssignments)" in js_text
     for model_name in ("risk_parity", "factor_risk_parity", "hierarchical_risk_parity", "minimize_variance", "minimize_cvar"):
         assert f'"{model_name}"' in js_text
+
+
+def test_portopt_control_sync_returns_no_update_for_unchanged_targeted_stores():
+    result = _run_dashmat_callbacks_js(
+        """
+ns.portoptControlSync(
+  "daily_trading",
+  0,
+  "weight",
+  ["Asset_A"],
+  "off",
+  "months",
+  "rolling",
+  252,
+  1,
+  "risk_parity",
+  "RP",
+  false,
+  63,
+  "none",
+  "scaled_identity",
+  "fill_na",
+  "maximize_sharpe",
+  0.05,
+  "ret_cov",
+  "tbill",
+  "total",
+  "match",
+  ["Asset_A"],
+  0.05,
+  "ret_cov",
+  true,
+  "total",
+  false
+)
+"""
+    )
+
+    assert result[3] == "__NO_UPDATE__"
+    assert result[17] == "__NO_UPDATE__"
+    assert result[18] == "__NO_UPDATE__"
+    assert result[19] == "__NO_UPDATE__"
+    assert result[20] == "__NO_UPDATE__"
+    assert result[21] == "__NO_UPDATE__"
+
+
+def test_portopt_control_sync_propagates_changed_targeted_store_values():
+    result = _run_dashmat_callbacks_js(
+        """
+ns.portoptControlSync(
+  "daily_trading",
+  0,
+  "weight",
+  ["Asset_A", "Asset_B"],
+  "off",
+  "months",
+  "rolling",
+  252,
+  1,
+  "risk_parity",
+  "RP",
+  false,
+  63,
+  "none",
+  "scaled_identity",
+  "fill_na",
+  "maximize_sharpe",
+  0.07,
+  "ret_cov",
+  "zero",
+  "excess",
+  "split",
+  ["Asset_A"],
+  0.05,
+  "ret_vol_corr",
+  true,
+  "total",
+  false
+)
+"""
+    )
+
+    assert result[3] == ["Asset_A", "Asset_B"]
+    assert result[17] == 0.07
+    assert result[18] == "ret_cov"
+    assert result[19] is False
+    assert result[20] == "excess"
+    assert result[21] is True
 
 
 def test_portopt_modal_harness_supports_active_tab():

@@ -5253,6 +5253,12 @@ clientside_callback(
     Input("po-use-risk-free-switch", "value"),
     Input("po-returns-basis-control", "value"),
     Input("po-reporting-basis-control", "value"),
+    State("po-series-select-value-store", "data"),
+    State("po-bl-tau-store", "data"),
+    State("po-ex-ante-mode-store", "data"),
+    State("po-use-risk-free-store", "data"),
+    State("po-returns-basis-store", "data"),
+    State("po-reporting-basis-store", "data"),
     prevent_initial_call=True,
 )
 
