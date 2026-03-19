@@ -49,6 +49,9 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Do not repeat the reverted PortOpt warm-switch regressions: broad selected-result/store splitting or `dmc.Tabs(keepMounted=False)` active-tab bootstrap.
 - If restoring a non-`weight` PortOpt tab on entry, seed that tab as render-ready during bootstrap.
 - Treat shared modal unmounting as a measured tradeoff, not an automatic win.
+- The PortOpt series modal now keeps a stable `po-series-selection-grid` in layout; optimize that path by updating `rowData` / `columnDefs`, not by rebuilding the grid shell.
+- Preserve the PortOpt modal snapshot-on-OK contract; do not introduce live per-edit temp-store syncing unless measurements justify it.
+- Do not assume the PortOpt series modal is server-bound; `portopt.render_series_modal_grid` was effectively negligible during Phase 2 timing and the remaining cost was browser-side modal/grid work.
 - Hidden full-screen overlays must be gated with `display:none`.
 - Keep module-switch blockers separate from page-local upload/modal blockers.
 - Shared route callbacks must use `_pages_location.pathname`, must not mix always-mounted and page-local outputs, and must mark page-local inputs/states `allow_optional=True` when other pages may be active.
@@ -62,6 +65,8 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - New worktrees do not inherit local SQLite files; copy `data/dashmat_local.db`, `data/MRD.db`, and `data/Performance.db` into the worktree before DB-backed browser runs.
 - When timing logs matter, do not launch the app with plain `python -u app.py`; use `tools/playwright/start_timed_server.ps1` so `DASHMAT_TIMING_ENABLED=1`, `DASHMAT_TIMING_MIN_MS`, and `conda run --no-capture-output -n dashmat python -u ...` are set consistently.
 - For harness timing correlation, pass the timed server `STDOUT` log path to `tools/playwright/warm_switch_harness.ps1` / `--server-log`; do not use the stderr log.
+- Use `tools/playwright/portopt_series_modal_harness.ps1` for PortOpt series-modal timing; it measures modal open, select all, unselect all, and OK confirm in `5-run` passes.
+- The PortOpt modal harness seeds a deterministic synthetic raw dataset and preloads the modal once before the measured window so modal timings stay isolated from welcome-screen/bootstrap noise.
 - For strict PortOpt first-entry timing, parse only the measured entry window after warmup.
 - If the warm-switch harness stalls on `#po-run-button`, verify the canonical PortOpt series-config stores first.
 - Keep Playwright/runtime artifacts out of commits unless explicitly needed, and clean `output/` after ad hoc validation runs.

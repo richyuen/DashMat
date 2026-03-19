@@ -341,6 +341,7 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     blocker_overlay = _find_component_by_id(portopt.layout, "po-ui-blocker-overlay")
     bootstrap_store = _find_component_by_id(portopt.layout, "po-bootstrap-store")
     results_meta_store = _find_component_by_id(portopt.layout, "po-results-meta-store")
+    series_grid = _find_component_by_id(portopt.layout, "po-series-selection-grid")
 
     assert getattr(welcome, "style", {})["display"] == "none"
     assert getattr(main, "style", {})["display"] == "none"
@@ -348,6 +349,8 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     assert getattr(blocker_overlay, "visible", None) is False
     assert getattr(blocker_overlay, "zIndex", None) == 2500
     assert getattr(results_meta_store, "data", None) == {"has_results": False, "count": 0}
+    assert series_grid is not None
+    assert getattr(series_grid, "rowData", None) == []
     assert getattr(bootstrap_store, "data", None) == {
         "phase": "idle",
         "loadedTabs": {
@@ -2608,7 +2611,8 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Input("po-menu-add-from-db", "n_clicks")' in page_text
     assert 'Input("po-open-modal-button", "n_clicks")' in page_text
     assert 'Output("po-ui-blocker-store", "data", allow_duplicate=True)' in page_text
-    assert 'Output("po-series-selection-container", "children")' in page_text
+    assert 'Output("po-series-selection-grid", "rowData")' in page_text
+    assert 'Output("po-series-selection-grid", "columnDefs")' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
     assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitialSeriesBlocker")' in page_text
@@ -2626,7 +2630,7 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
 def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
     _, portopt = page_modules
 
-    children, _order, blocker = portopt.po_update_series_selectors(
+    row_data, column_defs, _order, blocker = portopt.po_update_series_selectors(
         raw_json,
         {"columns": ["Asset_A", "Asset_B"]},
         ["Asset_A"],
@@ -2640,10 +2644,12 @@ def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules,
         {},
         {},
         None,
+        None,
     )
 
     assert blocker is no_update
-    assert getattr(children[0], "id", None) == "po-series-selection-grid"
+    assert [row["Series"] for row in row_data] == ["Asset_A", "Asset_B"]
+    assert next(col for col in column_defs if col.get("field") == "Selected")["cellEditor"] == "agCheckboxCellEditor"
 
 
 def test_po_series_selection_grid_uses_raw_meta_columns_without_parsing_json(monkeypatch, page_modules, raw_json):
@@ -2651,7 +2657,7 @@ def test_po_series_selection_grid_uses_raw_meta_columns_without_parsing_json(mon
 
     monkeypatch.setattr(portopt, "json_to_df", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not parse raw json")))
 
-    children, order, blocker = portopt.po_update_series_selectors(
+    row_data, column_defs, order, blocker = portopt.po_update_series_selectors(
         raw_json,
         {"columns": ["Asset_A", "Asset_B"]},
         ["Asset_A"],
@@ -2665,11 +2671,17 @@ def test_po_series_selection_grid_uses_raw_meta_columns_without_parsing_json(mon
         {},
         {},
         None,
+        None,
     )
 
-    assert order == ["Asset_A", "Asset_B"]
+    assert order is no_update
     assert blocker is no_update
-    assert getattr(children[0], "id", None) == "po-series-selection-grid"
+    assert [row["Series"] for row in row_data] == ["Asset_A", "Asset_B"]
+    assert next(col for col in column_defs if col.get("field") == "Benchmark")["cellEditorParams"]["values"] == [
+        "None",
+        "Asset_A",
+        "Asset_B",
+    ]
 
 
 def test_po_series_selection_grid_only_fetches_missing_cma_defaults_for_selected_series(monkeypatch, page_modules, raw_json):
@@ -2678,7 +2690,7 @@ def test_po_series_selection_grid_only_fetches_missing_cma_defaults_for_selected
 
     monkeypatch.setattr(portopt, "_po_cached_cmabench_defaults", lambda key: calls.append(key) or {"Asset_A": "Bench_A"})
 
-    children, _order, _blocker = portopt.po_update_series_selectors(
+    row_data, _column_defs, _order, _blocker = portopt.po_update_series_selectors(
         raw_json,
         {"columns": ["Asset_A", "Asset_B"]},
         ["Asset_A"],
@@ -2692,16 +2704,17 @@ def test_po_series_selection_grid_only_fetches_missing_cma_defaults_for_selected
         {},
         {},
         None,
+        None,
     )
 
     assert calls == [("Asset_A",)]
-    assert getattr(children[0], "id", None) == "po-series-selection-grid"
+    assert row_data[0]["CMABench"] == "Bench_A"
 
 
 def test_po_series_selection_grid_uses_preloaded_cmabench_options(page_modules, raw_json):
     _, portopt = page_modules
 
-    children, _order, _blocker = portopt.po_update_series_selectors(
+    row_data, column_defs, _order, _blocker = portopt.po_update_series_selectors(
         raw_json,
         {"columns": ["Asset_A", "Asset_B"]},
         ["Asset_A"],
@@ -2715,18 +2728,49 @@ def test_po_series_selection_grid_uses_preloaded_cmabench_options(page_modules, 
         {},
         {},
         ["Bench_1", "Bench_2"],
+        None,
     )
 
-    grid = children[0]
-    benchmark_col = next(col for col in getattr(grid, "columnDefs", []) if col.get("field") == "Benchmark")
-    cmabench_col = next(col for col in getattr(grid, "columnDefs", []) if col.get("field") == "CMABench")
+    benchmark_col = next(col for col in column_defs if col.get("field") == "Benchmark")
+    cmabench_col = next(col for col in column_defs if col.get("field") == "CMABench")
     assert benchmark_col["cellEditor"] == "agSelectCellEditor"
     assert cmabench_col["cellEditor"] == "agSelectCellEditor"
     assert benchmark_col["cellEditorParams"]["values"] == ["None", "Asset_A", "Asset_B"]
     assert "" in cmabench_col["cellEditorParams"]["values"]
     assert "Bench_1" in cmabench_col["cellEditorParams"]["values"]
     assert "Explicit_Bench" in cmabench_col["cellEditorParams"]["values"]
-    assert getattr(grid, "dashGridOptions", {})["animateRows"] is False
+    assert row_data[0]["CMABench"] == "Explicit_Bench"
+
+
+def test_po_series_selection_grid_only_updates_column_defs_when_options_change(page_modules, raw_json):
+    _, portopt = page_modules
+
+    current_column_defs = portopt._po_series_selection_column_defs(
+        benchmark_values=["None", "Asset_A", "Asset_B"],
+        cmabench_editor_values=["", "Bench_1"],
+    )
+
+    row_data, column_defs, order, blocker = portopt.po_update_series_selectors(
+        raw_json,
+        {"columns": ["Asset_A", "Asset_B"]},
+        ["Asset_A"],
+        ["Asset_A"],
+        [],
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        ["Bench_1"],
+        current_column_defs,
+    )
+
+    assert [row["Series"] for row in row_data] == ["Asset_A", "Asset_B"]
+    assert column_defs is no_update
+    assert order == ["Asset_A", "Asset_B"]
+    assert blocker is no_update
 
 
 def test_po_load_cmabench_option_values_is_lazy(monkeypatch, page_modules):
@@ -2749,7 +2793,8 @@ def test_po_series_selection_grid_no_longer_fetches_cmabench_values_inline():
     render_block = page_text.split("def po_update_series_selectors", 1)[1].split("clientside_callback(", 1)[0]
     assert 'Input("po-cmabench-option-values-store", "data")' in callback_block
     assert "get_unique_cmabench_values_cached(DB_ENGINE)" not in render_block
-    assert '"cellEditor": "agSelectCellEditor"' in render_block
+    assert 'def _po_series_selection_column_defs(' in page_text
+    assert '"cellEditor": "agSelectCellEditor"' in page_text
 
 
 def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monkeypatch, page_modules, raw_json):

@@ -104,7 +104,6 @@ from utils.dashmat_welcome_modal import (
     build_db_add_modal,
     build_portfolio_add_modal,
     build_raw_db_add_modal,
-    build_series_selection_modal,
     build_sheet_select_modal,
     build_underlying_add_modal,
     build_welcome_screen as build_shared_welcome_screen,
@@ -2491,6 +2490,210 @@ def build_po_welcome_screen():
     return build_shared_welcome_screen(PO_WELCOME_MODAL_CONFIG)
 
 
+def _po_series_selection_column_defs(
+    benchmark_values: list[str] | None = None,
+    cmabench_editor_values: list[str] | None = None,
+):
+    benchmark_values = list(benchmark_values or ["None"])
+    cmabench_editor_values = list(cmabench_editor_values or [""])
+    return [
+        {
+            "headerName": "",
+            "rowDrag": True,
+            "editable": False,
+            "sortable": False,
+            "filter": False,
+            "resizable": False,
+            "width": 36,
+            "pinned": "left",
+            "valueGetter": {"function": "''"},
+            "cellClass": "dashmat-series-center-cell",
+        },
+        {
+            "field": "Selected",
+            "headerName": "Use",
+            "editable": True,
+            "cellRenderer": "agCheckboxCellRenderer",
+            "cellEditor": "agCheckboxCellEditor",
+            "width": 72,
+            "pinned": "left",
+            "cellClass": "dashmat-series-center-cell",
+        },
+        {
+            "field": "Series",
+            "editable": True,
+            "minWidth": 150,
+            "cellStyle": {"textAlign": "left", "fontFamily": "monospace"},
+            "headerClass": "dashmat-left-header",
+        },
+        {
+            "field": "Benchmark",
+            "editable": True,
+            "cellEditor": "agSelectCellEditor",
+            "cellEditorParams": {"values": benchmark_values},
+            "minWidth": 150,
+            "cellStyle": {"textAlign": "left"},
+            "headerClass": "dashmat-left-header",
+        },
+        {
+            "field": "CMABench",
+            "editable": True,
+            "cellEditor": "agSelectCellEditor",
+            "cellEditorParams": {"values": cmabench_editor_values},
+            "minWidth": 130,
+            "cellStyle": {"textAlign": "left"},
+            "headerClass": "dashmat-left-header",
+        },
+        {
+            "field": "LongShort",
+            "headerName": "L/S",
+            "editable": True,
+            "cellRenderer": "agCheckboxCellRenderer",
+            "cellEditor": "agCheckboxCellEditor",
+            "width": 72,
+            "cellClass": "dashmat-series-center-cell",
+        },
+        {
+            "field": "ScaleVol",
+            "headerName": "Scale Vol",
+            "editable": True,
+            "cellRenderer": "agCheckboxCellRenderer",
+            "cellEditor": "agCheckboxCellEditor",
+            "width": 112,
+            "cellClass": "dashmat-series-center-cell",
+        },
+        {
+            "field": "MinWt",
+            "headerName": "Min Wt",
+            "editable": {"function": "!params.data.ForceMax"},
+            "width": 98,
+            "valueParser": {
+                "function": "var n=Number(params.newValue); if(!isFinite(n)) return 0; return Math.max(0, Math.min(100, n));"
+            },
+            "cellClass": "dashmat-series-center-cell",
+            "headerClass": "dashmat-center-header",
+        },
+        {
+            "field": "MaxWt",
+            "headerName": "Max Wt",
+            "editable": True,
+            "width": 98,
+            "valueParser": {
+                "function": "var n=Number(params.newValue); if(!isFinite(n)) return 100; return Math.max(0, Math.min(100, n));"
+            },
+            "cellClass": "dashmat-series-center-cell",
+            "headerClass": "dashmat-center-header",
+        },
+        {
+            "field": "ForceMax",
+            "headerName": "Force",
+            "editable": True,
+            "cellRenderer": "agCheckboxCellRenderer",
+            "cellEditor": "agCheckboxCellEditor",
+            "width": 70,
+            "cellClass": "dashmat-series-center-cell",
+        },
+        {
+            "field": "Delete",
+            "editable": True,
+            "cellRenderer": "agCheckboxCellRenderer",
+            "cellEditor": "agCheckboxCellEditor",
+            "width": 74,
+            "cellClass": "dashmat-series-center-cell",
+        },
+    ]
+
+
+def _build_po_series_selection_grid():
+    return dag.AgGrid(
+        id="po-series-selection-grid",
+        className="ag-theme-alpine dashmat-series-modal-grid",
+        getRowId="params.data.__row_key",
+        columnDefs=_po_series_selection_column_defs(),
+        rowData=[],
+        defaultColDef={
+            "resizable": True,
+            "sortable": False,
+            "filter": False,
+            "suppressHeaderMenuButton": True,
+            "suppressMovable": True,
+            "cellStyle": {"textAlign": "center"},
+            "headerClass": "dashmat-center-header",
+        },
+        style={"height": "46vh", "width": "100%"},
+        dashGridOptions=literal_field_dash_grid_options(
+            {
+                "suppressMovableColumns": True,
+                "rowDragManaged": True,
+                "animateRows": False,
+                "singleClickEdit": True,
+                "stopEditingWhenCellsLoseFocus": True,
+                "suppressExcelExport": True,
+                "suppressCsvExport": True,
+                "overlayNoRowsTemplate": (
+                    "<span class='ag-overlay-no-rows-center'>Upload data to select series</span>"
+                ),
+            }
+        ),
+        enableEnterpriseModules=True,
+        licenseKey=AG_GRID_LICENSE_KEY,
+    )
+
+
+def _build_po_series_selection_modal():
+    return dmc.Modal(
+        id="po-series-selection-modal",
+        title=dmc.Group(
+            gap="xs",
+            children=[
+                dmc.ThemeIcon(DashIconify(icon="tabler:list-check"), color="blue", variant="light", size="sm"),
+                dmc.Text("Select Series", fw=600, size="sm"),
+            ],
+        ),
+        size=PO_WELCOME_MODAL_CONFIG.series_modal_size,
+        styles={"content": {"maxWidth": PO_WELCOME_MODAL_CONFIG.series_modal_max_width}},
+        centered=True,
+        closeOnEscape=False,
+        zIndex=1900,
+        radius="lg",
+        className="series-modal-dark dashmat-modal",
+        overlayProps={"blur": 2, "opacity": 0.45},
+        transitionProps={"transition": "fade", "duration": PO_WELCOME_MODAL_CONFIG.series_modal_transition_ms},
+        children=[
+            dmc.Alert(
+                id="po-alert-message",
+                title="Info",
+                color="blue",
+                hide=True,
+                mb="md",
+                withCloseButton=True,
+            ),
+            dcc.Store(id="po-series-bulk-action-dummy", data=None, storage_type="memory"),
+            dmc.Group(
+                mb="sm",
+                gap="xs",
+                children=[
+                    dmc.Button("Select All", id="po-select-all-button", variant="light", size="xs"),
+                    dmc.Button("Unselect All", id="po-unselect-all-button", variant="outline", size="xs"),
+                ],
+            ),
+            html.Div(
+                id="po-series-selection-container",
+                children=[_build_po_series_selection_grid()],
+                style={"maxHeight": "50vh"},
+            ),
+            dmc.Group(
+                mt="md",
+                justify="flex-end",
+                children=[
+                    dmc.Button("Cancel", id="po-modal-cancel-button", variant="outline", color="red"),
+                    dmc.Button("OK", id="po-modal-ok-button", color="blue"),
+                ],
+            ),
+        ],
+    )
+
+
 def build_po_main_layout():
     return html.Div(
         style={"display": "flex", "flexDirection": "column", "height": "100%", "overflow": "hidden"},
@@ -3863,7 +4066,7 @@ layout = dmc.Container(
             style={"display": "none"},
         ),
 
-        build_series_selection_modal(PO_WELCOME_MODAL_CONFIG),
+        _build_po_series_selection_modal(),
 
         build_sheet_select_modal("po"),
 
@@ -7511,8 +7714,18 @@ def po_load_cmabench_option_values(modal_opened, current_values):
         raise PreventUpdate
     return get_unique_cmabench_values_cached(DB_ENGINE)
 
+
+def _po_normalize_series_order(all_series, series_order):
+    normalized_order = list(series_order or []) or list(all_series)
+    for series in all_series:
+        if series not in normalized_order:
+            normalized_order.append(series)
+    return [series for series in normalized_order if series in all_series]
+
+
 @callback(
-    Output("po-series-selection-container", "children"),
+    Output("po-series-selection-grid", "rowData"),
+    Output("po-series-selection-grid", "columnDefs"),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
     Input("dashmat-raw-data-store", "data"),
@@ -7528,6 +7741,7 @@ def po_load_cmabench_option_values(modal_opened, current_values):
     Input("po-temp-max-wt-store", "data"),
     Input("po-temp-force-max-store", "data"),
     Input("po-cmabench-option-values-store", "data"),
+    State("po-series-selection-grid", "columnDefs"),
     prevent_initial_call="initial_duplicate",
 )
 def po_update_series_selectors(
@@ -7544,9 +7758,14 @@ def po_update_series_selectors(
     max_wt,
     force_max,
     cmabench_option_values,
+    current_column_defs,
 ):
+    empty_column_defs = _po_series_selection_column_defs()
+    current_order = list(series_order or [])
+    empty_order_update = [] if current_order else no_update
+    empty_column_update = no_update if current_column_defs == empty_column_defs else empty_column_defs
     if raw_data is None:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
+        return [], empty_column_update, empty_order_update, False
 
     all_series = list((raw_meta or {}).get("columns") or [])
     if not all_series:
@@ -7554,15 +7773,9 @@ def po_update_series_selectors(
         all_series = list(df.columns)
 
     if not all_series:
-        return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
+        return [], empty_column_update, empty_order_update, False
 
-    if not series_order:
-        series_order = list(all_series)
-    else:
-        for s in all_series:
-            if s not in series_order:
-                series_order.append(s)
-        series_order = [s for s in series_order if s in all_series]
+    normalized_order = _po_normalize_series_order(all_series, current_order)
 
     selected_set = set(selected_series or [])
     deleted_set = set(deleted_series or [])
@@ -7586,163 +7799,46 @@ def po_update_series_selectors(
             }
         )
     )
-    row_data = []
-    for series in series_order:
-        bench_val = current_assignments.get(series, "None")
-        if bench_val not in all_series and bench_val != "None":
-            bench_val = "None"
-        is_ls = long_short_assignments.get(series, False)
-        is_scale_vol = vol_scaling_assignments.get(series, True)
-        cmabench_val = current_cmabench_assignments.get(series, core_cmabench_defaults.get(series, ""))
-        min_wt_val = min_wt.get(series, 0)
-        max_wt_val = max_wt.get(series, 100)
-        force_max_val = force_max.get(series, False)
-        row_data.append(
-            {
-                "__row_key": series,
-                "Selected": series in selected_set and series not in deleted_set,
-                "Series": series,
-                "Benchmark": bench_val,
-                "CMABench": cmabench_val,
-                "LongShort": bool(is_ls),
-                "ScaleVol": bool(is_scale_vol),
-                "MinWt": min_wt_val,
-                "MaxWt": max_wt_val,
-                "ForceMax": bool(force_max_val),
-                "Delete": series in deleted_set,
-            }
+    with timed_block(
+        "portopt.render_series_modal_grid",
+        series_count=len(all_series),
+        selected_count=len(selected_set),
+        cmabench_option_count=len(cmabench_editor_values),
+    ):
+        row_data = []
+        for series in normalized_order:
+            bench_val = current_assignments.get(series, "None")
+            if bench_val not in all_series and bench_val != "None":
+                bench_val = "None"
+            is_ls = long_short_assignments.get(series, False)
+            is_scale_vol = vol_scaling_assignments.get(series, True)
+            cmabench_val = current_cmabench_assignments.get(series, core_cmabench_defaults.get(series, ""))
+            min_wt_val = min_wt.get(series, 0)
+            max_wt_val = max_wt.get(series, 100)
+            force_max_val = force_max.get(series, False)
+            row_data.append(
+                {
+                    "__row_key": series,
+                    "Selected": series in selected_set and series not in deleted_set,
+                    "Series": series,
+                    "Benchmark": bench_val,
+                    "CMABench": cmabench_val,
+                    "LongShort": bool(is_ls),
+                    "ScaleVol": bool(is_scale_vol),
+                    "MinWt": min_wt_val,
+                    "MaxWt": max_wt_val,
+                    "ForceMax": bool(force_max_val),
+                    "Delete": series in deleted_set,
+                }
+            )
+        column_defs = _po_series_selection_column_defs(
+            benchmark_values=benchmark_values,
+            cmabench_editor_values=cmabench_editor_values,
         )
 
-    grid = dag.AgGrid(
-        id="po-series-selection-grid",
-        className="ag-theme-alpine dashmat-series-modal-grid",
-        getRowId="params.data.__row_key",
-        columnDefs=[
-            {
-                "headerName": "",
-                "rowDrag": True,
-                "editable": False,
-                "sortable": False,
-                "filter": False,
-                "resizable": False,
-                "width": 36,
-                "pinned": "left",
-                "valueGetter": {"function": "''"},
-                "cellClass": "dashmat-series-center-cell",
-            },
-            {
-                "field": "Selected",
-                "headerName": "Use",
-                "editable": True,
-                "cellRenderer": "agCheckboxCellRenderer",
-                "cellEditor": "agCheckboxCellEditor",
-                "width": 72,
-                "pinned": "left",
-                "cellClass": "dashmat-series-center-cell",
-            },
-            {
-                "field": "Series",
-                "editable": True,
-                "minWidth": 150,
-                "cellStyle": {"textAlign": "left", "fontFamily": "monospace"},
-                "headerClass": "dashmat-left-header",
-            },
-            {
-                "field": "Benchmark",
-                "editable": True,
-                "cellEditor": "agSelectCellEditor",
-                "cellEditorParams": {"values": benchmark_values},
-                "minWidth": 150,
-                "cellStyle": {"textAlign": "left"},
-                "headerClass": "dashmat-left-header",
-            },
-            {
-                "field": "CMABench",
-                "editable": True,
-                "cellEditor": "agSelectCellEditor",
-                "cellEditorParams": {"values": cmabench_editor_values},
-                "minWidth": 130,
-                "cellStyle": {"textAlign": "left"},
-                "headerClass": "dashmat-left-header",
-            },
-            {
-                "field": "LongShort",
-                "headerName": "L/S",
-                "editable": True,
-                "cellRenderer": "agCheckboxCellRenderer",
-                "cellEditor": "agCheckboxCellEditor",
-                "width": 72,
-                "cellClass": "dashmat-series-center-cell",
-            },
-            {
-                "field": "ScaleVol",
-                "headerName": "Scale Vol",
-                "editable": True,
-                "cellRenderer": "agCheckboxCellRenderer",
-                "cellEditor": "agCheckboxCellEditor",
-                "width": 112,
-                "cellClass": "dashmat-series-center-cell",
-            },
-            {
-                "field": "MinWt",
-                "headerName": "Min Wt",
-                "editable": {"function": "!params.data.ForceMax"},
-                "width": 98,
-                "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 0; return Math.max(0, Math.min(100, n));"},
-                "cellClass": "dashmat-series-center-cell",
-                "headerClass": "dashmat-center-header",
-            },
-            {
-                "field": "MaxWt",
-                "headerName": "Max Wt",
-                "editable": True,
-                "width": 98,
-                "valueParser": {"function": "var n=Number(params.newValue); if(!isFinite(n)) return 100; return Math.max(0, Math.min(100, n));"},
-                "cellClass": "dashmat-series-center-cell",
-                "headerClass": "dashmat-center-header",
-            },
-            {
-                "field": "ForceMax",
-                "headerName": "Force",
-                "editable": True,
-                "cellRenderer": "agCheckboxCellRenderer",
-                "cellEditor": "agCheckboxCellEditor",
-                "width": 70,
-                "cellClass": "dashmat-series-center-cell",
-            },
-            {
-                "field": "Delete",
-                "editable": True,
-                "cellRenderer": "agCheckboxCellRenderer",
-                "cellEditor": "agCheckboxCellEditor",
-                "width": 74,
-                "cellClass": "dashmat-series-center-cell",
-            },
-        ],
-        rowData=row_data,
-        defaultColDef={
-            "resizable": True,
-            "sortable": False,
-            "filter": False,
-            "suppressHeaderMenuButton": True,
-            "suppressMovable": True,
-            "cellStyle": {"textAlign": "center"},
-            "headerClass": "dashmat-center-header",
-        },
-        style={"height": "46vh", "width": "100%"},
-        dashGridOptions=literal_field_dash_grid_options({
-            "suppressMovableColumns": True,
-            "rowDragManaged": True,
-            "animateRows": False,
-            "singleClickEdit": True,
-            "stopEditingWhenCellsLoseFocus": True,
-            "suppressExcelExport": True,
-            "suppressCsvExport": True,
-        }),
-        enableEnterpriseModules=True,
-        licenseKey=AG_GRID_LICENSE_KEY,
-    )
-    return [grid], series_order, no_update
+    order_update = no_update if normalized_order == current_order else normalized_order
+    column_defs_update = no_update if current_column_defs == column_defs else column_defs
+    return row_data, column_defs_update, order_update, no_update
 
 
 clientside_callback(
