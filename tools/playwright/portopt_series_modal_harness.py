@@ -21,6 +21,126 @@ if str(REPO_ROOT) not in sys.path:
 from utils.raw_dataset import build_raw_data_store_payload
 
 
+def extract_dash_output_ids(post_data: str | None) -> list[str]:
+    if not post_data:
+        return []
+
+    try:
+        payload = json.loads(post_data)
+    except json.JSONDecodeError:
+        return []
+
+    outputs: list[str] = []
+
+    def _append_output(value) -> None:
+        if isinstance(value, str):
+            outputs.append(value)
+            return
+        if isinstance(value, dict):
+            output_id = value.get("id")
+            output_prop = value.get("property")
+            if isinstance(output_id, dict):
+                output_id = json.dumps(output_id, sort_keys=True, separators=(",", ":"))
+            if output_id is not None and output_prop:
+                outputs.append(f"{output_id}.{output_prop}")
+            return
+        if isinstance(value, list):
+            for item in value:
+                _append_output(item)
+
+    _append_output(payload.get("output"))
+    _append_output(payload.get("outputs"))
+    return sorted(set(outputs))
+
+
+class DashUpdateRequestTracker:
+    def __init__(self, page):
+        self.page = page
+        self.active_window = False
+        self.active_requests: dict[int, dict[str, object]] = {}
+        self.records: list[dict[str, object]] = []
+        page.on("request", self._on_request)
+        page.on("requestfinished", self._on_request_finished)
+        page.on("requestfailed", self._on_request_failed)
+
+    def _on_request(self, request) -> None:
+        if not self.active_window or "/_dash-update-component" not in request.url:
+            return
+        post_data = request.post_data or ""
+        self.active_requests[id(request)] = {
+            "started_at": time.perf_counter(),
+            "requestBytes": len(post_data.encode("utf-8")) if post_data else 0,
+            "outputs": extract_dash_output_ids(post_data),
+        }
+
+    def _finalize_request(self, request) -> None:
+        record = self.active_requests.pop(id(request), None)
+        if record is None:
+            return
+
+        response_bytes = 0
+        response = request.response()
+        if response is not None:
+            try:
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    response_bytes = int(content_length)
+                else:
+                    response_bytes = len(response.body())
+            except Exception:
+                response_bytes = 0
+
+        duration_ms = round((time.perf_counter() - record["started_at"]) * 1000)
+        self.records.append(
+            {
+                "durationMs": duration_ms,
+                "requestBytes": record["requestBytes"],
+                "responseBytes": response_bytes,
+                "outputs": record["outputs"],
+            }
+        )
+
+    def _on_request_finished(self, request) -> None:
+        self._finalize_request(request)
+
+    def _on_request_failed(self, request) -> None:
+        self._finalize_request(request)
+
+    def start_window(self) -> None:
+        self.records = []
+        self.active_requests = {}
+        self.active_window = True
+
+    def stop_window(self) -> None:
+        self.active_window = False
+
+    def wait_for_settle(self, timeout_ms: int = 5000) -> None:
+        deadline = time.perf_counter() + (timeout_ms / 1000.0)
+        while self.active_requests and time.perf_counter() < deadline:
+            self.page.wait_for_timeout(50)
+
+    def summary(self) -> dict[str, object]:
+        callback_ids: list[str] = []
+        total_duration = 0
+        total_request_bytes = 0
+        total_response_bytes = 0
+        for record in self.records:
+            total_duration += int(record.get("durationMs", 0) or 0)
+            total_request_bytes += int(record.get("requestBytes", 0) or 0)
+            total_response_bytes += int(record.get("responseBytes", 0) or 0)
+            for output_id in record.get("outputs", []):
+                if output_id not in callback_ids:
+                    callback_ids.append(output_id)
+        return {
+            "dashUpdateRequestCount": len(self.records),
+            "dashUpdateTotalMs": total_duration,
+            "dashUpdateRequestBytes": total_request_bytes,
+            "dashUpdateResponseBytes": total_response_bytes,
+            "dashUpdateCallbacks": callback_ids,
+            "dashUpdateRequests": self.records,
+        }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", default="")
@@ -468,7 +588,7 @@ def seed_portopt_page_db(page, base_url: str, opt_series: list[str]) -> None:
     install_ok_timing_probe(page)
 
 
-def measure_modal_run(page, opt_series: list[str], scenario: str) -> dict[str, object]:
+def measure_modal_run(page, opt_series: list[str], scenario: str, request_tracker: DashUpdateRequestTracker) -> dict[str, object]:
     reset_modal_seed_state(page, opt_series)
 
     open_start = time.perf_counter()
@@ -502,6 +622,7 @@ def measure_modal_run(page, opt_series: list[str], scenario: str) -> dict[str, o
     wait_modal_grid_ready(page, expected_rows=len(opt_series), timeout=30000)
     _, scenario_rows = apply_ok_scenario(page, scenario)
 
+    request_tracker.start_window()
     arm_ok_timing_probe(page)
     ok_start = time.perf_counter()
     page.locator("#po-modal-ok-button").click()
@@ -510,7 +631,10 @@ def measure_modal_run(page, opt_series: list[str], scenario: str) -> dict[str, o
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
     warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
     ok_confirm_ms = round((time.perf_counter() - ok_start) * 1000)
+    request_tracker.stop_window()
+    request_tracker.wait_for_settle(timeout_ms=5000)
     apply_ms = max(ok_confirm_ms - snapshot_ms, 0)
+    request_summary = request_tracker.summary()
 
     return {
         "scenario": scenario,
@@ -522,6 +646,7 @@ def measure_modal_run(page, opt_series: list[str], scenario: str) -> dict[str, o
         "okConfirmMs": ok_confirm_ms,
         "selectedAfterOk": [row["Series"] for row in scenario_rows if row.get("Selected") and not row.get("Delete")],
         "gridRowCount": len(baseline_rows),
+        **request_summary,
     }
 
 
@@ -537,6 +662,7 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
         run_results = []
         for run_index in range(1, args.runs + 1):
             page = browser.new_page(viewport={"width": 1440, "height": 960})
+            request_tracker = DashUpdateRequestTracker(page)
             page.on(
                 "console",
                 lambda msg: console_messages.append({"type": msg.type, "text": msg.text})
@@ -554,7 +680,7 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
             else:
                 seed_portopt_page_synthetic(page, args.base_url, opt_series)
             warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
-            result = measure_modal_run(page, opt_series, args.scenario)
+            result = measure_modal_run(page, opt_series, args.scenario, request_tracker)
             result["run"] = run_index
             run_results.append(result)
             page.close()
@@ -567,6 +693,10 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
     snapshot_values = [run["snapshotMs"] for run in run_results]
     apply_values = [run["applyMs"] for run in run_results]
     ok_confirm_values = [run["okConfirmMs"] for run in run_results]
+    dash_request_counts = [run["dashUpdateRequestCount"] for run in run_results]
+    dash_request_durations = [run["dashUpdateTotalMs"] for run in run_results]
+    dash_request_bytes = [run["dashUpdateRequestBytes"] for run in run_results]
+    dash_response_bytes = [run["dashUpdateResponseBytes"] for run in run_results]
 
     return {
         "timestamp": datetime.now().astimezone().isoformat(),
@@ -585,6 +715,10 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
             "snapshotMedian": round(median(snapshot_values)),
             "applyMedian": round(median(apply_values)),
             "okConfirmMedian": round(median(ok_confirm_values)),
+            "dashUpdateRequestCountMedian": round(median(dash_request_counts)),
+            "dashUpdateTotalMsMedian": round(median(dash_request_durations)),
+            "dashUpdateRequestBytesMedian": round(median(dash_request_bytes)),
+            "dashUpdateResponseBytesMedian": round(median(dash_response_bytes)),
         },
         "consoleMessages": console_messages,
         "timingStartOffset": timing_start_offset,

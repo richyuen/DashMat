@@ -474,6 +474,93 @@ def test_po_common_daily_button_uses_shared_clientside_helper():
     assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
 
 
+def test_po_selection_date_candidates_callback_returns_both_payloads(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    monkeypatch.setattr(portopt, "_dataset_key", lambda raw_data: f"dataset:{raw_data}")
+    monkeypatch.setattr(
+        portopt,
+        "compute_date_range_candidates",
+        lambda dataset_key, periodicity, selected_series: {
+            "kind": "range",
+            "dataset": dataset_key,
+            "periodicity": periodicity,
+            "selected": list(selected_series),
+        },
+    )
+    monkeypatch.setattr(
+        portopt,
+        "compute_common_daily_candidates",
+        lambda dataset_key, selected_series: {
+            "kind": "common_daily",
+            "dataset": dataset_key,
+            "selected": list(selected_series),
+        },
+    )
+
+    range_candidates, common_daily_candidates = portopt.po_update_selection_date_candidates(
+        "raw-payload",
+        "monthly",
+        ["Asset_A", "Asset_B"],
+    )
+
+    assert range_candidates == {
+        "kind": "range",
+        "dataset": "dataset:raw-payload",
+        "periodicity": "monthly",
+        "selected": ["Asset_A", "Asset_B"],
+    }
+    assert common_daily_candidates == {
+        "kind": "common_daily",
+        "dataset": "dataset:raw-payload",
+        "selected": ["Asset_A", "Asset_B"],
+    }
+
+
+def test_po_linear_constraints_columns_use_clientside_builder():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptLinearConstraintColumnDefs")' in page_text
+    assert 'def po_populate_linear_constraints_columns' not in page_text
+    assert "function portoptLinearConstraintColumnDefs(selectedSeries)" in js_text
+    assert 'field: "Constraint"' in js_text
+    assert 'field: "Min"' in js_text
+    assert 'field: "Max"' in js_text
+
+
+def test_po_returns_grid_uses_clientside_builder():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptReturnsGridData")' in page_text
+    assert 'def po_populate_returns_grid' not in page_text
+    assert "function portoptReturnsGridData(selectedSeries, mode, existingReturns, existingVol)" in js_text
+    assert 'field: "Return"' in js_text
+    assert 'field: "Volatility"' in js_text
+
+
+def test_po_matrix_grid_uses_clientside_builder():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptMatrixGridData")' in page_text
+    assert 'def po_populate_matrix_grid' not in page_text
+    assert "function portoptMatrixGridData(selectedSeries, mode, covStore, corrStore)" in js_text
+    assert 'field: "Asset"' in js_text
+    assert "d3.format(',.4f')" in js_text
+
+
+def test_portopt_modal_harness_tracks_dash_update_attribution():
+    harness_text = Path("tools/playwright/portopt_series_modal_harness.py").read_text(encoding="utf-8")
+    assert '"/_dash-update-component"' in harness_text
+    assert '"dashUpdateRequestCount"' in harness_text
+    assert '"dashUpdateTotalMs"' in harness_text
+    assert '"dashUpdateCallbacks"' in harness_text
+    assert '"dashUpdateRequests"' in harness_text
+    assert '"dashUpdateRequestCountMedian"' in harness_text
+
+
 def test_po_init_date_range_is_idempotent_when_range_is_current(monkeypatch, page_modules):
     _, portopt = page_modules
 

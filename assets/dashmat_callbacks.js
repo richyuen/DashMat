@@ -268,6 +268,126 @@
     return !hasDailyTrading;
   }
 
+  function portoptLinearConstraintColumnDefs(selectedSeries) {
+    if (!Array.isArray(selectedSeries) || !selectedSeries.length) {
+      return [];
+    }
+
+    const numericColumn = {
+      editable: true,
+      width: 90,
+      type: "numericColumn",
+      valueFormatter: { function: "d3.format('.4f')(params.value)" },
+      headerClass: "dashmat-center-header"
+    };
+    const columns = [
+      { field: "Constraint", editable: true, width: 120, headerClass: "dashmat-center-header" },
+      Object.assign({ field: "Min" }, numericColumn),
+      Object.assign({ field: "Max" }, numericColumn)
+    ];
+
+    selectedSeries.forEach(function (series) {
+      columns.push({
+        field: series,
+        editable: true,
+        width: 100,
+        type: "numericColumn",
+        valueFormatter: { function: "d3.format('.4f')(params.value)" },
+        headerClass: "dashmat-center-header"
+      });
+    });
+
+    return columns;
+  }
+
+  function portoptReturnsGridData(selectedSeries, mode, existingReturns, existingVol) {
+    if (!Array.isArray(selectedSeries) || !selectedSeries.length) {
+      return [[], []];
+    }
+
+    const returnsMap = existingReturns && typeof existingReturns === "object" ? existingReturns : {};
+    const volMap = existingVol && typeof existingVol === "object" ? existingVol : {};
+    const resolvedMode = mode || "ret_cov";
+    const hideVol = resolvedMode !== "ret_vol_corr";
+    const columnDefs = [
+      { field: "Asset", editable: false, width: 140, headerClass: "dashmat-center-header" },
+      {
+        field: "Return",
+        editable: true,
+        width: 110,
+        type: "numericColumn",
+        valueFormatter: { function: "d3.format('.2%')(params.value)" },
+        valueParser: { function: "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;" },
+        headerClass: "dashmat-center-header"
+      },
+      {
+        field: "Volatility",
+        editable: true,
+        width: 110,
+        type: "numericColumn",
+        valueFormatter: { function: "d3.format('.2%')(params.value)" },
+        valueParser: { function: "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;" },
+        hide: hideVol,
+        headerClass: "dashmat-center-header"
+      }
+    ];
+    const rows = selectedSeries.map(function (series) {
+      return {
+        Asset: series,
+        Return: Object.prototype.hasOwnProperty.call(returnsMap, series) ? returnsMap[series] : 0.0,
+        Volatility: Object.prototype.hasOwnProperty.call(volMap, series) ? volMap[series] : 0.0
+      };
+    });
+    return [rows, columnDefs];
+  }
+
+  function portoptMatrixGridData(selectedSeries, mode, covStore, corrStore) {
+    if (!Array.isArray(selectedSeries) || !selectedSeries.length) {
+      return [[], []];
+    }
+
+    const resolvedMode = mode || "ret_cov";
+    const isCorr = resolvedMode === "ret_vol_corr";
+    const matrixStore = (isCorr ? corrStore : covStore) && typeof (isCorr ? corrStore : covStore) === "object"
+      ? (isCorr ? corrStore : covStore)
+      : {};
+    const columnDefs = [
+      {
+        field: "Asset",
+        editable: false,
+        width: 140,
+        pinned: "left",
+        valueFormatter: { function: "params.value" },
+        headerClass: "dashmat-center-header"
+      }
+    ];
+    selectedSeries.forEach(function (series) {
+      columnDefs.push({
+        field: series,
+        editable: true,
+        width: 110,
+        type: "numericColumn",
+        valueFormatter: { function: "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format(',.4f')(Number(params.value)) : ''" },
+        headerClass: "dashmat-center-header"
+      });
+    });
+
+    const rows = selectedSeries.map(function (rowName) {
+      const rowKey = String(rowName);
+      const rowVals = matrixStore[rowKey] || matrixStore[rowName] || {};
+      const row = { Asset: rowKey };
+      selectedSeries.forEach(function (columnName) {
+        let value = rowVals[columnName];
+        if (value === undefined || value === null) {
+          value = NaN;
+        }
+        row[columnName] = value;
+      });
+      return row;
+    });
+    return [rows, columnDefs];
+  }
+
   function startInitialSeriesModalBlocker(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath) {
     const pagePath = normalizePath(pathname);
     if (pagePath !== targetPath) {
@@ -1915,6 +2035,9 @@
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,
       openPortoptSeriesModal: openPortoptSeriesModal,
+      portoptLinearConstraintColumnDefs: portoptLinearConstraintColumnDefs,
+      portoptMatrixGridData: portoptMatrixGridData,
+      portoptReturnsGridData: portoptReturnsGridData,
       openRegressionSeriesModal: openRegressionSeriesModal,
       portoptBootstrapRestore: portoptBootstrapRestore,
       portoptControlSync: portoptControlSync,

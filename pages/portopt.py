@@ -5428,8 +5428,8 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-# Populate expected returns grid when selected series changes (ex ante models)
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptReturnsGridData"),
     Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
     Output("po-ex-ante-returns-grid", "columnDefs"),
     Input("po-series-select", "data"),
@@ -5438,43 +5438,6 @@ clientside_callback(
     Input("po-ex-ante-vol-store", "data"),
     prevent_initial_call=True,
 )
-def po_populate_returns_grid(selected_series, mode, existing_returns, existing_vol):
-    """Populate the expected returns grid with selected series names."""
-    if not selected_series:
-        return [], []
-    
-    existing_returns = existing_returns or {}
-    existing_vol = existing_vol or {}
-    mode = mode or "ret_cov"
-    
-    # Hide volatility column unless in Vol/Corr mode
-    hide_vol = (mode != "ret_vol_corr")
-    
-    column_defs = [
-        {"field": "Asset", "editable": False, "width": 140, "headerClass": "dashmat-center-header"},
-        {"field": "Return", "editable": True, "width": 110,
-         "type": "numericColumn",
-         "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
-         "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
-         "headerClass": "dashmat-center-header"},
-        {"field": "Volatility", "editable": True, "width": 110,
-         "type": "numericColumn",
-         "valueFormatter": {"function": "d3.format('.2%')(params.value)"},
-         "valueParser": {"function": "var v=params.newValue; if (v===null || v===undefined || v==='') return null; var n=Number(v); if (!isFinite(n)) return null; return Math.abs(n) > 1 ? n/100 : n;"},
-         "hide": hide_vol,
-         "headerClass": "dashmat-center-header"},
-    ]
-
-    rows = []
-    for s in selected_series:
-        rows.append({
-            "Asset": s,
-            "Return": existing_returns.get(s, 0.0),
-            "Volatility": existing_vol.get(s, 0.0),
-        })
-    return rows, column_defs
-
-
 # Sync returns grid edits to store
 @callback(
     Output("po-ex-ante-returns-store", "data"),
@@ -5747,7 +5710,8 @@ def po_update_matrix_ui(mode):
 
 
 # Populate matrix grid
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptMatrixGridData"),
     Output("po-ex-ante-matrix-grid", "rowData", allow_duplicate=True),
     Output("po-ex-ante-matrix-grid", "columnDefs"),
     Input("po-series-select", "data"),
@@ -5756,46 +5720,6 @@ def po_update_matrix_ui(mode):
     Input("po-ex-ante-corr-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_populate_matrix_grid(selected_series, mode, cov_store, corr_store):
-    """Populate the matrix grid structure. Does NOT auto-estimate - use Estimate from Data button."""
-    if not selected_series:
-        return [], []
-    
-    mode = mode or "ret_cov"
-    is_corr = (mode == "ret_vol_corr")
-    
-    existing_matrix = corr_store if is_corr else cov_store
-    existing_matrix = existing_matrix or {}
-
-    matrix_defs = [{"field": "Asset", "editable": False, "width": 140, "pinned": "left",
-                    "valueFormatter": {"function": "params.value"}, "headerClass": "dashmat-center-header"}]
-    for s in selected_series:
-        matrix_defs.append({
-            "field": s,
-            "editable": True, 
-            "width": 110,
-            "type": "numericColumn",
-            "valueFormatter": {"function": "params.value !== null && params.value !== undefined && params.value !== '' && isFinite(Number(params.value)) ? d3.format(',.4f')(Number(params.value)) : ''"},
-            "headerClass": "dashmat-center-header",
-        })
-
-    rows = []
-    for r_name in selected_series:
-        r_name_str = str(r_name)
-        row = {"Asset": r_name_str}
-        
-        row_vals = existing_matrix.get(r_name_str, {})
-        if not row_vals and r_name in existing_matrix:
-             row_vals = existing_matrix.get(r_name, {})
-
-        for c_name in selected_series:
-            val = row_vals.get(c_name)
-            if val is None:
-                val = np.nan
-            row[c_name] = val
-        rows.append(row)
-    
-    return rows, matrix_defs
 
 # Estimate matrix from data button
 @callback(
@@ -6230,35 +6154,12 @@ def po_init_bl_views_grid(store_data, current_rows):
 # Linear Constraints Logic
 # ---------------------------------------------------------------------------
 
-# Populate Linear Constraints Grid Columns
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptLinearConstraintColumnDefs"),
     Output("po-linear-constraints-grid", "columnDefs"),
     Input("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_populate_linear_constraints_columns(selected_series):
-    if not selected_series:
-        return []
-    
-    cols = [
-        {"field": "Constraint", "editable": True, "width": 120, "headerClass": "dashmat-center-header"},
-        {"field": "Min", "editable": True, "width": 90, "type": "numericColumn", 
-         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
-        {"field": "Max", "editable": True, "width": 90, "type": "numericColumn", 
-         "valueFormatter": {"function": "d3.format('.4f')(params.value)"}, "headerClass": "dashmat-center-header"},
-    ]
-    
-    for s in selected_series:
-        cols.append({
-            "field": s,
-            "editable": True,
-            "width": 100,
-            "type": "numericColumn",
-            "valueFormatter": {"function": "d3.format('.4f')(params.value)"},
-            "headerClass": "dashmat-center-header",
-        })
-        
-    return cols
 
 
 # Add Linear Constraint Row
@@ -8087,29 +7988,25 @@ def po_on_modal_cancel(n_clicks):
 
 @callback(
     Output("po-range-candidates-store", "data"),
+    Output("po-common-daily-candidates-store", "data"),
     Input("dashmat-raw-data-store", "data"),
     Input("po-periodicity-select", "value"),
     Input("po-series-select", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_update_range_candidates(raw_data, periodicity, selected_series):
-    return compute_date_range_candidates(
-        _dataset_key(raw_data),
-        periodicity or "daily",
-        tuple(selected_series or ()),
-    )
-
-
-@callback(
-    Output("po-common-daily-candidates-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("po-series-select", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def po_update_common_daily_candidates(raw_data, selected_series):
-    return compute_common_daily_candidates(
-        _dataset_key(raw_data),
-        tuple(selected_series or ()),
+def po_update_selection_date_candidates(raw_data, periodicity, selected_series):
+    dataset_key = _dataset_key(raw_data)
+    selected_series_tuple = tuple(selected_series or ())
+    return (
+        compute_date_range_candidates(
+            dataset_key,
+            periodicity or "daily",
+            selected_series_tuple,
+        ),
+        compute_common_daily_candidates(
+            dataset_key,
+            selected_series_tuple,
+        ),
     )
 
 
