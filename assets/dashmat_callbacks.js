@@ -1381,6 +1381,258 @@
     return [rowData, columnDefsUpdate, orderUpdate, noUpdate()];
   }
 
+  function portoptCollectModalSnapshotRows(rows, validSeriesSet) {
+    const activeRows = [];
+    const finalNames = [];
+    const renameMap = {};
+    const deletedOriginals = [];
+    const deletedFinalNames = [];
+
+    for (let idx = 0; idx < rows.length; idx += 1) {
+      const row = rows[idx];
+      const original = String((row && row.__row_key) || "").trim();
+      if (!original || !validSeriesSet.has(original)) {
+        continue;
+      }
+      const finalName = String((row && row.Series) || "").trim();
+      if (!finalName || finalNames.indexOf(finalName) !== -1) {
+        return { invalid: true };
+      }
+      finalNames.push(finalName);
+      if (finalName !== original) {
+        renameMap[original] = finalName;
+      }
+      activeRows.push([original, finalName, row]);
+      if (!!row.Delete) {
+        deletedOriginals.push(original);
+        deletedFinalNames.push(finalName);
+      }
+    }
+
+    return {
+      invalid: false,
+      activeRows: activeRows,
+      renameMap: renameMap,
+      deletedOriginals: deletedOriginals,
+      deletedFinalNames: deletedFinalNames
+    };
+  }
+
+  function applyPortoptSeriesSnapshot(
+    snapshotData,
+    rawMeta,
+    currentSelect,
+    currentBench,
+    currentCmabench,
+    currentLs,
+    currentOrder,
+    currentVolScaling,
+    currentMinWt,
+    currentMaxWt,
+    currentForceMax
+  ) {
+    const nu = noUpdate();
+    const noopResult = [nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu, nu];
+    const rows = (snapshotData && Array.isArray(snapshotData.rows))
+      ? snapshotData.rows.filter(function (row) { return row && typeof row === "object"; }).map(function (row) {
+        return Object.assign({}, row);
+      })
+      : [];
+    const existingCols = rawMetaColumns(rawMeta);
+    if (!rows.length || !existingCols.length) {
+      return noopResult;
+    }
+
+    const existingSet = new Set(existingCols);
+    const collected = portoptCollectModalSnapshotRows(rows, existingSet);
+    if (!collected || collected.invalid) {
+      return noopResult;
+    }
+
+    const activeRows = collected.activeRows;
+    const renameMap = collected.renameMap;
+    const deletedOriginals = collected.deletedOriginals;
+    const deletedFinalNames = collected.deletedFinalNames;
+    const structuralChange = Object.keys(renameMap).length > 0 || deletedFinalNames.length > 0;
+
+    let remainingCols = existingCols.slice();
+    if (structuralChange) {
+      remainingCols = remainingCols.map(function (series) {
+        return Object.prototype.hasOwnProperty.call(renameMap, series) ? renameMap[series] : series;
+      }).filter(function (series) {
+        return deletedFinalNames.indexOf(series) === -1;
+      });
+    }
+    const remainingSet = new Set(remainingCols);
+
+    const nextSelect = [];
+    const nextBench = {};
+    const nextCmabench = {};
+    const nextLs = {};
+    const nextOrder = [];
+    const nextVolScaling = {};
+    const nextMinWt = {};
+    const nextMaxWt = {};
+    const nextForceMax = {};
+
+    for (let idx = 0; idx < activeRows.length; idx += 1) {
+      const entry = activeRows[idx];
+      const finalName = entry[1];
+      const row = entry[2];
+      if (!remainingSet.has(finalName)) {
+        continue;
+      }
+      nextOrder.push(finalName);
+      if (!!row.Selected) {
+        nextSelect.push(finalName);
+      }
+
+      let benchmarkValue = String(row.Benchmark || "None").trim() || "None";
+      benchmarkValue = Object.prototype.hasOwnProperty.call(renameMap, benchmarkValue) ? renameMap[benchmarkValue] : benchmarkValue;
+      if (benchmarkValue !== "None" && !remainingSet.has(benchmarkValue)) {
+        benchmarkValue = "None";
+      }
+      nextBench[finalName] = benchmarkValue;
+      nextCmabench[finalName] = String(row.CMABench || "").trim();
+      nextLs[finalName] = !!row.LongShort;
+      nextVolScaling[finalName] = row.ScaleVol === undefined ? true : !!row.ScaleVol;
+
+      let minWtValue = portoptCoerceFloat(row.MinWt);
+      let maxWtValue = portoptCoerceFloat(row.MaxWt);
+      minWtValue = minWtValue === null ? 0 : Math.max(0, Math.min(100, minWtValue));
+      maxWtValue = maxWtValue === null ? 100 : Math.max(0, Math.min(100, maxWtValue));
+      const forceMaxValue = !!row.ForceMax;
+      if (forceMaxValue) {
+        minWtValue = 0;
+      }
+      nextMinWt[finalName] = minWtValue;
+      nextMaxWt[finalName] = maxWtValue;
+      nextForceMax[finalName] = forceMaxValue;
+    }
+
+    const currentSelectList = Array.isArray(currentSelect) ? currentSelect.slice() : [];
+    const currentBenchMap = (currentBench && typeof currentBench === "object") ? currentBench : {};
+    const currentCmabenchMap = (currentCmabench && typeof currentCmabench === "object") ? currentCmabench : {};
+    const currentLsMap = (currentLs && typeof currentLs === "object") ? currentLs : {};
+    const currentOrderList = Array.isArray(currentOrder) ? currentOrder.slice() : [];
+    const currentVolScalingMap = (currentVolScaling && typeof currentVolScaling === "object") ? currentVolScaling : {};
+    const currentMinWtMap = (currentMinWt && typeof currentMinWt === "object") ? currentMinWt : {};
+    const currentMaxWtMap = (currentMaxWt && typeof currentMaxWt === "object") ? currentMaxWt : {};
+    const currentForceMaxMap = (currentForceMax && typeof currentForceMax === "object") ? currentForceMax : {};
+
+    if (!structuralChange) {
+      const nextSelectSet = new Set(nextSelect);
+      const currentSelectSet = new Set(currentSelectList);
+      if (nextSelect.length === currentSelectList.length) {
+        let sameMembers = true;
+        currentSelectSet.forEach(function (series) {
+          if (!nextSelectSet.has(series)) {
+            sameMembers = false;
+          }
+        });
+        if (sameMembers) {
+          nextSelect.splice(0, nextSelect.length, ...currentSelectList);
+        }
+      }
+    }
+
+    function stableValue(value) {
+      if (Array.isArray(value)) {
+        return value.map(stableValue);
+      }
+      if (value && typeof value === "object") {
+        const out = {};
+        Object.keys(value).sort().forEach(function (key) {
+          out[key] = stableValue(value[key]);
+        });
+        return out;
+      }
+      return value;
+    }
+
+    function sameValue(left, right) {
+      if (left === right) {
+        return true;
+      }
+      const leftIsObject = left !== null && typeof left === "object";
+      const rightIsObject = right !== null && typeof right === "object";
+      if (leftIsObject || rightIsObject) {
+        try {
+          return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+        } catch (_err) {
+          return false;
+        }
+      }
+      return false;
+    }
+
+    function resolvedOutput(nextValue, currentValue) {
+      return sameValue(currentValue, nextValue) ? nu : nextValue;
+    }
+
+    if (structuralChange) {
+      return [
+        nu,
+        nu,
+        nu,
+        nu,
+        nu,
+        nu,
+        nu,
+        nu,
+        nu,
+        nu,
+        nu,
+        {
+          kind: "structural",
+          stamp: Date.now(),
+          rows: rows,
+          renameMap: renameMap,
+          deletedOriginals: deletedOriginals,
+          deletedFinalNames: deletedFinalNames
+        }
+      ];
+    }
+
+    const selectOutput = resolvedOutput(nextSelect, currentSelectList);
+    const benchOutput = resolvedOutput(nextBench, currentBenchMap);
+    const cmabenchOutput = resolvedOutput(nextCmabench, currentCmabenchMap);
+    const lsOutput = resolvedOutput(nextLs, currentLsMap);
+    const orderOutput = resolvedOutput(nextOrder, currentOrderList);
+    const selectValueOutput = resolvedOutput(nextSelect, currentSelectList);
+    const volScalingOutput = resolvedOutput(nextVolScaling, currentVolScalingMap);
+    const minWtOutput = resolvedOutput(nextMinWt, currentMinWtMap);
+    const maxWtOutput = resolvedOutput(nextMaxWt, currentMaxWtMap);
+    const forceMaxOutput = resolvedOutput(nextForceMax, currentForceMaxMap);
+    const changed = [
+      selectOutput,
+      benchOutput,
+      cmabenchOutput,
+      lsOutput,
+      orderOutput,
+      selectValueOutput,
+      volScalingOutput,
+      minWtOutput,
+      maxWtOutput,
+      forceMaxOutput
+    ].some(function (value) { return value !== nu; });
+
+    return [
+      selectOutput,
+      benchOutput,
+      cmabenchOutput,
+      lsOutput,
+      orderOutput,
+      changed ? false : false,
+      selectValueOutput,
+      volScalingOutput,
+      minWtOutput,
+      maxWtOutput,
+      forceMaxOutput,
+      nu
+    ];
+  }
+
   function openPortoptSeriesModal(
     nClicks,
     pathname,
@@ -2503,6 +2755,7 @@
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,
       openPortoptSeriesModal: openPortoptSeriesModal,
+      applyPortoptSeriesSnapshot: applyPortoptSeriesSnapshot,
       portoptActiveVisTrigger: portoptActiveVisTrigger,
       portoptReportingBasisControl: portoptReportingBasisControl,
       portoptToggleUiElements: portoptToggleUiElements,

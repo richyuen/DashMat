@@ -4288,6 +4288,7 @@ layout = dmc.Container(
         dcc.Store(id="po-temp-max-wt-store", data={}),
         dcc.Store(id="po-temp-force-max-store", data={}),
         dcc.Store(id="po-series-grid-snapshot-store", data=None),
+        dcc.Store(id="po-series-grid-apply-plan-store", data=None, storage_type="memory"),
         dcc.Store(id="po-cmabench-option-values-store", data=None, storage_type="memory"),
         dcc.Store(id="po-portfolio-add-mode-store", data=None),
         dcc.Store(id="po-portfolio-add-rows-store", data=[]),
@@ -7790,6 +7791,33 @@ clientside_callback(
     State("po-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="applyPortoptSeriesSnapshot"),
+    Output("po-series-select", "data", allow_duplicate=True),
+    Output("po-benchmark-assignments-store", "data", allow_duplicate=True),
+    Output("po-cmabench-assignments-store", "data", allow_duplicate=True),
+    Output("po-long-short-store", "data", allow_duplicate=True),
+    Output("po-series-order-store", "data", allow_duplicate=True),
+    Output("po-series-selection-modal", "opened", allow_duplicate=True),
+    Output("po-series-select-value-store", "data", allow_duplicate=True),
+    Output("po-vol-scaling-assignments-store", "data", allow_duplicate=True),
+    Output("po-min-wt-store", "data", allow_duplicate=True),
+    Output("po-max-wt-store", "data", allow_duplicate=True),
+    Output("po-force-max-store", "data", allow_duplicate=True),
+    Output("po-series-grid-apply-plan-store", "data"),
+    Input("po-series-grid-snapshot-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
+    State("po-series-select", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-series-order-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-min-wt-store", "data"),
+    State("po-max-wt-store", "data"),
+    State("po-force-max-store", "data"),
+    prevent_initial_call=True,
+)
 # ---------------------------------------------------------------------------
 # Modal: OK button
 # ---------------------------------------------------------------------------
@@ -7804,13 +7832,13 @@ clientside_callback(
     Output("po-series-select-value-store", "data", allow_duplicate=True),
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("po-vol-scaling-assignments-store", "data", allow_duplicate=True),
-    Output("po-min-wt-store", "data"),
-    Output("po-max-wt-store", "data"),
-    Output("po-force-max-store", "data"),
+    Output("po-min-wt-store", "data", allow_duplicate=True),
+    Output("po-max-wt-store", "data", allow_duplicate=True),
+    Output("po-force-max-store", "data", allow_duplicate=True),
     Output("po-results-store", "data", allow_duplicate=True),
     Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Output("po-cmabench-defaults-store", "data", allow_duplicate=True),
-    Input("po-series-grid-snapshot-store", "data"),
+    Input("po-series-grid-apply-plan-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("dashmat-raw-data-meta-store", "data"),
     State("po-results-store", "data"),
@@ -7825,20 +7853,10 @@ clientside_callback(
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
     State("dashmat-db-import-provenance-store", "data"),
-    State("po-temp-series-select", "data"),
-    State("po-temp-series-order-store", "data"),
-    State("po-temp-deleted-series-store", "data"),
-    State("po-temp-benchmark-assignments-store", "data"),
-    State("po-temp-cmabench-assignments-store", "data"),
-    State("po-temp-long-short-store", "data"),
-    State("po-temp-vol-scaling-assignments-store", "data"),
-    State("po-temp-min-wt-store", "data"),
-    State("po-temp-max-wt-store", "data"),
-    State("po-temp-force-max-store", "data"),
     prevent_initial_call=True,
 )
 def po_on_modal_ok(
-    snapshot_data,
+    apply_plan,
     raw_data,
     raw_meta,
     current_results,
@@ -7853,20 +7871,10 @@ def po_on_modal_ok(
     current_max_wt,
     current_force_max,
     current_provenance,
-    temp_select=None,
-    temp_order=None,
-    temp_deleted=None,
-    temp_bench=None,
-    temp_cmabench=None,
-    temp_ls=None,
-    temp_vol_scaling=None,
-    temp_min_wt=None,
-    temp_max_wt=None,
-    temp_force_max=None,
 ):
-    rows = []
-    if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
-        rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
+    if not isinstance(apply_plan, dict) or apply_plan.get("kind") != "structural":
+        raise PreventUpdate
+    rows = [dict(row) for row in (apply_plan.get("rows") or []) if isinstance(row, dict)]
     if not rows or not raw_data:
         raise PreventUpdate
 
@@ -7874,8 +7882,14 @@ def po_on_modal_ok(
     if not existing_cols:
         existing_cols = list(_raw_df(raw_data).columns)
     existing_set = set(existing_cols)
-    active_rows, rename_map, deleted_originals, deleted_final_names = _po_collect_modal_snapshot_rows(rows, existing_set)
-    structural_change = bool(rename_map or deleted_final_names)
+    active_rows, rename_map, deleted_originals, deleted_final_names = _po_collect_modal_snapshot_rows(
+        rows,
+        existing_set,
+    )
+    rename_map = dict(apply_plan.get("renameMap") or rename_map)
+    deleted_originals = list(apply_plan.get("deletedOriginals") or deleted_originals)
+    deleted_final_names = list(apply_plan.get("deletedFinalNames") or deleted_final_names)
+    structural_change = True
     remaining_cols = set(existing_cols)
     updated_raw_data = no_update
     updated_results = no_update

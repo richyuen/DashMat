@@ -64,6 +64,8 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - When measuring PortOpt modal OK windows, start attribution only after pending modal-open Dash traffic has settled, and count requests by request start time so late modal-open responses do not bleed into OK-window totals.
 - On selection-driven callbacks, prefer metadata stores over full payload stores when only routing keys are needed; for PortOpt date-range fan-out, `dashmat-raw-data-meta-store.dataset_key` is sufficient and avoids pulling the full raw-data blob into the request.
 - If a PortOpt validator depends only on browser-visible state, it is a good clientside candidate, but keep the Python implementation as the reference and add Python-vs-Node parity tests before relying on the JS path for perf gains.
+- For PortOpt modal OK optimization, split non-structural apply (`noop`, `selection`, `order`, metadata-only) clientside before trying to micro-optimize the server structural path; the biggest win came from removing the heavy server request entirely for common cases.
+- Track request bytes as well as request count in modal harness runs; Phase 10 showed the remaining cost can be dominated by request payload size, and removing `dashmat-raw-data-store` from non-structural OK traffic was a larger win than shaving callback body time.
 - Hidden full-screen overlays must be gated with `display:none`.
 - Keep module-switch blockers separate from page-local upload/modal blockers.
 - Shared route callbacks must use `_pages_location.pathname`, must not mix always-mounted and page-local outputs, and must mark page-local inputs/states `allow_optional=True` when other pages may be active.
