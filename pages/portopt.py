@@ -5353,7 +5353,8 @@ clientside_callback(
 )
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptReportingBasisControl"),
     Output("po-reporting-basis-control", "disabled"),
     Output("po-reporting-basis-control", "value", allow_duplicate=True),
     Output("po-reporting-basis-help", "children"),
@@ -5367,7 +5368,8 @@ def po_sync_reporting_basis_control(opt_model, selected_series, long_short_assig
     eligible = _po_supports_split_reporting(opt_model or "risk_parity", selected_series or [], long_short_assignments or {})
     if eligible:
         return False, no_update, "Uses long-only returns for portfolio performance while keeping optimization on the selected basis."
-    return True, "match", "Available only for supported risk-based models when at least one selected series is marked Long/Short."
+    next_value = no_update if current_value == "match" else "match"
+    return True, next_value, "Available only for supported risk-based models when at least one selected series is marked Long/Short."
 
 
 def _po_require_active_vis_trigger(trigger_payload, expected_tab):
@@ -8051,39 +8053,52 @@ def po_update_selection_date_candidates(raw_data, periodicity, selected_series):
     State("po-date-range-store", "data"),
     State("po-start-date-picker", "value"),
     State("po-end-date-picker", "value"),
+    State("po-date-picker-wrapper", "style"),
+    State("po-common-range-button", "disabled"),
+    State("po-maximum-range-button", "disabled"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_date_range(candidates, stored_range, current_start_date, current_end_date):
+def po_init_date_range(
+    candidates,
+    stored_range,
+    current_start_date,
+    current_end_date,
+    current_wrapper_style,
+    current_common_disabled,
+    current_max_disabled,
+):
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
+    def _value_output(current_value, next_value):
+        return no_update if current_value == next_value else next_value
+
+    def _range_output(next_range):
+        if stored_range == next_range:
+            return no_update
+        return next_range
+
+    def _state_outputs(next_start, next_end, next_style, next_common_disabled, next_max_disabled, next_range):
+        return (
+            _value_output(current_start_date, next_start),
+            _value_output(current_end_date, next_end),
+            _value_output(current_wrapper_style, next_style),
+            _value_output(current_common_disabled, next_common_disabled),
+            _value_output(current_max_disabled, next_max_disabled),
+            _range_output(next_range),
+        )
+
     if not isinstance(candidates, dict) or not candidates.get("available_series"):
-        return None, None, disabled_style, True, True, None
+        return _state_outputs(None, None, disabled_style, True, True, None)
 
     try:
         start_date, end_date = resolve_initial_range(candidates, stored_range)
         if not start_date or not end_date:
-            return None, None, disabled_style, True, True, None
+            return _state_outputs(None, None, disabled_style, True, True, None)
         next_range = {"start": start_date, "end": end_date}
-        start_output = no_update if current_start_date == start_date else start_date
-        end_output = no_update if current_end_date == end_date else end_date
-        range_output = (
-            no_update
-            if isinstance(stored_range, dict)
-            and stored_range.get("start") == start_date
-            and stored_range.get("end") == end_date
-            else next_range
-        )
-        return (
-            start_output,
-            end_output,
-            enabled_style,
-            False,
-            False,
-            range_output,
-        )
+        return _state_outputs(start_date, end_date, enabled_style, False, False, next_range)
     except Exception:
-        return None, None, disabled_style, True, True, None
+        return _state_outputs(None, None, disabled_style, True, True, None)
 
 
 clientside_callback(

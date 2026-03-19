@@ -268,6 +268,41 @@
     return !hasDailyTrading;
   }
 
+  const portoptSplitReportingModels = [
+    "risk_parity",
+    "factor_risk_parity",
+    "hierarchical_risk_parity",
+    "minimize_variance",
+    "minimize_cvar"
+  ];
+
+  function portoptSupportsSplitReporting(optModel, selectedSeries, longShortAssignments) {
+    if (portoptSplitReportingModels.indexOf(optModel || "risk_parity") === -1) {
+      return false;
+    }
+    const seriesList = Array.isArray(selectedSeries) ? selectedSeries : [];
+    const assignmentMap = longShortAssignments && typeof longShortAssignments === "object" ? longShortAssignments : {};
+    return seriesList.some(function (series) {
+      return !!assignmentMap[series];
+    });
+  }
+
+  function portoptReportingBasisControl(optModel, selectedSeries, longShortAssignments, currentValue) {
+    const eligible = portoptSupportsSplitReporting(optModel || "risk_parity", selectedSeries || [], longShortAssignments || {});
+    if (eligible) {
+      return [
+        false,
+        noUpdate(),
+        "Uses long-only returns for portfolio performance while keeping optimization on the selected basis."
+      ];
+    }
+    return [
+      true,
+      currentValue === "match" ? noUpdate() : "match",
+      "Available only for supported risk-based models when at least one selected series is marked Long/Short."
+    ];
+  }
+
   function portoptLinearConstraintColumnDefs(selectedSeries) {
     if (!Array.isArray(selectedSeries) || !selectedSeries.length) {
       return [];
@@ -2048,6 +2083,7 @@
       navigateRegression: navigateRegression,
       openPortoptSeriesModal: openPortoptSeriesModal,
       portoptActiveVisTrigger: portoptActiveVisTrigger,
+      portoptReportingBasisControl: portoptReportingBasisControl,
       portoptLinearConstraintColumnDefs: portoptLinearConstraintColumnDefs,
       portoptMatrixGridData: portoptMatrixGridData,
       portoptReturnsGridData: portoptReturnsGridData,

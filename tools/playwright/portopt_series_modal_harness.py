@@ -5,6 +5,7 @@ import json
 import sys
 import time
 import urllib.parse
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from statistics import median
@@ -737,6 +738,11 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
     dash_request_durations = [run["dashUpdateTotalMs"] for run in run_results]
     dash_request_bytes = [run["dashUpdateRequestBytes"] for run in run_results]
     dash_response_bytes = [run["dashUpdateResponseBytes"] for run in run_results]
+    callback_frequency: Counter[str] = Counter()
+    for run in run_results:
+        for request in run.get("dashUpdateRequests", []):
+            for output_id in request.get("outputs", []):
+                callback_frequency[str(output_id)] += 1
 
     return {
         "timestamp": datetime.now().astimezone().isoformat(),
@@ -760,6 +766,10 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
             "dashUpdateTotalMsMedian": round(median(dash_request_durations)),
             "dashUpdateRequestBytesMedian": round(median(dash_request_bytes)),
             "dashUpdateResponseBytesMedian": round(median(dash_response_bytes)),
+            "topDashUpdateCallbacksByFrequency": [
+                {"id": callback_id, "count": count}
+                for callback_id, count in callback_frequency.most_common(10)
+            ],
         },
         "consoleMessages": console_messages,
         "timingStartOffset": timing_start_offset,

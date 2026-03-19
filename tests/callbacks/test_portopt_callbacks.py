@@ -589,6 +589,18 @@ def test_portopt_modal_harness_tracks_dash_update_attribution():
     assert '"dashUpdateCallbacks"' in harness_text
     assert '"dashUpdateRequests"' in harness_text
     assert '"dashUpdateRequestCountMedian"' in harness_text
+    assert '"topDashUpdateCallbacksByFrequency"' in harness_text
+
+
+def test_po_reporting_basis_control_uses_clientside_callback():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptReportingBasisControl")' in page_text
+    assert "function portoptReportingBasisControl(optModel, selectedSeries, longShortAssignments, currentValue)" in js_text
+    assert "function portoptSupportsSplitReporting(optModel, selectedSeries, longShortAssignments)" in js_text
+    for model_name in ("risk_parity", "factor_risk_parity", "hierarchical_risk_parity", "minimize_variance", "minimize_cvar"):
+        assert f'"{model_name}"' in js_text
 
 
 def test_portopt_modal_harness_supports_active_tab():
@@ -618,10 +630,16 @@ def test_po_init_date_range_is_idempotent_when_range_is_current(monkeypatch, pag
         {"start": "2024-01-01", "end": "2024-12-31"},
         "2024-01-01",
         "2024-12-31",
+        {"display": "flex", "alignItems": "flex-start"},
+        False,
+        False,
     )
 
     assert start is no_update
     assert end is no_update
+    assert _style is no_update
+    assert _common_disabled is no_update
+    assert _max_disabled is no_update
     assert range_store is no_update
 
 
@@ -1529,6 +1547,21 @@ def test_po_sync_reporting_basis_control_disables_when_ineligible(page_modules):
 
     assert disabled is True
     assert value == "match"
+    assert "supported risk-based models" in help_text
+
+
+def test_po_sync_reporting_basis_control_returns_no_update_when_already_match(page_modules):
+    _, portopt = page_modules
+
+    disabled, value, help_text = portopt.po_sync_reporting_basis_control(
+        "maximize_sharpe",
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": True},
+        "match",
+    )
+
+    assert disabled is True
+    assert value is no_update
     assert "supported risk-based models" in help_text
 
 
