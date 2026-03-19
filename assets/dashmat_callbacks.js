@@ -388,6 +388,18 @@
     return [rows, columnDefs];
   }
 
+  function portoptActiveVisTrigger(activeTab, selectedPortfolio, periodicity, returnsBasis, rollingWindow, rollingReturnType, rollingMetric, rollingView, savedSeriesStore, useRiskFree, calendarView, calendarSeries, partialMode, drawdownView) {
+    const gatedTabs = ["returns", "rolling", "statistics", "calendar", "drawdown"];
+    if (gatedTabs.indexOf(activeTab) === -1) {
+      return noUpdate();
+    }
+    return {
+      tab: activeTab,
+      stamp: Date.now(),
+      reason: triggeredId() || "unknown"
+    };
+  }
+
   function startInitialSeriesModalBlocker(pathname, pageLoadReady, modalOpened, modalStillNeeded, virtualRows, targetPath) {
     const pagePath = normalizePath(pathname);
     if (pagePath !== targetPath) {
@@ -2035,6 +2047,7 @@
       navigatePortopt: navigatePortopt,
       navigateRegression: navigateRegression,
       openPortoptSeriesModal: openPortoptSeriesModal,
+      portoptActiveVisTrigger: portoptActiveVisTrigger,
       portoptLinearConstraintColumnDefs: portoptLinearConstraintColumnDefs,
       portoptMatrixGridData: portoptMatrixGridData,
       portoptReturnsGridData: portoptReturnsGridData,

@@ -41,7 +41,9 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 ## Performance
 
 - Warm-switch decisions need browser timing, not just unit tests; use `5-run` passes.
+- Perf work should measure browser callback/network fan-out, not just server callback time.
 - Measure PortOpt startup and warm-switch separately.
+- For modal-heavy flows, split measurements into open, snapshot, and apply windows when possible.
 - For A/B warm-switch timing, run comparison cases in series, not in parallel, to avoid local resource contention skewing the result.
 - PortOpt warm-switch rollback reference on `2026-03-13`: about `1970 ms` ready and `2870 ms` weights ready in non-debug mode.
 - Do not assume PortOpt warm-switch is server-bound; the weight-chart callback was only about `15-18 ms`.
@@ -52,6 +54,10 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - The PortOpt series modal now keeps a stable `po-series-selection-grid` in layout; optimize that path by updating `rowData` / `columnDefs`, not by rebuilding the grid shell.
 - Preserve the PortOpt modal snapshot-on-OK contract; do not introduce live per-edit temp-store syncing unless measurements justify it.
 - Do not assume the PortOpt series modal is server-bound; `portopt.render_series_modal_grid` was effectively negligible during Phase 2 timing and the remaining cost was browser-side modal/grid work.
+- Synthetic perf and DB-backed perf can diverge materially; validate both before drawing conclusions.
+- Prefer small internal `memory` stores for perf routing/gating over persisted schema changes.
+- When hidden tabs are expensive, first prevent their callbacks from being scheduled; optimizing the callback body is usually a smaller win.
+- The PortOpt hidden content-tab trigger pattern is a candidate for AnalyticsTool/Regression when inactive tab content is waking on shared control changes.
 - Hidden full-screen overlays must be gated with `display:none`.
 - Keep module-switch blockers separate from page-local upload/modal blockers.
 - Shared route callbacks must use `_pages_location.pathname`, must not mix always-mounted and page-local outputs, and must mark page-local inputs/states `allow_optional=True` when other pages may be active.
@@ -67,6 +73,8 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - For harness timing correlation, pass the timed server `STDOUT` log path to `tools/playwright/warm_switch_harness.ps1` / `--server-log`; do not use the stderr log.
 - Use `tools/playwright/portopt_series_modal_harness.ps1` for PortOpt series-modal timing; it measures modal open, select all, unselect all, and OK confirm in `5-run` passes.
 - The PortOpt modal harness seeds a deterministic synthetic raw dataset and preloads the modal once before the measured window so modal timings stay isolated from welcome-screen/bootstrap noise.
+- Use harness request attribution to choose the next perf phase instead of guessing from medians alone.
+- Prefer adding harness switches for active-tab / restore-tab scenarios rather than changing app code to force a perf case.
 - For strict PortOpt first-entry timing, parse only the measured entry window after warmup.
 - If the warm-switch harness stalls on `#po-run-button`, verify the canonical PortOpt series-config stores first.
 - Keep Playwright/runtime artifacts out of commits unless explicitly needed, and clean `output/` after ad hoc validation runs.

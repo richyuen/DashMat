@@ -4309,6 +4309,7 @@ layout = dmc.Container(
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="po-common-daily-candidates-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-active-vis-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
@@ -5369,6 +5370,13 @@ def po_sync_reporting_basis_control(opt_model, selected_series, long_short_assig
     return True, "match", "Available only for supported risk-based models when at least one selected series is marked Long/Short."
 
 
+def _po_require_active_vis_trigger(trigger_payload, expected_tab):
+    if not isinstance(trigger_payload, dict):
+        raise PreventUpdate
+    if trigger_payload.get("tab") != expected_tab:
+        raise PreventUpdate
+
+
 @callback(
     Output("po-portfolio-name-input", "value", allow_duplicate=True),
     Input("po-opt-model-select", "value"),
@@ -5720,6 +5728,28 @@ clientside_callback(
     Input("po-ex-ante-corr-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptActiveVisTrigger"),
+    Output("po-active-vis-trigger-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-periodicity-select", "value"),
+    Input("po-returns-basis-store", "data"),
+    Input("po-rolling-window-select", "value"),
+    Input("po-rolling-return-type-select", "value"),
+    Input("po-rolling-metric-select", "value"),
+    Input("po-rolling-chart-switch", "value"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("po-use-risk-free-store", "data"),
+    Input("po-calendar-view-select", "value"),
+    Input("po-calendar-series-select", "value"),
+    Input("po-partial-period-store", "data"),
+    Input("po-drawdown-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
 
 # Estimate matrix from data button
 @callback(
@@ -9131,15 +9161,16 @@ def po_toggle_rolling_return_type(metric):
 
 @callback(
     Output("po-rolling-content", "children"),
-    Input("po-vis-tabs", "value"),
-    Input("po-weight-portfolio-select", "value"),
-    Input("po-periodicity-select", "value"),
-    Input("po-rolling-window-select", "value"),
-    Input("po-rolling-return-type-select", "value"),
-    Input("po-rolling-metric-select", "value"),
-    Input("po-rolling-chart-switch", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
-    Input("po-use-risk-free-store", "data"),
+    Input("po-active-vis-trigger-store", "data"),
+    State("po-vis-tabs", "value"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-periodicity-select", "value"),
+    State("po-rolling-window-select", "value"),
+    State("po-rolling-return-type-select", "value"),
+    State("po-rolling-metric-select", "value"),
+    State("po-rolling-chart-switch", "value"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("po-use-risk-free-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9151,6 +9182,7 @@ def po_toggle_rolling_return_type(metric):
     prevent_initial_call=True,
 )
 def _po_render_rolling_callback(
+    trigger_payload,
     active_tab,
     selected_portfolio,
     periodicity,
@@ -9169,6 +9201,7 @@ def _po_render_rolling_callback(
     theme,
     results,
 ):
+    _po_require_active_vis_trigger(trigger_payload, "rolling")
     return po_render_rolling(
         results,
         active_tab,
@@ -9339,13 +9372,14 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
 
 @callback(
     Output("po-calendar-content", "children"),
-    Input("po-vis-tabs", "value"),
-    Input("po-weight-portfolio-select", "value"),
-    Input("po-periodicity-select", "value"),
-    Input("po-calendar-view-select", "value"),
-    Input("po-calendar-series-select", "value"),
-    Input("po-returns-basis-store", "data"),
-    Input("po-partial-period-store", "data"),
+    Input("po-active-vis-trigger-store", "data"),
+    State("po-vis-tabs", "value"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-periodicity-select", "value"),
+    State("po-calendar-view-select", "value"),
+    State("po-calendar-series-select", "value"),
+    State("po-returns-basis-store", "data"),
+    State("po-partial-period-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9356,6 +9390,7 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     prevent_initial_call=True,
 )
 def _po_render_calendar_callback(
+    trigger_payload,
     active_tab,
     selected_portfolio,
     periodicity,
@@ -9371,6 +9406,7 @@ def _po_render_calendar_callback(
     vol_scaling,
     results,
 ):
+    _po_require_active_vis_trigger(trigger_payload, "calendar")
     return po_render_calendar(
         results,
         active_tab,
@@ -9513,11 +9549,12 @@ def po_render_calendar(
 
 @callback(
     Output("po-drawdown-content", "children"),
-    Input("po-vis-tabs", "value"),
-    Input("po-weight-portfolio-select", "value"),
-    Input("po-periodicity-select", "value"),
-    Input("po-drawdown-chart-switch", "value"),
-    Input("po-returns-basis-store", "data"),
+    Input("po-active-vis-trigger-store", "data"),
+    State("po-vis-tabs", "value"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-periodicity-select", "value"),
+    State("po-drawdown-chart-switch", "value"),
+    State("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9529,6 +9566,7 @@ def po_render_calendar(
     prevent_initial_call=True,
 )
 def _po_render_drawdown_callback(
+    trigger_payload,
     active_tab,
     selected_portfolio,
     periodicity,
@@ -9543,6 +9581,7 @@ def _po_render_drawdown_callback(
     theme,
     results,
 ):
+    _po_require_active_vis_trigger(trigger_payload, "drawdown")
     return po_render_drawdown(
         results,
         active_tab,
@@ -10010,10 +10049,11 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
 
 @callback(
     Output("po-statistics-grid-content", "children"),
-    Input("po-vis-tabs", "value"),
-    Input("po-weight-portfolio-select", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
-    Input("po-use-risk-free-store", "data"),
+    Input("po-active-vis-trigger-store", "data"),
+    State("po-vis-tabs", "value"),
+    State("po-weight-portfolio-select", "value"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("po-use-risk-free-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -10025,6 +10065,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     prevent_initial_call=True,
 )
 def _po_render_statistics_callback(
+    trigger_payload,
     active_tab,
     selected_portfolio,
     saved_series_store,
@@ -10038,6 +10079,7 @@ def _po_render_statistics_callback(
     vol_scaling=None,
     results=None,
 ):
+    _po_require_active_vis_trigger(trigger_payload, "statistics")
     return po_render_statistics(
         results,
         active_tab,
@@ -10144,9 +10186,10 @@ def po_render_statistics(
 
 @callback(
     Output("po-returns-grid-content", "children"),
-    Input("po-vis-tabs", "value"),
-    Input("po-weight-portfolio-select", "value"),
-    Input("po-returns-basis-store", "data"),
+    Input("po-active-vis-trigger-store", "data"),
+    State("po-vis-tabs", "value"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-returns-basis-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10158,6 +10201,7 @@ def po_render_statistics(
     prevent_initial_call=True,
 )
 def _po_render_returns_callback(
+    trigger_payload,
     active_tab,
     selected_portfolio,
     returns_basis="total",
@@ -10170,6 +10214,7 @@ def _po_render_returns_callback(
     vol_scaling=None,
     results=None,
 ):
+    _po_require_active_vis_trigger(trigger_payload, "returns")
     return po_render_returns(
         results,
         active_tab,

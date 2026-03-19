@@ -21,6 +21,16 @@ if str(REPO_ROOT) not in sys.path:
 from utils.raw_dataset import build_raw_data_store_payload
 
 
+ACTIVE_VIS_TAB_LABELS = {
+    "weight": "Weights",
+    "returns": "Returns",
+    "rolling": "Rolling",
+    "statistics": "Statistics",
+    "calendar": "Calendar Year",
+    "drawdown": "Drawdown",
+}
+
+
 def extract_dash_output_ids(post_data: str | None) -> list[str]:
     if not post_data:
         return []
@@ -157,19 +167,25 @@ def parse_args() -> argparse.Namespace:
         choices=("noop", "selection", "order", "metadata", "rename", "delete"),
         default="selection",
     )
+    parser.add_argument(
+        "--active-tab",
+        choices=tuple(ACTIVE_VIS_TAB_LABELS.keys()),
+        default="weight",
+    )
     parser.add_argument("--db-series", nargs="+", default=warm.DEFAULT_DB_SERIES)
     parser.add_argument("--server-log", default="")
     return parser.parse_args()
 
 
-def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str, mode: str, scenario: str) -> str:
+def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str, mode: str, scenario: str, active_tab: str) -> str:
     git_token = warm.sanitize_token((git_ref or "unknown")[:8], "unknown")
     label_token = warm.sanitize_token(label, "run")
     mode_token = warm.sanitize_token(mode, "synthetic")
     scenario_token = warm.sanitize_token(scenario, "selection")
+    active_tab_token = warm.sanitize_token(active_tab, "weight")
     port = urllib.parse.urlparse(base_url).port
     port_token = f"p{port}" if port else "punknown"
-    return f"portopt_series_modal_{timestamp}_{label_token}_{mode_token}_{scenario_token}_{git_token}_{port_token}"
+    return f"portopt_series_modal_{timestamp}_{label_token}_{mode_token}_{scenario_token}_{active_tab_token}_{git_token}_{port_token}"
 
 
 def build_synthetic_raw_dataset(series_names: list[str]) -> tuple[dict[str, object], dict[str, object]]:
@@ -546,7 +562,29 @@ def reset_modal_seed_state(page, opt_series: list[str]) -> None:
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
 
 
-def seed_portopt_page_synthetic(page, base_url: str, opt_series: list[str]) -> None:
+def set_active_vis_tab(page, active_tab: str) -> None:
+    target_tab = active_tab or "weight"
+    if target_tab == "weight":
+        return
+    tab_label = ACTIVE_VIS_TAB_LABELS.get(target_tab)
+    if not tab_label:
+        raise RuntimeError(f"Unsupported PortOpt active tab '{target_tab}'.")
+    tab = page.get_by_role("tab", name=tab_label, exact=True)
+    tab.click(force=True)
+    page.wait_for_function(
+        """
+        (expectedLabel) => {
+          const active = document.querySelector('[role="tab"][aria-selected="true"]');
+          return !!active && ((active.textContent || '').trim() === expectedLabel);
+        }
+        """,
+        arg=tab_label,
+        timeout=30000,
+    )
+    warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
+
+
+def seed_portopt_page_synthetic(page, base_url: str, opt_series: list[str], active_tab: str) -> None:
     raw_data_payload, raw_meta_payload = build_synthetic_raw_dataset(opt_series)
     page.goto(base_url + "/portopt", wait_until="domcontentloaded")
     warm.wait_dash_hydrated(page, timeout=30000)
@@ -566,9 +604,10 @@ def seed_portopt_page_synthetic(page, base_url: str, opt_series: list[str]) -> N
     page.locator("#po-modal-cancel-button").click()
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
     install_ok_timing_probe(page)
+    set_active_vis_tab(page, active_tab)
 
 
-def seed_portopt_page_db(page, base_url: str, opt_series: list[str]) -> None:
+def seed_portopt_page_db(page, base_url: str, opt_series: list[str], active_tab: str) -> None:
     page.goto(base_url + "/portopt", wait_until="domcontentloaded")
     warm.wait_dash_hydrated(page, timeout=30000)
     warm.try_set_component_props(page, "po-page-visited-store", {"data": True})
@@ -586,6 +625,7 @@ def seed_portopt_page_db(page, base_url: str, opt_series: list[str]) -> None:
     warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
     wait_session_store(page, "po-series-select", opt_series, timeout=30000)
     install_ok_timing_probe(page)
+    set_active_vis_tab(page, active_tab)
 
 
 def measure_modal_run(page, opt_series: list[str], scenario: str, request_tracker: DashUpdateRequestTracker) -> dict[str, object]:
@@ -676,9 +716,9 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
                 else None,
             )
             if args.mode == "db":
-                seed_portopt_page_db(page, args.base_url, opt_series)
+                seed_portopt_page_db(page, args.base_url, opt_series, args.active_tab)
             else:
-                seed_portopt_page_synthetic(page, args.base_url, opt_series)
+                seed_portopt_page_synthetic(page, args.base_url, opt_series, args.active_tab)
             warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
             result = measure_modal_run(page, opt_series, args.scenario, request_tracker)
             result["run"] = run_index
@@ -705,6 +745,7 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
         "baseUrl": args.base_url,
         "mode": args.mode,
         "scenario": args.scenario,
+        "activeTab": args.active_tab,
         "dbSeries": args.db_series,
         "selectedSeries": opt_series,
         "runs": run_results,
@@ -745,6 +786,7 @@ def main() -> int:
         timestamp,
         args.mode,
         args.scenario,
+        args.active_tab,
     )
     out_dir = root / "output" / "playwright"
     fail_dir = out_dir / "failures"

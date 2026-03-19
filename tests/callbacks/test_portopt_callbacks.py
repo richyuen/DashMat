@@ -474,6 +474,23 @@ def test_po_common_daily_button_uses_shared_clientside_helper():
     assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
 
 
+def test_po_active_vis_trigger_store_exists(page_modules):
+    _, portopt = page_modules
+    assert _find_component_by_id(portopt.layout, "po-active-vis-trigger-store") is not None
+
+
+def test_po_require_active_vis_trigger_rejects_mismatched_tab(page_modules):
+    _, portopt = page_modules
+
+    assert portopt._po_require_active_vis_trigger({"tab": "returns"}, "returns") is None
+
+    with pytest.raises(PreventUpdate):
+        portopt._po_require_active_vis_trigger(None, "returns")
+
+    with pytest.raises(PreventUpdate):
+        portopt._po_require_active_vis_trigger({"tab": "weight"}, "returns")
+
+
 def test_po_selection_date_candidates_callback_returns_both_payloads(monkeypatch, page_modules):
     _, portopt = page_modules
 
@@ -551,6 +568,19 @@ def test_po_matrix_grid_uses_clientside_builder():
     assert "d3.format(',.4f')" in js_text
 
 
+def test_po_hidden_vis_tabs_use_shared_trigger_store():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptActiveVisTrigger")' in page_text
+    assert 'Output("po-active-vis-trigger-store", "data")' in page_text
+    assert "function portoptActiveVisTrigger(activeTab" in js_text
+    for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown"):
+        assert f'"{tab_name}"' in js_text
+    for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown"):
+        assert f'_po_require_active_vis_trigger(trigger_payload, "{tab_name}")' in page_text
+
+
 def test_portopt_modal_harness_tracks_dash_update_attribution():
     harness_text = Path("tools/playwright/portopt_series_modal_harness.py").read_text(encoding="utf-8")
     assert '"/_dash-update-component"' in harness_text
@@ -559,6 +589,17 @@ def test_portopt_modal_harness_tracks_dash_update_attribution():
     assert '"dashUpdateCallbacks"' in harness_text
     assert '"dashUpdateRequests"' in harness_text
     assert '"dashUpdateRequestCountMedian"' in harness_text
+
+
+def test_portopt_modal_harness_supports_active_tab():
+    harness_text = Path("tools/playwright/portopt_series_modal_harness.py").read_text(encoding="utf-8")
+    wrapper_text = Path("tools/playwright/portopt_series_modal_harness.ps1").read_text(encoding="utf-8")
+
+    assert '"--active-tab"' in harness_text
+    assert '"activeTab": args.active_tab' in harness_text
+    assert "def set_active_vis_tab(page, active_tab: str) -> None:" in harness_text
+    assert "[ValidateSet('weight', 'returns', 'rolling', 'statistics', 'calendar', 'drawdown')][string]$ActiveTab = 'weight'" in wrapper_text
+    assert "'--active-tab', $ActiveTab" in wrapper_text
 
 
 def test_po_init_date_range_is_idempotent_when_range_is_current(monkeypatch, page_modules):

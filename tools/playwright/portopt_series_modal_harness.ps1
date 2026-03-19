@@ -8,6 +8,7 @@ param(
     [string]$GitRef = '',
     [ValidateSet('synthetic', 'db')][string]$Mode = 'synthetic',
     [ValidateSet('noop', 'selection', 'order', 'metadata', 'rename', 'delete')][string]$Scenario = 'selection',
+    [ValidateSet('weight', 'returns', 'rolling', 'statistics', 'calendar', 'drawdown')][string]$ActiveTab = 'weight',
     [string]$ServerLog = '',
     [switch]$SkipDbBuild,
     [switch]$Headed
@@ -25,7 +26,8 @@ $args = @(
   '--startup-timeout', $StartupTimeout.ToString(),
   '--label', $Label,
   '--mode', $Mode,
-  '--scenario', $Scenario
+  '--scenario', $Scenario,
+  '--active-tab', $ActiveTab
 )
 
 if ($GitRef) {
