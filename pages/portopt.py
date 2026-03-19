@@ -2427,37 +2427,58 @@ def _compute_cma_missing(
     return list(dict.fromkeys(missing))
 
 
-def _cma_missing_message(target: str | None, missing: list[str]) -> str:
-    if not missing:
-        return ""
-    if (target or "returns") == "returns":
-        return f"Missing series in DB: {', '.join(missing)}. They will be loaded as 0."
-    return f"Missing series in DB: {', '.join(missing)}. They will be loaded as NaN."
+def _cma_missing_message(target: str | None, missing: list[str], unmapped: list[str] | None = None) -> str:
+    messages: list[str] = []
+    if unmapped:
+        missing_assignments = list(dict.fromkeys(str(series) for series in unmapped if str(series).strip()))
+        if missing_assignments:
+            messages.append(f"Select CMA Benchmarks for: {', '.join(missing_assignments)}.")
+    if missing:
+        if (target or "returns") == "returns":
+            messages.append(f"Missing series in DB: {', '.join(missing)}. They will be loaded as 0.")
+        else:
+            messages.append(f"Missing series in DB: {', '.join(missing)}. They will be loaded as NaN.")
+    return " ".join(messages)
 
 
 def _resolve_cma_bench(series_name: str, cmabench_assignments: dict | None) -> str:
     if not cmabench_assignments:
-        return series_name
+        return ""
     bench = cmabench_assignments.get(series_name)
     if isinstance(bench, str):
         bench = bench.strip()
-    return bench if bench else series_name
+    return bench if bench else ""
 
 
 def _selected_cma_benches(selected_series: list[str] | None, cmabench_assignments: dict | None) -> list[str]:
-    return [_resolve_cma_bench(s, cmabench_assignments) for s in (selected_series or [])]
+    selected = []
+    for series in (selected_series or []):
+        bench = _resolve_cma_bench(series, cmabench_assignments)
+        if bench:
+            selected.append(bench)
+    return selected
 
 
-def _effective_cmabench_assignments(selected_series: list[str] | None, cmabench_assignments: dict | None) -> dict[str, str]:
+def _missing_cmabench_assignments(selected_series: list[str] | None, cmabench_assignments: dict | None) -> list[str]:
     series = selected_series or []
+    assignments = cmabench_assignments or {}
+    return [series_name for series_name in series if not str(assignments.get(series_name, "")).strip()]
+
+
+def _effective_cmabench_assignments(
+    selected_series: list[str] | None,
+    cmabench_assignments: dict | None,
+    cmabench_defaults: dict | None = None,
+) -> dict[str, str]:
+    series = list(selected_series or [])
+    selected_set = set(series)
     effective = {}
-    if cmabench_assignments:
-        for s, v in cmabench_assignments.items():
+    for source in (cmabench_defaults or {}, cmabench_assignments or {}):
+        for s, v in source.items():
+            if selected_set and s not in selected_set:
+                continue
             if isinstance(v, str) and v.strip():
                 effective[s] = v.strip()
-    missing = [s for s in series if not effective.get(s)]
-    if missing:
-        effective.update(get_cmabench_map_for_fofbench(DB_ENGINE, missing))
     return effective
 
 
@@ -2480,6 +2501,33 @@ def _po_resolve_cmabench_defaults(series_names, current_cmabench_assignments) ->
     if not missing:
         return {}
     return dict(_po_cached_cmabench_defaults(tuple(missing)))
+
+
+def _po_update_cmabench_defaults_store(
+    current_defaults: dict | None,
+    rename_map: dict[str, str] | None,
+    deleted_series: list[str] | None,
+    remaining_series: list[str] | None,
+) -> dict[str, str]:
+    rename_map = dict(rename_map or {})
+    deleted_set = {str(series).strip() for series in (deleted_series or []) if str(series).strip()}
+    remaining_set = {str(series).strip() for series in (remaining_series or []) if str(series).strip()}
+
+    updated = {}
+    for original, value in (current_defaults or {}).items():
+        original_name = str(original).strip()
+        if not original_name or not isinstance(value, str):
+            continue
+        clean_value = value.strip()
+        if not clean_value:
+            continue
+        final_name = str(rename_map.get(original_name, original_name)).strip()
+        if not final_name or final_name in deleted_set:
+            continue
+        if remaining_set and final_name not in remaining_set:
+            continue
+        updated[final_name] = clean_value
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -4194,6 +4242,7 @@ layout = dmc.Container(
         dcc.Store(id="po-series-order-store", data=[], storage_type="session"),
         dcc.Store(id="po-benchmark-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="po-cmabench-assignments-store", data={}, storage_type="session"),
+        dcc.Store(id="po-cmabench-defaults-store", data={}, storage_type="session"),
         dcc.Store(id="po-long-short-store", data={}, storage_type="session"),
         dcc.Store(id="po-vol-scaling-assignments-store", data={}, storage_type="session"),
         dcc.Store(id="po-min-wt-store", data={}, storage_type="session"),
@@ -5502,10 +5551,11 @@ def po_clear_returns(n_clicks, selected_series):
     Input("po-load-db-matrix-btn", "n_clicks"),
     State("po-series-select", "data"),
     State("po-cmabench-assignments-store", "data"),
+    State("po-cmabench-defaults-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     prevent_initial_call=True,
 )
-def po_open_cma_load_modal(n_returns, n_matrix, selected_series, cmabench_assignments, mode):
+def po_open_cma_load_modal(n_returns, n_matrix, selected_series, cmabench_assignments, cmabench_defaults, mode):
     if not n_returns and not n_matrix:
         raise PreventUpdate
 
@@ -5520,10 +5570,11 @@ def po_open_cma_load_modal(n_returns, n_matrix, selected_series, cmabench_assign
     default_type = "hmm"
     stats_map = _get_cma_stats_map(default_version, default_type)
     corr_map = _get_cma_corr_map(default_version, default_type)
-    effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments)
+    effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments, cmabench_defaults)
+    unmapped = _missing_cmabench_assignments(selected_series, effective_cmabench)
     selected_cma = _selected_cma_benches(selected_series, effective_cmabench)
     missing = _compute_cma_missing(selected_cma, target, mode, stats_map, corr_map)
-    missing_msg = _cma_missing_message(target, missing)
+    missing_msg = _cma_missing_message(target, missing, unmapped)
     return True, target, version_options, default_version, default_type, missing_msg
 
 
@@ -5545,19 +5596,21 @@ def po_close_cma_load_modal(n_clicks):
     Input("po-cma-load-target-store", "data"),
     State("po-series-select", "data"),
     State("po-cmabench-assignments-store", "data"),
+    State("po-cmabench-defaults-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_cma_missing_warning(version, cma_type, target, selected_series, cmabench_assignments, mode):
+def po_update_cma_missing_warning(version, cma_type, target, selected_series, cmabench_assignments, cmabench_defaults, mode):
     if version is None or not cma_type:
         return "Select a valid Version and Type."
     try:
         stats_map = _get_cma_stats_map(int(version), cma_type)
         corr_map = _get_cma_corr_map(int(version), cma_type)
-        effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments)
+        effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments, cmabench_defaults)
+        unmapped = _missing_cmabench_assignments(selected_series, effective_cmabench)
         selected_cma = _selected_cma_benches(selected_series, effective_cmabench)
         missing = _compute_cma_missing(selected_cma, target, mode, stats_map, corr_map)
-        return _cma_missing_message(target, missing)
+        return _cma_missing_message(target, missing, unmapped)
     except Exception:
         return "Unable to query CMA tables. Check database connection/configuration."
 
@@ -5576,10 +5629,11 @@ def po_update_cma_missing_warning(version, cma_type, target, selected_series, cm
     State("po-cma-load-target-store", "data"),
     State("po-series-select", "data"),
     State("po-cmabench-assignments-store", "data"),
+    State("po-cmabench-defaults-store", "data"),
     State("po-ex-ante-mode-store", "data"),
     prevent_initial_call=True,
 )
-def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, cmabench_assignments, mode):
+def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, cmabench_assignments, cmabench_defaults, mode):
     if not n_clicks:
         raise PreventUpdate
     if version is None or not cma_type or not selected_series:
@@ -5594,8 +5648,10 @@ def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, cm
     except Exception:
         raise PreventUpdate
 
-    effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments)
-    cma_lookup = {s: _resolve_cma_bench(s, effective_cmabench) for s in selected_series}
+    effective_cmabench = _effective_cmabench_assignments(selected_series, cmabench_assignments, cmabench_defaults)
+    if _missing_cmabench_assignments(selected_series, effective_cmabench):
+        raise PreventUpdate
+    cma_lookup = {s: effective_cmabench.get(s, "") for s in selected_series}
 
     if target == "returns":
         returns_dict = {}
@@ -6615,6 +6671,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     Output("po-db-add-modal", "opened", allow_duplicate=True),
     Output("po-db-add-series-select", "value", allow_duplicate=True),
     Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
+    Output("po-cmabench-defaults-store", "data", allow_duplicate=True),
     Input("po-db-add-ok-button", "n_clicks"),
     State("po-db-add-series-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -6629,6 +6686,7 @@ def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
     State("po-max-wt-store", "data"),
     State("po-force-max-store", "data"),
     State("dashmat-db-import-provenance-store", "data"),
+    State("po-cmabench-defaults-store", "data"),
     prevent_initial_call=True,
 )
 def po_add_series_from_database(
@@ -6646,6 +6704,7 @@ def po_add_series_from_database(
     current_max_wt,
     current_force_max,
     current_provenance,
+    current_cmabench_defaults,
 ):
     if not n_clicks:
         raise PreventUpdate
@@ -6655,12 +6714,12 @@ def po_add_series_from_database(
         return (
             n_no, n_no, n_no, n_no, n_no, n_no,
             "Select at least one series from the database.",
-            "orange",
-            False,
-            n_no, n_no, n_no, n_no, n_no,
-            n_no, n_no, n_no, n_no, n_no, n_no,
-            True, n_no,
-        )
+                    "orange",
+                    False,
+                    n_no, n_no, n_no, n_no, n_no,
+                    n_no, n_no, n_no, n_no, n_no, n_no,
+                    True, n_no, n_no, n_no,
+                )
 
     try:
         if existing_data:
@@ -6674,7 +6733,7 @@ def po_add_series_from_database(
                     False,
                     n_no, n_no, n_no, n_no, n_no,
                     n_no, n_no, n_no, n_no, n_no, n_no,
-                    True, n_no, n_no,
+                    True, n_no, n_no, n_no, n_no,
                 )
 
         new_df, db_meta = load_cma_returns_for_benches_with_meta(
@@ -6746,6 +6805,21 @@ def po_add_series_from_database(
             emitted_series=list(new_df.columns),
             primary_series=list(new_df.columns)[0] if list(new_df.columns) else None,
         )
+        current_cmabench_defaults = dict(current_cmabench_defaults or {})
+        resolved_defaults = _po_resolve_cmabench_defaults(
+            list(new_df.columns),
+            {
+                **current_cmabench_defaults,
+                **dict(current_cmabench or {}),
+            },
+        )
+        next_cmabench_defaults = dict(current_cmabench_defaults)
+        for series_name, mapped_bench in resolved_defaults.items():
+            if isinstance(mapped_bench, str) and mapped_bench.strip():
+                next_cmabench_defaults.setdefault(series_name, mapped_bench.strip())
+        next_cmabench_defaults_output = (
+            no_update if next_cmabench_defaults == current_cmabench_defaults else next_cmabench_defaults
+        )
         return (
             build_raw_data_store_payload(merged_df),
             combined_periodicity,
@@ -6770,6 +6844,7 @@ def po_add_series_from_database(
             False,
             [],
             updated_provenance,
+            next_cmabench_defaults_output,
         )
     except Exception as e:
         return (
@@ -6779,7 +6854,7 @@ def po_add_series_from_database(
             False,
             n_no, n_no, n_no, n_no, n_no,
             n_no, n_no, n_no, n_no, n_no, n_no,
-            True, n_no, n_no,
+            True, n_no, n_no, n_no, n_no,
         )
 
 
@@ -7715,26 +7790,19 @@ def po_load_cmabench_option_values(modal_opened, current_values):
     return get_unique_cmabench_values_cached(DB_ENGINE)
 
 
-def _po_normalize_series_order(all_series, series_order):
-    normalized_order = list(series_order or []) or list(all_series)
-    for series in all_series:
-        if series not in normalized_order:
-            normalized_order.append(series)
-    return [series for series in normalized_order if series in all_series]
-
-
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="syncPortoptSeriesModalGrid"),
     Output("po-series-selection-grid", "rowData"),
     Output("po-series-selection-grid", "columnDefs"),
     Output("po-temp-series-order-store", "data", allow_duplicate=True),
     Output("po-ui-blocker-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
     Input("dashmat-raw-data-meta-store", "data"),
     Input("po-temp-series-select", "data"),
     Input("po-temp-series-order-store", "data"),
     Input("po-temp-deleted-series-store", "data"),
     Input("po-temp-benchmark-assignments-store", "data"),
     Input("po-temp-cmabench-assignments-store", "data"),
+    Input("po-cmabench-defaults-store", "data"),
     Input("po-temp-long-short-store", "data"),
     Input("po-temp-vol-scaling-assignments-store", "data"),
     Input("po-temp-min-wt-store", "data"),
@@ -7742,105 +7810,9 @@ def _po_normalize_series_order(all_series, series_order):
     Input("po-temp-force-max-store", "data"),
     Input("po-cmabench-option-values-store", "data"),
     State("po-series-selection-grid", "columnDefs"),
+    State("po-series-selection-modal", "opened"),
     prevent_initial_call="initial_duplicate",
 )
-def po_update_series_selectors(
-    raw_data,
-    raw_meta,
-    selected_series,
-    series_order,
-    deleted_series,
-    current_assignments,
-    current_cmabench_assignments,
-    long_short_assignments,
-    vol_scaling_assignments,
-    min_wt,
-    max_wt,
-    force_max,
-    cmabench_option_values,
-    current_column_defs,
-):
-    empty_column_defs = _po_series_selection_column_defs()
-    current_order = list(series_order or [])
-    empty_order_update = [] if current_order else no_update
-    empty_column_update = no_update if current_column_defs == empty_column_defs else empty_column_defs
-    if raw_data is None:
-        return [], empty_column_update, empty_order_update, False
-
-    all_series = list((raw_meta or {}).get("columns") or [])
-    if not all_series:
-        df = _raw_df(raw_data)
-        all_series = list(df.columns)
-
-    if not all_series:
-        return [], empty_column_update, empty_order_update, False
-
-    normalized_order = _po_normalize_series_order(all_series, current_order)
-
-    selected_set = set(selected_series or [])
-    deleted_set = set(deleted_series or [])
-    current_assignments = current_assignments or {}
-    current_cmabench_assignments = current_cmabench_assignments or {}
-    long_short_assignments = long_short_assignments or {}
-    vol_scaling_assignments = vol_scaling_assignments or {}
-    min_wt = min_wt or {}
-    max_wt = max_wt or {}
-    force_max = force_max or {}
-    core_cmabench_defaults = _po_resolve_cmabench_defaults(selected_set, current_cmabench_assignments)
-
-    benchmark_values = ["None"] + list(all_series)
-    cmabench_values = list(cmabench_option_values or [])
-    cmabench_editor_values = [""] + sorted(
-        set(cmabench_values).union(
-            {
-                str(v).strip()
-                for v in current_cmabench_assignments.values()
-                if isinstance(v, str) and v.strip()
-            }
-        )
-    )
-    with timed_block(
-        "portopt.render_series_modal_grid",
-        series_count=len(all_series),
-        selected_count=len(selected_set),
-        cmabench_option_count=len(cmabench_editor_values),
-    ):
-        row_data = []
-        for series in normalized_order:
-            bench_val = current_assignments.get(series, "None")
-            if bench_val not in all_series and bench_val != "None":
-                bench_val = "None"
-            is_ls = long_short_assignments.get(series, False)
-            is_scale_vol = vol_scaling_assignments.get(series, True)
-            cmabench_val = current_cmabench_assignments.get(series, core_cmabench_defaults.get(series, ""))
-            min_wt_val = min_wt.get(series, 0)
-            max_wt_val = max_wt.get(series, 100)
-            force_max_val = force_max.get(series, False)
-            row_data.append(
-                {
-                    "__row_key": series,
-                    "Selected": series in selected_set and series not in deleted_set,
-                    "Series": series,
-                    "Benchmark": bench_val,
-                    "CMABench": cmabench_val,
-                    "LongShort": bool(is_ls),
-                    "ScaleVol": bool(is_scale_vol),
-                    "MinWt": min_wt_val,
-                    "MaxWt": max_wt_val,
-                    "ForceMax": bool(force_max_val),
-                    "Delete": series in deleted_set,
-                }
-            )
-        column_defs = _po_series_selection_column_defs(
-            benchmark_values=benchmark_values,
-            cmabench_editor_values=cmabench_editor_values,
-        )
-
-    order_update = no_update if normalized_order == current_order else normalized_order
-    column_defs_update = no_update if current_column_defs == column_defs else column_defs
-    return row_data, column_defs_update, order_update, no_update
-
-
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="capturePortoptSeriesSnapshot"),
     Output("po-series-grid-snapshot-store", "data"),
@@ -7848,77 +7820,6 @@ clientside_callback(
     State("po-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
-
-
-def _po_build_modal_rows_from_temp_state(
-    raw_data,
-    temp_select,
-    temp_order,
-    temp_deleted,
-    temp_bench,
-    temp_cmabench,
-    temp_ls,
-    temp_vol_scaling,
-    temp_min_wt,
-    temp_max_wt,
-    temp_force_max,
-):
-    if not raw_data:
-        return []
-
-    df = _raw_df(raw_data)
-    all_series = list(df.columns)
-    if not all_series:
-        return []
-
-    series_order = list(temp_order or []) or list(all_series)
-    for series in all_series:
-        if series not in series_order:
-            series_order.append(series)
-    series_order = [series for series in series_order if series in all_series]
-
-    selected_set = set(temp_select or [])
-    deleted_set = set(temp_deleted or [])
-    temp_bench = dict(temp_bench or {})
-    temp_cmabench = dict(temp_cmabench or {})
-    temp_ls = dict(temp_ls or {})
-    temp_vol_scaling = dict(temp_vol_scaling or {})
-    temp_min_wt = dict(temp_min_wt or {})
-    temp_max_wt = dict(temp_max_wt or {})
-    temp_force_max = dict(temp_force_max or {})
-    core_cmabench_defaults = _po_resolve_cmabench_defaults(selected_set, temp_cmabench)
-
-    rows = []
-    for series in series_order:
-        bench_val = temp_bench.get(series, "None")
-        if bench_val not in all_series and bench_val != "None":
-            bench_val = "None"
-        rows.append(
-            {
-                "__row_key": series,
-                "Selected": series in selected_set and series not in deleted_set,
-                "Series": series,
-                "Benchmark": bench_val,
-                "CMABench": temp_cmabench.get(series, core_cmabench_defaults.get(series, "")),
-                "LongShort": bool(temp_ls.get(series, False)),
-                "ScaleVol": bool(temp_vol_scaling.get(series, True)),
-                "MinWt": temp_min_wt.get(series, 0),
-                "MaxWt": temp_max_wt.get(series, 100),
-                "ForceMax": bool(temp_force_max.get(series, False)),
-                "Delete": series in deleted_set,
-            }
-        )
-    return rows
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # Modal: OK button
 # ---------------------------------------------------------------------------
@@ -7938,12 +7839,14 @@ def _po_build_modal_rows_from_temp_state(
     Output("po-force-max-store", "data"),
     Output("po-results-store", "data", allow_duplicate=True),
     Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
+    Output("po-cmabench-defaults-store", "data", allow_duplicate=True),
     Input("po-series-grid-snapshot-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-results-store", "data"),
     State("po-series-select", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
+    State("po-cmabench-defaults-store", "data"),
     State("po-long-short-store", "data"),
     State("po-series-order-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
@@ -7970,6 +7873,7 @@ def po_on_modal_ok(
     current_select,
     current_bench,
     current_cmabench,
+    current_cmabench_defaults,
     current_ls,
     current_order,
     current_vol_scaling,
@@ -8071,20 +7975,13 @@ def po_on_modal_ok(
     current_select = list(current_select or [])
     current_bench = dict(current_bench or {})
     current_cmabench = dict(current_cmabench or {})
+    current_cmabench_defaults = dict(current_cmabench_defaults or {})
     current_ls = dict(current_ls or {})
     current_order = list(current_order or [])
     current_vol_scaling = dict(current_vol_scaling or {})
     current_min_wt = dict(current_min_wt or {})
     current_max_wt = dict(current_max_wt or {})
     current_force_max = dict(current_force_max or {})
-
-    missing_cmabench = [series for series in next_select if not str(next_cmabench.get(series, "")).strip()]
-    if missing_cmabench:
-        defaults = _po_resolve_cmabench_defaults(next_select, next_cmabench)
-        for series in missing_cmabench:
-            mapped = defaults.get(series)
-            if mapped:
-                next_cmabench[series] = mapped
 
     updated_raw_data = no_update if list(df.columns) == existing_cols else build_raw_data_store_payload(df)
     updated_results = no_update
@@ -8110,6 +8007,15 @@ def po_on_modal_ok(
     updated_provenance = remove_db_import_provenance_series(updated_provenance, deleted_final_names) if deleted_final_names else updated_provenance
     updated_provenance = prune_db_import_provenance(updated_provenance, list(df.columns))
     next_provenance_output = no_update if updated_provenance == (current_provenance or {}) else updated_provenance
+    next_cmabench_defaults = _po_update_cmabench_defaults_store(
+        current_cmabench_defaults,
+        rename_map,
+        deleted_final_names,
+        list(df.columns),
+    )
+    next_cmabench_defaults_output = (
+        no_update if next_cmabench_defaults == current_cmabench_defaults else next_cmabench_defaults
+    )
 
     return (
         next_series_select,
@@ -8126,6 +8032,7 @@ def po_on_modal_ok(
         next_force_output,
         updated_results,
         next_provenance_output,
+        next_cmabench_defaults_output,
     )
 
 

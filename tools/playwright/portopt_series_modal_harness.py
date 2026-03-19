@@ -31,17 +31,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--startup-timeout", type=int, default=30)
     parser.add_argument("--skip-db-build", action="store_true")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--mode", choices=("synthetic", "db"), default="synthetic")
     parser.add_argument("--db-series", nargs="+", default=warm.DEFAULT_DB_SERIES)
     parser.add_argument("--server-log", default="")
     return parser.parse_args()
 
 
-def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str) -> str:
+def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str, mode: str) -> str:
     git_token = warm.sanitize_token((git_ref or "unknown")[:8], "unknown")
     label_token = warm.sanitize_token(label, "run")
+    mode_token = warm.sanitize_token(mode, "synthetic")
     port = urllib.parse.urlparse(base_url).port
     port_token = f"p{port}" if port else "punknown"
-    return f"portopt_series_modal_{timestamp}_{label_token}_{git_token}_{port_token}"
+    return f"portopt_series_modal_{timestamp}_{label_token}_{mode_token}_{git_token}_{port_token}"
 
 
 def build_synthetic_raw_dataset(series_names: list[str]) -> tuple[dict[str, object], dict[str, object]]:
@@ -208,6 +210,32 @@ def wait_session_store(page, component_id: str, expected_value, timeout: int = 1
     )
 
 
+def wait_session_store_keys(page, component_id: str, expected_keys: list[str], timeout: int = 15000) -> None:
+    page.wait_for_function(
+        """
+        ([componentId, expectedKeys]) => {
+          try {
+            const raw = window.sessionStorage.getItem(componentId);
+            if (raw === null) {
+              return false;
+            }
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") {
+              return false;
+            }
+            return expectedKeys.every(function (key) {
+              return typeof parsed[key] === "string" && parsed[key].trim().length > 0;
+            });
+          } catch (_err) {
+            return false;
+          }
+        }
+        """,
+        arg=[component_id, list(expected_keys or [])],
+        timeout=timeout,
+    )
+
+
 def reset_modal_seed_state(page, opt_series: list[str]) -> None:
     warm.try_set_component_props(page, "po-page-visited-store", {"data": True})
     warm.try_set_component_props(page, "po-series-select", {"data": opt_series})
@@ -230,7 +258,7 @@ def reset_modal_seed_state(page, opt_series: list[str]) -> None:
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
 
 
-def seed_portopt_page(page, base_url: str, opt_series: list[str]) -> None:
+def seed_portopt_page_synthetic(page, base_url: str, opt_series: list[str]) -> None:
     raw_data_payload, raw_meta_payload = build_synthetic_raw_dataset(opt_series)
     page.goto(base_url + "/portopt", wait_until="domcontentloaded")
     warm.wait_dash_hydrated(page, timeout=30000)
@@ -240,6 +268,7 @@ def seed_portopt_page(page, base_url: str, opt_series: list[str]) -> None:
     warm.try_set_component_props(page, "po-series-select", {"data": opt_series})
     warm.try_set_component_props(page, "po-series-select-value-store", {"data": opt_series})
     warm.try_set_component_props(page, "po-series-order-store", {"data": opt_series})
+    warm.try_set_component_props(page, "po-cmabench-defaults-store", {"data": {}})
     warm.wait_visible(page, "#po-main-container", timeout=30000)
     warm.wait_ready(page, "#po-open-modal-button", timeout=30000)
     warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
@@ -248,6 +277,25 @@ def seed_portopt_page(page, base_url: str, opt_series: list[str]) -> None:
     wait_modal_grid_ready(page, expected_rows=len(opt_series), timeout=30000)
     page.locator("#po-modal-cancel-button").click()
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
+
+
+def seed_portopt_page_db(page, base_url: str, opt_series: list[str]) -> None:
+    page.goto(base_url + "/portopt", wait_until="domcontentloaded")
+    warm.wait_dash_hydrated(page, timeout=30000)
+    warm.try_set_component_props(page, "po-page-visited-store", {"data": True})
+
+    if not warm.try_set_component_props(page, "po-db-add-series-select", {"value": opt_series}):
+        raise RuntimeError("PortOpt modal harness could not seed po-db-add-series-select for database mode.")
+    if not warm.try_set_component_props(page, "po-db-add-ok-button", {"n_clicks": 1}):
+        raise RuntimeError("PortOpt modal harness could not trigger po-db-add-ok-button for database mode.")
+
+    wait_modal_grid_ready(page, expected_rows=len(opt_series), timeout=60000)
+    wait_session_store_keys(page, "po-cmabench-defaults-store", opt_series, timeout=60000)
+
+    page.locator("#po-modal-ok-button").click()
+    page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
+    warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
+    wait_session_store(page, "po-series-select", opt_series, timeout=30000)
 
 
 def measure_modal_run(page, opt_series: list[str]) -> dict[str, object]:
@@ -313,7 +361,10 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
         )
 
         opt_series = warm.resolve_portopt_series(args.db_series)
-        seed_portopt_page(page, args.base_url, opt_series)
+        if args.mode == "db":
+            seed_portopt_page_db(page, args.base_url, opt_series)
+        else:
+            seed_portopt_page_synthetic(page, args.base_url, opt_series)
         timing_start_offset = warm.current_log_offset(server_log_path)
         warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
 
@@ -335,6 +386,7 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
         "label": args.label or "portopt-series-modal",
         "gitRef": resolved_git_ref,
         "baseUrl": args.base_url,
+        "mode": args.mode,
         "dbSeries": args.db_series,
         "selectedSeries": opt_series,
         "runs": run_results,
@@ -362,7 +414,7 @@ def main() -> int:
     warm.wait_for_app(args.base_url, args.startup_timeout)
 
     timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    stem = build_artifact_stem(args.label or "portopt-series-modal", resolved_git_ref, args.base_url, timestamp)
+    stem = build_artifact_stem(args.label or "portopt-series-modal", resolved_git_ref, args.base_url, timestamp, args.mode)
     out_dir = root / "output" / "playwright"
     fail_dir = out_dir / "failures"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -400,6 +452,7 @@ def main() -> int:
         "gitRef": resolved_git_ref,
         "baseUrl": args.base_url,
         "repoRoot": str(root),
+        "mode": args.mode,
         "dbSeries": args.db_series,
         "dbRebuilt": db_rebuilt,
         "dbRebuildReasons": db_rebuild_reasons,

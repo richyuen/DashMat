@@ -610,6 +610,240 @@
     return [];
   }
 
+  function nonEmptyStringMap(store) {
+    const source = (store && typeof store === "object") ? store : {};
+    const cleaned = {};
+    Object.keys(source).forEach(function (key) {
+      const value = source[key];
+      if (typeof value === "string" && value.trim()) {
+        cleaned[key] = value.trim();
+      }
+    });
+    return cleaned;
+  }
+
+  function normalizePortoptSeriesOrder(allSeries, seriesOrder) {
+    const known = new Set(allSeries || []);
+    const normalized = Array.isArray(seriesOrder) && seriesOrder.length ? seriesOrder.slice() : (allSeries || []).slice();
+    (allSeries || []).forEach(function (series) {
+      if (known.has(series) && normalized.indexOf(series) === -1) {
+        normalized.push(series);
+      }
+    });
+    return normalized.filter(function (series) {
+      return known.has(series);
+    });
+  }
+
+  function portoptSeriesSelectionColumnDefs(benchmarkValues, cmabenchEditorValues) {
+    return [
+      {
+        headerName: "",
+        rowDrag: true,
+        editable: false,
+        sortable: false,
+        filter: false,
+        resizable: false,
+        width: 36,
+        pinned: "left",
+        valueGetter: { function: "''" },
+        cellClass: "dashmat-series-center-cell"
+      },
+      {
+        field: "Selected",
+        headerName: "Use",
+        editable: true,
+        cellRenderer: "agCheckboxCellRenderer",
+        cellEditor: "agCheckboxCellEditor",
+        width: 72,
+        pinned: "left",
+        cellClass: "dashmat-series-center-cell"
+      },
+      {
+        field: "Series",
+        editable: true,
+        minWidth: 150,
+        cellStyle: { textAlign: "left", fontFamily: "monospace" },
+        headerClass: "dashmat-left-header"
+      },
+      {
+        field: "Benchmark",
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: benchmarkValues },
+        minWidth: 150,
+        cellStyle: { textAlign: "left" },
+        headerClass: "dashmat-left-header"
+      },
+      {
+        field: "CMABench",
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: cmabenchEditorValues },
+        minWidth: 130,
+        cellStyle: { textAlign: "left" },
+        headerClass: "dashmat-left-header"
+      },
+      {
+        field: "LongShort",
+        headerName: "L/S",
+        editable: true,
+        cellRenderer: "agCheckboxCellRenderer",
+        cellEditor: "agCheckboxCellEditor",
+        width: 72,
+        cellClass: "dashmat-series-center-cell"
+      },
+      {
+        field: "ScaleVol",
+        headerName: "Scale Vol",
+        editable: true,
+        cellRenderer: "agCheckboxCellRenderer",
+        cellEditor: "agCheckboxCellEditor",
+        width: 112,
+        cellClass: "dashmat-series-center-cell"
+      },
+      {
+        field: "MinWt",
+        headerName: "Min Wt",
+        editable: { function: "!params.data.ForceMax" },
+        width: 98,
+        valueParser: {
+          function: "var n=Number(params.newValue); if(!isFinite(n)) return 0; return Math.max(0, Math.min(100, n));"
+        },
+        cellClass: "dashmat-series-center-cell",
+        headerClass: "dashmat-center-header"
+      },
+      {
+        field: "MaxWt",
+        headerName: "Max Wt",
+        editable: true,
+        width: 98,
+        valueParser: {
+          function: "var n=Number(params.newValue); if(!isFinite(n)) return 100; return Math.max(0, Math.min(100, n));"
+        },
+        cellClass: "dashmat-series-center-cell",
+        headerClass: "dashmat-center-header"
+      },
+      {
+        field: "ForceMax",
+        headerName: "Force",
+        editable: true,
+        cellRenderer: "agCheckboxCellRenderer",
+        cellEditor: "agCheckboxCellEditor",
+        width: 70,
+        cellClass: "dashmat-series-center-cell"
+      },
+      {
+        field: "Delete",
+        editable: true,
+        cellRenderer: "agCheckboxCellRenderer",
+        cellEditor: "agCheckboxCellEditor",
+        width: 74,
+        cellClass: "dashmat-series-center-cell"
+      }
+    ];
+  }
+
+  function syncPortoptSeriesModalGrid(
+    rawMeta,
+    selectedSeries,
+    seriesOrder,
+    deletedSeries,
+    currentAssignments,
+    currentCmabenchAssignments,
+    currentCmabenchDefaults,
+    longShortAssignments,
+    volScalingAssignments,
+    minWt,
+    maxWt,
+    forceMax,
+    cmabenchOptionValues,
+    currentColumnDefs,
+    modalOpened
+  ) {
+    const allSeries = rawMetaColumns(rawMeta);
+    const emptyColumnDefs = portoptSeriesSelectionColumnDefs(["None"], [""]);
+    const currentOrder = Array.isArray(seriesOrder) ? seriesOrder.slice() : [];
+    const emptyOrderUpdate = currentOrder.length ? [] : noUpdate();
+    const currentColumnDefsJson = JSON.stringify(Array.isArray(currentColumnDefs) ? currentColumnDefs : []);
+    const emptyColumnDefsJson = JSON.stringify(emptyColumnDefs);
+    const emptyColumnUpdate = currentColumnDefsJson === emptyColumnDefsJson ? noUpdate() : emptyColumnDefs;
+    if (!allSeries.length) {
+      return [[], emptyColumnUpdate, emptyOrderUpdate, modalOpened === true ? false : noUpdate()];
+    }
+
+    const normalizedOrder = normalizePortoptSeriesOrder(allSeries, currentOrder);
+    const selectedSet = new Set(Array.isArray(selectedSeries) ? selectedSeries : []);
+    const deletedSet = new Set(Array.isArray(deletedSeries) ? deletedSeries : []);
+    const benchmarkAssignments = (currentAssignments && typeof currentAssignments === "object") ? currentAssignments : {};
+    const explicitCmabenchAssignments = nonEmptyStringMap(currentCmabenchAssignments);
+    const importedCmabenchDefaults = nonEmptyStringMap(currentCmabenchDefaults);
+    const longShortMap = (longShortAssignments && typeof longShortAssignments === "object") ? longShortAssignments : {};
+    const volScalingMap = (volScalingAssignments && typeof volScalingAssignments === "object") ? volScalingAssignments : {};
+    const minWtMap = (minWt && typeof minWt === "object") ? minWt : {};
+    const maxWtMap = (maxWt && typeof maxWt === "object") ? maxWt : {};
+    const forceMaxMap = (forceMax && typeof forceMax === "object") ? forceMax : {};
+
+    const benchmarkValues = ["None"].concat(allSeries);
+    const cmabenchOptionSet = new Set([""]);
+    (Array.isArray(cmabenchOptionValues) ? cmabenchOptionValues : []).forEach(function (value) {
+      if (typeof value === "string" && value.trim()) {
+        cmabenchOptionSet.add(value.trim());
+      }
+    });
+    Object.keys(importedCmabenchDefaults).forEach(function (key) {
+      cmabenchOptionSet.add(importedCmabenchDefaults[key]);
+    });
+    Object.keys(explicitCmabenchAssignments).forEach(function (key) {
+      cmabenchOptionSet.add(explicitCmabenchAssignments[key]);
+    });
+    const cmabenchEditorValues = Array.from(cmabenchOptionSet).sort(function (a, b) {
+      if (a === "") {
+        return -1;
+      }
+      if (b === "") {
+        return 1;
+      }
+      return a.localeCompare(b);
+    });
+
+    const rowData = normalizedOrder.map(function (series) {
+      let benchmarkValue = benchmarkAssignments[series];
+      benchmarkValue = typeof benchmarkValue === "string" && benchmarkValue.trim() ? benchmarkValue.trim() : "None";
+      if (benchmarkValue !== "None" && allSeries.indexOf(benchmarkValue) === -1) {
+        benchmarkValue = "None";
+      }
+      let minWtValue = Number(minWtMap[series]);
+      if (!isFinite(minWtValue)) {
+        minWtValue = 0;
+      }
+      let maxWtValue = Number(maxWtMap[series]);
+      if (!isFinite(maxWtValue)) {
+        maxWtValue = 100;
+      }
+      const explicitCmabench = explicitCmabenchAssignments[series] || "";
+      const defaultCmabench = importedCmabenchDefaults[series] || "";
+      return {
+        __row_key: series,
+        Selected: selectedSet.has(series) && !deletedSet.has(series),
+        Series: series,
+        Benchmark: benchmarkValue,
+        CMABench: explicitCmabench || defaultCmabench || "",
+        LongShort: !!longShortMap[series],
+        ScaleVol: Object.prototype.hasOwnProperty.call(volScalingMap, series) ? !!volScalingMap[series] : true,
+        MinWt: minWtValue,
+        MaxWt: maxWtValue,
+        ForceMax: !!forceMaxMap[series],
+        Delete: deletedSet.has(series)
+      };
+    });
+
+    const columnDefs = portoptSeriesSelectionColumnDefs(benchmarkValues, cmabenchEditorValues);
+    const columnDefsUpdate = currentColumnDefsJson === JSON.stringify(columnDefs) ? noUpdate() : columnDefs;
+    const orderUpdate = JSON.stringify(normalizedOrder) === JSON.stringify(currentOrder) ? noUpdate() : normalizedOrder;
+    return [rowData, columnDefsUpdate, orderUpdate, noUpdate()];
+  }
+
   function openPortoptSeriesModal(
     nClicks,
     pathname,
@@ -1686,6 +1920,7 @@
       portoptControlSync: portoptControlSync,
       portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
       portoptMarkVisitedTabLoaded: portoptMarkVisitedTabLoaded,
+      syncPortoptSeriesModalGrid: syncPortoptSeriesModalGrid,
       portoptViewSync: portoptViewSync,
       regressionInitialSeriesBlocker: regressionInitialSeriesBlocker,
       regressionControlSync: regressionControlSync,

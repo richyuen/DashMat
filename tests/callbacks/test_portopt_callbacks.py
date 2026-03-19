@@ -341,6 +341,7 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     blocker_overlay = _find_component_by_id(portopt.layout, "po-ui-blocker-overlay")
     bootstrap_store = _find_component_by_id(portopt.layout, "po-bootstrap-store")
     results_meta_store = _find_component_by_id(portopt.layout, "po-results-meta-store")
+    cmabench_defaults_store = _find_component_by_id(portopt.layout, "po-cmabench-defaults-store")
     series_grid = _find_component_by_id(portopt.layout, "po-series-selection-grid")
 
     assert getattr(welcome, "style", {})["display"] == "none"
@@ -349,6 +350,7 @@ def test_po_layout_starts_with_welcome_and_main_hidden(page_modules):
     assert getattr(blocker_overlay, "visible", None) is False
     assert getattr(blocker_overlay, "zIndex", None) == 2500
     assert getattr(results_meta_store, "data", None) == {"has_results": False, "count": 0}
+    assert getattr(cmabench_defaults_store, "data", None) == {}
     assert series_grid is not None
     assert getattr(series_grid, "rowData", None) == []
     assert getattr(bootstrap_store, "data", None) == {
@@ -2613,6 +2615,7 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'Output("po-ui-blocker-store", "data", allow_duplicate=True)' in page_text
     assert 'Output("po-series-selection-grid", "rowData")' in page_text
     assert 'Output("po-series-selection-grid", "columnDefs")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="syncPortoptSeriesModalGrid")' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
     assert 'Input("po-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitialSeriesBlocker")' in page_text
@@ -2625,16 +2628,78 @@ def test_po_blocker_wiring_covers_add_modal_entry_and_series_render():
     assert 'State("dashmat-pending-new-series-store", "data")' in page_text
     assert "function portoptInitialSeriesBlocker(pathname, rawMeta, currentSelect, pageLoadReady, modalOpened, virtualRows, pageVisited, currentOrder, poOriginSeries)" in js_text
     assert "function portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited)" in js_text
+    assert "function syncPortoptSeriesModalGrid(" in js_text
 
 
-def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
+def test_po_series_selection_grid_is_fully_clientside():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="syncPortoptSeriesModalGrid")' in page_text
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
+    assert 'Input("po-cmabench-defaults-store", "data")' in page_text
+    assert 'Input("po-cmabench-option-values-store", "data")' in page_text
+    assert 'State("po-series-selection-grid", "columnDefs")' in page_text
+    assert 'State("po-series-selection-modal", "opened")' in page_text
+    assert "def po_update_series_selectors" not in page_text
+    assert "function syncPortoptSeriesModalGrid(" in js_text
+    assert 'const explicitCmabench = explicitCmabenchAssignments[series] || "";' in js_text
+    assert 'const defaultCmabench = importedCmabenchDefaults[series] || "";' in js_text
+    assert 'CMABench: explicitCmabench || defaultCmabench || ""' in js_text
+    assert "portoptSeriesSelectionColumnDefs" in js_text
+
+
+def test_po_effective_cmabench_assignments_use_imported_defaults_without_autoresolve(page_modules):
     _, portopt = page_modules
 
-    row_data, column_defs, _order, blocker = portopt.po_update_series_selectors(
-        raw_json,
-        {"columns": ["Asset_A", "Asset_B"]},
-        ["Asset_A"],
+    effective = portopt._effective_cmabench_assignments(
+        ["Asset_A", "Asset_B", "Asset_C"],
+        {"Asset_A": "Explicit_Bench", "Asset_B": ""},
+        {"Asset_B": "Imported_Bench"},
+    )
+
+    assert effective == {
+        "Asset_A": "Explicit_Bench",
+        "Asset_B": "Imported_Bench",
+    }
+    assert portopt._missing_cmabench_assignments(["Asset_A", "Asset_B", "Asset_C"], effective) == ["Asset_C"]
+
+
+def test_po_update_cmabench_defaults_store_handles_rename_and_delete(page_modules):
+    _, portopt = page_modules
+
+    updated = portopt._po_update_cmabench_defaults_store(
+        {"Asset_A": "Bench_A", "Asset_B": "Bench_B", "Asset_C": ""},
+        {"Asset_A": "Asset_A_Renamed"},
+        ["Asset_B"],
+        ["Asset_A_Renamed"],
+    )
+
+    assert updated == {"Asset_A_Renamed": "Bench_A"}
+
+
+def test_po_add_series_from_database_persists_imported_cmabench_defaults(monkeypatch, page_modules):
+    _, portopt = page_modules
+    imported_df = pd.DataFrame({"Asset_A": [0.01, 0.02], "Asset_B": [0.03, 0.01]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    imported_df.index.name = "Date"
+
+    monkeypatch.setattr(
+        portopt,
+        "load_cma_returns_for_benches_with_meta",
+        lambda *_args, **_kwargs: (imported_df, {"Asset_A": {}, "Asset_B": {}}),
+    )
+    monkeypatch.setattr(portopt, "_po_cached_cmabench_defaults", lambda key: {"Asset_A": "Bench_A", "Asset_B": "Bench_B"})
+    monkeypatch.setattr(portopt, "add_db_import_provenance_entry", lambda current, **_kwargs: {"updated": True})
+
+    result = portopt.po_add_series_from_database(
+        1,
         ["Asset_A", "Asset_B"],
+        None,
+        None,
+        [],
+        {},
+        {},
+        {},
         [],
         {},
         {},
@@ -2642,135 +2707,10 @@ def test_po_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules,
         {},
         {},
         {},
-        {},
-        None,
-        None,
     )
 
-    assert blocker is no_update
-    assert [row["Series"] for row in row_data] == ["Asset_A", "Asset_B"]
-    assert next(col for col in column_defs if col.get("field") == "Selected")["cellEditor"] == "agCheckboxCellEditor"
-
-
-def test_po_series_selection_grid_uses_raw_meta_columns_without_parsing_json(monkeypatch, page_modules, raw_json):
-    _, portopt = page_modules
-
-    monkeypatch.setattr(portopt, "json_to_df", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not parse raw json")))
-
-    row_data, column_defs, order, blocker = portopt.po_update_series_selectors(
-        raw_json,
-        {"columns": ["Asset_A", "Asset_B"]},
-        ["Asset_A"],
-        ["Asset_A", "Asset_B"],
-        [],
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        None,
-        None,
-    )
-
-    assert order is no_update
-    assert blocker is no_update
-    assert [row["Series"] for row in row_data] == ["Asset_A", "Asset_B"]
-    assert next(col for col in column_defs if col.get("field") == "Benchmark")["cellEditorParams"]["values"] == [
-        "None",
-        "Asset_A",
-        "Asset_B",
-    ]
-
-
-def test_po_series_selection_grid_only_fetches_missing_cma_defaults_for_selected_series(monkeypatch, page_modules, raw_json):
-    _, portopt = page_modules
-    calls = []
-
-    monkeypatch.setattr(portopt, "_po_cached_cmabench_defaults", lambda key: calls.append(key) or {"Asset_A": "Bench_A"})
-
-    row_data, _column_defs, _order, _blocker = portopt.po_update_series_selectors(
-        raw_json,
-        {"columns": ["Asset_A", "Asset_B"]},
-        ["Asset_A"],
-        ["Asset_A", "Asset_B"],
-        [],
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        None,
-        None,
-    )
-
-    assert calls == [("Asset_A",)]
-    assert row_data[0]["CMABench"] == "Bench_A"
-
-
-def test_po_series_selection_grid_uses_preloaded_cmabench_options(page_modules, raw_json):
-    _, portopt = page_modules
-
-    row_data, column_defs, _order, _blocker = portopt.po_update_series_selectors(
-        raw_json,
-        {"columns": ["Asset_A", "Asset_B"]},
-        ["Asset_A"],
-        ["Asset_A", "Asset_B"],
-        [],
-        {},
-        {"Asset_A": "Explicit_Bench"},
-        {},
-        {},
-        {},
-        {},
-        {},
-        ["Bench_1", "Bench_2"],
-        None,
-    )
-
-    benchmark_col = next(col for col in column_defs if col.get("field") == "Benchmark")
-    cmabench_col = next(col for col in column_defs if col.get("field") == "CMABench")
-    assert benchmark_col["cellEditor"] == "agSelectCellEditor"
-    assert cmabench_col["cellEditor"] == "agSelectCellEditor"
-    assert benchmark_col["cellEditorParams"]["values"] == ["None", "Asset_A", "Asset_B"]
-    assert "" in cmabench_col["cellEditorParams"]["values"]
-    assert "Bench_1" in cmabench_col["cellEditorParams"]["values"]
-    assert "Explicit_Bench" in cmabench_col["cellEditorParams"]["values"]
-    assert row_data[0]["CMABench"] == "Explicit_Bench"
-
-
-def test_po_series_selection_grid_only_updates_column_defs_when_options_change(page_modules, raw_json):
-    _, portopt = page_modules
-
-    current_column_defs = portopt._po_series_selection_column_defs(
-        benchmark_values=["None", "Asset_A", "Asset_B"],
-        cmabench_editor_values=["", "Bench_1"],
-    )
-
-    row_data, column_defs, order, blocker = portopt.po_update_series_selectors(
-        raw_json,
-        {"columns": ["Asset_A", "Asset_B"]},
-        ["Asset_A"],
-        ["Asset_A"],
-        [],
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        {},
-        ["Bench_1"],
-        current_column_defs,
-    )
-
-    assert [row["Series"] for row in row_data] == ["Asset_A", "Asset_B"]
-    assert column_defs is no_update
-    assert order == ["Asset_A", "Asset_B"]
-    assert blocker is no_update
+    assert result[-2] == {"updated": True}
+    assert result[-1] == {"Asset_A": "Bench_A", "Asset_B": "Bench_B"}
 
 
 def test_po_load_cmabench_option_values_is_lazy(monkeypatch, page_modules):
@@ -2789,19 +2729,50 @@ def test_po_load_cmabench_option_values_is_lazy(monkeypatch, page_modules):
 
 def test_po_series_selection_grid_no_longer_fetches_cmabench_values_inline():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
-    callback_block = page_text.split("@callback(", 1)[1].split("def po_update_series_selectors", 1)[0]
-    render_block = page_text.split("def po_update_series_selectors", 1)[1].split("clientside_callback(", 1)[0]
-    assert 'Input("po-cmabench-option-values-store", "data")' in callback_block
-    assert "get_unique_cmabench_values_cached(DB_ENGINE)" not in render_block
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'Input("po-cmabench-option-values-store", "data")' in page_text
+    assert 'Input("po-cmabench-defaults-store", "data")' in page_text
+    assert "function syncPortoptSeriesModalGrid(" in js_text
+    assert "get_unique_cmabench_values_cached(DB_ENGINE)" not in js_text
     assert 'def _po_series_selection_column_defs(' in page_text
     assert '"cellEditor": "agSelectCellEditor"' in page_text
 
 
-def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monkeypatch, page_modules, raw_json):
+def test_po_cma_modal_treats_blank_cmabench_as_missing(monkeypatch, page_modules):
     _, portopt = page_modules
-    calls = []
+    monkeypatch.setattr(portopt, "callback_context", type("Ctx", (), {"triggered_id": "po-load-db-returns-btn"})())
+    monkeypatch.setattr(portopt, "get_cma_versions_cached", lambda *_args: [2025])
+    monkeypatch.setattr(portopt, "_get_cma_stats_map", lambda *_args: {"Bench_A": {"Mean": 0.05}})
+    monkeypatch.setattr(portopt, "_get_cma_corr_map", lambda *_args: {})
 
-    monkeypatch.setattr(portopt, "_po_cached_cmabench_defaults", lambda key: calls.append(key) or {"Asset_A": "Bench_A"})
+    result = portopt.po_open_cma_load_modal(1, None, ["Asset_A"], {}, {}, "ret_cov")
+
+    assert result[0] is True
+    assert "Select CMA Benchmarks for: Asset_A." in result[5]
+
+
+def test_po_cma_load_modal_accepts_imported_defaults_without_explicit_assignments(monkeypatch, page_modules):
+    _, portopt = page_modules
+    monkeypatch.setattr(portopt, "_get_cma_stats_map", lambda *_args: {"Bench_A": {"Mean": 0.05, "SD": 0.1}})
+    monkeypatch.setattr(portopt, "_get_cma_corr_map", lambda *_args: {"Bench_A": {"Bench_A": 1.0}})
+
+    result = portopt.po_load_cma_from_db(
+        1,
+        "2025",
+        "hmm",
+        "returns",
+        ["Asset_A"],
+        {},
+        {"Asset_A": "Bench_A"},
+        "ret_cov",
+    )
+
+    assert result[0] == {"Asset_A": 0.05}
+    assert result[2][0]["Asset"] == "Asset_A"
+
+
+def test_po_modal_ok_keeps_blank_cmabench_without_backfill(page_modules, raw_json):
+    _, portopt = page_modules
 
     result = portopt.po_on_modal_ok(
         _series_snapshot(
@@ -2818,20 +2789,7 @@ def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monke
                     "MaxWt": 100,
                     "ForceMax": False,
                     "Delete": False,
-                },
-                {
-                    "__row_key": "Asset_B",
-                    "Selected": False,
-                    "Series": "Asset_B",
-                    "Benchmark": "None",
-                    "CMABench": "",
-                    "LongShort": False,
-                    "ScaleVol": True,
-                    "MinWt": 0,
-                    "MaxWt": 100,
-                    "ForceMax": False,
-                    "Delete": False,
-                },
+                }
             ]
         ),
         raw_json,
@@ -2839,17 +2797,18 @@ def test_po_modal_ok_only_fetches_missing_cma_defaults_for_selected_series(monke
         [],
         {},
         {},
+        {"Asset_A": "Imported_Bench"},
         {},
-        ["Asset_A", "Asset_B"],
+        ["Asset_A"],
         {},
-        {"Asset_A": 0.0, "Asset_B": 0.0},
-        {"Asset_A": 100.0, "Asset_B": 100.0},
-        {"Asset_A": False, "Asset_B": False},
+        {"Asset_A": 0.0},
+        {"Asset_A": 100.0},
+        {"Asset_A": False},
         {},
     )
 
-    assert calls == [("Asset_A",)]
-    assert result[2]["Asset_A"] == "Bench_A"
+    assert result[2] == {"Asset_A": ""}
+    assert result[14] is no_update
 
 
 def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, raw_json):
@@ -2878,6 +2837,7 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
         ["Asset_A"],
         {"Asset_A": "None"},
         {"Asset_A": "Bench_A"},
+        {},
         {"Asset_A": False},
         ["Asset_A"],
         {"Asset_A": True},
@@ -2901,6 +2861,7 @@ def test_po_modal_ok_returns_no_update_for_unchanged_common_path(page_modules, r
     assert result[11] is no_update
     assert result[12] is no_update
     assert result[13] is no_update
+    assert result[14] is no_update
 
 
 def test_po_modal_ok_requires_a_real_grid_snapshot(page_modules, raw_json):
@@ -2912,6 +2873,7 @@ def test_po_modal_ok_requires_a_real_grid_snapshot(page_modules, raw_json):
             raw_json,
             {},
             [],
+            {},
             {},
             {},
             {},
@@ -2976,6 +2938,7 @@ def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
         {},
         {},
         {},
+        {},
         ["Asset_A", "Port_1"],
         {},
         {},
@@ -2987,6 +2950,59 @@ def test_po_modal_ok_delete_path_updates_only_raw_and_results(page_modules):
     updated_df = pd.read_json(StringIO(_raw_json_value(result[7])), orient="split")
     assert list(updated_df.columns) == ["Asset_A"]
     assert result[12] == {}
+    assert result[14] is no_update
+
+
+def test_po_modal_ok_renames_and_prunes_cmabench_defaults(page_modules, raw_json):
+    _, portopt = page_modules
+
+    result = portopt.po_on_modal_ok(
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_Renamed",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": False,
+                },
+                {
+                    "__row_key": "Asset_B",
+                    "Selected": False,
+                    "Series": "Asset_B",
+                    "Benchmark": "None",
+                    "CMABench": "",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "MinWt": 0,
+                    "MaxWt": 100,
+                    "ForceMax": False,
+                    "Delete": True,
+                },
+            ]
+        ),
+        raw_json,
+        {},
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {"Asset_A": "Bench_A", "Asset_B": "Bench_B"},
+        {},
+        ["Asset_A", "Asset_B"],
+        {},
+        {"Asset_A": 0.0, "Asset_B": 0.0},
+        {"Asset_A": 100.0, "Asset_B": 100.0},
+        {"Asset_A": False, "Asset_B": False},
+        {},
+    )
+
+    assert result[14] == {"Asset_Renamed": "Bench_A"}
 
 
 def test_po_session_actions_use_shared_workspace_helpers():

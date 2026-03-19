@@ -30,7 +30,6 @@ TIMING_EVENT_NAMES = (
     "portopt.performance_frames",
     "portopt.project_results",
     "portopt.render_weight_chart",
-    "portopt.render_series_modal_grid",
     "portopt.render_attribution_chart",
     "portopt.render_statistics",
     "portopt.render_risk_chart",

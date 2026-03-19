@@ -6,6 +6,7 @@ param(
     [int]$StartupTimeout = 30,
     [string]$Label = '',
     [string]$GitRef = '',
+    [ValidateSet('synthetic', 'db')][string]$Mode = 'synthetic',
     [string]$ServerLog = '',
     [switch]$SkipDbBuild,
     [switch]$Headed
@@ -21,7 +22,8 @@ $args = @(
   '--base-url', $BaseUrl,
   '--runs', $Runs.ToString(),
   '--startup-timeout', $StartupTimeout.ToString(),
-  '--label', $Label
+  '--label', $Label,
+  '--mode', $Mode
 )
 
 if ($GitRef) {
