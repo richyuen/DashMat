@@ -8940,7 +8940,8 @@ clientside_callback(
 )
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsDateRangeButtons"),
     Output("at-start-date-picker", "value", allow_duplicate=True),
     Output("at-end-date-picker", "value", allow_duplicate=True),
     Output("at-date-range-store", "data"),
@@ -8953,44 +8954,20 @@ clientside_callback(
     State("at-common-daily-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def update_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candidates, common_daily_candidates):
-    """Update date range based on button clicks."""
-    if not isinstance(candidates, dict) or not candidates.get("available_series"):
-        raise PreventUpdate
-
-    ctx = callback_context
-    if not ctx.triggered:
-        raise PreventUpdate
-
-    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
-
-    try:
-        start_date, end_date, force_daily = resolve_button_range(
-            candidates,
-            button_id,
-            common_daily_candidates,
-        )
-        if not start_date or not end_date:
-            raise PreventUpdate
-
-        periodicity_value = "daily_trading" if force_daily else no_update
-
-        date_range = {"start": start_date, "end": end_date}
-        return start_date, end_date, date_range, periodicity_value, periodicity_value
-
-    except Exception:
-        raise PreventUpdate
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsDateRangeStoreUpdate"),
     Output("at-date-range-store", "data", allow_duplicate=True),
     Input("at-start-date-picker", "value"),
     Input("at-end-date-picker", "value"),
     State("at-date-range-store", "data"),
     prevent_initial_call=True,
 )
+
+
 def update_date_range_store(start_date, end_date, existing_range):
-    """Store date range when user manually changes dates."""
+    """Reference implementation for deduping manual date-range store writes."""
     if start_date and end_date:
         next_range = {"start": start_date, "end": end_date}
         if _has_complete_date_range(existing_range):

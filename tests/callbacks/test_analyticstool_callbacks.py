@@ -384,6 +384,15 @@ def test_at_initialize_date_range_uses_clientside_helper():
     assert "function analyticsInitDateRange(" in js_text
 
 
+def test_at_date_range_buttons_and_store_use_clientside_helpers():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsDateRangeButtons")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsDateRangeStoreUpdate")' in page_text
+    assert "function analyticsDateRangeButtons(" in js_text
+    assert "function analyticsDateRangeStoreUpdate(" in js_text
+
+
 def test_analytics_resolve_initial_range_clientside_matches_python(page_modules):
     analyticstool, _ = page_modules
     candidates = {
@@ -405,6 +414,87 @@ def test_analytics_resolve_initial_range_clientside_matches_python(page_modules)
     assert _run_dashmat_callbacks_js(
         f"ns.analyticsResolveInitialRange({json.dumps(candidates)}, {json.dumps(stored_out_of_range)})"
     ) == list(analyticstool.resolve_initial_range(candidates, stored_out_of_range))
+
+
+def test_analytics_resolve_button_range_clientside_matches_python(page_modules):
+    analyticstool, _ = page_modules
+    candidates = {
+        "available_series": ["Asset_A"],
+        "common_start": "2024-03-01",
+        "common_end": "2024-11-30",
+        "max_start": "2024-01-01",
+        "max_end": "2024-12-31",
+    }
+    common_daily = {
+        "common_daily_start": "2024-04-01",
+        "common_daily_end": "2024-10-31",
+    }
+
+    for button_id in [
+        "at-common-range-button",
+        "at-common-daily-button",
+        "at-maximum-range-button",
+        "at-unknown-button",
+    ]:
+        assert _run_dashmat_callbacks_js(
+            f"ns.analyticsResolveButtonRange({json.dumps(candidates)}, {json.dumps(button_id)}, {json.dumps(common_daily)})"
+        ) == list(analyticstool.resolve_button_range(candidates, button_id, common_daily))
+
+
+def test_analytics_date_range_buttons_clientside_outputs_expected_payloads():
+    candidates = {
+        "available_series": ["Asset_A"],
+        "common_start": "2024-03-01",
+        "common_end": "2024-11-30",
+        "max_start": "2024-01-01",
+        "max_end": "2024-12-31",
+    }
+    common_daily = {
+        "common_daily_start": "2024-04-01",
+        "common_daily_end": "2024-10-31",
+    }
+
+    common = _run_dashmat_callbacks_js(
+        "(window.dash_clientside.callback_context = { triggered: [{ prop_id: 'at-common-range-button.n_clicks' }] }, "
+        + f"ns.analyticsDateRangeButtons(1, null, null, {json.dumps(candidates)}, {json.dumps(common_daily)}))"
+    )
+    assert common == [
+        "2024-03-01",
+        "2024-11-30",
+        {"start": "2024-03-01", "end": "2024-11-30"},
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+    ]
+
+    common_daily_result = _run_dashmat_callbacks_js(
+        "(window.dash_clientside.callback_context = { triggered: [{ prop_id: 'at-common-daily-button.n_clicks' }] }, "
+        + f"ns.analyticsDateRangeButtons(null, 1, null, {json.dumps(candidates)}, {json.dumps(common_daily)}))"
+    )
+    assert common_daily_result == [
+        "2024-04-01",
+        "2024-10-31",
+        {"start": "2024-04-01", "end": "2024-10-31"},
+        "daily_trading",
+        "daily_trading",
+    ]
+
+    max_result = _run_dashmat_callbacks_js(
+        "(window.dash_clientside.callback_context = { triggered: [{ prop_id: 'at-maximum-range-button.n_clicks' }] }, "
+        + f"ns.analyticsDateRangeButtons(null, null, 1, {json.dumps(candidates)}, {json.dumps(common_daily)}))"
+    )
+    assert max_result == [
+        "2024-01-01",
+        "2024-12-31",
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+    ]
+
+    invalid = _run_dashmat_callbacks_js(
+        "(window.dash_clientside.callback_context = { triggered: [{ prop_id: 'at-common-range-button.n_clicks' }] }, "
+        "ns.analyticsDateRangeButtons(1, null, null, null, null))"
+    )
+    assert invalid == ["__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__"]
 
 
 def test_analytics_init_date_range_clientside_idempotent():
@@ -993,6 +1083,20 @@ def test_update_download_excel_disabled_uses_ready_state(page_modules):
         )
         is no_update
     )
+
+
+def test_analytics_date_range_store_update_clientside_matches_python(page_modules):
+    analyticstool, _ = page_modules
+
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsDateRangeStoreUpdate("2024-01-01", "2024-12-31", null)'
+    ) == analyticstool.update_date_range_store("2024-01-01", "2024-12-31", None)
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsDateRangeStoreUpdate("2024-01-01", null, null)'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsDateRangeStoreUpdate("2024-01-01", "2024-12-31", {"start":"2024-01-01","end":"2024-12-31"})'
+    ) == "__NO_UPDATE__"
 
 
 def test_update_statistics_requires_ready_state(page_modules):

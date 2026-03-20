@@ -361,6 +361,65 @@
     ];
   }
 
+  function analyticsResolveButtonRange(candidates, buttonId, commonDailyCandidates) {
+    const source = candidates && typeof candidates === "object" ? candidates : {};
+    const normalizedId = String(buttonId || "");
+    if (normalizedId.endsWith("common-range-button")) {
+      return [source.common_start || null, source.common_end || null, false];
+    }
+    if (normalizedId.endsWith("common-daily-button")) {
+      const dailySource = commonDailyCandidates && typeof commonDailyCandidates === "object"
+        ? commonDailyCandidates
+        : source;
+      return [dailySource.common_daily_start || null, dailySource.common_daily_end || null, true];
+    }
+    if (normalizedId.endsWith("maximum-range-button")) {
+      return [source.max_start || null, source.max_end || null, false];
+    }
+    return [null, null, false];
+  }
+
+  function analyticsDateRangeButtons(commonClicks, commonDailyClicks, maxClicks, candidates, commonDailyCandidates) {
+    const nu = noUpdate();
+    if (!(candidates && Array.isArray(candidates.available_series) && candidates.available_series.length)) {
+      return [nu, nu, nu, nu, nu];
+    }
+    const buttonId = triggeredId();
+    if (!buttonId) {
+      return [nu, nu, nu, nu, nu];
+    }
+    const resolved = analyticsResolveButtonRange(candidates, buttonId, commonDailyCandidates);
+    const startDate = resolved[0];
+    const endDate = resolved[1];
+    const forceDaily = !!resolved[2];
+    if (!startDate || !endDate) {
+      return [nu, nu, nu, nu, nu];
+    }
+    const periodicityValue = forceDaily ? "daily_trading" : nu;
+    return [
+      startDate,
+      endDate,
+      { start: startDate, end: endDate },
+      periodicityValue,
+      periodicityValue
+    ];
+  }
+
+  function analyticsDateRangeStoreUpdate(startDate, endDate, existingRange) {
+    const nu = noUpdate();
+    if (!startDate || !endDate) {
+      return nu;
+    }
+    if (
+      existingRange &&
+      existingRange.start === startDate &&
+      existingRange.end === endDate
+    ) {
+      return nu;
+    }
+    return { start: startDate, end: endDate };
+  }
+
   const portoptSplitReportingModels = [
     "risk_parity",
     "factor_risk_parity",
@@ -2882,6 +2941,9 @@
       analyticsDownloadExcelDisabled: analyticsDownloadExcelDisabled,
       analyticsViewSync: analyticsViewSync,
       analyticsInitDateRange: analyticsInitDateRange,
+      analyticsResolveButtonRange: analyticsResolveButtonRange,
+      analyticsDateRangeButtons: analyticsDateRangeButtons,
+      analyticsDateRangeStoreUpdate: analyticsDateRangeStoreUpdate,
       analyticsResolveInitialRange: analyticsResolveInitialRange,
       clearWorkspaceSession: clearWorkspaceSession,
       commonDailyButtonDisabled: commonDailyButtonDisabled,
