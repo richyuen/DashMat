@@ -530,18 +530,6 @@ def test_analytics_download_excel_disabled_clientside_helper():
     ) is False
 
 
-def test_analytics_statistics_loading_display_clientside_helper():
-    assert _run_dashmat_callbacks_js(
-        'ns.analyticsStatisticsLoadingDisplay("statistics", false, null, null, true)'
-    ) == "show"
-    assert _run_dashmat_callbacks_js(
-        'ns.analyticsStatisticsLoadingDisplay("statistics", true, "sig", "sig", true)'
-    ) == "hide"
-    assert _run_dashmat_callbacks_js(
-        'ns.analyticsStatisticsLoadingDisplay("returns", true, "sig", null, true)'
-    ) == "hide"
-
-
 def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
     analyticstool, _ = page_modules
 
@@ -956,8 +944,8 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     )
 
     column_defs, row_data, loaded, rendered_key = analyticstool.update_statistics(
+        {"tab": "statistics"},
         "statistics",
-        target_key,
         {"dataset_key": "unit-test-dataset"},
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1012,8 +1000,8 @@ def test_update_statistics_requires_ready_state(page_modules):
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            {"tab": "statistics"},
             "statistics",
-            "sig",
             {"dataset_key": "unit-test-dataset"},
             "daily",
             ["Asset_A"],
@@ -1035,8 +1023,8 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            {"tab": "statistics"},
             "returns",
-            "sig",
             {"dataset_key": "unit-test-dataset"},
             "daily",
             ["Asset_A"],
@@ -1054,8 +1042,8 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            {"tab": "statistics"},
             "statistics",
-            "sig",
             {"dataset_key": "unit-test-dataset"},
             "daily",
             ["Asset_A"],
@@ -1126,8 +1114,8 @@ def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_statistics(
+            {"tab": "statistics"},
             "statistics",
-            signature,
             {"dataset_key": analyticstool._dataset_key(raw_json)},
             "daily",
             ["Asset_A"],
@@ -1144,61 +1132,18 @@ def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_
         )
 
 
-def test_statistics_target_key_skips_when_statistics_tab_is_inactive(page_modules):
-    analyticstool, _ = page_modules
-
-    result = analyticstool.update_statistics_target_key(
-        {"tab": "statistics"},
-        "returns",
-        {"dataset_key": "unit-test-dataset"},
-        "daily",
-        ["Asset_A"],
-        {},
-        {},
-        {"start": "2024-01-01", "end": "2024-12-31"},
-        True,
-        0,
-        {},
-        True,
-        {},
-        True,
-        "existing-key",
-    )
-
-    assert result is no_update
+def test_statistics_render_schedules_from_statistics_trigger_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'Input("at-statistics-tab-trigger-store", "data")' in page_text
+    assert 'Input("at-statistics-target-key-store", "data")' not in page_text
+    assert 'dcc.Store(id="at-statistics-target-key-store"' not in page_text
 
 
-def test_statistics_target_key_uses_raw_meta_dataset_key(page_modules):
-    analyticstool, _ = page_modules
-
-    result = analyticstool.update_statistics_target_key(
-        {"tab": "statistics"},
-        "statistics",
-        {"dataset_key": "unit-test-dataset"},
-        "daily",
-        ["Asset_A"],
-        {},
-        {},
-        {"start": "2024-01-01", "end": "2024-12-31"},
-        True,
-        0,
-        {},
-        True,
-        {},
-        True,
-        None,
-    )
-
-    assert isinstance(result, str)
-
-
-def test_control_statistics_loading_display(page_modules):
-    analyticstool, _ = page_modules
-    assert analyticstool.control_statistics_loading_display("statistics", False, None, None) == "show"
-    assert analyticstool.control_statistics_loading_display("statistics", True, "sig", None) == "show"
-    assert analyticstool.control_statistics_loading_display("statistics", True, "sig", "sig") == "hide"
-    assert analyticstool.control_statistics_loading_display("returns", True, "sig", None) == "hide"
-    assert analyticstool.control_statistics_loading_display("statistics", True, "sig", "sig", False) == "show"
+def test_statistics_loading_uses_native_loading_without_manual_display_callback():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'Output("at-loading-statistics", "display")' not in page_text
+    assert "analyticsStatisticsLoadingDisplay" not in js_text
 
 
 def test_update_growth_grid_requires_growth_table_view(page_modules):

@@ -2442,19 +2442,6 @@
     return !(dateRange && dateRange.start && dateRange.end);
   }
 
-  function analyticsStatisticsLoadingDisplay(activeTab, stateReady, targetKey, renderedKey, initialTabReady) {
-    if (String(activeTab || "statistics") !== "statistics") {
-      return "hide";
-    }
-    if (initialTabReady === false || !stateReady) {
-      return "show";
-    }
-    if (targetKey && targetKey !== renderedKey) {
-      return "show";
-    }
-    return "hide";
-  }
-
   function analyticsFactorRegimeSync(factorMode, factorQuantiles, factorTransform, factorSeries, factorQqReference, regimeDefinition, regimeMethodType) {
     let quantiles = 5;
     if (factorQuantiles !== null && factorQuantiles !== undefined) {
@@ -2893,7 +2880,6 @@
       analyticsTabTrigger: analyticsTabTrigger,
       analyticsModalPreviewTrigger: analyticsModalPreviewTrigger,
       analyticsDownloadExcelDisabled: analyticsDownloadExcelDisabled,
-      analyticsStatisticsLoadingDisplay: analyticsStatisticsLoadingDisplay,
       analyticsViewSync: analyticsViewSync,
       analyticsInitDateRange: analyticsInitDateRange,
       analyticsResolveInitialRange: analyticsResolveInitialRange,

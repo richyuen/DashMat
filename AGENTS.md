@@ -34,6 +34,10 @@
   - small internal `memory` stores for routing/gating instead of persisted schema changes
   - hidden-tab scheduling gating before callback-body micro-optimization
 - For hidden-tab gating, use per-family triggers when the goal is to stop inactive callbacks from being scheduled at all.
+- When a visible-tab signature/render path only needs dataset identity, pass raw-data metadata or dataset keys instead of the full raw-data store.
+- For modal-only preview callbacks, gate scheduling with a modal-open trigger store instead of letting closed modals wake on shared control changes.
+- When two stores are recomputed from the same inputs, prefer one deduped multi-output callback over parallel sibling callbacks.
+- Avoid cycles in trigger-store graphs: do not feed a trigger emitter from a control whose value is derived downstream from that same trigger path.
 - If moving pure browser-visible logic clientside for perf, keep the Python path as the reference and add parity tests.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
 - PortOpt-specific guardrails:

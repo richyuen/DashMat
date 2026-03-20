@@ -4919,7 +4919,6 @@ layout = dmc.Container(
         dcc.Store(id="at-regime-preview-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
-        dcc.Store(id="at-statistics-target-key-store", data=None, storage_type="memory"),
         dcc.Store(id="at-statistics-rendered-key-store", data=None, storage_type="memory"),
         dcc.Store(id="at-initial-tab-render-ready-store", data=False, storage_type="memory"),
         dcc.Store(id="at-secondary-restore-ready-store", data=False, storage_type="memory"),
@@ -9112,7 +9111,6 @@ def update_download_excel_disabled(raw_data, selected_series, date_range, state_
 
 @callback(
     Output("at-statistics-loaded-store", "data"),
-    Output("at-statistics-target-key-store", "data", allow_duplicate=True),
     Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
     Input("at-state-ready-store", "data"),
     prevent_initial_call=True,
@@ -9120,89 +9118,7 @@ def update_download_excel_disabled(raw_data, selected_series, date_range, state_
 def reset_statistics_loaded_on_hydration(state_ready):
     if state_ready:
         raise PreventUpdate
-    return False, None, None
-
-
-@callback(
-    Output("at-statistics-target-key-store", "data"),
-    Input("at-statistics-tab-trigger-store", "data"),
-    State("at-main-tabs", "value"),
-    State("dashmat-raw-data-meta-store", "data"),
-    State("at-periodicity-select", "value"),
-    State("at-series-select", "data"),
-    State("at-benchmark-assignments-store", "data"),
-    State("at-long-short-store", "data"),
-    State("at-date-range-store", "data"),
-    State("at-state-ready-store", "data"),
-    State("at-vol-scaler-value-store", "data"),
-    State("at-vol-scaling-assignments-store", "data"),
-    State("at-use-risk-free-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
-    State("at-initial-tab-render-ready-store", "data"),
-    State("at-statistics-target-key-store", "data"),
-    prevent_initial_call=True,
-)
-def update_statistics_target_key(
-    trigger_payload,
-    active_tab,
-    raw_meta,
-    periodicity,
-    selected_series,
-    benchmark_assignments,
-    long_short_assignments,
-    date_range,
-    state_ready,
-    vol_scaler,
-    vol_scaling_assignments,
-    use_risk_free,
-    saved_series_store,
-    initial_tab_ready,
-    current_target_key,
-):
-    _at_require_tab_trigger(trigger_payload, "statistics")
-    if active_tab != "statistics":
-        return no_update
-    if not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
-        return None
-    dataset_key = _dataset_key_from_meta(raw_meta)
-    if not dataset_key or not selected_series:
-        return None
-
-    next_key = _statistics_tab_signature(
-        raw_meta,
-        periodicity,
-        selected_series,
-        benchmark_assignments,
-        long_short_assignments,
-        date_range,
-        vol_scaler,
-        vol_scaling_assignments,
-        use_risk_free,
-        saved_series_store,
-    )
-    if next_key == current_target_key:
-        return no_update
-    return next_key
-
-
-clientside_callback(
-    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsStatisticsLoadingDisplay"),
-    Output("at-loading-statistics", "display"),
-    Input("at-main-tabs", "value"),
-    Input("at-state-ready-store", "data"),
-    Input("at-statistics-target-key-store", "data"),
-    Input("at-statistics-rendered-key-store", "data"),
-    Input("at-initial-tab-render-ready-store", "data"),
-    prevent_initial_call=False,
-)
-def control_statistics_loading_display(active_tab, state_ready, target_key, rendered_key, initial_tab_ready=True):
-    if active_tab != "statistics":
-        return "hide"
-    if not initial_tab_ready or not state_ready:
-        return "show"
-    if target_key and target_key != rendered_key:
-        return "show"
-    return "hide"
+    return False, None
 
 
 @callback(
@@ -9649,8 +9565,8 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     Output("at-statistics-grid", "rowData"),
     Output("at-statistics-loaded-store", "data", allow_duplicate=True),
     Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
-    Input("at-main-tabs", "value"),
-    Input("at-statistics-target-key-store", "data"),
+    Input("at-statistics-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
     State("dashmat-raw-data-meta-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
@@ -9666,15 +9582,29 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     State("at-statistics-rendered-key-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(active_tab="statistics", target_key=None, raw_meta=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
+def update_statistics(trigger_payload, active_tab="statistics", raw_meta=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
     """Update the Statistics grid with transposed data (optimized with caching)."""
+    _at_require_tab_trigger(trigger_payload, "statistics")
     if active_tab != "statistics" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
     dataset_key = _dataset_key_from_meta(raw_meta)
     if not dataset_key or not selected_series:
         return [], [], True, None
-    if not target_key or target_key == rendered_key:
+
+    next_key = _statistics_tab_signature(
+        raw_meta,
+        periodicity,
+        selected_series,
+        benchmark_assignments,
+        long_short_assignments,
+        date_range,
+        vol_scaler,
+        vol_scaling_assignments,
+        use_risk_free,
+        saved_series_store,
+    )
+    if next_key == rendered_key:
         raise PreventUpdate
 
     try:
@@ -9695,7 +9625,7 @@ def update_statistics(active_tab="statistics", target_key=None, raw_meta=None, p
             )
 
         if not stats:
-            return [], [], True, target_key
+            return [], [], True, next_key
 
         # Transpose: rows become statistics, columns become series
         # First column is "Statistic" (pinned), then one column per series
@@ -9729,7 +9659,7 @@ def update_statistics(active_tab="statistics", target_key=None, raw_meta=None, p
 
             row_data.append(row)
             
-        return column_defs, row_data, True, target_key
+        return column_defs, row_data, True, next_key
 
     except Exception:
         return [], [], True, no_update
