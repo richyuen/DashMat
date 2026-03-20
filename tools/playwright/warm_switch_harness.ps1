@@ -2,6 +2,7 @@ param(
     [string]$RepoRoot = '',
     [string]$BaseUrl = 'http://127.0.0.1:8050',
     [string[]]$DbSeries = @('SPX_TRIndex', 'R2000_TRIndex', 'EAFE_TRIndex', 'BCTBill13_TRIndex'),
+    [string[]]$Pages = @('analytics', 'portopt', 'regression'),
     [int]$Runs = 5,
     [int]$StartupTimeout = 30,
     [string]$Label = '',
@@ -44,6 +45,10 @@ if ($SkipDbBuild) {
 if ($DbSeries -and $DbSeries.Count -gt 0) {
   $args += '--db-series'
   $args += $DbSeries
+}
+if ($Pages -and $Pages.Count -gt 0) {
+  $args += '--pages'
+  $args += $Pages
 }
 if ($ServerLog) {
   $args += '--server-log'

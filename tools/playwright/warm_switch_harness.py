@@ -33,8 +33,12 @@ DEFAULT_DB_SERIES = [
     "EAFE_TRIndex",
     "BCTBill13_TRIndex",
 ]
+PAGE_ORDER = ["analytics", "portopt", "regression"]
 
 TIMING_EVENT_NAMES = (
+    "analyticstool.render_statistics_grid",
+    "analyticstool.render_returns_grid",
+    "analyticstool.download_excel.total",
     "portopt.performance_frames",
     "portopt.project_results",
     "portopt.render_weight_chart",
@@ -235,7 +239,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--portopt-restore-tab", default="weight")
     parser.add_argument("--portopt-entry-only", action="store_true")
     parser.add_argument("--server-log", default="")
+    parser.add_argument("--pages", nargs="+", default=PAGE_ORDER)
     return parser.parse_args()
+
+
+def normalize_pages(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    requested = values or PAGE_ORDER
+    normalized: list[str] = []
+    for raw_value in requested:
+        for token in str(raw_value or "").split(","):
+            page = token.strip().lower()
+            if not page:
+                continue
+            if page not in PAGE_ORDER:
+                raise ValueError(f"Unsupported page selection: {page}")
+            if page not in normalized:
+                normalized.append(page)
+    return normalized or PAGE_ORDER
 
 
 def resolve_root() -> Path:
@@ -1366,6 +1386,7 @@ def run_harness(
     restore_tab: str,
     entry_only: bool,
     server_log: Path | None,
+    selected_pages: list[str],
 ) -> dict:
     pages = {
         "analytics": {"path": "/analyticstool", "shell": "#at-main-app-container", "ready": "#at-periodicity-select"},
@@ -1392,12 +1413,16 @@ def run_harness(
         page.on("console", on_console)
         page.on("pageerror", on_page_error)
 
-        renderer_mode = warm_analytics_db(page, base_url, db_series)
-        warm_portopt_results(page, base_url, db_series, restore_tab)
-        warm_regression_results(page, base_url, db_series)
-        measure_portopt(page, pages["portopt"], restore_tab, entry_only)
-        regression_preflight = measure_regression(page, pages["regression"], server_log)
-        validate_regression_timing_preflight(regression_preflight, server_log)
+        renderer_mode = None
+        if "analytics" in selected_pages:
+            renderer_mode = warm_analytics_db(page, base_url, db_series)
+        if "portopt" in selected_pages:
+            warm_portopt_results(page, base_url, db_series, restore_tab)
+            measure_portopt(page, pages["portopt"], restore_tab, entry_only)
+        if "regression" in selected_pages:
+            warm_regression_results(page, base_url, db_series)
+            regression_preflight = measure_regression(page, pages["regression"], server_log)
+            validate_regression_timing_preflight(regression_preflight, server_log)
         timing_start_offset = server_log.stat().st_size if server_log and server_log.exists() else 0
 
         results = {
@@ -1438,7 +1463,7 @@ def run_harness(
                 "drawdownOpenMs": [],
             }
         )
-        order = ["analytics", "portopt", "regression"]
+        order = [name for name in PAGE_ORDER if name in selected_pages]
         for _ in range(runs):
             for name in order:
                 if name == "portopt":
@@ -1466,43 +1491,56 @@ def run_harness(
                     results[name]["rollingOpenMs"].append(metrics["rollingOpenMs"])
                     results[name]["growthOpenMs"].append(metrics["growthOpenMs"])
                     results[name]["drawdownOpenMs"].append(metrics["drawdownOpenMs"])
-            measure(page, pages["analytics"])
-            results["analytics"]["selectionFlowRuns"].append(
-                measure_analytics_selection_flow(page, request_tracker, db_series)
-            )
-            results["analytics"]["dateRangeFlowRuns"].append(
-                measure_analytics_date_range_flow(page, request_tracker, db_series)
-            )
-            results["analytics"]["returnsSelectionFlowRuns"].append(
-                measure_analytics_selection_flow(page, request_tracker, db_series, active_tab="returns")
-            )
+            if "analytics" in selected_pages:
+                measure(page, pages["analytics"])
+                results["analytics"]["selectionFlowRuns"].append(
+                    measure_analytics_selection_flow(page, request_tracker, db_series)
+                )
+                results["analytics"]["dateRangeFlowRuns"].append(
+                    measure_analytics_date_range_flow(page, request_tracker, db_series)
+                )
+                results["analytics"]["returnsSelectionFlowRuns"].append(
+                    measure_analytics_selection_flow(page, request_tracker, db_series, active_tab="returns")
+                )
 
-        for data in results.values():
+        for name in selected_pages:
+            data = results[name]
             data["shellMedian"] = round(median(data["shellMs"]))
             data["readyMedian"] = round(median(data["readyMs"]))
-        results["analytics"]["selectionFlow"] = summarize_dash_update_runs(results["analytics"]["selectionFlowRuns"])
-        results["analytics"]["dateRangeFlow"] = summarize_dash_update_runs(results["analytics"]["dateRangeFlowRuns"])
-        results["analytics"]["returnsSelectionFlow"] = summarize_dash_update_runs(results["analytics"]["returnsSelectionFlowRuns"])
-        results["portopt"]["restoredTabReadyMedian"] = round(median(results["portopt"]["restoredTabReadyMs"]))
-        if not entry_only:
-            results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))
-            results["portopt"]["frontierOpenMedian"] = round(median(results["portopt"]["frontierOpenMs"]))
-            results["portopt"]["riskOpenMedian"] = round(median(results["portopt"]["riskOpenMs"]))
-            results["portopt"]["attributionOpenMedian"] = round(median(results["portopt"]["attributionOpenMs"]))
-        results["regression"]["restoreStateReadyMedian"] = round(median(results["regression"]["restoreStateReadyMs"]))
-        results["regression"]["resultReadyMedian"] = round(median(results["regression"]["resultReadyMs"]))
-        results["regression"]["timingValidatedCount"] = sum(1 for ok in results["regression"]["timingValidated"] if ok)
-        results["regression"]["timingValidatedAll"] = all(results["regression"]["timingValidated"])
-        results["regression"]["timingDiagnosticValidatedCount"] = sum(
-            1 for ok in results["regression"]["timingDiagnosticValidated"] if ok
-        )
-        results["regression"]["timingDiagnosticValidatedAll"] = all(results["regression"]["timingDiagnosticValidated"])
-        results["regression"]["returnsOpenMedian"] = round(median(results["regression"]["returnsOpenMs"]))
-        results["regression"]["rollingOpenMedian"] = round(median(results["regression"]["rollingOpenMs"]))
-        results["regression"]["growthOpenMedian"] = round(median(results["regression"]["growthOpenMs"]))
-        results["regression"]["drawdownOpenMedian"] = round(median(results["regression"]["drawdownOpenMs"]))
+        if "analytics" in selected_pages:
+            results["analytics"]["selectionFlow"] = summarize_dash_update_runs(results["analytics"]["selectionFlowRuns"])
+            results["analytics"]["dateRangeFlow"] = summarize_dash_update_runs(results["analytics"]["dateRangeFlowRuns"])
+            results["analytics"]["returnsSelectionFlow"] = summarize_dash_update_runs(results["analytics"]["returnsSelectionFlowRuns"])
+        if "portopt" in selected_pages:
+            results["portopt"]["restoredTabReadyMedian"] = round(median(results["portopt"]["restoredTabReadyMs"]))
+            if not entry_only:
+                results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))
+                results["portopt"]["frontierOpenMedian"] = round(median(results["portopt"]["frontierOpenMs"]))
+                results["portopt"]["riskOpenMedian"] = round(median(results["portopt"]["riskOpenMs"]))
+                results["portopt"]["attributionOpenMedian"] = round(median(results["portopt"]["attributionOpenMs"]))
+        if "regression" in selected_pages:
+            results["regression"]["restoreStateReadyMedian"] = round(median(results["regression"]["restoreStateReadyMs"]))
+            results["regression"]["resultReadyMedian"] = round(median(results["regression"]["resultReadyMs"]))
+            results["regression"]["timingValidatedCount"] = sum(1 for ok in results["regression"]["timingValidated"] if ok)
+            results["regression"]["timingValidatedAll"] = all(results["regression"]["timingValidated"])
+            results["regression"]["timingDiagnosticValidatedCount"] = sum(
+                1 for ok in results["regression"]["timingDiagnosticValidated"] if ok
+            )
+            results["regression"]["timingDiagnosticValidatedAll"] = all(results["regression"]["timingDiagnosticValidated"])
+            results["regression"]["returnsOpenMedian"] = round(median(results["regression"]["returnsOpenMs"]))
+            results["regression"]["rollingOpenMedian"] = round(median(results["regression"]["rollingOpenMs"]))
+            results["regression"]["growthOpenMedian"] = round(median(results["regression"]["growthOpenMs"]))
+            results["regression"]["drawdownOpenMedian"] = round(median(results["regression"]["drawdownOpenMs"]))
 
         browser.close()
+
+    warmup_segments: list[str] = []
+    if "analytics" in selected_pages:
+        warmup_segments.append("analyticstool-aa-db-import+series-selection-confirm")
+    if "portopt" in selected_pages:
+        warmup_segments.append("portopt-risk-parity-solve")
+    if "regression" in selected_pages:
+        warmup_segments.append("regression-ols-solve")
 
     return {
         "ok": True,
@@ -1511,8 +1549,9 @@ def run_harness(
         "dbSeries": db_series,
         "portoptRestoreTab": normalize_portopt_restore_tab(restore_tab),
         "portoptEntryOnly": bool(entry_only),
+        "selectedPages": selected_pages,
         "runs": runs,
-        "warmupFlow": "analyticstool-aa-db-import+series-selection-confirm+portopt-risk-parity-solve+regression-ols-solve",
+        "warmupFlow": "+".join(warmup_segments),
         "rendererMode": renderer_mode,
         "results": results,
         "consoleMessages": console_messages,
@@ -1523,6 +1562,7 @@ def run_harness(
 def main() -> int:
     args = parse_args()
     root = resolve_repo_root(args.repo_root)
+    selected_pages = normalize_pages(args.pages)
     out_dir = root / "output" / "playwright"
     fail_dir = out_dir / "failures"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1553,6 +1593,7 @@ def main() -> int:
             restore_tab=args.portopt_restore_tab,
             entry_only=args.portopt_entry_only,
             server_log=server_log_path,
+            selected_pages=selected_pages,
         )
     except Exception as exc:
         page_state: dict | None = None
@@ -1573,7 +1614,12 @@ def main() -> int:
                     if len(console_messages) < 120
                     else None,
                 )
-                page.goto(args.base_url + "/analyticstool", wait_until="domcontentloaded", timeout=10000)
+                failure_path = {
+                    "analytics": "/analyticstool",
+                    "portopt": "/portopt",
+                    "regression": "/regression",
+                }[selected_pages[0]]
+                page.goto(args.base_url + failure_path, wait_until="domcontentloaded", timeout=10000)
                 screenshot_path = fail_dir / f"{stem}.png"
                 page.screenshot(path=str(screenshot_path), full_page=True)
                 page_state = {
@@ -1614,6 +1660,7 @@ def main() -> int:
         "dbSeries": result["dbSeries"],
         "portoptRestoreTab": result["portoptRestoreTab"],
         "portoptEntryOnly": result["portoptEntryOnly"],
+        "selectedPages": result["selectedPages"],
         "warmupFlow": result["warmupFlow"],
         "runs": result["runs"],
         "dbRebuilt": db_rebuilt,
