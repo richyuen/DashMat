@@ -92,6 +92,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-account-list-selected-id-store", data=None),
     dcc.Store(id="dashmat-account-list-selected-detail-store", data=None),
     dcc.Store(id="dashmat-account-list-session-snapshot-store", data={}),
+    dcc.Store(id="dashmat-account-list-load-snapshot-store", data=None),
     dcc.Store(id="dashmat-account-list-refresh-store", data=0),
     dcc.Store(id="dashmat-account-list-session-apply-store", data=None),
     dcc.Store(id="dashmat-account-list-load-state-store", data={"status": "idle"}),

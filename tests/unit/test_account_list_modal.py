@@ -31,7 +31,7 @@ def test_load_selected_account_list_session_requires_click():
             raw_data=None,
             original_periodicity="daily",
             provenance_store={},
-            session_snapshot={},
+            load_snapshot={},
             userinfo={"username": "tester"},
             db_engine=None,
             mrd_engine=None,
@@ -49,7 +49,7 @@ def test_load_selected_account_list_session_handles_missing_selection():
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
-        session_snapshot={},
+        load_snapshot={},
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -73,7 +73,7 @@ def test_load_selected_account_list_session_handles_missing_row(monkeypatch):
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
-        session_snapshot={},
+        load_snapshot={},
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -106,7 +106,7 @@ def test_load_selected_account_list_session_handles_loader_error(monkeypatch):
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
-        session_snapshot={},
+        load_snapshot={},
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -124,10 +124,17 @@ def test_load_selected_account_list_session_reports_success(monkeypatch):
         "load_account_list_by_id",
         lambda *_args, **_kwargs: {"ConfigJson": {"series_entries": [{"entry_id": "x"}]}},
     )
+
+    seen = {}
+
+    def fake_build(**kwargs):
+        seen["snapshot"] = kwargs["current_session_snapshot"]
+        return {"dashmat-raw-data-store": "json"}, {"added_series": ["A"]}
+
     monkeypatch.setattr(
         modal_module,
         "build_account_list_session_payload",
-        lambda **_kwargs: ({"dashmat-raw-data-store": "json"}, {"added_series": ["A"]}),
+        fake_build,
     )
 
     payload, notice, load_state = modal_module.load_selected_account_list_session(
@@ -139,7 +146,7 @@ def test_load_selected_account_list_session_reports_success(monkeypatch):
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
-        session_snapshot={},
+        load_snapshot={"at-series-select": ["A"], "unused-store": 1},
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -149,6 +156,7 @@ def test_load_selected_account_list_session_reports_success(monkeypatch):
     assert payload == {"dashmat-raw-data-store": "json"}
     assert notice is no_update
     assert load_state == {"status": "success"}
+    assert seen["snapshot"] == {"at-series-select": ["A"]}
 
 
 def test_load_selected_account_list_session_repeated_failures_return_same_error_state(monkeypatch):
@@ -163,7 +171,7 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
-        session_snapshot={},
+        load_snapshot={},
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -178,7 +186,7 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
         raw_data=None,
         original_periodicity="daily",
         provenance_store={},
-        session_snapshot={},
+        load_snapshot={},
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -278,3 +286,24 @@ def test_render_selected_account_list_preview_parses_selected_detail():
     assert preview_rows == [
         {"Series": "SPX_TRIndex", "SourceType": "cma_bench", "AT": True, "PO": False, "REG": False}
     ]
+
+
+def test_normalize_account_list_load_snapshot_keeps_only_merge_keys():
+    snapshot = modal_module.normalize_account_list_load_snapshot(
+        {
+            "at-series-select": ["A"],
+            "po-series-select": ["B"],
+            "reg-series-select": ["C"],
+            "unrelated-store": 123,
+        }
+    )
+
+    assert snapshot == {
+        "at-series-select": ["A"],
+        "po-series-select": ["B"],
+        "reg-series-select": ["C"],
+    }
+
+
+def test_account_list_load_merge_store_ids_count_is_expected():
+    assert len(modal_module.ACCOUNT_LIST_LOAD_MERGE_STORE_IDS) == 24

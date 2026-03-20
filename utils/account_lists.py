@@ -197,6 +197,33 @@ ACCOUNT_LIST_EXTRA_CONTROL_STORE_IDS = (
 
 ACCOUNT_LIST_CAPTURE_STORE_IDS = ACCOUNT_LIST_SERIES_DIALOG_STORE_IDS + ACCOUNT_LIST_EXTRA_CONTROL_STORE_IDS
 
+ACCOUNT_LIST_LOAD_MERGE_STORE_IDS = [
+    AT_STORE_IDS["selected"],
+    AT_STORE_IDS["bench"],
+    AT_STORE_IDS["long_short"],
+    AT_STORE_IDS["order"],
+    AT_STORE_IDS["vol"],
+    PO_STORE_IDS["selected"],
+    PO_STORE_IDS["bench"],
+    PO_STORE_IDS["cmabench"],
+    PO_STORE_IDS["long_short"],
+    PO_STORE_IDS["order"],
+    PO_STORE_IDS["vol"],
+    PO_STORE_IDS["min_wt"],
+    PO_STORE_IDS["max_wt"],
+    PO_STORE_IDS["force_max"],
+    REG_STORE_IDS["selected"],
+    REG_STORE_IDS["bench"],
+    REG_STORE_IDS["long_short"],
+    REG_STORE_IDS["order"],
+    REG_STORE_IDS["vol"],
+    REG_STORE_IDS["dep"],
+    REG_STORE_IDS["lag"],
+    REG_STORE_IDS["min_beta"],
+    REG_STORE_IDS["max_beta"],
+    REG_STORE_IDS["enable"],
+]
+
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)

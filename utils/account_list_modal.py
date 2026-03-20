@@ -10,7 +10,11 @@ from sqlalchemy.engine import Engine
 from utils.ag_grid import literal_field_dash_grid_options
 
 from utils.account_lists import (
+    ACCOUNT_LIST_LOAD_MERGE_STORE_IDS,
     ACCOUNT_LIST_CAPTURE_STORE_IDS,
+    AT_STORE_IDS,
+    PO_STORE_IDS,
+    REG_STORE_IDS,
     account_list_tables_available,
     account_list_preview_rows,
     build_account_list_payload,
@@ -56,7 +60,7 @@ def load_selected_account_list_session(
     raw_data,
     original_periodicity,
     provenance_store,
-    session_snapshot,
+    load_snapshot,
     userinfo,
     db_engine: Engine,
     mrd_engine: Engine,
@@ -76,17 +80,24 @@ def load_selected_account_list_session(
     if row is None:
         return no_update, {"message": "Saved account list no longer exists.", "color": "red"}, build_account_list_load_state("error")
     try:
-        session_payload, _stats = build_account_list_session_payload(
-            payload=row.get("ConfigJson"),
-            current_raw_data=raw_data,
-            current_original_periodicity=original_periodicity,
-            current_provenance=provenance_store,
-            current_session_snapshot=session_snapshot,
+        current_snapshot = normalize_account_list_load_snapshot(load_snapshot)
+        with timed_block(
+            "account_list.load_request",
+            merge_key_count=len(ACCOUNT_LIST_LOAD_MERGE_STORE_IDS),
+            snapshot_key_count=len(current_snapshot),
             apply_settings=bool(apply_settings),
-            db_engine=db_engine,
-            mrd_engine=mrd_engine,
-            perf_engine=perf_engine,
-        )
+        ):
+            session_payload, _stats = build_account_list_session_payload(
+                payload=row.get("ConfigJson"),
+                current_raw_data=raw_data,
+                current_original_periodicity=original_periodicity,
+                current_provenance=provenance_store,
+                current_session_snapshot=current_snapshot,
+                apply_settings=bool(apply_settings),
+                db_engine=db_engine,
+                mrd_engine=mrd_engine,
+                perf_engine=perf_engine,
+            )
     except Exception as exc:
         return (
             no_update,
@@ -474,6 +485,16 @@ def account_list_send_controls_state(mode, selected_id, recipient_options, recip
     return visible, False, selected_id is None or not str(recipient_value or "").strip(), "Select a user"
 
 
+def normalize_account_list_load_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        return {}
+    return {
+        str(key): snapshot.get(key)
+        for key in ACCOUNT_LIST_LOAD_MERGE_STORE_IDS
+        if str(key) in snapshot
+    }
+
+
 def render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail):
     hidden = {"display": "none"}
     visible = {}
@@ -574,14 +595,52 @@ def register_account_list_callbacks(
         """,
         Output("dashmat-account-list-session-snapshot-store", "data"),
         Input("at-menu-save-account-list", "n_clicks", allow_optional=True),
-        Input("at-menu-load-account-list", "n_clicks", allow_optional=True),
-        Input("at-welcome-load-account-list-btn", "n_clicks", allow_optional=True),
         Input("po-menu-save-account-list", "n_clicks", allow_optional=True),
-        Input("po-menu-load-account-list", "n_clicks", allow_optional=True),
-        Input("po-welcome-load-account-list-btn", "n_clicks", allow_optional=True),
         Input("reg-menu-save-account-list", "n_clicks", allow_optional=True),
-        Input("reg-menu-load-account-list", "n_clicks", allow_optional=True),
-        Input("reg-welcome-load-account-list-btn", "n_clicks", allow_optional=True),
+        prevent_initial_call=True,
+    )
+
+    app.clientside_callback(
+        """
+        function(nClicks) {
+            if (!nClicks) {
+                return window.dash_clientside.no_update;
+            }
+            const start = (window.performance && typeof window.performance.now === "function")
+                ? window.performance.now()
+                : Date.now();
+            const keys = __LOAD_KEYS__;
+            const out = {};
+            let keyCount = 0;
+            let totalBytes = 0;
+            for (let i = 0; i < keys.length; i += 1) {
+                const key = keys[i];
+                const raw = sessionStorage.getItem(key);
+                if (raw == null) {
+                    continue;
+                }
+                try {
+                    out[key] = JSON.parse(raw);
+                } catch (err) {
+                    out[key] = null;
+                }
+                keyCount += 1;
+                totalBytes += raw ? raw.length : 0;
+            }
+            const end = (window.performance && typeof window.performance.now === "function")
+                ? window.performance.now()
+                : Date.now();
+            console.info(
+                "timing name=account_list.load_snapshot_capture elapsed_ms=%s key_count=%s payload_bytes=%s",
+                (end - start).toFixed(2),
+                keyCount,
+                totalBytes
+            );
+            return out;
+        }
+        """.replace("__LOAD_KEYS__", json.dumps(ACCOUNT_LIST_LOAD_MERGE_STORE_IDS)),
+        Output("dashmat-account-list-load-snapshot-store", "data"),
+        Input("dashmat-account-list-load-button", "n_clicks"),
         prevent_initial_call=True,
     )
 
@@ -589,33 +648,93 @@ def register_account_list_callbacks(
         """
         function(sessionPayload) {
             if (!sessionPayload || typeof sessionPayload !== "object") {
-                return window.dash_clientside.no_update;
+                return [
+                    window.dash_clientside.no_update,
+                    window.dash_clientside.no_update,
+                    window.dash_clientside.no_update,
+                    window.dash_clientside.no_update
+                ];
             }
+            const stableStringify = function(value) {
+                if (value === null || typeof value !== "object") {
+                    return JSON.stringify(value);
+                }
+                if (Array.isArray(value)) {
+                    return "[" + value.map(stableStringify).join(",") + "]";
+                }
+                const keys = Object.keys(value).sort();
+                return "{" + keys.map(function(key) {
+                    return JSON.stringify(key) + ":" + stableStringify(value[key]);
+                }).join(",") + "}";
+            };
             const start = (window.performance && typeof window.performance.now === "function")
                 ? window.performance.now()
                 : Date.now();
             let keyCount = 0;
-            let totalBytes = 0;
+            let changedKeyCount = 0;
+            let changedBytes = 0;
+            let noticePayload = window.dash_clientside.no_update;
+            const changedEntries = [];
             Object.keys(sessionPayload).forEach(function(key) {
-                const serialized = JSON.stringify(sessionPayload[key]);
-                sessionStorage.setItem(key, serialized);
                 keyCount += 1;
-                totalBytes += serialized ? serialized.length : 0;
+                if (key === "dashmat-account-list-notice-store") {
+                    noticePayload = sessionPayload[key];
+                    return;
+                }
+                const serialized = stableStringify(sessionPayload[key]);
+                const existingRaw = sessionStorage.getItem(key);
+                let existingSerialized = existingRaw;
+                if (existingRaw != null) {
+                    try {
+                        existingSerialized = stableStringify(JSON.parse(existingRaw));
+                    } catch (err) {
+                        existingSerialized = existingRaw;
+                    }
+                }
+                if (serialized === existingSerialized) {
+                    return;
+                }
+                changedEntries.push([key, serialized]);
+                changedKeyCount += 1;
+                changedBytes += serialized ? serialized.length : 0;
             });
             const end = (window.performance && typeof window.performance.now === "function")
                 ? window.performance.now()
                 : Date.now();
             console.info(
-                "timing name=account_list.session_apply elapsed_ms=%s key_count=%s payload_bytes=%s",
+                "timing name=account_list.session_apply elapsed_ms=%s key_count=%s changed_key_count=%s changed_payload_bytes=%s",
                 (end - start).toFixed(2),
                 keyCount,
-                totalBytes
+                changedKeyCount,
+                changedBytes
             );
+            if (!changedEntries.length) {
+                return [
+                    null,
+                    false,
+                    noticePayload,
+                    {status: "idle"}
+                ];
+            }
+            changedEntries.forEach(function(entry) {
+                sessionStorage.setItem(entry[0], entry[1]);
+            });
+            if (noticePayload !== window.dash_clientside.no_update) {
+                sessionStorage.setItem("dashmat-account-list-notice-store", stableStringify(noticePayload));
+            }
             window.location.reload();
-            return window.dash_clientside.no_update;
+            return [
+                window.dash_clientside.no_update,
+                window.dash_clientside.no_update,
+                window.dash_clientside.no_update,
+                window.dash_clientside.no_update
+            ];
         }
         """,
         Output("dashmat-account-list-session-apply-store", "data", allow_duplicate=True),
+        Output("dashmat-account-list-modal", "opened", allow_duplicate=True),
+        Output("dashmat-account-list-notice-store", "data", allow_duplicate=True),
+        Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-session-apply-store", "data"),
         prevent_initial_call=True,
     )
@@ -1031,7 +1150,8 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-session-apply-store", "data", allow_duplicate=True),
         Output("dashmat-account-list-notice-store", "data", allow_duplicate=True),
         Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
-        Input("dashmat-account-list-load-button", "n_clicks"),
+        Input("dashmat-account-list-load-snapshot-store", "data"),
+        State("dashmat-account-list-load-button", "n_clicks"),
         State("dashmat-account-list-selected-id-store", "data"),
         State("dashmat-account-list-selected-detail-store", "data"),
         State("dashmat-account-list-rows-store", "data"),
@@ -1039,11 +1159,11 @@ def register_account_list_callbacks(
         State("dashmat-raw-data-store", "data"),
         State("dashmat-original-periodicity-store", "data"),
         State("dashmat-db-import-provenance-store", "data"),
-        State("dashmat-account-list-session-snapshot-store", "data"),
         State("userinfo", "data"),
         prevent_initial_call=True,
     )
     def _load_selected_account_list(
+        load_snapshot,
         n_clicks,
         selected_id,
         selected_detail,
@@ -1052,7 +1172,6 @@ def register_account_list_callbacks(
         raw_data,
         original_periodicity,
         provenance_store,
-        session_snapshot,
         userinfo,
     ):
         return load_selected_account_list_session(
@@ -1064,7 +1183,7 @@ def register_account_list_callbacks(
             raw_data=raw_data,
             original_periodicity=original_periodicity,
             provenance_store=provenance_store,
-            session_snapshot=session_snapshot,
+            load_snapshot=load_snapshot,
             userinfo=userinfo,
             db_engine=db_engine,
             mrd_engine=mrd_engine,
