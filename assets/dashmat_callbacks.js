@@ -2418,6 +2418,43 @@
     };
   }
 
+  function analyticsModalPreviewTrigger(opened) {
+    if (!opened) {
+      return noUpdate();
+    }
+    return {
+      opened: true,
+      stamp: Date.now(),
+      reason: triggeredId() || "unknown"
+    };
+  }
+
+  function analyticsDownloadExcelDisabled(rawData, selectedSeries, dateRange, stateReady) {
+    if (!rawData) {
+      return true;
+    }
+    if (!selectedSeries || !selectedSeries.length) {
+      return true;
+    }
+    if (!stateReady) {
+      return true;
+    }
+    return !(dateRange && dateRange.start && dateRange.end);
+  }
+
+  function analyticsStatisticsLoadingDisplay(activeTab, stateReady, targetKey, renderedKey, initialTabReady) {
+    if (String(activeTab || "statistics") !== "statistics") {
+      return "hide";
+    }
+    if (initialTabReady === false || !stateReady) {
+      return "show";
+    }
+    if (targetKey && targetKey !== renderedKey) {
+      return "show";
+    }
+    return "hide";
+  }
+
   function analyticsFactorRegimeSync(factorMode, factorQuantiles, factorTransform, factorSeries, factorQqReference, regimeDefinition, regimeMethodType) {
     let quantiles = 5;
     if (factorQuantiles !== null && factorQuantiles !== undefined) {
@@ -2854,6 +2891,9 @@
       analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsTabTrigger: analyticsTabTrigger,
+      analyticsModalPreviewTrigger: analyticsModalPreviewTrigger,
+      analyticsDownloadExcelDisabled: analyticsDownloadExcelDisabled,
+      analyticsStatisticsLoadingDisplay: analyticsStatisticsLoadingDisplay,
       analyticsViewSync: analyticsViewSync,
       analyticsInitDateRange: analyticsInitDateRange,
       analyticsResolveInitialRange: analyticsResolveInitialRange,

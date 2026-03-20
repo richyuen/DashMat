@@ -336,6 +336,24 @@ def test_at_common_daily_candidates_use_raw_data_meta_dataset_key(monkeypatch, p
     assert result == {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"}
 
 
+def test_at_date_candidate_stores_dedupe_unchanged_outputs(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    candidates = {"available_series": ["Asset_A"], "max_start": "2020-01-31", "max_end": "2025-12-31"}
+    common_daily = {"common_daily_start": "2020-01-31", "common_daily_end": "2025-12-31"}
+    monkeypatch.setattr(analyticstool, "update_at_range_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
+
+    result = analyticstool.update_at_date_candidate_stores(
+        {"dataset_key": "ds-123"},
+        "monthly",
+        ["Asset_A"],
+        candidates,
+        common_daily,
+    )
+
+    assert result == (no_update, no_update)
+
+
 def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     init_callback = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitDateRange")', 1)[-1]
@@ -418,6 +436,7 @@ def test_analytics_init_date_range_clientside_idempotent():
 def test_at_hidden_tab_trigger_stores_exist(page_modules):
     analyticstool, _ = page_modules
     for component_id in [
+        "at-statistics-tab-trigger-store",
         "at-returns-tab-trigger-store",
         "at-rolling-tab-trigger-store",
         "at-calendar-tab-trigger-store",
@@ -427,6 +446,8 @@ def test_at_hidden_tab_trigger_stores_exist(page_modules):
         "at-regime-tab-trigger-store",
         "at-conditional-tab-trigger-store",
         "at-correlogram-tab-trigger-store",
+        "at-factor-preview-trigger-store",
+        "at-regime-preview-trigger-store",
     ]:
         assert _find_component_by_id(analyticstool.layout, component_id) is not None
 
@@ -442,6 +463,15 @@ def test_analytics_tab_trigger_clientside_helper_respects_active_tab():
     assert _run_dashmat_callbacks_js(
         'ns.analyticsTabTrigger("returns", "statistics", true, true)'
     ) == "__NO_UPDATE__"
+
+
+def test_analytics_modal_preview_trigger_clientside_helper():
+    matched = _run_dashmat_callbacks_js('ns.analyticsModalPreviewTrigger(true)')
+    assert matched["opened"] is True
+    assert matched["reason"]
+    assert isinstance(matched["stamp"], int)
+
+    assert _run_dashmat_callbacks_js('ns.analyticsModalPreviewTrigger(false)') == "__NO_UPDATE__"
     assert _run_dashmat_callbacks_js(
         'ns.analyticsTabTrigger("returns", "returns", false, true)'
     ) == "__NO_UPDATE__"
@@ -466,6 +496,7 @@ def test_at_require_tab_trigger_accepts_match_and_raises_for_mismatch(page_modul
 def test_hidden_at_callbacks_use_family_trigger_inputs():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     for trigger_id in [
+        'Input("at-statistics-tab-trigger-store", "data")',
         'Input("at-returns-tab-trigger-store", "data")',
         'Input("at-rolling-tab-trigger-store", "data")',
         'Input("at-calendar-tab-trigger-store", "data")',
@@ -484,8 +515,31 @@ def test_hidden_at_trigger_emitters_include_restore_ready_guards():
     assert 'Input("at-main-tabs", "value")' in page_text
     assert 'Input("at-initial-tab-render-ready-store", "data")' in page_text
     assert 'Input("at-state-ready-store", "data")' in page_text
+    assert 'analyticsTabTrigger("statistics"' in page_text
     assert 'analyticsTabTrigger("returns"' in page_text
     assert 'analyticsTabTrigger("correlogram"' in page_text
+    assert 'analyticsModalPreviewTrigger(opened)' in page_text
+
+
+def test_analytics_download_excel_disabled_clientside_helper():
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsDownloadExcelDisabled(null, ["Asset_A"], {"start":"2024-01-01","end":"2024-12-31"}, true)'
+    ) is True
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsDownloadExcelDisabled("raw", ["Asset_A"], {"start":"2024-01-01","end":"2024-12-31"}, true)'
+    ) is False
+
+
+def test_analytics_statistics_loading_display_clientside_helper():
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsStatisticsLoadingDisplay("statistics", false, null, null, true)'
+    ) == "show"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsStatisticsLoadingDisplay("statistics", true, "sig", "sig", true)'
+    ) == "hide"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsStatisticsLoadingDisplay("returns", true, "sig", null, true)'
+    ) == "hide"
 
 
 def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
@@ -889,7 +943,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
 
     target_key = analyticstool._statistics_tab_signature(
-        "raw-json",
+        {"dataset_key": "unit-test-dataset"},
         "daily",
         ["Asset_A", "Asset_B"],
         {},
@@ -904,7 +958,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     column_defs, row_data, loaded, rendered_key = analyticstool.update_statistics(
         "statistics",
         target_key,
-        "raw-json",
+        {"dataset_key": "unit-test-dataset"},
         "daily",
         ["Asset_A", "Asset_B"],
         {},
@@ -941,6 +995,16 @@ def test_update_download_excel_disabled_uses_ready_state(page_modules):
         )
         is False
     )
+    assert (
+        analyticstool.update_download_excel_disabled(
+            "raw",
+            ["Asset_A"],
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            True,
+            False,
+        )
+        is no_update
+    )
 
 
 def test_update_statistics_requires_ready_state(page_modules):
@@ -950,7 +1014,7 @@ def test_update_statistics_requires_ready_state(page_modules):
         analyticstool.update_statistics(
             "statistics",
             "sig",
-            "raw-json",
+            {"dataset_key": "unit-test-dataset"},
             "daily",
             ["Asset_A"],
             {},
@@ -973,7 +1037,7 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
         analyticstool.update_statistics(
             "returns",
             "sig",
-            "raw-json",
+            {"dataset_key": "unit-test-dataset"},
             "daily",
             ["Asset_A"],
             {},
@@ -992,7 +1056,7 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
         analyticstool.update_statistics(
             "statistics",
             "sig",
-            "raw-json",
+            {"dataset_key": "unit-test-dataset"},
             "daily",
             ["Asset_A"],
             {},
@@ -1047,7 +1111,7 @@ def test_update_returns_grid_skips_unchanged_tab_revisit(monkeypatch, page_modul
 def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_modules, raw_json):
     analyticstool, _ = page_modules
     signature = analyticstool._statistics_tab_signature(
-        raw_json,
+        {"dataset_key": analyticstool._dataset_key(raw_json)},
         "daily",
         ["Asset_A"],
         {},
@@ -1064,7 +1128,7 @@ def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_
         analyticstool.update_statistics(
             "statistics",
             signature,
-            raw_json,
+            {"dataset_key": analyticstool._dataset_key(raw_json)},
             "daily",
             ["Asset_A"],
             {},
@@ -1078,6 +1142,54 @@ def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_
             True,
             signature,
         )
+
+
+def test_statistics_target_key_skips_when_statistics_tab_is_inactive(page_modules):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.update_statistics_target_key(
+        {"tab": "statistics"},
+        "returns",
+        {"dataset_key": "unit-test-dataset"},
+        "daily",
+        ["Asset_A"],
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        True,
+        {},
+        True,
+        "existing-key",
+    )
+
+    assert result is no_update
+
+
+def test_statistics_target_key_uses_raw_meta_dataset_key(page_modules):
+    analyticstool, _ = page_modules
+
+    result = analyticstool.update_statistics_target_key(
+        {"tab": "statistics"},
+        "statistics",
+        {"dataset_key": "unit-test-dataset"},
+        "daily",
+        ["Asset_A"],
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        True,
+        {},
+        True,
+        None,
+    )
+
+    assert isinstance(result, str)
 
 
 def test_control_statistics_loading_display(page_modules):
@@ -1209,8 +1321,9 @@ def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules)
 
 def test_update_correlogram_meta_returns_no_update_when_not_active(page_modules):
     analyticstool, _ = page_modules
-    assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "growth") is no_update
-    assert analyticstool.update_correlogram_meta(["Asset_A", "Asset_B"], "correlogram") == {"num_series": 2}
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_correlogram_meta({"tab": "growth"}, ["Asset_A", "Asset_B"])
+    assert analyticstool.update_correlogram_meta({"tab": "correlogram"}, ["Asset_A", "Asset_B"]) == {"num_series": 2}
 
 
 def test_sync_at_returns_type_from_mirrors_updates_canonical(monkeypatch, page_modules):
@@ -1265,6 +1378,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
     key_unweighted = analyticstool.update_correlogram_target_key(
         {"tab": "correlogram"},
         None,
+        None,
         "daily",
         ["Asset_A", "Asset_B"],
         "total",
@@ -1280,11 +1394,11 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         63,
         "none",
         "scaled_identity",
-        120,
         None,
     )
     key_weighted = analyticstool.update_correlogram_target_key(
         {"tab": "correlogram"},
+        None,
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1301,7 +1415,6 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         0.94,
         "none",
         "scaled_identity",
-        120,
         None,
     )
 
@@ -1311,6 +1424,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
     assert (
         analyticstool.update_correlogram_target_key(
             {"tab": "correlogram"},
+            None,
             None,
             "daily",
             ["Asset_A", "Asset_B"],
@@ -1327,7 +1441,6 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
             0.94,
             "none",
             "scaled_identity",
-            120,
             key_weighted,
         )
         is no_update
@@ -1340,6 +1453,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
 
     key_none = analyticstool.update_correlogram_target_key(
         {"tab": "correlogram"},
+        None,
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1356,11 +1470,11 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         63,
         "none",
         "scaled_identity",
-        120,
         None,
     )
     key_shrunk = analyticstool.update_correlogram_target_key(
         {"tab": "correlogram"},
+        None,
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1377,7 +1491,6 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         63,
         "ledoit_wolf",
         "scaled_identity",
-        120,
         None,
     )
 
@@ -1392,6 +1505,7 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
 
     key_scatter = analyticstool.update_correlogram_target_key(
         {"tab": "correlogram"},
+        None,
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1408,13 +1522,13 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
         63,
         "none",
         "scaled_identity",
-        120,
         None,
     )
 
     assert (
         analyticstool.update_correlogram_target_key(
             {"tab": "correlogram"},
+            None,
             None,
             "daily",
             ["Asset_A", "Asset_B"],
@@ -1431,7 +1545,6 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
             63,
             "oas",
             "constant_correlation",
-            120,
             key_scatter,
         )
         is no_update
@@ -1631,6 +1744,8 @@ def test_update_factor_series_select_includes_unselected_series(page_modules, ra
     analyticstool, _ = page_modules
 
     options, value, conditional_options, conditional_value = analyticstool.update_factor_series_select(
+        {"tab": "factor_analysis"},
+        None,
         raw_json,
         ["Asset_C", "Asset_A"],
         [],
@@ -1651,6 +1766,8 @@ def test_update_factor_series_select_includes_saved_and_session_definitions(page
     analyticstool, _ = page_modules
 
     options, _value, conditional_options, _conditional_value = analyticstool.update_factor_series_select(
+        None,
+        {"tab": "conditional_returns"},
         raw_json,
         ["Asset_A"],
         [{"FactorName": "SavedFactor"}],

@@ -282,6 +282,10 @@ def _dataset_key_from_meta(raw_meta) -> str | None:
     return str(dataset_key).strip() if dataset_key else None
 
 
+def _dataset_key_from_source(dataset_source) -> str | None:
+    return _dataset_key_from_meta(dataset_source) or _dataset_key(dataset_source)
+
+
 def _has_complete_date_range(value) -> bool:
     return (
         isinstance(value, dict)
@@ -1784,7 +1788,7 @@ def _returns_tab_signature(
 
 
 def _statistics_tab_signature(
-    raw_data,
+    dataset_source,
     periodicity,
     selected_series,
     benchmark_assignments,
@@ -1797,7 +1801,7 @@ def _statistics_tab_signature(
 ) -> str:
     return _tab_render_signature(
         {
-            "dataset_key": _dataset_key(raw_data) or "",
+            "dataset_key": _dataset_key_from_source(dataset_source) or "",
             "periodicity": periodicity or "daily",
             "selected_series": tuple(selected_series or ()),
             "benchmark_payload": _mapping_payload(benchmark_assignments),
@@ -4901,6 +4905,7 @@ layout = dmc.Container(
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="at-common-daily-candidates-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-statistics-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-returns-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-rolling-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-calendar-tab-trigger-store", data=None, storage_type="memory"),
@@ -4910,6 +4915,8 @@ layout = dmc.Container(
         dcc.Store(id="at-regime-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-conditional-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-correlogram-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-factor-preview-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-regime-preview-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-target-key-store", data=None, storage_type="memory"),
@@ -5830,6 +5837,28 @@ clientside_callback(
 clientside_callback(
     """
     function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("statistics", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-statistics-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-use-risk-free-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
         return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("returns", activeTab, initialTabReady, stateReady);
     }
     """,
@@ -6050,7 +6079,35 @@ clientside_callback(
     Input("at-correlation-halflife-input", "value"),
     Input("at-correlation-shrinkage-select", "value"),
     Input("at-correlation-shrinkage-target-select", "value"),
-    Input("at-correlogram-block-width", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(opened) {
+        return window.dash_clientside.dashmat_callbacks.analyticsModalPreviewTrigger(opened);
+    }
+    """,
+    Output("at-factor-preview-trigger-store", "data"),
+    Input("at-factor-def-modal", "opened"),
+    Input("at-factor-def-modal-draft-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-date-range-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(opened) {
+        return window.dash_clientside.dashmat_callbacks.analyticsModalPreviewTrigger(opened);
+    }
+    """,
+    Output("at-regime-preview-trigger-store", "data"),
+    Input("at-regime-def-modal", "opened"),
+    Input("at-regime-def-modal-draft-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-date-range-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -6192,15 +6249,19 @@ clientside_callback(
     Output("at-factor-series-select", "value", allow_duplicate=True),
     Output("at-factor-series-select-conditional", "data"),
     Output("at-factor-series-select-conditional", "value", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-series-select", "data"),
-    Input("at-factor-definitions-db-store", "data"),
-    Input("at-factor-definitions-local-store", "data"),
+    Input("at-factor-tab-trigger-store", "data"),
+    Input("at-conditional-tab-trigger-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-series-select", "data"),
+    State("at-factor-definitions-db-store", "data"),
+    State("at-factor-definitions-local-store", "data"),
     State("at-factor-series-store", "data"),
     State("at-factor-series-select", "value"),
     prevent_initial_call="initial_duplicate",
 )
 def update_factor_series_select(
+    factor_trigger_payload,
+    conditional_trigger_payload,
     raw_data,
     selected_series,
     db_definitions,
@@ -6209,6 +6270,15 @@ def update_factor_series_select(
     current_factor_series,
 ):
     """Expose raw and custom factor candidates, with selected raw series first."""
+    trigger_payload = (
+        factor_trigger_payload
+        if isinstance(factor_trigger_payload, dict)
+        else conditional_trigger_payload
+    )
+    if not isinstance(trigger_payload, dict):
+        raise PreventUpdate
+    if str(trigger_payload.get("tab") or "") not in {"factor_analysis", "conditional_returns"}:
+        raise PreventUpdate
     if raw_data is None:
         return [], None, [], None
 
@@ -6469,13 +6539,16 @@ def at_update_factor_definition_draft_from_form(
 
 @callback(
     Output("at-factor-def-preview-lines", "children"),
-    Input("at-factor-def-modal", "opened"),
-    Input("at-factor-def-modal-draft-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-date-range-store", "data"),
+    Input("at-factor-preview-trigger-store", "data"),
+    State("at-factor-def-modal", "opened"),
+    State("at-factor-def-modal-draft-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-date-range-store", "data"),
     prevent_initial_call=True,
 )
-def at_update_factor_definition_preview(opened, draft_data, periodicity, date_range):
+def at_update_factor_definition_preview(trigger_payload, opened, draft_data, periodicity, date_range):
+    if not isinstance(trigger_payload, dict) or not trigger_payload.get("opened"):
+        raise PreventUpdate
     if not opened:
         raise PreventUpdate
 
@@ -7076,15 +7149,17 @@ def at_update_regime_definition_draft_from_form(
 @callback(
     Output("at-regime-def-preview-lines", "children"),
     Output("at-regime-series-store", "data", allow_duplicate=True),
-    Input("at-regime-def-modal", "opened"),
-    Input("at-regime-def-modal-draft-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-date-range-store", "data"),
+    Input("at-regime-preview-trigger-store", "data"),
+    State("at-regime-def-modal", "opened"),
+    State("at-regime-def-modal-draft-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-date-range-store", "data"),
     State("at-regime-series-store", "data"),
     prevent_initial_call=True,
 )
 def at_update_regime_definition_preview(
+    trigger_payload,
     opened,
     draft_data,
     raw_data,
@@ -7092,6 +7167,8 @@ def at_update_regime_definition_preview(
     date_range,
     regime_series_store,
 ):
+    if not isinstance(trigger_payload, dict) or not trigger_payload.get("opened"):
+        raise PreventUpdate
     if not opened:
         raise PreventUpdate
 
@@ -8738,13 +8815,6 @@ def on_modal_cancel(n_clicks):
     return False
 
 
-@callback(
-    Output("at-range-candidates-store", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    prevent_initial_call="initial_duplicate",
-)
 def update_at_range_candidates(raw_meta, periodicity, selected_series):
     return compute_date_range_candidates(
         _dataset_key_from_meta(raw_meta),
@@ -8753,16 +8823,35 @@ def update_at_range_candidates(raw_meta, periodicity, selected_series):
     )
 
 
-@callback(
-    Output("at-common-daily-candidates-store", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
-    Input("at-series-select", "data"),
-    prevent_initial_call="initial_duplicate",
-)
 def update_at_common_daily_candidates(raw_meta, selected_series):
     return compute_common_daily_candidates(
         _dataset_key_from_meta(raw_meta),
         tuple(selected_series or ()),
+    )
+
+
+@callback(
+    Output("at-range-candidates-store", "data"),
+    Output("at-common-daily-candidates-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    State("at-range-candidates-store", "data"),
+    State("at-common-daily-candidates-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def update_at_date_candidate_stores(
+    raw_meta,
+    periodicity,
+    selected_series,
+    current_candidates,
+    current_common_daily_candidates,
+):
+    next_candidates = update_at_range_candidates(raw_meta, periodicity, selected_series)
+    next_common_daily = update_at_common_daily_candidates(raw_meta, selected_series)
+    return (
+        no_update if next_candidates == current_candidates else next_candidates,
+        no_update if next_common_daily == current_common_daily_candidates else next_common_daily,
     )
 
 def initialize_date_range(
@@ -9000,21 +9089,25 @@ def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_
         return [], [], no_update
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsDownloadExcelDisabled"),
     Output("at-menu-download-excel", "disabled"),
     Input("dashmat-raw-data-store", "data"),
     Input("at-series-select", "data"),
     Input("at-date-range-store", "data"),
     Input("at-state-ready-store", "data"),
+    prevent_initial_call=False,
 )
-def update_download_excel_disabled(raw_data, selected_series, date_range, state_ready):
-    if not raw_data:
-        return True
-    if not selected_series:
-        return True
-    if not state_ready:
-        return True
-    return not _has_complete_date_range(date_range)
+def update_download_excel_disabled(raw_data, selected_series, date_range, state_ready, current_disabled=None):
+    next_disabled = (
+        (not raw_data)
+        or (not selected_series)
+        or (not state_ready)
+        or (not _has_complete_date_range(date_range))
+    )
+    if current_disabled is next_disabled:
+        return no_update
+    return next_disabled
 
 
 @callback(
@@ -9032,23 +9125,27 @@ def reset_statistics_loaded_on_hydration(state_ready):
 
 @callback(
     Output("at-statistics-target-key-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-use-risk-free-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
-    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-statistics-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("dashmat-raw-data-meta-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-use-risk-free-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("at-initial-tab-render-ready-store", "data"),
     State("at-statistics-target-key-store", "data"),
     prevent_initial_call=True,
 )
 def update_statistics_target_key(
-    raw_data,
+    trigger_payload,
+    active_tab,
+    raw_meta,
     periodicity,
     selected_series,
     benchmark_assignments,
@@ -9062,13 +9159,17 @@ def update_statistics_target_key(
     initial_tab_ready,
     current_target_key,
 ):
+    _at_require_tab_trigger(trigger_payload, "statistics")
+    if active_tab != "statistics":
+        return no_update
     if not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         return None
-    if raw_data is None or not selected_series:
+    dataset_key = _dataset_key_from_meta(raw_meta)
+    if not dataset_key or not selected_series:
         return None
 
     next_key = _statistics_tab_signature(
-        raw_data,
+        raw_meta,
         periodicity,
         selected_series,
         benchmark_assignments,
@@ -9084,13 +9185,15 @@ def update_statistics_target_key(
     return next_key
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsStatisticsLoadingDisplay"),
     Output("at-loading-statistics", "display"),
     Input("at-main-tabs", "value"),
     Input("at-state-ready-store", "data"),
     Input("at-statistics-target-key-store", "data"),
     Input("at-statistics-rendered-key-store", "data"),
     Input("at-initial-tab-render-ready-store", "data"),
+    prevent_initial_call=False,
 )
 def control_statistics_loading_display(active_tab, state_ready, target_key, rendered_key, initial_tab_ready=True):
     if active_tab != "statistics":
@@ -9338,17 +9441,17 @@ def update_rolling_chart(trigger_payload, active_tab, chart_checked, raw_data, p
     Output("at-monthly-series-select", "disabled"),
     Output("at-monthly-series-select", "data"),
     Output("at-monthly-series-select", "value", allow_duplicate=True),
-    Input("at-monthly-view-checkbox", "value"),
-    Input("at-series-select", "data"),
+    Input("at-calendar-tab-trigger-store", "data"),
+    State("at-monthly-view-checkbox", "value"),
+    State("at-series-select", "data"),
     State("at-monthly-series-store", "data"),
     State("at-monthly-series-select", "value"),
     prevent_initial_call=True,
 )
-def update_monthly_series_select(monthly_view, selected_series, stored_monthly_series, current_value):
+def update_monthly_series_select(trigger_payload, monthly_view, selected_series, stored_monthly_series, current_value):
     """Enable/disable monthly series select and populate with available series."""
-    # Check which input triggered the callback
-    ctx = callback_context
-    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+    _at_require_tab_trigger(trigger_payload, "calendar")
+    triggered_id = str(trigger_payload.get("reason") or "")
 
     if not selected_series:
         return True, [], None
@@ -9548,7 +9651,7 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
     Input("at-main-tabs", "value"),
     Input("at-statistics-target-key-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -9563,12 +9666,13 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     State("at-statistics-rendered-key-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(active_tab="statistics", target_key=None, raw_data=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
+def update_statistics(active_tab="statistics", target_key=None, raw_meta=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     if active_tab != "statistics" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    dataset_key = _dataset_key_from_meta(raw_meta)
+    if not dataset_key or not selected_series:
         return [], [], True, None
     if not target_key or target_key == rendered_key:
         raise PreventUpdate
@@ -9577,7 +9681,7 @@ def update_statistics(active_tab="statistics", target_key=None, raw_data=None, p
         with timed_block("analyticstool.render_statistics_grid", series_count=len(selected_series)):
             # Use cached function to avoid repeated computation
             stats = calculate_statistics_cached(
-                _dataset_key(raw_data),
+                dataset_key,
                 periodicity or "daily",
                 tuple(selected_series),
                 _mapping_payload(benchmark_assignments),
@@ -9658,12 +9762,13 @@ clientside_callback(
 
 @callback(
     Output("at-correlogram-meta-store", "data"),
-    Input("at-series-select", "data"),
-    Input("at-main-tabs", "value"),
+    Input("at-correlogram-tab-trigger-store", "data"),
+    State("at-series-select", "data"),
 )
-def update_correlogram_meta(selected_series, active_tab):
+def update_correlogram_meta(trigger_payload, selected_series):
     """Update correlogram metadata (num_series) when tab is active."""
-    if active_tab != "correlogram" or not selected_series:
+    _at_require_tab_trigger(trigger_payload, "correlogram")
+    if not selected_series:
         return no_update
     return {"num_series": len(selected_series)}
 
@@ -9671,6 +9776,7 @@ def update_correlogram_meta(selected_series, active_tab):
 @callback(
     Output("at-correlogram-target-key-store", "data"),
     Input("at-correlogram-tab-trigger-store", "data"),
+    Input("at-correlogram-block-width", "value"),
     State("dashmat-raw-data-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
@@ -9687,12 +9793,12 @@ def update_correlogram_meta(selected_series, active_tab):
     State("at-correlation-halflife-input", "value"),
     State("at-correlation-shrinkage-select", "value"),
     State("at-correlation-shrinkage-target-select", "value"),
-    State("at-correlogram-block-width", "value"),
     State("at-correlogram-target-key-store", "data"),
     prevent_initial_call=True,
 )
 def update_correlogram_target_key(
     trigger_payload,
+    block_width,
     raw_data,
     periodicity,
     selected_series,
@@ -9709,7 +9815,6 @@ def update_correlogram_target_key(
     decay_value,
     shrinkage,
     shrinkage_target,
-    block_width,
     current_target_key,
 ):
     _at_require_tab_trigger(trigger_payload, "correlogram")
