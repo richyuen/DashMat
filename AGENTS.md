@@ -27,6 +27,7 @@
 - Judge perf changes by end-to-end browser medians, not just server callback time, request count, or request bytes.
 - If a perf result is ambiguous, compare fresh clean `HEAD` vs unstaged vs rollback on isolated ports before deciding.
 - If a change removes server work but regresses end-to-end timing, roll it back unless the regression is clearly isolated and safely salvageable.
+- Do not add an extra startup callback hop just to dedupe server-side restore/bootstrap work unless timed runs show an end-to-end startup win; tiny restore callback timings usually mean the real bottleneck is elsewhere.
 - Start measured sub-flow windows only after prior Dash traffic has settled, and count requests by request start time.
 - Use callback/request attribution to choose the next perf phase; do not pick targets from medians alone.
 - Prefer reducing fan-out first:
