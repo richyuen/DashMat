@@ -11887,8 +11887,8 @@ def control_conditional_returns_loading_display(active_tab, state_ready, initial
 )
 def update_conditional_returns(
     trigger_payload,
-    active_tab,
     target_key,
+    active_tab,
     factor_definitions_db=None,
     factor_definitions_local=None,
     factor_series=None,

@@ -2805,8 +2805,8 @@ def test_update_conditional_returns_skips_when_target_already_rendered(monkeypat
     with pytest.raises(PreventUpdate):
         analyticstool.update_conditional_returns(
             {"tab": "conditional_returns"},
-            "conditional_returns",
             signature,
+            "conditional_returns",
             None,
             None,
             "raw::Asset_A",
@@ -2830,6 +2830,62 @@ def test_update_conditional_returns_skips_when_target_already_rendered(monkeypat
             "months",
             signature,
         )
+
+
+def test_update_conditional_returns_renders_with_decorator_argument_order(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    signature = "conditional-signature"
+    mean_df = pd.DataFrame({"Asset_B": [0.12]}, index=["1M"])
+    count_df = pd.DataFrame({"Asset_B": [8]}, index=["1M"])
+
+    monkeypatch.setattr(
+        analyticstool,
+        "_compute_conditional_returns_cached",
+        lambda *_args, **_kwargs: analyticstool._ConditionalReturnsPayload(
+            factor_label="SPX",
+            factor_display_name="SPX",
+            coincident_mean_df=mean_df,
+            coincident_count_df=count_df,
+            forward_mean_by_series={"Asset_B": mean_df},
+            forward_count_by_series={"Asset_B": count_df},
+            coincident_detail_df=pd.DataFrame(),
+            forward_detail_df=pd.DataFrame(),
+            coincident_row_count=0,
+            forward_row_count=0,
+        ),
+    )
+
+    warning, container, rendered_key = analyticstool.update_conditional_returns(
+        {"tab": "conditional_returns"},
+        signature,
+        "conditional_returns",
+        None,
+        None,
+        "raw::Asset_A",
+        "raw",
+        raw_json,
+        "daily_trading",
+        ["Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2023-01-02", "end": "2024-03-31"},
+        True,
+        0,
+        {},
+        "summary",
+        "coincident",
+        "le",
+        0.0,
+        "compound",
+        1,
+        "months",
+        None,
+    )
+
+    assert warning is None
+    assert container is not None
+    assert rendered_key == signature
 
 
 def test_control_conditional_returns_loading_display(page_modules):
