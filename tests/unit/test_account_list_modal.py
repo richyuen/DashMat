@@ -10,6 +10,7 @@ import utils.account_list_modal as modal_module
 def test_account_list_loader_visible_only_for_loading_status():
     assert modal_module.build_account_list_load_state("loading") == {"status": "loading"}
     assert modal_module.account_list_loader_visible({"status": "loading"}) is True
+    assert modal_module.account_list_loader_visible({"status": "live_applying"}) is True
     assert modal_module.account_list_loader_visible({"status": "error"}) is False
     assert modal_module.account_list_loader_visible(None) is False
     assert modal_module.account_list_loader_wrapper_style({"status": "idle"}) == {"display": "none"}
@@ -32,6 +33,7 @@ def test_load_selected_account_list_session_requires_click():
             original_periodicity="daily",
             provenance_store={},
             load_snapshot={},
+            pathname="/analyticstool",
             userinfo={"username": "tester"},
             db_engine=None,
             mrd_engine=None,
@@ -50,6 +52,7 @@ def test_load_selected_account_list_session_handles_missing_selection():
         original_periodicity="daily",
         provenance_store={},
         load_snapshot={},
+        pathname="/analyticstool",
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -74,6 +77,7 @@ def test_load_selected_account_list_session_handles_missing_row(monkeypatch):
         original_periodicity="daily",
         provenance_store={},
         load_snapshot={},
+        pathname="/analyticstool",
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -107,6 +111,7 @@ def test_load_selected_account_list_session_handles_loader_error(monkeypatch):
         original_periodicity="daily",
         provenance_store={},
         load_snapshot={},
+        pathname="/analyticstool",
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -147,13 +152,18 @@ def test_load_selected_account_list_session_reports_success(monkeypatch):
         original_periodicity="daily",
         provenance_store={},
         load_snapshot={"at-series-select": ["A"], "unused-store": 1},
+        pathname="/analyticstool",
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
         perf_engine=None,
     )
 
-    assert payload == {"dashmat-raw-data-store": "json"}
+    assert payload == {
+        "mode": "live_apply_analyticstool",
+        "pathname": "/analyticstool",
+        "session_payload": {"dashmat-raw-data-store": "json"},
+    }
     assert notice is no_update
     assert load_state == {"status": "success"}
     assert seen["snapshot"] == {"at-series-select": ["A"]}
@@ -172,6 +182,7 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
         original_periodicity="daily",
         provenance_store={},
         load_snapshot={},
+        pathname="/analyticstool",
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -187,6 +198,7 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
         original_periodicity="daily",
         provenance_store={},
         load_snapshot={},
+        pathname="/analyticstool",
         userinfo={"username": "tester"},
         db_engine=None,
         mrd_engine=None,
@@ -196,6 +208,25 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
     assert first[2] == {"status": "error"}
     assert second[2] == {"status": "error"}
     assert first[1] == second[1] == {"message": "Saved account list no longer exists.", "color": "red"}
+
+
+def test_build_account_list_session_apply_payload_modes():
+    assert modal_module.build_account_list_session_apply_payload(
+        pathname="/analyticstool",
+        session_payload={"dashmat-raw-data-store": "json"},
+    ) == {
+        "mode": "live_apply_analyticstool",
+        "pathname": "/analyticstool",
+        "session_payload": {"dashmat-raw-data-store": "json"},
+    }
+    assert modal_module.build_account_list_session_apply_payload(
+        pathname="/portopt",
+        session_payload={"dashmat-raw-data-store": "json"},
+    ) == {
+        "mode": "reload",
+        "pathname": "/portopt",
+        "session_payload": {"dashmat-raw-data-store": "json"},
+    }
 
 
 def test_account_list_update_by_uses_username_only():

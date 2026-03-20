@@ -12,6 +12,7 @@ from utils.ag_grid import literal_field_dash_grid_options
 from utils.account_lists import (
     ACCOUNT_LIST_LOAD_MERGE_STORE_IDS,
     ACCOUNT_LIST_CAPTURE_STORE_IDS,
+    AT_EXTRA_CONTROL_STORE_IDS,
     AT_STORE_IDS,
     PO_STORE_IDS,
     REG_STORE_IDS,
@@ -50,13 +51,26 @@ def build_account_list_prefetch_state(account_list_id=None, update_date=None, st
 
 
 def account_list_loader_visible(load_state) -> bool:
-    return isinstance(load_state, dict) and str(load_state.get("status") or "").strip().lower() == "loading"
+    return (
+        isinstance(load_state, dict)
+        and str(load_state.get("status") or "").strip().lower() in {"loading", "live_applying"}
+    )
 
 
 def account_list_loader_wrapper_style(load_state) -> dict[str, object]:
     if not account_list_loader_visible(load_state):
         return {"display": "none"}
     return {"position": "fixed", "inset": 0, "zIndex": 4100}
+
+
+def build_account_list_session_apply_payload(*, pathname, session_payload):
+    normalized_path = str(pathname or "").strip()
+    mode = "live_apply_analyticstool" if normalized_path.startswith("/analyticstool") else "reload"
+    return {
+        "mode": mode,
+        "pathname": normalized_path,
+        "session_payload": dict(session_payload or {}),
+    }
 
 
 def prefetch_selected_account_list_entries(
@@ -111,6 +125,7 @@ def load_selected_account_list_session(
     original_periodicity,
     provenance_store,
     load_snapshot,
+    pathname,
     userinfo,
     db_engine: Engine,
     mrd_engine: Engine,
@@ -154,7 +169,11 @@ def load_selected_account_list_session(
             {"message": f"Unable to load account list: {exc}", "color": "red"},
             build_account_list_load_state("error"),
         )
-    return session_payload, no_update, build_account_list_load_state("success")
+    return (
+        build_account_list_session_apply_payload(pathname=pathname, session_payload=session_payload),
+        no_update,
+        build_account_list_load_state("success"),
+    )
 
 
 def load_selected_account_list_detail(*, selected_id, userinfo, db_engine: Engine):
@@ -718,13 +737,24 @@ def register_account_list_callbacks(
 
     app.clientside_callback(
         """
-        function(sessionPayload) {
-            if (!sessionPayload || typeof sessionPayload !== "object") {
+        function(applyEnvelope) {
+            if (!applyEnvelope || typeof applyEnvelope !== "object") {
                 return [
                     window.dash_clientside.no_update,
                     window.dash_clientside.no_update,
                     window.dash_clientside.no_update,
                     window.dash_clientside.no_update
+                ];
+            }
+            const mode = String(applyEnvelope.mode || "reload");
+            const targetPath = String(applyEnvelope.pathname || window.location.pathname || "");
+            const sessionPayload = applyEnvelope.session_payload;
+            if (!sessionPayload || typeof sessionPayload !== "object") {
+                return [
+                    null,
+                    window.dash_clientside.no_update,
+                    window.dash_clientside.no_update,
+                    {status: "error"}
                 ];
             }
             const stableStringify = function(value) {
@@ -795,33 +825,88 @@ def register_account_list_callbacks(
             if (noticePayload !== window.dash_clientside.no_update) {
                 sessionStorage.setItem("dashmat-account-list-notice-store", stableStringify(noticePayload));
             }
-            try {
-                const timingPayload = JSON.parse(sessionStorage.getItem("dashmat-account-list-load-timing") || "{}");
-                timingPayload.pagePath = timingPayload.pagePath || window.location.pathname;
-                timingPayload.clickStartEpochMs = timingPayload.clickStartEpochMs || Date.now();
-                timingPayload.reloadStartEpochMs = Date.now();
-                timingPayload.status = "reloading";
-                sessionStorage.setItem("dashmat-account-list-load-timing", JSON.stringify(timingPayload));
-            } catch (err) {
-                sessionStorage.setItem(
-                    "dashmat-account-list-load-timing",
-                    JSON.stringify({
-                        pagePath: window.location.pathname,
-                        clickStartEpochMs: Date.now(),
-                        reloadStartEpochMs: Date.now(),
-                        status: "reloading"
-                    })
-                );
+            const updateTiming = function(nextPayload) {
+                try {
+                    const timingPayload = JSON.parse(sessionStorage.getItem("dashmat-account-list-load-timing") || "{}");
+                    Object.keys(nextPayload).forEach(function(key) {
+                        timingPayload[key] = nextPayload[key];
+                    });
+                    timingPayload.pagePath = timingPayload.pagePath || targetPath || window.location.pathname;
+                    timingPayload.clickStartEpochMs = timingPayload.clickStartEpochMs || Date.now();
+                    sessionStorage.setItem("dashmat-account-list-load-timing", JSON.stringify(timingPayload));
+                } catch (err) {
+                    const fallback = Object.assign({
+                        pagePath: targetPath || window.location.pathname,
+                        clickStartEpochMs: Date.now()
+                    }, nextPayload);
+                    sessionStorage.setItem("dashmat-account-list-load-timing", JSON.stringify(fallback));
+                }
+            };
+            const fallbackToReload = function() {
+                updateTiming({
+                    reloadStartEpochMs: Date.now(),
+                    status: "reloading"
+                });
+                window.location.reload();
+                return [
+                    window.dash_clientside.no_update,
+                    window.dash_clientside.no_update,
+                    window.dash_clientside.no_update,
+                    window.dash_clientside.no_update
+                ];
+            };
+            if (mode === "live_apply_analyticstool" && targetPath.indexOf("/analyticstool") === 0) {
+                try {
+                    if (!(window.dash_clientside && typeof window.dash_clientside.set_props === "function")) {
+                        throw new Error("set_props unavailable");
+                    }
+                    const changedEntryMap = {};
+                    changedEntries.forEach(function(entry) {
+                        changedEntryMap[entry[0]] = sessionPayload[entry[0]];
+                    });
+                    if (noticePayload !== window.dash_clientside.no_update) {
+                        changedEntryMap["dashmat-account-list-notice-store"] = noticePayload;
+                    }
+                    updateTiming({
+                        liveApplyCommitEpochMs: Date.now(),
+                        status: "live_applying"
+                    });
+                    window.dash_clientside.set_props("at-state-ready-store", {data: false});
+                    __AT_ORDERED_IDS__.forEach(function(id) {
+                        if (!Object.prototype.hasOwnProperty.call(changedEntryMap, id)) {
+                            return;
+                        }
+                        window.dash_clientside.set_props(id, {data: changedEntryMap[id]});
+                    });
+                    __SHARED_ORDERED_IDS__.forEach(function(id) {
+                        if (!Object.prototype.hasOwnProperty.call(changedEntryMap, id)) {
+                            return;
+                        }
+                        window.dash_clientside.set_props(id, {data: changedEntryMap[id]});
+                    });
+                    return [
+                        null,
+                        false,
+                        window.dash_clientside.no_update,
+                        {status: "live_applying"}
+                    ];
+                } catch (err) {
+                    console.warn("account_list.live_apply_fallback", err && err.message ? err.message : err);
+                    return fallbackToReload();
+                }
             }
-            window.location.reload();
-            return [
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update
-            ];
+            return fallbackToReload();
         }
-        """,
+        """
+        .replace("__AT_ORDERED_IDS__", json.dumps(
+            list(dict.fromkeys(list(AT_STORE_IDS.values()) + list(AT_EXTRA_CONTROL_STORE_IDS)))
+        ))
+        .replace("__SHARED_ORDERED_IDS__", json.dumps([
+            "dashmat-db-import-provenance-store",
+            "dashmat-original-periodicity-store",
+            "dashmat-raw-data-store",
+            "dashmat-account-list-notice-store",
+        ])),
         Output("dashmat-account-list-session-apply-store", "data", allow_duplicate=True),
         Output("dashmat-account-list-modal", "opened", allow_duplicate=True),
         Output("dashmat-account-list-notice-store", "data", allow_duplicate=True),
@@ -835,25 +920,22 @@ def register_account_list_callbacks(
         function(pathname, atReady, poBootstrap, regReady, loadState) {
             const raw = sessionStorage.getItem("dashmat-account-list-load-timing");
             if (!raw) {
-                return window.dash_clientside.no_update;
+                return [window.dash_clientside.no_update, window.dash_clientside.no_update];
             }
             let timingPayload;
             try {
                 timingPayload = JSON.parse(raw);
             } catch (err) {
                 sessionStorage.removeItem("dashmat-account-list-load-timing");
-                return window.dash_clientside.no_update;
+                return [window.dash_clientside.no_update, window.dash_clientside.no_update];
             }
             if (loadState && loadState.status === "error") {
                 sessionStorage.removeItem("dashmat-account-list-load-timing");
-                return window.dash_clientside.no_update;
-            }
-            if (timingPayload.status !== "reloading" || !timingPayload.reloadStartEpochMs) {
-                return window.dash_clientside.no_update;
+                return [window.dash_clientside.no_update, window.dash_clientside.no_update];
             }
             const currentPath = pathname || window.location.pathname || "";
             if (timingPayload.pagePath && timingPayload.pagePath !== currentPath) {
-                return window.dash_clientside.no_update;
+                return [window.dash_clientside.no_update, window.dash_clientside.no_update];
             }
             const isAnalytics = currentPath.indexOf("/analyticstool") === 0;
             const isPortopt = currentPath.indexOf("/portopt") === 0;
@@ -867,34 +949,56 @@ def register_account_list_callbacks(
                 ready = !!regReady;
             }
             if (!ready) {
-                return window.dash_clientside.no_update;
+                return [window.dash_clientside.no_update, window.dash_clientside.no_update];
             }
             const now = Date.now();
-            const clickStart = Number(timingPayload.clickStartEpochMs || timingPayload.reloadStartEpochMs || now);
-            const reloadStart = Number(timingPayload.reloadStartEpochMs || now);
-            console.info(
-                "timing name=account_list.click_to_ready click_to_reload_start_ms=%s reload_start_to_ready_ms=%s total_click_to_ready_ms=%s page=%s",
-                String(reloadStart - clickStart),
-                String(now - reloadStart),
-                String(now - clickStart),
-                currentPath
-            );
-            sessionStorage.removeItem("dashmat-account-list-load-timing");
-            return {
-                pagePath: currentPath,
-                clickToReloadStartMs: reloadStart - clickStart,
-                reloadStartToReadyMs: now - reloadStart,
-                totalClickToReadyMs: now - clickStart
-            };
+            if (timingPayload.status === "reloading" && timingPayload.reloadStartEpochMs) {
+                const clickStart = Number(timingPayload.clickStartEpochMs || timingPayload.reloadStartEpochMs || now);
+                const reloadStart = Number(timingPayload.reloadStartEpochMs || now);
+                console.info(
+                    "timing name=account_list.click_to_ready click_to_reload_start_ms=%s reload_start_to_ready_ms=%s total_click_to_ready_ms=%s page=%s",
+                    String(reloadStart - clickStart),
+                    String(now - reloadStart),
+                    String(now - clickStart),
+                    currentPath
+                );
+                sessionStorage.removeItem("dashmat-account-list-load-timing");
+                return [{
+                    pagePath: currentPath,
+                    clickToReloadStartMs: reloadStart - clickStart,
+                    reloadStartToReadyMs: now - reloadStart,
+                    totalClickToReadyMs: now - clickStart
+                }, window.dash_clientside.no_update];
+            }
+            if (timingPayload.status === "live_applying" && timingPayload.liveApplyCommitEpochMs) {
+                const clickStart = Number(timingPayload.clickStartEpochMs || timingPayload.liveApplyCommitEpochMs || now);
+                const commitStart = Number(timingPayload.liveApplyCommitEpochMs || now);
+                console.info(
+                    "timing name=account_list.click_to_ready click_to_live_apply_commit_ms=%s live_apply_commit_to_ready_ms=%s total_click_to_ready_ms=%s page=%s",
+                    String(commitStart - clickStart),
+                    String(now - commitStart),
+                    String(now - clickStart),
+                    currentPath
+                );
+                sessionStorage.removeItem("dashmat-account-list-load-timing");
+                return [{
+                    pagePath: currentPath,
+                    clickToLiveApplyCommitMs: commitStart - clickStart,
+                    liveApplyCommitToReadyMs: now - commitStart,
+                    totalClickToReadyMs: now - clickStart
+                }, {status: "idle"}];
+            }
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
         """,
         Output("dashmat-account-list-load-timing-dummy", "data"),
+        Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
         Input("_pages_location", "pathname"),
         Input("at-state-ready-store", "data", allow_optional=True),
         Input("po-bootstrap-store", "data", allow_optional=True),
         Input("reg-initial-tab-render-ready-store", "data", allow_optional=True),
         Input("dashmat-account-list-load-state-store", "data"),
-        prevent_initial_call=False,
+        prevent_initial_call="initial_duplicate",
     )
 
     app.clientside_callback(
@@ -1336,6 +1440,7 @@ def register_account_list_callbacks(
         State("dashmat-raw-data-store", "data"),
         State("dashmat-original-periodicity-store", "data"),
         State("dashmat-db-import-provenance-store", "data"),
+        State("_pages_location", "pathname"),
         State("userinfo", "data"),
         prevent_initial_call=True,
     )
@@ -1349,6 +1454,7 @@ def register_account_list_callbacks(
         raw_data,
         original_periodicity,
         provenance_store,
+        pathname,
         userinfo,
     ):
         return load_selected_account_list_session(
@@ -1361,6 +1467,7 @@ def register_account_list_callbacks(
             original_periodicity=original_periodicity,
             provenance_store=provenance_store,
             load_snapshot=load_snapshot,
+            pathname=pathname,
             userinfo=userinfo,
             db_engine=db_engine,
             mrd_engine=mrd_engine,

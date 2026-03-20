@@ -109,8 +109,13 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert '"account_list.prefetch_entry_frames"' in account_list_text
     assert 'timing name=account_list.session_apply' in account_list_text
     assert 'timing name=account_list.click_to_ready' in account_list_text
+    assert 'live_apply_analyticstool' in account_list_text
+    assert 'live_applying' in account_list_text
+    assert 'click_to_live_apply_commit_ms=%s' in account_list_text
     assert 'changed_key_count=%s' in account_list_text
     assert 'dashmat-account-list-load-timing' in account_list_text
+    assert 'State("_pages_location", "pathname")' in account_list_text
+    assert 'window.dash_clientside.set_props("at-state-ready-store", {data: false});' in account_list_text
     assert 'window.location.reload();' in account_list_text
     assert "configure_timing_logger" in app_text
 
