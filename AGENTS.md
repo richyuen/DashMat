@@ -21,7 +21,8 @@
 ## Performance
 
 - Use browser timing for warm-switch decisions; unit tests are not enough.
-- Use `1`-run passes to verify harness operation.
+- After any code change that affects a timing harness or its measured UI flow, run a `1`-run harness smoke test first.
+- Use `5`-run passes only after the `1`-run smoke test succeeds.
 - Use `5`-run passes and run A/B comparison cases in series, not in parallel.
 - Judge perf changes by end-to-end browser medians, not just server callback time, request count, or request bytes.
 - If a perf result is ambiguous, compare fresh clean `HEAD` vs unstaged vs rollback on isolated ports before deciding.
