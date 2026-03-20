@@ -24,6 +24,7 @@ from utils.account_lists import (
     list_account_list_users,
     load_account_list_by_id,
     normalize_db_import_provenance_store,
+    prefetch_account_list_entry_frames,
     prune_db_import_provenance,
     save_account_list,
     send_account_list,
@@ -40,6 +41,14 @@ def build_account_list_load_state(status: str) -> dict[str, object]:
     return {"status": str(status or "idle").strip().lower() or "idle"}
 
 
+def build_account_list_prefetch_state(account_list_id=None, update_date=None, status: str = "idle") -> dict[str, object]:
+    return {
+        "account_list_id": int(account_list_id) if account_list_id is not None else None,
+        "update_date": str(update_date) if update_date is not None else None,
+        "status": str(status or "idle").strip().lower() or "idle",
+    }
+
+
 def account_list_loader_visible(load_state) -> bool:
     return isinstance(load_state, dict) and str(load_state.get("status") or "").strip().lower() == "loading"
 
@@ -48,6 +57,47 @@ def account_list_loader_wrapper_style(load_state) -> dict[str, object]:
     if not account_list_loader_visible(load_state):
         return {"display": "none"}
     return {"position": "fixed", "inset": 0, "zIndex": 4100}
+
+
+def prefetch_selected_account_list_entries(
+    *,
+    opened,
+    mode,
+    selected_detail,
+    current_prefetch,
+    db_engine: Engine,
+    mrd_engine: Engine,
+    perf_engine: Engine,
+):
+    if not opened or str(mode or "load") != "load" or not isinstance(selected_detail, dict):
+        return build_account_list_prefetch_state()
+
+    account_list_id = selected_detail.get("AccountListID")
+    update_date = selected_detail.get("UPDATE_DATE")
+    next_state = build_account_list_prefetch_state(account_list_id, update_date, "ready")
+
+    if isinstance(current_prefetch, dict):
+        if (
+            current_prefetch.get("account_list_id") == next_state["account_list_id"]
+            and current_prefetch.get("update_date") == next_state["update_date"]
+            and current_prefetch.get("status") in {"loading", "ready", "error"}
+        ):
+            return no_update
+
+    try:
+        with timed_block(
+            "account_list.prefetch_entry_frames",
+            account_list_id=account_list_id,
+        ):
+            prefetch_account_list_entry_frames(
+                selected_detail.get("ConfigJson"),
+                db_engine=db_engine,
+                mrd_engine=mrd_engine,
+                perf_engine=perf_engine,
+            )
+        return next_state
+    except Exception:
+        return build_account_list_prefetch_state(account_list_id, update_date, "error")
 
 
 def load_selected_account_list_session(
@@ -151,11 +201,13 @@ def build_account_list_components() -> list:
         dcc.Store(id="dashmat-account-list-rows-store", data=[]),
         dcc.Store(id="dashmat-account-list-selected-id-store", data=None),
         dcc.Store(id="dashmat-account-list-selected-detail-store", data=None),
+        dcc.Store(id="dashmat-account-list-prefetch-store", data={"account_list_id": None, "update_date": None, "status": "idle"}),
         dcc.Store(id="dashmat-account-list-session-snapshot-store", data={}),
         dcc.Store(id="dashmat-account-list-load-snapshot-store", data=None),
         dcc.Store(id="dashmat-account-list-refresh-store", data=0),
         dcc.Store(id="dashmat-account-list-session-apply-store", data=None),
         dcc.Store(id="dashmat-account-list-load-state-store", data={"status": "idle"}),
+        dcc.Store(id="dashmat-account-list-load-timing-dummy", data=None),
         dcc.Store(id="dashmat-account-list-enter-submit-dummy", data=None),
         dcc.Store(id="dashmat-account-list-focus-dummy", data=None),
         html.Div(
@@ -648,6 +700,14 @@ def register_account_list_callbacks(
                 keyCount,
                 totalBytes
             );
+            sessionStorage.setItem(
+                "dashmat-account-list-load-timing",
+                JSON.stringify({
+                    pagePath: window.location.pathname,
+                    clickStartEpochMs: Date.now(),
+                    status: "clicked"
+                })
+            );
             return out;
         }
         """.replace("__LOAD_KEYS__", json.dumps(ACCOUNT_LIST_LOAD_MERGE_STORE_IDS)),
@@ -721,6 +781,7 @@ def register_account_list_callbacks(
                 changedBytes
             );
             if (!changedEntries.length) {
+                sessionStorage.removeItem("dashmat-account-list-load-timing");
                 return [
                     null,
                     false,
@@ -733,6 +794,24 @@ def register_account_list_callbacks(
             });
             if (noticePayload !== window.dash_clientside.no_update) {
                 sessionStorage.setItem("dashmat-account-list-notice-store", stableStringify(noticePayload));
+            }
+            try {
+                const timingPayload = JSON.parse(sessionStorage.getItem("dashmat-account-list-load-timing") || "{}");
+                timingPayload.pagePath = timingPayload.pagePath || window.location.pathname;
+                timingPayload.clickStartEpochMs = timingPayload.clickStartEpochMs || Date.now();
+                timingPayload.reloadStartEpochMs = Date.now();
+                timingPayload.status = "reloading";
+                sessionStorage.setItem("dashmat-account-list-load-timing", JSON.stringify(timingPayload));
+            } catch (err) {
+                sessionStorage.setItem(
+                    "dashmat-account-list-load-timing",
+                    JSON.stringify({
+                        pagePath: window.location.pathname,
+                        clickStartEpochMs: Date.now(),
+                        reloadStartEpochMs: Date.now(),
+                        status: "reloading"
+                    })
+                );
             }
             window.location.reload();
             return [
@@ -749,6 +828,73 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-session-apply-store", "data"),
         prevent_initial_call=True,
+    )
+
+    app.clientside_callback(
+        """
+        function(pathname, atReady, poBootstrap, regReady, loadState) {
+            const raw = sessionStorage.getItem("dashmat-account-list-load-timing");
+            if (!raw) {
+                return window.dash_clientside.no_update;
+            }
+            let timingPayload;
+            try {
+                timingPayload = JSON.parse(raw);
+            } catch (err) {
+                sessionStorage.removeItem("dashmat-account-list-load-timing");
+                return window.dash_clientside.no_update;
+            }
+            if (loadState && loadState.status === "error") {
+                sessionStorage.removeItem("dashmat-account-list-load-timing");
+                return window.dash_clientside.no_update;
+            }
+            if (timingPayload.status !== "reloading" || !timingPayload.reloadStartEpochMs) {
+                return window.dash_clientside.no_update;
+            }
+            const currentPath = pathname || window.location.pathname || "";
+            if (timingPayload.pagePath && timingPayload.pagePath !== currentPath) {
+                return window.dash_clientside.no_update;
+            }
+            const isAnalytics = currentPath.indexOf("/analyticstool") === 0;
+            const isPortopt = currentPath.indexOf("/portopt") === 0;
+            const isRegression = currentPath.indexOf("/regression") === 0;
+            let ready = false;
+            if (isAnalytics) {
+                ready = !!atReady;
+            } else if (isPortopt) {
+                ready = !!(poBootstrap && poBootstrap.phase === "ready");
+            } else if (isRegression) {
+                ready = !!regReady;
+            }
+            if (!ready) {
+                return window.dash_clientside.no_update;
+            }
+            const now = Date.now();
+            const clickStart = Number(timingPayload.clickStartEpochMs || timingPayload.reloadStartEpochMs || now);
+            const reloadStart = Number(timingPayload.reloadStartEpochMs || now);
+            console.info(
+                "timing name=account_list.click_to_ready click_to_reload_start_ms=%s reload_start_to_ready_ms=%s total_click_to_ready_ms=%s page=%s",
+                String(reloadStart - clickStart),
+                String(now - reloadStart),
+                String(now - clickStart),
+                currentPath
+            );
+            sessionStorage.removeItem("dashmat-account-list-load-timing");
+            return {
+                pagePath: currentPath,
+                clickToReloadStartMs: reloadStart - clickStart,
+                reloadStartToReadyMs: now - reloadStart,
+                totalClickToReadyMs: now - clickStart
+            };
+        }
+        """,
+        Output("dashmat-account-list-load-timing-dummy", "data"),
+        Input("_pages_location", "pathname"),
+        Input("at-state-ready-store", "data", allow_optional=True),
+        Input("po-bootstrap-store", "data", allow_optional=True),
+        Input("reg-initial-tab-render-ready-store", "data", allow_optional=True),
+        Input("dashmat-account-list-load-state-store", "data"),
+        prevent_initial_call=False,
     )
 
     app.clientside_callback(
@@ -984,6 +1130,25 @@ def register_account_list_callbacks(
             selected_id=selected_id,
             userinfo=userinfo,
             db_engine=db_engine,
+        )
+
+    @app.callback(
+        Output("dashmat-account-list-prefetch-store", "data"),
+        Input("dashmat-account-list-modal", "opened"),
+        Input("dashmat-account-list-modal-mode-store", "data"),
+        Input("dashmat-account-list-selected-detail-store", "data"),
+        State("dashmat-account-list-prefetch-store", "data"),
+        prevent_initial_call=False,
+    )
+    def _prefetch_account_list_entries(opened, mode, selected_detail, current_prefetch):
+        return prefetch_selected_account_list_entries(
+            opened=opened,
+            mode=mode,
+            selected_detail=selected_detail,
+            current_prefetch=current_prefetch,
+            db_engine=db_engine,
+            mrd_engine=mrd_engine,
+            perf_engine=perf_engine,
         )
 
     @app.callback(

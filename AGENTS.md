@@ -27,6 +27,7 @@
 - Judge perf changes by end-to-end browser medians, not just server callback time, request count, or request bytes.
 - If a perf result is ambiguous, compare fresh clean `HEAD` vs unstaged vs rollback on isolated ports before deciding.
 - If a change removes server work but regresses end-to-end timing, roll it back unless the regression is clearly isolated and safely salvageable.
+- For reload-based flows, measure `click -> reload start` separately from `reload start -> controls ready`; pre-reload wins do not prove the post-reload wait improved.
 - Do not add an extra startup callback hop just to dedupe server-side restore/bootstrap work unless timed runs show an end-to-end startup win; tiny restore callback timings usually mean the real bottleneck is elsewhere.
 - Do not assume collapsing many clientside startup emitters into one union-input router is a win; if the merged callback broadens wakeups or startup medians regress, keep the per-family emitters.
 - Start measured sub-flow windows only after prior Dash traffic has settled, and count requests by request start time.

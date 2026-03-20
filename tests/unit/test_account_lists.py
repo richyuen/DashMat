@@ -186,6 +186,38 @@ def test_list_account_lists_does_not_require_config_json_parsing():
     ]
 
 
+def test_load_entry_frame_uses_short_lived_cache(monkeypatch):
+    calls = {"count": 0}
+    now = {"value": 100.0}
+    frame = pd.DataFrame({"SPX_TRIndex": [0.01, 0.02]}, index=pd.to_datetime(["2025-01-01", "2025-01-02"]))
+
+    def fake_uncached(entry, **_kwargs):
+        calls["count"] += 1
+        return frame, "daily"
+
+    monkeypatch.setattr(account_lists, "_load_entry_frame_uncached", fake_uncached)
+    monkeypatch.setattr(account_lists, "_entry_frame_cache_now", lambda: now["value"])
+    account_lists._clear_account_list_entry_frame_cache()
+
+    entry = {
+        "loader_type": "cma_bench",
+        "loader_args": {"selected_benches": ["SPX_TRIndex"]},
+        "emitted_series": ["SPX_TRIndex"],
+    }
+
+    first_df, first_periodicity = account_lists._load_entry_frame(entry, db_engine=None, mrd_engine=None, perf_engine=None)
+    second_df, second_periodicity = account_lists._load_entry_frame(entry, db_engine=None, mrd_engine=None, perf_engine=None)
+
+    now["value"] += account_lists.ACCOUNT_LIST_ENTRY_FRAME_CACHE_TTL_SECONDS + 1.0
+    third_df, third_periodicity = account_lists._load_entry_frame(entry, db_engine=None, mrd_engine=None, perf_engine=None)
+
+    assert calls["count"] == 2
+    assert first_periodicity == second_periodicity == third_periodicity == "daily"
+    pd.testing.assert_frame_equal(first_df, second_df)
+    pd.testing.assert_frame_equal(first_df, third_df)
+    account_lists._clear_account_list_entry_frame_cache()
+
+
 def test_send_account_list_copies_record_to_recipient():
     db_engine = _seed_db_engine()
     with db_engine.begin() as conn:

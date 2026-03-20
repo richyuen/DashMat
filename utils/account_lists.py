@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -223,6 +224,12 @@ ACCOUNT_LIST_LOAD_MERGE_STORE_IDS = [
     REG_STORE_IDS["max_beta"],
     REG_STORE_IDS["enable"],
 ]
+
+ACCOUNT_LIST_ENTRY_FRAME_CACHE_TTL_SECONDS = 60.0
+ACCOUNT_LIST_PREFETCH_MAX_ENTRIES = 8
+ACCOUNT_LIST_PREFETCH_MAX_MS = 750.0
+
+_ACCOUNT_LIST_ENTRY_FRAME_CACHE: dict[str, tuple[float, pd.DataFrame, str]] = {}
 
 
 def _now_utc() -> datetime:
@@ -892,7 +899,23 @@ def _entry_load_priority_key(entry: dict[str, Any]) -> tuple[int, str]:
     return (-len(emitted), primary_series.lower())
 
 
-def _load_entry_frame(
+def _entry_frame_cache_now() -> float:
+    return time.monotonic()
+
+
+def _entry_frame_cache_key(entry: dict[str, Any]) -> str:
+    payload = {
+        "loader_type": str(entry.get("loader_type") or "").strip().lower(),
+        "loader_args": entry.get("loader_args") if isinstance(entry.get("loader_args"), dict) else {},
+    }
+    return canonical_json_dumps(payload)
+
+
+def _clear_account_list_entry_frame_cache() -> None:
+    _ACCOUNT_LIST_ENTRY_FRAME_CACHE.clear()
+
+
+def _load_entry_frame_uncached(
     entry: dict[str, Any],
     *,
     db_engine: Engine,
@@ -928,6 +951,75 @@ def _load_entry_frame(
         )
         return result.returns_df, result.periodicity or "monthly"
     return pd.DataFrame(), "monthly"
+
+
+def _load_entry_frame(
+    entry: dict[str, Any],
+    *,
+    db_engine: Engine,
+    mrd_engine: Engine,
+    perf_engine: Engine,
+) -> tuple[pd.DataFrame, str]:
+    cache_key = _entry_frame_cache_key(entry)
+    now = _entry_frame_cache_now()
+    cached = _ACCOUNT_LIST_ENTRY_FRAME_CACHE.get(cache_key)
+    if cached is not None:
+        cached_at, cached_df, cached_periodicity = cached
+        if (now - cached_at) <= ACCOUNT_LIST_ENTRY_FRAME_CACHE_TTL_SECONDS:
+            return cached_df.copy(), cached_periodicity
+
+    df, periodicity = _load_entry_frame_uncached(
+        entry,
+        db_engine=db_engine,
+        mrd_engine=mrd_engine,
+        perf_engine=perf_engine,
+    )
+    _ACCOUNT_LIST_ENTRY_FRAME_CACHE[cache_key] = (now, df.copy(), periodicity)
+    return df, periodicity
+
+
+def prefetch_account_list_entry_frames(
+    payload: Any,
+    *,
+    db_engine: Engine,
+    mrd_engine: Engine,
+    perf_engine: Engine,
+) -> dict[str, Any]:
+    normalized_payload = normalize_account_list_payload(payload)
+    entries_to_load = sorted(
+        normalized_payload.get("series_entries", []),
+        key=_entry_load_priority_key,
+    )
+    started_at = _entry_frame_cache_now()
+    warmed_count = 0
+    attempted_count = 0
+    budget_exhausted = False
+
+    for entry in entries_to_load:
+        if attempted_count >= ACCOUNT_LIST_PREFETCH_MAX_ENTRIES:
+            budget_exhausted = True
+            break
+        elapsed_ms = (_entry_frame_cache_now() - started_at) * 1000.0
+        if elapsed_ms >= ACCOUNT_LIST_PREFETCH_MAX_MS:
+            budget_exhausted = True
+            break
+        if not _dedupe_strings(entry.get("emitted_series")):
+            continue
+        attempted_count += 1
+        _load_entry_frame(
+            entry,
+            db_engine=db_engine,
+            mrd_engine=mrd_engine,
+            perf_engine=perf_engine,
+        )
+        warmed_count += 1
+
+    return {
+        "entry_count": len(entries_to_load),
+        "attempted_count": attempted_count,
+        "warmed_count": warmed_count,
+        "budget_exhausted": budget_exhausted,
+    }
 
 
 def _merge_selected_list(current: Any, saved: Any, loaded_series: set[str]) -> list[str]:

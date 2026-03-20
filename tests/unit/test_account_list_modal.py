@@ -307,3 +307,80 @@ def test_normalize_account_list_load_snapshot_keeps_only_merge_keys():
 
 def test_account_list_load_merge_store_ids_count_is_expected():
     assert len(modal_module.ACCOUNT_LIST_LOAD_MERGE_STORE_IDS) == 24
+
+
+def test_prefetch_selected_account_list_entries_resets_when_modal_not_ready():
+    reset_state = modal_module.prefetch_selected_account_list_entries(
+        opened=False,
+        mode="load",
+        selected_detail={"AccountListID": 1, "UPDATE_DATE": "2026-03-20 12:00:00", "ConfigJson": {}},
+        current_prefetch={"account_list_id": 1, "update_date": "2026-03-20 12:00:00", "status": "ready"},
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert reset_state == {"account_list_id": None, "update_date": None, "status": "idle"}
+
+
+def test_prefetch_selected_account_list_entries_dedupes_same_selected_version(monkeypatch):
+    monkeypatch.setattr(
+        modal_module,
+        "prefetch_account_list_entry_frames",
+        lambda *args, **kwargs: pytest.fail("prefetch should be deduped"),
+    )
+
+    result = modal_module.prefetch_selected_account_list_entries(
+        opened=True,
+        mode="load",
+        selected_detail={"AccountListID": 2, "UPDATE_DATE": "2026-03-20 12:00:00", "ConfigJson": {}},
+        current_prefetch={"account_list_id": 2, "update_date": "2026-03-20 12:00:00", "status": "ready"},
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert result is no_update
+
+
+def test_prefetch_selected_account_list_entries_marks_ready(monkeypatch):
+    seen = {}
+
+    def fake_prefetch(payload, **_kwargs):
+        seen["payload"] = payload
+        return {"warmed_count": 1}
+
+    monkeypatch.setattr(modal_module, "prefetch_account_list_entry_frames", fake_prefetch)
+
+    result = modal_module.prefetch_selected_account_list_entries(
+        opened=True,
+        mode="load",
+        selected_detail={"AccountListID": 3, "UPDATE_DATE": "2026-03-20 12:00:00", "ConfigJson": {"series_entries": []}},
+        current_prefetch=None,
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert seen["payload"] == {"series_entries": []}
+    assert result == {"account_list_id": 3, "update_date": "2026-03-20 12:00:00", "status": "ready"}
+
+
+def test_prefetch_selected_account_list_entries_marks_error(monkeypatch):
+    monkeypatch.setattr(
+        modal_module,
+        "prefetch_account_list_entry_frames",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    result = modal_module.prefetch_selected_account_list_entries(
+        opened=True,
+        mode="load",
+        selected_detail={"AccountListID": 4, "UPDATE_DATE": "2026-03-20 12:00:00", "ConfigJson": {}},
+        current_prefetch=None,
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert result == {"account_list_id": 4, "update_date": "2026-03-20 12:00:00", "status": "error"}

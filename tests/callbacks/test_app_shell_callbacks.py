@@ -71,12 +71,15 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dcc.Store(id="dashmat-account-list-load-state-store"' not in app_text
     assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' not in app_text
     assert 'dcc.Store(id="dashmat-account-list-load-snapshot-store"' not in app_text
+    assert 'dcc.Store(id="dashmat-account-list-prefetch-store"' not in app_text
     assert "build_account_list_components" in app_text
     assert "register_account_list_callbacks" in app_text
     assert 'dcc.Store(id="dashmat-account-list-session-apply-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-load-state-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-load-snapshot-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-prefetch-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-load-timing-dummy"' in account_list_text
     assert 'id="dashmat-account-list-modal"' in account_list_text
     assert 'id="dashmat-account-list-load-overlay"' in account_list_text
     assert 'id="dashmat-account-list-load-overlay-shell"' in account_list_text
@@ -87,8 +90,10 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dashmat-series-modal-grid' in account_list_text
     assert 'ACCOUNT_LIST_MODAL_LOAD_CLASS' in account_list_text
     assert 'Output("dashmat-account-list-selected-detail-store", "data")' in account_list_text
+    assert 'Output("dashmat-account-list-prefetch-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-snapshot-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True)' in account_list_text
+    assert 'Output("dashmat-account-list-load-timing-dummy", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-overlay", "visible")' in account_list_text
     assert 'Output("dashmat-account-list-load-overlay-shell", "style")' in account_list_text
     assert 'Input("dashmat-account-list-load-button", "n_clicks")' in account_list_text
@@ -101,8 +106,11 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'Input("reg-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text
     assert 'sessionStorage.setItem(entry[0], entry[1]);' in account_list_text
     assert 'timing name=account_list.load_snapshot_capture' in account_list_text
+    assert '"account_list.prefetch_entry_frames"' in account_list_text
     assert 'timing name=account_list.session_apply' in account_list_text
+    assert 'timing name=account_list.click_to_ready' in account_list_text
     assert 'changed_key_count=%s' in account_list_text
+    assert 'dashmat-account-list-load-timing' in account_list_text
     assert 'window.location.reload();' in account_list_text
     assert "configure_timing_logger" in app_text
 
