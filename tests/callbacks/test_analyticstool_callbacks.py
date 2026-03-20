@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from io import BytesIO
 from io import StringIO
@@ -105,6 +106,14 @@ process.stdout.write(JSON.stringify(normalize(result)));
         text=True,
     )
     return json.loads(completed.stdout)
+
+
+def _callback_block(page_text: str, function_name: str) -> str:
+    marker = f"def {function_name}("
+    idx = page_text.index(marker)
+    start = page_text.rfind("@callback(", 0, idx)
+    end = page_text.find("\n\n", idx)
+    return page_text[start:end]
 
 
 def _raw_json_value(value):
@@ -2886,6 +2895,24 @@ def test_update_conditional_returns_renders_with_decorator_argument_order(monkey
     assert warning is None
     assert container is not None
     assert rendered_key == signature
+
+
+def test_target_key_render_callbacks_keep_decorator_and_signature_order(page_modules):
+    analyticstool, _ = page_modules
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+
+    conditional_block = _callback_block(page_text, "update_conditional_returns")
+    conditional_params = list(inspect.signature(analyticstool.update_conditional_returns).parameters)
+    assert 'Input("at-conditional-tab-trigger-store", "data")' in conditional_block
+    assert 'Input("at-conditional-returns-target-key-store", "data")' in conditional_block
+    assert 'State("at-main-tabs", "value")' in conditional_block
+    assert conditional_params[:3] == ["trigger_payload", "target_key", "active_tab"]
+
+    correlogram_block = _callback_block(page_text, "update_correlogram")
+    correlogram_params = list(inspect.signature(analyticstool.update_correlogram).parameters)
+    assert 'Input("at-correlogram-target-key-store", "data")' in correlogram_block
+    assert 'State("at-main-tabs", "value")' in correlogram_block
+    assert correlogram_params[:2] == ["target_key", "active_tab"]
 
 
 def test_control_conditional_returns_loading_display(page_modules):
