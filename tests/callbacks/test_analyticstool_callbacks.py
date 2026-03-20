@@ -364,7 +364,7 @@ def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():
 
 def test_at_date_candidate_callbacks_use_raw_data_meta_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
-    assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
+    assert 'Input("at-dataset-key-store", "data")' in page_text
     assert 'Output("at-range-candidates-store", "data")' in page_text
     assert 'Output("at-common-daily-candidates-store", "data")' in page_text
 
@@ -539,6 +539,7 @@ def test_at_hidden_tab_trigger_stores_exist(page_modules):
         "at-factor-preview-trigger-store",
         "at-regime-preview-trigger-store",
         "at-dataset-key-store",
+        "at-shared-benchmark-stamp-store",
     ]:
         assert _find_component_by_id(analyticstool.layout, component_id) is not None
 
@@ -1252,17 +1253,126 @@ def test_update_at_dataset_key_store_dedupes_unchanged(page_modules):
         )
 
 
+def test_shared_benchmark_stamp_store_helpers_round_trip(page_modules):
+    analyticstool, _ = page_modules
+    shared_store = {
+        "series_data": {
+            analyticstool.RISK_FREE_SERIES: {
+                "max_date": "2024-12-31",
+                "returns_json": "rf-json",
+            },
+            analyticstool.MARKET_BETA_SERIES: {
+                "max_date": "2025-01-31",
+                "returns_json": "spx-json",
+            },
+        }
+    }
+
+    payload = analyticstool._extract_shared_benchmark_payload(shared_store)
+    assert payload == {
+        "risk_free_json": "rf-json",
+        "spx_json": "spx-json",
+        "risk_free_max_date": "2024-12-31",
+        "spx_max_date": "2025-01-31",
+    }
+
+    stamp = analyticstool._build_shared_benchmark_stamp(payload)
+    assert set(stamp.keys()) == {
+        "risk_free_max_date",
+        "spx_max_date",
+        "risk_free_hash",
+        "spx_hash",
+    }
+    assert stamp["risk_free_hash"]
+    assert stamp["spx_hash"]
+
+    analyticstool._cache_shared_benchmark_payload(stamp, payload)
+    assert analyticstool._resolve_shared_benchmark_payload(stamp) == {
+        "risk_free_json": "rf-json",
+        "spx_json": "spx-json",
+    }
+    assert analyticstool._resolve_shared_benchmark_payload(shared_store) == {
+        "risk_free_json": "rf-json",
+        "spx_json": "spx-json",
+    }
+
+
+def test_update_at_shared_benchmark_stamp_store_dedupes_unchanged(page_modules):
+    analyticstool, _ = page_modules
+    shared_store = {
+        "series_data": {
+            analyticstool.RISK_FREE_SERIES: {
+                "max_date": "2024-12-31",
+                "returns_json": "rf-json",
+            },
+            analyticstool.MARKET_BETA_SERIES: {
+                "max_date": "2025-01-31",
+                "returns_json": "spx-json",
+            },
+        }
+    }
+
+    next_stamp = analyticstool.update_at_shared_benchmark_stamp_store(shared_store, None)
+    assert set(next_stamp.keys()) == {
+        "risk_free_max_date",
+        "spx_max_date",
+        "risk_free_hash",
+        "spx_hash",
+    }
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_at_shared_benchmark_stamp_store(shared_store, next_stamp)
+
+
+def test_resolve_shared_benchmark_payload_uses_stamp_lookup_when_cache_misses(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    stamp = {
+        "risk_free_max_date": "2024-12-31",
+        "spx_max_date": "2025-01-31",
+        "risk_free_hash": "rf-hash",
+        "spx_hash": "spx-hash",
+    }
+
+    monkeypatch.setattr(analyticstool.cache_config.cache, "get", lambda _key: None)
+    monkeypatch.setattr(
+        analyticstool,
+        "_load_shared_benchmark_payload_from_stamp",
+        lambda *_args: {"risk_free_json": "rf-json", "spx_json": "spx-json"},
+    )
+
+    assert analyticstool._resolve_shared_benchmark_payload(stamp) == {
+        "risk_free_json": "rf-json",
+        "spx_json": "spx-json",
+    }
+
+
 def test_statistics_render_schedules_from_statistics_trigger_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     assert 'Input("at-statistics-tab-trigger-store", "data")' in page_text
     assert 'Input("at-statistics-target-key-store", "data")' not in page_text
     assert 'dcc.Store(id="at-statistics-target-key-store"' not in page_text
     assert 'State("at-dataset-key-store", "data")' in page_text
+    trigger_callback = page_text.split('Output("at-statistics-tab-trigger-store", "data")', 1)[-1]
+    trigger_callback = trigger_callback.split('Output("at-returns-tab-trigger-store", "data")', 1)[0]
+    assert 'Input("at-shared-benchmark-stamp-store", "data")' in trigger_callback
+    assert 'Input("dashmat-saved-series-cache-store", "data")' not in trigger_callback
+    render_callback = page_text.split('Output("at-statistics-grid", "columnDefs")', 1)[-1]
+    render_callback = render_callback.split('Output("at-correlation-loaded-store", "data"', 1)[0]
+    assert 'State("at-shared-benchmark-stamp-store", "data")' in render_callback
+    assert 'State("dashmat-saved-series-cache-store", "data")' not in render_callback
 
 
 def test_analytics_date_candidate_callback_uses_dataset_key_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     assert 'Input("at-dataset-key-store", "data")' in page_text
+
+
+def test_download_excel_uses_shared_benchmark_stamp_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    download_callback = page_text.split('Output("at-download-excel", "data")', 1)[-1]
+    download_callback = download_callback.split('def download_excel(', 1)[0]
+    assert 'State("at-shared-benchmark-stamp-store", "data")' in download_callback
+    assert 'State("dashmat-saved-series-cache-store", "data")' not in download_callback
 
 
 

@@ -184,6 +184,13 @@ SAVED_SERIES_CONFIG = {
     MARKET_BETA_SERIES: {"start_date": "1988-01-04"},
 }
 
+_SHARED_BENCHMARK_STAMP_FIELDS = (
+    "risk_free_max_date",
+    "spx_max_date",
+    "risk_free_hash",
+    "spx_hash",
+)
+
 CONDITIONAL_VIEW_OPTIONS = [
     {"value": "coincident", "label": "Coincident"},
     {"value": "forward", "label": "Forward"},
@@ -288,6 +295,133 @@ def _dataset_key_from_source(dataset_source) -> str | None:
         if direct_key and not direct_key.startswith("{"):
             return direct_key
     return _dataset_key_from_meta(dataset_source) or _dataset_key(dataset_source)
+
+
+def _saved_series_entry_from_store(store_data, series_name: str) -> dict:
+    if not isinstance(store_data, dict):
+        return {}
+    series_data = store_data.get("series_data")
+    if not isinstance(series_data, dict):
+        return {}
+    entry = series_data.get(series_name)
+    return dict(entry) if isinstance(entry, dict) else {}
+
+
+def _extract_shared_benchmark_payload(store_data) -> dict:
+    risk_free_entry = _saved_series_entry_from_store(store_data, RISK_FREE_SERIES)
+    spx_entry = _saved_series_entry_from_store(store_data, MARKET_BETA_SERIES)
+    return {
+        "risk_free_json": str(risk_free_entry.get("returns_json") or ""),
+        "spx_json": str(spx_entry.get("returns_json") or ""),
+        "risk_free_max_date": str(risk_free_entry.get("max_date") or ""),
+        "spx_max_date": str(spx_entry.get("max_date") or ""),
+    }
+
+
+def _shared_benchmark_payload_json_hash(payload_json: str) -> str:
+    normalized = str(payload_json or "")
+    if not normalized:
+        return ""
+    return hashlib.md5(normalized.encode("utf-8")).hexdigest()
+
+
+def _build_shared_benchmark_stamp(shared_benchmark_payload) -> dict:
+    payload = shared_benchmark_payload if isinstance(shared_benchmark_payload, dict) else {}
+    risk_free_json = str(payload.get("risk_free_json") or "")
+    spx_json = str(payload.get("spx_json") or "")
+    return {
+        "risk_free_max_date": str(payload.get("risk_free_max_date") or ""),
+        "spx_max_date": str(payload.get("spx_max_date") or ""),
+        "risk_free_hash": _shared_benchmark_payload_json_hash(risk_free_json),
+        "spx_hash": _shared_benchmark_payload_json_hash(spx_json),
+    }
+
+
+def _coerce_shared_benchmark_stamp(value) -> dict:
+    if isinstance(value, dict) and isinstance(value.get("series_data"), dict):
+        return _build_shared_benchmark_stamp(_extract_shared_benchmark_payload(value))
+    if not isinstance(value, dict):
+        return {field: "" for field in _SHARED_BENCHMARK_STAMP_FIELDS}
+    return {
+        field: str(value.get(field) or "")
+        for field in _SHARED_BENCHMARK_STAMP_FIELDS
+    }
+
+
+def _shared_benchmark_payload_cache_key(shared_benchmark_stamp) -> str:
+    normalized_stamp = _coerce_shared_benchmark_stamp(shared_benchmark_stamp)
+    digest = hashlib.md5(
+        canonical_json_dumps(normalized_stamp).encode("utf-8")
+    ).hexdigest()
+    return f"analyticstool.shared_benchmark_payload:{digest}"
+
+
+def _cache_shared_benchmark_payload(shared_benchmark_stamp, shared_benchmark_payload) -> None:
+    normalized_payload = {
+        "risk_free_json": str((shared_benchmark_payload or {}).get("risk_free_json") or ""),
+        "spx_json": str((shared_benchmark_payload or {}).get("spx_json") or ""),
+    }
+    cache_config.cache.set(
+        _shared_benchmark_payload_cache_key(shared_benchmark_stamp),
+        normalized_payload,
+        timeout=0,
+    )
+
+
+@cache_config.cache.memoize(timeout=0)
+def _load_shared_benchmark_payload_from_stamp(
+    risk_free_max_date: str,
+    spx_max_date: str,
+    risk_free_hash: str,
+    spx_hash: str,
+) -> dict:
+    del risk_free_max_date, spx_max_date, risk_free_hash, spx_hash
+    try:
+        saved_df = load_cma_returns_for_benches(
+            DB_ENGINE,
+            list(SAVED_SERIES_CONFIG.keys()),
+            MRD_ENGINE,
+        )
+    except Exception:
+        return {"risk_free_json": "", "spx_json": ""}
+
+    series_data = _build_saved_series_cache_series_data(saved_df)
+    extracted = _extract_shared_benchmark_payload({"series_data": series_data})
+    return {
+        "risk_free_json": extracted["risk_free_json"],
+        "spx_json": extracted["spx_json"],
+    }
+
+
+def _resolve_shared_benchmark_payload(shared_benchmark_source) -> dict:
+    if isinstance(shared_benchmark_source, dict) and isinstance(
+        shared_benchmark_source.get("series_data"), dict
+    ):
+        extracted = _extract_shared_benchmark_payload(shared_benchmark_source)
+        return {
+            "risk_free_json": extracted["risk_free_json"],
+            "spx_json": extracted["spx_json"],
+        }
+
+    normalized_stamp = _coerce_shared_benchmark_stamp(shared_benchmark_source)
+    if not any(normalized_stamp.values()):
+        return {"risk_free_json": "", "spx_json": ""}
+
+    cached_payload = cache_config.cache.get(
+        _shared_benchmark_payload_cache_key(normalized_stamp)
+    )
+    if isinstance(cached_payload, dict):
+        return {
+            "risk_free_json": str(cached_payload.get("risk_free_json") or ""),
+            "spx_json": str(cached_payload.get("spx_json") or ""),
+        }
+
+    return _load_shared_benchmark_payload_from_stamp(
+        normalized_stamp["risk_free_max_date"],
+        normalized_stamp["spx_max_date"],
+        normalized_stamp["risk_free_hash"],
+        normalized_stamp["spx_hash"],
+    )
 
 
 def _has_complete_date_range(value) -> bool:
@@ -1801,7 +1935,7 @@ def _statistics_tab_signature(
     vol_scaler,
     vol_scaling_assignments,
     use_risk_free,
-    saved_series_store,
+    shared_benchmark_stamp,
 ) -> str:
     return _tab_render_signature(
         {
@@ -1814,8 +1948,7 @@ def _statistics_tab_signature(
             "vol_scaler": vol_scaler or 0,
             "vol_scaling_payload": _mapping_payload(vol_scaling_assignments),
             "use_risk_free": bool(use_risk_free),
-            "risk_free_json": _risk_free_json_from_store(saved_series_store),
-            "spx_json": _spx_json_from_store(saved_series_store),
+            **_coerce_shared_benchmark_stamp(shared_benchmark_stamp),
         }
     )
 
@@ -2780,6 +2913,33 @@ def at_update_raw_db_preview(
         return "No rows returned for the selected options."
     return "\n".join(lines)
 
+def _build_saved_series_cache_series_data(saved_df: pd.DataFrame) -> dict:
+    if saved_df.empty:
+        return {}
+
+    saved_df = saved_df.sort_index()
+    series_data = {}
+    for series_name, config in SAVED_SERIES_CONFIG.items():
+        if series_name not in saved_df.columns:
+            continue
+
+        series_returns = saved_df[series_name].dropna().sort_index()
+        start_date = config.get("start_date")
+        if start_date:
+            series_returns = series_returns.loc[
+                series_returns.index >= pd.Timestamp(start_date)
+            ]
+        if series_returns.empty:
+            continue
+
+        series_max = pd.to_datetime(series_returns.index.max())
+        series_data[series_name] = {
+            "max_date": series_max.strftime("%Y-%m-%d"),
+            "returns_json": df_to_json(series_returns.to_frame(series_name)),
+        }
+
+    return series_data
+
 
 @callback(
     Output("dashmat-saved-series-cache-store", "data"),
@@ -2830,27 +2990,7 @@ def refresh_saved_series_cache(raw_data, cache_data):
     if saved_df.empty:
         raise PreventUpdate
 
-    saved_df = saved_df.sort_index()
-    series_data = {}
-    for series_name, config in SAVED_SERIES_CONFIG.items():
-        if series_name not in saved_df.columns:
-            continue
-
-        series_returns = saved_df[series_name].dropna().sort_index()
-        start_date = config.get("start_date")
-        if start_date:
-            series_returns = series_returns.loc[
-                series_returns.index >= pd.Timestamp(start_date)
-            ]
-        if series_returns.empty:
-            continue
-
-        series_max = pd.to_datetime(series_returns.index.max())
-        series_data[series_name] = {
-            "max_date": series_max.strftime("%Y-%m-%d"),
-            "returns_json": df_to_json(series_returns.to_frame(series_name)),
-        }
-
+    series_data = _build_saved_series_cache_series_data(saved_df)
     if not series_data:
         raise PreventUpdate
 
@@ -2867,6 +3007,20 @@ def update_at_dataset_key_store(raw_meta, current_dataset_key):
     if next_dataset_key == current_dataset_key:
         raise PreventUpdate
     return next_dataset_key
+
+
+@callback(
+    Output("at-shared-benchmark-stamp-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    State("at-shared-benchmark-stamp-store", "data"),
+)
+def update_at_shared_benchmark_stamp_store(saved_series_store, current_stamp):
+    shared_benchmark_payload = _extract_shared_benchmark_payload(saved_series_store)
+    next_stamp = _build_shared_benchmark_stamp(shared_benchmark_payload)
+    _cache_shared_benchmark_payload(next_stamp, shared_benchmark_payload)
+    if next_stamp == _coerce_shared_benchmark_stamp(current_stamp):
+        raise PreventUpdate
+    return next_stamp
 
 
 @callback(
@@ -4919,6 +5073,7 @@ layout = dmc.Container(
         dcc.Store(id="at-regime-def-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-regime-series-store", data={"series_data": {}}, storage_type="session"),
         dcc.Store(id="at-dataset-key-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-shared-benchmark-stamp-store", data=None, storage_type="memory"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="at-common-daily-candidates-store", data=None, storage_type="memory"),
@@ -5868,7 +6023,7 @@ clientside_callback(
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     Input("at-use-risk-free-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("at-shared-benchmark-stamp-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -9571,12 +9726,12 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     State("at-vol-scaler-value-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
     State("at-use-risk-free-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("at-shared-benchmark-stamp-store", "data"),
     State("at-initial-tab-render-ready-store", "data"),
     State("at-statistics-rendered-key-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
+def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, shared_benchmark_stamp=None, initial_tab_ready=True, rendered_key=None):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     _at_require_tab_trigger(trigger_payload, "statistics")
     if active_tab != "statistics" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
@@ -9595,11 +9750,12 @@ def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None
         vol_scaler,
         vol_scaling_assignments,
         use_risk_free,
-        saved_series_store,
+        shared_benchmark_stamp,
     )
     if next_key == rendered_key:
         raise PreventUpdate
 
+    shared_benchmark_payload = _resolve_shared_benchmark_payload(shared_benchmark_stamp)
     try:
         with timed_block("analyticstool.render_statistics_grid", series_count=len(selected_series)):
             # Use cached function to avoid repeated computation
@@ -9612,8 +9768,8 @@ def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None
                 _date_range_payload(date_range),
                 vol_scaler or 0,
                 _mapping_payload(vol_scaling_assignments),
-                _risk_free_json_from_store(saved_series_store),
-                _spx_json_from_store(saved_series_store),
+                shared_benchmark_payload["risk_free_json"],
+                shared_benchmark_payload["spx_json"],
                 bool(use_risk_free),
             )
 
@@ -10811,7 +10967,7 @@ def _compute_analytics_export_artifacts(
     bundle: _AnalyticsComputeBundle,
     returns_type,
     use_risk_free,
-    saved_series_store,
+    shared_benchmark_stamp,
     correlation_exp_wt,
     correlation_halflife,
     correlation_shrinkage,
@@ -10838,6 +10994,7 @@ def _compute_analytics_export_artifacts(
             cov_df=pd.DataFrame(),
         )
 
+    shared_benchmark_payload = _resolve_shared_benchmark_payload(shared_benchmark_stamp)
     with timed_block("analyticstool.download_excel.statistics"):
         stats = calculate_statistics_cached(
             bundle.dataset_key,
@@ -10848,8 +11005,8 @@ def _compute_analytics_export_artifacts(
             bundle.date_range_payload,
             bundle.vol_scaler,
             bundle.vol_scaling_payload,
-            _risk_free_json_from_store(saved_series_store),
-            _spx_json_from_store(saved_series_store),
+            shared_benchmark_payload["risk_free_json"],
+            shared_benchmark_payload["spx_json"],
             bool(use_risk_free),
         )
     stats_df = _build_statistics_export_frame(stats)
@@ -11069,14 +11226,14 @@ def _build_core_export_sheets(
     correlation_halflife,
     correlation_shrinkage,
     correlation_shrinkage_target,
-    saved_series_store,
+    shared_benchmark_stamp,
     keep_partial: bool = False,
 ) -> list[_ExcelSheetSpec]:
     artifacts = _compute_analytics_export_artifacts(
         bundle,
         returns_type,
         use_risk_free,
-        saved_series_store,
+        shared_benchmark_stamp,
         correlation_exp_wt,
         correlation_halflife,
         correlation_shrinkage,
@@ -11366,7 +11523,7 @@ def _resolve_export_sheet_specs(
     regime_definitions_local,
     regime_series_store,
     vol_scaling_assignments,
-    saved_series_store,
+    shared_benchmark_stamp,
     keep_partial: bool = False,
 ) -> list[_ExcelSheetSpec]:
     sheet_specs = _build_core_export_sheets(
@@ -11382,7 +11539,7 @@ def _resolve_export_sheet_specs(
         correlation_halflife,
         correlation_shrinkage,
         correlation_shrinkage_target,
-        saved_series_store,
+        shared_benchmark_stamp,
         keep_partial=keep_partial,
     )
     if not sheet_specs:
@@ -12548,7 +12705,7 @@ def update_drawdown_grid(trigger_payload, active_tab, chart_checked, raw_data, p
     State("at-regime-definitions-db-store", "data"),
     State("at-regime-definitions-local-store", "data"),
     State("at-regime-series-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("at-shared-benchmark-stamp-store", "data"),
     State("at-partial-period-store", "data"),
     prevent_initial_call=True,
 )
@@ -12588,7 +12745,7 @@ def download_excel(
     regime_definitions_db=None,
     regime_definitions_local=None,
     regime_series_store=None,
-    saved_series_store=None,
+    shared_benchmark_stamp=None,
     partial_mode=None,
 ):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
@@ -12642,7 +12799,7 @@ def download_excel(
             regime_definitions_local,
             regime_series_store,
             vol_scaling_assignments,
-            saved_series_store,
+            shared_benchmark_stamp,
             keep_partial=(partial_mode == "partial"),
         )
         if not sheet_specs:
