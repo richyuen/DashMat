@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import re
 import sqlite3
@@ -17,6 +18,13 @@ from pathlib import Path
 from statistics import median
 
 from playwright.sync_api import sync_playwright
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils.date_range_flow import compute_date_range_candidates
+from utils.raw_dataset import resolve_dataset_key
 
 
 DEFAULT_DB_SERIES = [
@@ -57,6 +65,160 @@ REGRESSION_EMPTY_STATE_TEXTS = (
     "Run a regression to see results.",
     "No results.",
 )
+
+
+def extract_dash_output_ids(post_data: str | None) -> list[str]:
+    if not post_data:
+        return []
+
+    try:
+        payload = json.loads(post_data)
+    except json.JSONDecodeError:
+        return []
+
+    outputs: list[str] = []
+
+    def _append_output(value) -> None:
+        if isinstance(value, str):
+            outputs.append(value)
+            return
+        if isinstance(value, dict):
+            output_id = value.get("id")
+            output_prop = value.get("property")
+            if isinstance(output_id, dict):
+                output_id = json.dumps(output_id, sort_keys=True, separators=(",", ":"))
+            if output_id is not None and output_prop:
+                outputs.append(f"{output_id}.{output_prop}")
+            return
+        if isinstance(value, list):
+            for item in value:
+                _append_output(item)
+
+    _append_output(payload.get("output"))
+    _append_output(payload.get("outputs"))
+    return sorted(set(outputs))
+
+
+class DashUpdateRequestTracker:
+    def __init__(self, page):
+        self.page = page
+        self.active_requests: dict[int, dict[str, object]] = {}
+        self.records: list[dict[str, object]] = []
+        self.window_start_at: float | None = None
+        self.window_end_at: float | None = None
+        page.on("request", self._on_request)
+        page.on("requestfinished", self._on_request_finished)
+        page.on("requestfailed", self._on_request_failed)
+
+    def _on_request(self, request) -> None:
+        if "/_dash-update-component" not in request.url:
+            return
+        post_data = request.post_data or ""
+        self.active_requests[id(request)] = {
+            "started_at": time.perf_counter(),
+            "requestBytes": len(post_data.encode("utf-8")) if post_data else 0,
+            "outputs": extract_dash_output_ids(post_data),
+        }
+
+    def _finalize_request(self, request) -> None:
+        record = self.active_requests.pop(id(request), None)
+        if record is None:
+            return
+        started_at = float(record.get("started_at", 0) or 0)
+        if self.window_start_at is None or started_at < self.window_start_at:
+            return
+        if self.window_end_at is not None and started_at > self.window_end_at:
+            return
+
+        response_bytes = 0
+        response = request.response()
+        if response is not None:
+            try:
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    response_bytes = int(content_length)
+                else:
+                    response_bytes = len(response.body())
+            except Exception:
+                response_bytes = 0
+
+        duration_ms = round((time.perf_counter() - record["started_at"]) * 1000)
+        self.records.append(
+            {
+                "durationMs": duration_ms,
+                "requestBytes": record["requestBytes"],
+                "responseBytes": response_bytes,
+                "outputs": record["outputs"],
+            }
+        )
+
+    def _on_request_finished(self, request) -> None:
+        self._finalize_request(request)
+
+    def _on_request_failed(self, request) -> None:
+        self._finalize_request(request)
+
+    def start_window(self) -> None:
+        self.records = []
+        self.window_start_at = time.perf_counter()
+        self.window_end_at = None
+
+    def stop_window(self) -> None:
+        self.window_end_at = time.perf_counter()
+
+    def wait_for_settle(self, timeout_ms: int = 5000) -> None:
+        deadline = time.perf_counter() + (timeout_ms / 1000.0)
+        while self.active_requests and time.perf_counter() < deadline:
+            self.page.wait_for_timeout(50)
+
+    def summary(self) -> dict[str, object]:
+        callback_ids: list[str] = []
+        total_duration = 0
+        total_request_bytes = 0
+        total_response_bytes = 0
+        for record in self.records:
+            total_duration += int(record.get("durationMs", 0) or 0)
+            total_request_bytes += int(record.get("requestBytes", 0) or 0)
+            total_response_bytes += int(record.get("responseBytes", 0) or 0)
+            for output_id in record.get("outputs", []):
+                if output_id not in callback_ids:
+                    callback_ids.append(output_id)
+        return {
+            "dashUpdateRequestCount": len(self.records),
+            "dashUpdateTotalMs": total_duration,
+            "dashUpdateRequestBytes": total_request_bytes,
+            "dashUpdateResponseBytes": total_response_bytes,
+            "dashUpdateCallbacks": callback_ids,
+            "dashUpdateRequests": self.records,
+        }
+
+
+def summarize_dash_update_runs(run_results: list[dict[str, object]]) -> dict[str, object]:
+    dash_request_counts = [run["dashUpdateRequestCount"] for run in run_results]
+    dash_request_durations = [run["dashUpdateTotalMs"] for run in run_results]
+    dash_request_bytes = [run["dashUpdateRequestBytes"] for run in run_results]
+    dash_response_bytes = [run["dashUpdateResponseBytes"] for run in run_results]
+    flow_durations = [run["flowMs"] for run in run_results]
+    callback_counter: Counter[str] = Counter()
+    for run in run_results:
+        for request in run.get("dashUpdateRequests", []):
+            for output_id in request.get("outputs", []):
+                callback_counter[output_id] += 1
+
+    return {
+        "runs": len(run_results),
+        "flowMs": flow_durations,
+        "flowMedian": round(median(flow_durations)) if flow_durations else 0,
+        "dashUpdateRequestCountMedian": round(median(dash_request_counts)) if dash_request_counts else 0,
+        "dashUpdateTotalMsMedian": round(median(dash_request_durations)) if dash_request_durations else 0,
+        "dashUpdateRequestBytesMedian": round(median(dash_request_bytes)) if dash_request_bytes else 0,
+        "dashUpdateResponseBytesMedian": round(median(dash_response_bytes)) if dash_response_bytes else 0,
+        "topDashUpdateCallbacksByFrequency": [
+            {"callback": callback_id, "count": count}
+            for callback_id, count in callback_counter.most_common(12)
+        ],
+        "runResults": run_results,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -610,6 +772,117 @@ def warm_analytics_db(page, base_url: str, db_series: list[str]) -> str:
     return renderer_mode
 
 
+def wait_analytics_statistics_idle(page, timeout: int = 30000) -> None:
+    page.wait_for_function(
+        """
+        () => {
+          const overlay = document.querySelector("#at-loading-statistics");
+          const grid = document.querySelector("#at-statistics-grid");
+          const title = (document.title || "").trim();
+          const visible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+          };
+          const overlayHidden = !overlay || overlay.getAttribute("data-show") === "false" || !visible(overlay);
+          return !!title && title !== "Updating..." && overlayHidden && visible(grid);
+        }
+        """,
+        timeout=timeout,
+    )
+
+
+def wait_for_analytics_state_ready(page, timeout: int = 30000) -> None:
+    deadline = time.time() + max(timeout, 1000) / 1000.0
+    while time.time() < deadline:
+        if get_persisted_store_value(page, "at-state-ready-store") is True:
+            wait_analytics_statistics_idle(page, timeout=timeout)
+            return
+        time.sleep(0.1)
+    raise RuntimeError("Timed out waiting for AnalyticsTool state-ready store.")
+
+
+def ensure_analytics_selection(page, selected_series: list[str], timeout: int = 30000) -> None:
+    target_series = list(selected_series or [])
+    set_component_value_if_needed(page, "at-main-tabs", "statistics", store_id="at-active-tab-store")
+    wait_for_persisted_store_value(page, "at-active-tab-store", "statistics", timeout=timeout)
+    set_component_props(page, "at-series-select", {"data": target_series})
+    wait_for_persisted_store_value(page, "at-series-select-value-store", target_series, timeout=timeout)
+    wait_for_analytics_state_ready(page, timeout=timeout)
+
+
+def _analytics_target_selection(db_series: list[str]) -> list[str]:
+    resolved = list(db_series or DEFAULT_DB_SERIES)
+    if len(resolved) >= 3:
+        return resolved[:3]
+    if len(resolved) == 2:
+        return resolved[:1]
+    return resolved
+
+
+def _analytics_narrow_date_range(page, selected_series: list[str]) -> dict[str, str]:
+    raw_store = get_persisted_store_value(page, "dashmat-raw-data-store")
+    dataset_key = resolve_dataset_key(raw_store)
+    periodicity = get_persisted_store_value(page, "at-periodicity-value-store") or "daily"
+    candidates = compute_date_range_candidates(dataset_key, periodicity, tuple(selected_series or ()))
+    max_start = candidates.get("max_start")
+    max_end = candidates.get("max_end")
+    if not max_start or not max_end:
+        raise RuntimeError("AnalyticsTool date-range candidates were unavailable during harness setup.")
+    if max_start != max_end:
+        return {"start": max_start, "end": max_start}
+    return {"start": max_start, "end": max_end}
+
+
+def measure_analytics_selection_flow(page, request_tracker: DashUpdateRequestTracker, db_series: list[str]) -> dict[str, object]:
+    baseline_series = list(db_series or DEFAULT_DB_SERIES)
+    target_series = _analytics_target_selection(baseline_series)
+    ensure_analytics_selection(page, baseline_series)
+    request_tracker.wait_for_settle()
+    start = time.perf_counter()
+    request_tracker.start_window()
+    set_component_props(page, "at-series-select", {"data": target_series})
+    wait_for_persisted_store_value(page, "at-series-select-value-store", target_series)
+    wait_for_analytics_state_ready(page)
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    summary = request_tracker.summary()
+    flow_ms = round((time.perf_counter() - start) * 1000)
+    ensure_analytics_selection(page, baseline_series)
+    request_tracker.wait_for_settle()
+    return {"flowMs": flow_ms, **summary}
+
+
+def measure_analytics_date_range_flow(page, request_tracker: DashUpdateRequestTracker, db_series: list[str]) -> dict[str, object]:
+    baseline_series = list(db_series or DEFAULT_DB_SERIES)
+    ensure_analytics_selection(page, baseline_series)
+    narrow_range = _analytics_narrow_date_range(page, baseline_series)
+    set_component_props(page, "at-date-range-store", {"data": narrow_range})
+    wait_for_persisted_store_value(page, "at-date-range-store", narrow_range)
+    wait_for_analytics_state_ready(page)
+    request_tracker.wait_for_settle()
+    candidates = compute_date_range_candidates(
+        resolve_dataset_key(get_persisted_store_value(page, "dashmat-raw-data-store")),
+        get_persisted_store_value(page, "at-periodicity-value-store") or "daily",
+        tuple(baseline_series),
+    )
+    expected_range = {
+        "start": candidates.get("max_start"),
+        "end": candidates.get("max_end"),
+    }
+    start = time.perf_counter()
+    request_tracker.start_window()
+    page.locator("#at-maximum-range-button").click(force=True)
+    wait_for_persisted_store_value(page, "at-date-range-store", expected_range)
+    wait_for_analytics_state_ready(page)
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    summary = request_tracker.summary()
+    flow_ms = round((time.perf_counter() - start) * 1000)
+    return {"flowMs": flow_ms, **summary}
+
+
 def measure(page, cfg: dict[str, str]) -> dict[str, int]:
     start = time.perf_counter()
     page.evaluate("(path) => { window.location.pathname = path; }", cfg["path"])
@@ -1054,6 +1327,7 @@ def run_harness(
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=not headed)
         page = browser.new_page(viewport={"width": 1440, "height": 960})
+        request_tracker = DashUpdateRequestTracker(page)
 
         def on_console(msg) -> None:
             if len(console_messages) >= 120:
@@ -1081,6 +1355,12 @@ def run_harness(
             name: {"runs": 0, "shellMs": [], "readyMs": []}
             for name in pages
         }
+        results["analytics"].update(
+            {
+                "selectionFlowRuns": [],
+                "dateRangeFlowRuns": [],
+            }
+        )
         results["portopt"].update(
             {
                 "restoredTab": normalize_portopt_restore_tab(restore_tab),
@@ -1136,10 +1416,19 @@ def run_harness(
                     results[name]["rollingOpenMs"].append(metrics["rollingOpenMs"])
                     results[name]["growthOpenMs"].append(metrics["growthOpenMs"])
                     results[name]["drawdownOpenMs"].append(metrics["drawdownOpenMs"])
+            measure(page, pages["analytics"])
+            results["analytics"]["selectionFlowRuns"].append(
+                measure_analytics_selection_flow(page, request_tracker, db_series)
+            )
+            results["analytics"]["dateRangeFlowRuns"].append(
+                measure_analytics_date_range_flow(page, request_tracker, db_series)
+            )
 
         for data in results.values():
             data["shellMedian"] = round(median(data["shellMs"]))
             data["readyMedian"] = round(median(data["readyMs"]))
+        results["analytics"]["selectionFlow"] = summarize_dash_update_runs(results["analytics"]["selectionFlowRuns"])
+        results["analytics"]["dateRangeFlow"] = summarize_dash_update_runs(results["analytics"]["dateRangeFlowRuns"])
         results["portopt"]["restoredTabReadyMedian"] = round(median(results["portopt"]["restoredTabReadyMs"]))
         if not entry_only:
             results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))

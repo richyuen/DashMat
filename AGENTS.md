@@ -45,6 +45,10 @@ conda run -n dashmat python tools/db/init_local_cma_db.py
 - Measure PortOpt startup and warm-switch separately.
 - For modal-heavy flows, split measurements into open, snapshot, and apply windows when possible.
 - For A/B warm-switch timing, run comparison cases in series, not in parallel, to avoid local resource contention skewing the result.
+- Request elimination and request-byte reduction are not enough by themselves; keep or rollback decisions must still be based on end-to-end browser medians.
+- When a perf result is ambiguous, validate with fresh clean `HEAD` vs unstaged vs rollback runs on isolated ports before deciding to keep or discard it.
+- A zero-request path can still regress if browser reconciliation or layout work increases.
+- If a perf experiment removes server work but regresses end-to-end timing, roll it back unless the regression is proven isolated and safely salvageable.
 - PortOpt warm-switch rollback reference on `2026-03-13`: about `1970 ms` ready and `2870 ms` weights ready in non-debug mode.
 - Do not assume PortOpt warm-switch is server-bound; the weight-chart callback was only about `15-18 ms`.
 - Favor bootstrap/store fan-out reduction for PortOpt warm-switch.

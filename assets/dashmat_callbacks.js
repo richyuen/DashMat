@@ -268,6 +268,99 @@
     return !hasDailyTrading;
   }
 
+  const accountListMaxEndSentinel = "3999-12-31";
+
+  function sameClientsideValue(left, right) {
+    if (left === right) {
+      return true;
+    }
+    if (left == null || right == null) {
+      return left == null && right == null;
+    }
+    if (typeof left !== typeof right) {
+      return false;
+    }
+    if (typeof left !== "object") {
+      return left === right;
+    }
+    try {
+      return JSON.stringify(left) === JSON.stringify(right);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function analyticsResolveInitialRange(candidates, storedRange) {
+    const source = candidates && typeof candidates === "object" ? candidates : {};
+    const maxStart = source.max_start;
+    const maxEnd = source.max_end;
+    if (!maxStart || !maxEnd) {
+      return [null, null];
+    }
+    if (storedRange && storedRange.start && storedRange.end) {
+      const storedStart = storedRange.start;
+      const storedEnd = storedRange.end === accountListMaxEndSentinel ? maxEnd : storedRange.end;
+      if (storedStart >= maxStart && storedEnd <= maxEnd) {
+        return [storedStart, storedEnd];
+      }
+    }
+    return [maxStart, maxEnd];
+  }
+
+  function analyticsInitDateRange(
+    candidates,
+    storedRange,
+    currentStartDate,
+    currentEndDate,
+    currentWrapperStyle,
+    currentCommonDisabled,
+    currentMaxDisabled,
+    currentStateReady
+  ) {
+    const nu = noUpdate();
+    const disabledStyle = { display: "flex", opacity: 0.5, pointerEvents: "none", alignItems: "flex-start" };
+    const enabledStyle = { display: "flex", alignItems: "flex-start" };
+    const hasSeries = !!(candidates && Array.isArray(candidates.available_series) && candidates.available_series.length);
+
+    if (!hasSeries) {
+      return [
+        currentStartDate == null ? nu : null,
+        currentEndDate == null ? nu : null,
+        sameClientsideValue(currentWrapperStyle || {}, disabledStyle) ? nu : disabledStyle,
+        currentCommonDisabled === true ? nu : true,
+        currentMaxDisabled === true ? nu : true,
+        storedRange == null ? nu : null,
+        currentStateReady === false ? nu : false
+      ];
+    }
+
+    const resolved = analyticsResolveInitialRange(candidates, storedRange);
+    const startDate = resolved[0];
+    const endDate = resolved[1];
+    if (!startDate || !endDate) {
+      return [
+        currentStartDate == null ? nu : null,
+        currentEndDate == null ? nu : null,
+        sameClientsideValue(currentWrapperStyle || {}, disabledStyle) ? nu : disabledStyle,
+        currentCommonDisabled === true ? nu : true,
+        currentMaxDisabled === true ? nu : true,
+        storedRange == null ? nu : null,
+        currentStateReady === false ? nu : false
+      ];
+    }
+
+    const nextRange = { start: startDate, end: endDate };
+    return [
+      currentStartDate === startDate ? nu : startDate,
+      currentEndDate === endDate ? nu : endDate,
+      sameClientsideValue(currentWrapperStyle || {}, enabledStyle) ? nu : enabledStyle,
+      currentCommonDisabled === false ? nu : false,
+      currentMaxDisabled === false ? nu : false,
+      storedRange && storedRange.start === startDate && storedRange.end === endDate ? nu : nextRange,
+      currentStateReady === true ? nu : true
+    ];
+  }
+
   const portoptSplitReportingModels = [
     "risk_parity",
     "factor_risk_parity",
@@ -2747,6 +2840,8 @@
       analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsViewSync: analyticsViewSync,
+      analyticsInitDateRange: analyticsInitDateRange,
+      analyticsResolveInitialRange: analyticsResolveInitialRange,
       clearWorkspaceSession: clearWorkspaceSession,
       commonDailyButtonDisabled: commonDailyButtonDisabled,
       loadWorkspaceSession: loadWorkspaceSession,

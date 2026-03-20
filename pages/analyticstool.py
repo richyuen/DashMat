@@ -275,6 +275,13 @@ def _raw_df(raw_data_store) -> pd.DataFrame:
     return get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
 
 
+def _dataset_key_from_meta(raw_meta) -> str | None:
+    if not isinstance(raw_meta, dict):
+        return None
+    dataset_key = raw_meta.get("dataset_key")
+    return str(dataset_key).strip() if dataset_key else None
+
+
 def _has_complete_date_range(value) -> bool:
     return (
         isinstance(value, dict)
@@ -8489,14 +8496,14 @@ def on_modal_cancel(n_clicks):
 
 @callback(
     Output("at-range-candidates-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def update_at_range_candidates(raw_data, periodicity, selected_series):
+def update_at_range_candidates(raw_meta, periodicity, selected_series):
     return compute_date_range_candidates(
-        _dataset_key(raw_data),
+        _dataset_key_from_meta(raw_meta),
         periodicity or "daily",
         tuple(selected_series or ()),
     )
@@ -8504,40 +8511,30 @@ def update_at_range_candidates(raw_data, periodicity, selected_series):
 
 @callback(
     Output("at-common-daily-candidates-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("at-series-select", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def update_at_common_daily_candidates(raw_data, selected_series):
+def update_at_common_daily_candidates(raw_meta, selected_series):
     return compute_common_daily_candidates(
-        _dataset_key(raw_data),
+        _dataset_key_from_meta(raw_meta),
         tuple(selected_series or ()),
     )
 
-
-@callback(
-    Output("at-start-date-picker", "value"),
-    Output("at-end-date-picker", "value"),
-    Output("at-date-picker-wrapper", "style"),
-    Output("at-common-range-button", "disabled"),
-    Output("at-maximum-range-button", "disabled"),
-    Output("at-date-range-store", "data", allow_duplicate=True),
-    Output("at-state-ready-store", "data", allow_duplicate=True),
-    Input("at-range-candidates-store", "data"),
-    State("at-date-range-store", "data"),
-    State("at-start-date-picker", "value"),
-    State("at-end-date-picker", "value"),
-    State("at-state-ready-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
 def initialize_date_range(
     candidates,
     stored_range,
     current_start_date,
     current_end_date,
-    current_state_ready,
+    current_wrapper_style=None,
+    current_common_disabled=None,
+    current_max_disabled=None,
+    current_state_ready=False,
 ):
     """Initialize date range to maximum range when data is loaded."""
+    if isinstance(current_wrapper_style, bool) and current_common_disabled is None and current_max_disabled is None:
+        current_state_ready = current_wrapper_style
+        current_wrapper_style = None
     disabled_style = {"display": "flex", "opacity": 0.5, "pointerEvents": "none", "alignItems": "flex-start"}
     enabled_style = {"display": "flex", "alignItems": "flex-start"}
 
@@ -8578,6 +8575,27 @@ def initialize_date_range(
     except Exception:
         ready_output = no_update if current_state_ready is False else False
         return None, None, disabled_style, True, True, None, ready_output
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitDateRange"),
+    Output("at-start-date-picker", "value"),
+    Output("at-end-date-picker", "value"),
+    Output("at-date-picker-wrapper", "style"),
+    Output("at-common-range-button", "disabled"),
+    Output("at-maximum-range-button", "disabled"),
+    Output("at-date-range-store", "data", allow_duplicate=True),
+    Output("at-state-ready-store", "data", allow_duplicate=True),
+    Input("at-range-candidates-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-start-date-picker", "value"),
+    State("at-end-date-picker", "value"),
+    State("at-date-picker-wrapper", "style"),
+    State("at-common-range-button", "disabled"),
+    State("at-maximum-range-button", "disabled"),
+    State("at-state-ready-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
 
 
 clientside_callback(

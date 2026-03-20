@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from io import StringIO
 from pathlib import Path
+import subprocess
 
 import pandas as pd
 import pytest
@@ -67,6 +69,42 @@ def _find_component_by_id(node, target_id):
 
 def _raw_meta(raw_json: str, original_periodicity: str = "daily") -> dict:
     return build_raw_data_metadata(raw_json, original_periodicity)
+
+
+def _run_dashmat_callbacks_js(expression: str):
+    repo_root = Path(__file__).resolve().parents[2]
+    script = f"""
+const path = require("path");
+global.window = {{ dash_clientside: {{ no_update: {{ __dash_no_update__: true }} }} }};
+require(path.resolve("assets/dashmat_callbacks.js"));
+const ns = window.dash_clientside.dashmat_callbacks;
+function normalize(value) {{
+  if (value && value.__dash_no_update__) {{
+    return "__NO_UPDATE__";
+  }}
+  if (Array.isArray(value)) {{
+    return value.map(normalize);
+  }}
+  if (value && typeof value === "object") {{
+    const out = {{}};
+    for (const [key, nextValue] of Object.entries(value)) {{
+      out[key] = normalize(nextValue);
+    }}
+    return out;
+  }}
+  return value;
+}}
+const result = {expression};
+process.stdout.write(JSON.stringify(normalize(result)));
+"""
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def _raw_json_value(value):
@@ -249,12 +287,68 @@ def test_initialize_date_range_skips_ready_write_when_already_ready_and_range_un
     assert ready is no_update
 
 
+def test_at_range_candidates_use_raw_data_meta_dataset_key(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    captured = {}
+
+    def _fake_compute(dataset_key, periodicity, selected_series):
+        captured["dataset_key"] = dataset_key
+        captured["periodicity"] = periodicity
+        captured["selected_series"] = selected_series
+        return {"available_series": list(selected_series)}
+
+    monkeypatch.setattr(analyticstool, "compute_date_range_candidates", _fake_compute)
+
+    result = analyticstool.update_at_range_candidates(
+        {"dataset_key": "ds-123"},
+        "monthly",
+        ["Asset_A", "Asset_B"],
+    )
+
+    assert captured == {
+        "dataset_key": "ds-123",
+        "periodicity": "monthly",
+        "selected_series": ("Asset_A", "Asset_B"),
+    }
+    assert result == {"available_series": ["Asset_A", "Asset_B"]}
+
+
+def test_at_common_daily_candidates_use_raw_data_meta_dataset_key(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    captured = {}
+
+    def _fake_compute(dataset_key, selected_series):
+        captured["dataset_key"] = dataset_key
+        captured["selected_series"] = selected_series
+        return {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"}
+
+    monkeypatch.setattr(analyticstool, "compute_common_daily_candidates", _fake_compute)
+
+    result = analyticstool.update_at_common_daily_candidates(
+        {"dataset_key": "ds-123"},
+        ["Asset_A", "Asset_B"],
+    )
+
+    assert captured == {
+        "dataset_key": "ds-123",
+        "selected_series": ("Asset_A", "Asset_B"),
+    }
+    assert result == {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"}
+
+
 def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
-    init_block = page_text.split("def initialize_date_range", 1)[0]
-    init_callback = init_block.rsplit("@callback(", 1)[-1]
+    init_callback = page_text.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitDateRange")', 1)[-1]
+    init_callback = init_callback.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled")', 1)[0]
     assert 'Input("at-range-candidates-store", "data")' in init_callback
     assert 'Input("at-common-daily-candidates-store", "data")' not in init_callback
+
+
+def test_at_date_candidate_callbacks_use_raw_data_meta_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
+    assert 'Output("at-range-candidates-store", "data")' in page_text
+    assert 'Output("at-common-daily-candidates-store", "data")' in page_text
 
 
 def test_at_common_daily_button_uses_shared_clientside_helper():
@@ -263,6 +357,62 @@ def test_at_common_daily_button_uses_shared_clientside_helper():
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="commonDailyButtonDisabled")' in page_text
     assert 'Output("at-common-daily-button", "disabled")' in page_text
     assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
+
+
+def test_at_initialize_date_range_uses_clientside_helper():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsInitDateRange")' in page_text
+    assert "function analyticsInitDateRange(" in js_text
+
+
+def test_analytics_resolve_initial_range_clientside_matches_python(page_modules):
+    analyticstool, _ = page_modules
+    candidates = {
+        "available_series": ["Asset_A"],
+        "max_start": "2024-01-05",
+        "max_end": "2024-12-31",
+    }
+
+    assert _run_dashmat_callbacks_js(
+        f"ns.analyticsResolveInitialRange({json.dumps(candidates)}, {json.dumps(None)})"
+    ) == list(analyticstool.resolve_initial_range(candidates, None))
+
+    stored_max_end = {"start": "2024-02-01", "end": "3999-12-31"}
+    assert _run_dashmat_callbacks_js(
+        f"ns.analyticsResolveInitialRange({json.dumps(candidates)}, {json.dumps(stored_max_end)})"
+    ) == list(analyticstool.resolve_initial_range(candidates, stored_max_end))
+
+    stored_out_of_range = {"start": "2023-01-01", "end": "2023-12-31"}
+    assert _run_dashmat_callbacks_js(
+        f"ns.analyticsResolveInitialRange({json.dumps(candidates)}, {json.dumps(stored_out_of_range)})"
+    ) == list(analyticstool.resolve_initial_range(candidates, stored_out_of_range))
+
+
+def test_analytics_init_date_range_clientside_idempotent():
+    result = _run_dashmat_callbacks_js(
+        "ns.analyticsInitDateRange("
+        + json.dumps({"available_series": ["Asset_A"], "max_start": "2024-01-01", "max_end": "2024-12-31"})
+        + ","
+        + json.dumps({"start": "2024-01-01", "end": "2024-12-31"})
+        + ","
+        + json.dumps("2024-01-01")
+        + ","
+        + json.dumps("2024-12-31")
+        + ","
+        + json.dumps({"display": "flex", "alignItems": "flex-start"})
+        + ",false,false,true)"
+    )
+
+    assert result == [
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+    ]
 
 
 def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
