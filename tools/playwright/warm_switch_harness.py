@@ -896,6 +896,21 @@ def _analytics_narrow_date_range(page, selected_series: list[str]) -> dict[str, 
     return {"start": max_start, "end": max_end}
 
 
+def set_analytics_date_range(page, date_range: dict[str, str], timeout: int = 10000) -> None:
+    start_value = date_range.get("start")
+    end_value = date_range.get("end")
+    page.evaluate(
+        """
+        ([startValue, endValue]) => {
+          window.dash_clientside.set_props("at-start-date-picker", { value: startValue });
+          window.dash_clientside.set_props("at-end-date-picker", { value: endValue });
+        }
+        """,
+        [start_value, end_value],
+    )
+    wait_for_persisted_store_value(page, "at-date-range-store", {"start": start_value, "end": end_value}, timeout=timeout)
+
+
 def measure_analytics_selection_flow(page, request_tracker: DashUpdateRequestTracker, db_series: list[str], active_tab: str = "statistics") -> dict[str, object]:
     baseline_series = list(db_series or DEFAULT_DB_SERIES)
     target_series = _analytics_target_selection(baseline_series)
@@ -927,8 +942,7 @@ def measure_analytics_date_range_flow(page, request_tracker: DashUpdateRequestTr
     baseline_series = list(db_series or DEFAULT_DB_SERIES)
     ensure_analytics_selection(page, baseline_series)
     narrow_range = _analytics_narrow_date_range(page, baseline_series)
-    set_component_props(page, "at-date-range-store", {"data": narrow_range})
-    wait_for_persisted_store_value(page, "at-date-range-store", narrow_range)
+    set_analytics_date_range(page, narrow_range)
     wait_for_analytics_state_ready(page)
     request_tracker.wait_for_settle()
     candidates = compute_date_range_candidates(
