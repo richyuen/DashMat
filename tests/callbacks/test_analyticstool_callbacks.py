@@ -344,6 +344,7 @@ def test_at_date_candidate_stores_dedupe_unchanged_outputs(monkeypatch, page_mod
     monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
 
     result = analyticstool.update_at_date_candidate_stores(
+        {"phase": "bootstrap"},
         "ds-123",
         "monthly",
         ["Asset_A"],
@@ -362,11 +363,16 @@ def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():
     assert 'Input("at-common-daily-candidates-store", "data")' not in init_callback
 
 
-def test_at_date_candidate_callbacks_use_raw_data_meta_store():
+def test_at_bootstrap_date_candidate_callback_uses_trigger_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
-    assert 'Input("at-dataset-key-store", "data")' in page_text
-    assert 'Output("at-range-candidates-store", "data")' in page_text
-    assert 'Output("at-common-daily-candidates-store", "data")' in page_text
+    callback_text = page_text.split('def update_at_date_candidate_stores(', 1)[0]
+    callback_text = callback_text.rsplit('@callback(', 1)[-1]
+    assert 'Input("at-bootstrap-candidate-trigger-store", "data")' in callback_text
+    assert 'State("at-dataset-key-store", "data")' in callback_text
+    assert 'State("at-periodicity-select", "value")' in callback_text
+    assert 'State("at-series-select", "data")' in callback_text
+    assert 'Output("at-range-candidates-store", "data", allow_duplicate=True)' in callback_text
+    assert 'Output("at-common-daily-candidates-store", "data", allow_duplicate=True)' in callback_text
 
 
 def test_at_common_daily_button_uses_shared_clientside_helper():
@@ -526,8 +532,10 @@ def test_analytics_init_date_range_clientside_idempotent():
 def test_at_hidden_tab_trigger_stores_exist(page_modules):
     analyticstool, _ = page_modules
     for component_id in [
+        "at-bootstrap-candidate-trigger-store",
         "at-statistics-tab-trigger-store",
         "at-returns-tab-trigger-store",
+        "at-candidate-refresh-trigger-store",
         "at-rolling-tab-trigger-store",
         "at-calendar-tab-trigger-store",
         "at-growth-tab-trigger-store",
@@ -572,6 +580,32 @@ def test_analytics_modal_preview_trigger_clientside_helper():
     ) == "__NO_UPDATE__"
 
 
+def test_analytics_candidate_refresh_trigger_clientside_helper():
+    bootstrap = _run_dashmat_callbacks_js(
+        'ns.analyticsBootstrapCandidateTrigger("dataset-1", "monthly", ["Asset_A"], false)'
+    )
+    assert bootstrap["phase"] == "bootstrap"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsBootstrapCandidateTrigger("dataset-1", "monthly", ["Asset_A"], true)'
+    ) == "__NO_UPDATE__"
+
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsCandidateRefreshTrigger("statistics", false, "dataset-1", ["Asset_A"])'
+    ) == "__NO_UPDATE__"
+
+    matched = _run_dashmat_callbacks_js(
+        'ns.analyticsCandidateRefreshTrigger("correlogram", true, "dataset-1", ["Asset_A"])'
+    )
+    assert matched["tab"] == "correlogram"
+
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsCandidateRefreshTrigger("statistics", true, "dataset-1", ["Asset_A"])'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsCandidateRefreshTrigger("correlogram", true, null, ["Asset_A"])'
+    ) == "__NO_UPDATE__"
+
+
 def test_at_require_tab_trigger_accepts_match_and_raises_for_mismatch(page_modules):
     analyticstool, _ = page_modules
 
@@ -610,6 +644,8 @@ def test_hidden_at_trigger_emitters_include_restore_ready_guards():
     assert 'analyticsTabTrigger("statistics"' in page_text
     assert 'analyticsTabTrigger("returns"' in page_text
     assert 'analyticsTabTrigger("correlogram"' in page_text
+    assert 'analyticsBootstrapCandidateTrigger' in page_text
+    assert 'analyticsCandidateRefreshTrigger' in page_text
     assert 'analyticsModalPreviewTrigger(opened)' in page_text
 
 
@@ -1013,6 +1049,14 @@ def test_at_bootstrap_uses_only_page_load_interval_and_real_secondary_ready_sign
 
 def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modules):
     analyticstool, _ = page_modules
+    candidates = {
+        "available_series": ["Asset_A", "Asset_B"],
+        "max_start": "2024-01-01",
+        "max_end": "2024-12-31",
+        "common_start": "2024-01-01",
+        "common_end": "2024-12-31",
+    }
+    common_daily = {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"}
 
     def _fake_stats(*_args, **_kwargs):
         return [
@@ -1021,6 +1065,8 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         ]
 
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
+    monkeypatch.setattr(analyticstool, "update_at_range_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
 
     target_key = analyticstool._statistics_tab_signature(
         "unit-test-dataset",
@@ -1035,7 +1081,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         {},
     )
 
-    column_defs, row_data, loaded, rendered_key = analyticstool.update_statistics(
+    column_defs, row_data, loaded, rendered_key, next_candidates, next_common_daily = analyticstool.update_statistics(
         {"tab": "statistics"},
         "statistics",
         "unit-test-dataset",
@@ -1051,6 +1097,8 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
         {},
         True,
         None,
+        None,
+        None,
     )
 
     assert column_defs[0]["field"] == "Statistic"
@@ -1060,6 +1108,8 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     assert cum_row["Asset_B"] == pytest.approx(0.20)
     assert loaded is True
     assert rendered_key == target_key
+    assert next_candidates == candidates
+    assert next_common_daily == common_daily
 
 
 def test_update_download_excel_disabled_uses_ready_state(page_modules):
@@ -1121,6 +1171,8 @@ def test_update_statistics_requires_ready_state(page_modules):
             {},
             True,
             None,
+            None,
+            None,
         )
 
 
@@ -1144,6 +1196,8 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
             {},
             True,
             None,
+            None,
+            None,
         )
 
     with pytest.raises(PreventUpdate):
@@ -1163,11 +1217,15 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
             {},
             False,
             None,
+            None,
+            None,
         )
 
 
 def test_update_returns_grid_skips_unchanged_tab_revisit(monkeypatch, page_modules, raw_json):
     analyticstool, _ = page_modules
+    candidates = {"available_series": ["Asset_A"], "max_start": "2024-01-01", "max_end": "2024-12-31"}
+    common_daily = {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"}
     signature = analyticstool._returns_tab_signature(
         raw_json,
         "daily",
@@ -1181,6 +1239,8 @@ def test_update_returns_grid_skips_unchanged_tab_revisit(monkeypatch, page_modul
     )
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-main-tabs"})())
     monkeypatch.setattr(analyticstool, "_compute_selected_returns", lambda *_args, **_kwargs: pytest.fail("should skip unchanged revisit"))
+    monkeypatch.setattr(analyticstool, "update_at_range_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
 
     result = analyticstool.update_grid(
         {"tab": "returns"},
@@ -1197,20 +1257,29 @@ def test_update_returns_grid_skips_unchanged_tab_revisit(monkeypatch, page_modul
         "returns",
         True,
         {"returns": signature},
+        candidates,
+        common_daily,
     )
 
-    assert result == (no_update, no_update, no_update)
+    assert result == (no_update, no_update, no_update, no_update, no_update)
 
 
 def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_modules, raw_json):
     analyticstool, _ = page_modules
+    dataset_key = analyticstool._dataset_key(raw_json)
+    candidates = analyticstool.update_at_range_candidates(dataset_key, "daily", ["Asset_A"])
+    common_daily = analyticstool.update_at_common_daily_candidates(dataset_key, ["Asset_A"])
+    resolved_start, resolved_end = analyticstool.resolve_initial_range(
+        candidates,
+        {"start": "2024-01-01", "end": "2024-12-31"},
+    )
     signature = analyticstool._statistics_tab_signature(
-        analyticstool._dataset_key(raw_json),
+        dataset_key,
         "daily",
         ["Asset_A"],
         {},
         {},
-        {"start": "2024-01-01", "end": "2024-12-31"},
+        {"start": resolved_start, "end": resolved_end},
         0,
         {},
         True,
@@ -1218,24 +1287,126 @@ def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_
     )
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", lambda *_args, **_kwargs: pytest.fail("should skip unchanged revisit"))
 
-    with pytest.raises(PreventUpdate):
-        analyticstool.update_statistics(
-            {"tab": "statistics"},
-            "statistics",
-            analyticstool._dataset_key(raw_json),
-            "daily",
-            ["Asset_A"],
-            {},
-            {},
-            {"start": "2024-01-01", "end": "2024-12-31"},
-            True,
-            0,
-            {},
-            True,
-            {},
-            True,
-            signature,
-        )
+    assert analyticstool.update_statistics(
+        {"tab": "statistics"},
+        "statistics",
+        dataset_key,
+        "daily",
+        ["Asset_A"],
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        True,
+        {},
+        True,
+        signature,
+        candidates,
+        common_daily,
+    ) == (no_update, no_update, no_update, no_update, no_update, no_update)
+
+
+def test_update_statistics_updates_candidates_and_uses_resolved_range(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    captured = {}
+    candidates = {
+        "available_series": ["Asset_A"],
+        "max_start": "2024-02-01",
+        "max_end": "2024-12-31",
+        "common_start": "2024-02-01",
+        "common_end": "2024-12-31",
+    }
+    common_daily = {"common_daily_start": "2024-02-01", "common_daily_end": "2024-12-31"}
+
+    monkeypatch.setattr(analyticstool, "update_at_range_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
+
+    def _fake_stats(*args):
+        captured["date_range_payload"] = args[5]
+        return [{"Series": "Asset_A", "Total Return": 0.1}]
+
+    monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
+    monkeypatch.setattr(
+        analyticstool,
+        "_resolve_shared_benchmark_payload",
+        lambda *_args: {"risk_free_json": "", "spx_json": ""},
+    )
+
+    result = analyticstool.update_statistics(
+        {"tab": "statistics"},
+        "statistics",
+        "unit-test-dataset",
+        "daily",
+        ["Asset_A"],
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        True,
+        {},
+        True,
+        None,
+        None,
+        None,
+    )
+
+    assert result[4] == candidates
+    assert result[5] == common_daily
+    assert json.loads(captured["date_range_payload"]) == {"start": "2024-02-01", "end": "2024-12-31"}
+
+
+def test_update_returns_grid_updates_candidates_and_uses_resolved_range(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    captured = {}
+    candidates = {
+        "available_series": ["Asset_A"],
+        "max_start": "2024-02-01",
+        "max_end": "2024-12-31",
+        "common_start": "2024-02-01",
+        "common_end": "2024-12-31",
+    }
+    common_daily = {"common_daily_start": "2024-02-01", "common_daily_end": "2024-12-31"}
+    display_df = pd.DataFrame(
+        {"Asset_A": [0.1]},
+        index=pd.to_datetime(["2024-02-01"]),
+    )
+    display_df.index.name = "Date"
+
+    monkeypatch.setattr(analyticstool, "update_at_range_candidates", lambda *_args: candidates)
+    monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
+
+    def _fake_returns(*args):
+        captured["date_range"] = args[6]
+        return display_df
+
+    monkeypatch.setattr(analyticstool, "_compute_selected_returns", _fake_returns)
+
+    result = analyticstool.update_grid(
+        {"tab": "returns"},
+        raw_json,
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        "returns",
+        True,
+        {},
+        None,
+        None,
+    )
+
+    assert result[3] == candidates
+    assert result[4] == common_daily
+    assert captured["date_range"] == {"start": "2024-02-01", "end": "2024-12-31"}
 
 
 def test_update_at_dataset_key_store_dedupes_unchanged(page_modules):
@@ -1360,11 +1531,35 @@ def test_statistics_render_schedules_from_statistics_trigger_store():
     render_callback = render_callback.split('Output("at-correlation-loaded-store", "data"', 1)[0]
     assert 'State("at-shared-benchmark-stamp-store", "data")' in render_callback
     assert 'State("dashmat-saved-series-cache-store", "data")' not in render_callback
+    assert 'State("at-range-candidates-store", "data")' in render_callback
+    assert 'State("at-common-daily-candidates-store", "data")' in render_callback
 
 
 def test_analytics_date_candidate_callback_uses_dataset_key_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
-    assert 'Input("at-dataset-key-store", "data")' in page_text
+    callback_text = page_text.split('def update_at_date_candidate_stores(', 1)[0]
+    callback_text = callback_text.rsplit('@callback(', 1)[-1]
+    assert 'State("at-dataset-key-store", "data")' in callback_text
+    assert 'State("at-periodicity-select", "value")' in callback_text
+    assert 'State("at-series-select", "data")' in callback_text
+
+
+def test_correlogram_candidate_refresh_callback_uses_trigger_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    callback_text = page_text.split('def refresh_correlogram_candidate_stores(', 1)[0]
+    callback_text = callback_text.rsplit('@callback(', 1)[-1]
+    assert 'Input("at-candidate-refresh-trigger-store", "data")' in callback_text
+    assert 'State("at-dataset-key-store", "data")' in callback_text
+    assert 'State("at-periodicity-select", "value")' in callback_text
+    assert 'State("at-series-select", "data")' in callback_text
+
+
+def test_candidate_refresh_trigger_callback_does_not_depend_on_candidate_stores():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    trigger_block = page_text.split('Output("at-candidate-refresh-trigger-store", "data")', 1)[-1]
+    trigger_block = trigger_block.split('Output("at-statistics-tab-trigger-store", "data")', 1)[0]
+    assert 'Input("at-range-candidates-store", "data")' not in trigger_block
+    assert 'Input("at-common-daily-candidates-store", "data")' not in trigger_block
 
 
 def test_download_excel_uses_shared_benchmark_stamp_store():

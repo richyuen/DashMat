@@ -2477,6 +2477,39 @@
     };
   }
 
+  function analyticsBootstrapCandidateTrigger(datasetKey, periodicity, selectedSeries, stateReady) {
+    const hasDataset = typeof datasetKey === "string" && datasetKey.length > 0;
+    const hasPeriodicity = typeof periodicity === "string" && periodicity.length > 0;
+    const seriesList = Array.isArray(selectedSeries) ? selectedSeries.filter(Boolean) : [];
+    if (stateReady || !hasDataset || !hasPeriodicity || !seriesList.length) {
+      return noUpdate();
+    }
+
+    return {
+      phase: "bootstrap",
+      stamp: Date.now(),
+      reason: triggeredId() || "unknown"
+    };
+  }
+
+  function analyticsCandidateRefreshTrigger(activeTab, stateReady, datasetKey, selectedSeries) {
+    const hasDataset = typeof datasetKey === "string" && datasetKey.length > 0;
+    const seriesList = Array.isArray(selectedSeries) ? selectedSeries.filter(Boolean) : [];
+    if (!hasDataset || !seriesList.length) {
+      return noUpdate();
+    }
+
+    if (!stateReady || String(activeTab || "statistics") !== "correlogram") {
+      return noUpdate();
+    }
+
+    return {
+      tab: "correlogram",
+      stamp: Date.now(),
+      reason: triggeredId() || "unknown"
+    };
+  }
+
   function analyticsModalPreviewTrigger(opened) {
     if (!opened) {
       return noUpdate();
@@ -2937,6 +2970,8 @@
       analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsTabTrigger: analyticsTabTrigger,
+      analyticsBootstrapCandidateTrigger: analyticsBootstrapCandidateTrigger,
+      analyticsCandidateRefreshTrigger: analyticsCandidateRefreshTrigger,
       analyticsModalPreviewTrigger: analyticsModalPreviewTrigger,
       analyticsDownloadExcelDisabled: analyticsDownloadExcelDisabled,
       analyticsViewSync: analyticsViewSync,

@@ -34,6 +34,8 @@
   - `no_update` for unchanged UI/store state
   - small internal `memory` stores for routing/gating instead of persisted schema changes
   - hidden-tab scheduling gating before callback-body micro-optimization
+- If the real perf goal is removing a request, do not rely on `PreventUpdate`; change the scheduling graph so the callback does not wake on that flow at all.
+- When splitting a hot-path callback out of bootstrap, keep a separate bootstrap hydration path so ready-state optimization does not strand initial store population.
 - For hidden-tab gating, use per-family triggers when the goal is to stop inactive callbacks from being scheduled at all.
 - When a visible-tab signature/render path only needs dataset identity, pass raw-data metadata or dataset keys instead of the full raw-data store.
 - For modal-only preview callbacks, gate scheduling with a modal-open trigger store instead of letting closed modals wake on shared control changes.
