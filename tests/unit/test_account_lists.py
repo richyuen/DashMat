@@ -130,10 +130,12 @@ def test_save_list_load_and_delete_account_list_support_duplicate_names():
     rows = list_account_lists(db_engine, "tester")
     assert len(rows) == 2
     assert rows[0]["ListName"] == "My List"
+    assert "ConfigJson" not in rows[0]
+    assert rows[0]["SeriesCount"] is None
 
     loaded = load_account_list_by_id(db_engine, saved1["AccountListID"], "tester")
     assert loaded is not None
-    assert loaded["SeriesCount"] == 1
+    assert "ConfigJson" in loaded
     assert loaded["UPDATE_BY"] == "tester"
 
     delete_ok, _delete_msg = delete_account_list(
@@ -156,6 +158,31 @@ def test_list_account_list_users_excludes_current_username():
     assert list_account_list_users(db_engine, "tester") == [
         {"Username": "alice", "Role": "Analyst"},
         {"Username": "bob", "Role": "Viewer"},
+    ]
+
+
+def test_list_account_lists_does_not_require_config_json_parsing():
+    db_engine = _seed_db_engine()
+    with db_engine.begin() as conn:
+        conn.exec_driver_sql("INSERT INTO Users (Username, Role) VALUES ('tester', 'Admin')")
+        conn.exec_driver_sql(
+            """
+            INSERT INTO DMAccountLists (Username, ListName, ConfigJson, UPDATE_DATE, UPDATE_BY)
+            VALUES ('tester', 'Broken Config', 'not-json', '2026-03-20 10:00:00', 'tester')
+            """
+        )
+
+    rows = list_account_lists(db_engine, "tester")
+
+    assert rows == [
+        {
+            "AccountListID": 1,
+            "Username": "tester",
+            "ListName": "Broken Config",
+            "UPDATE_DATE": "2026-03-20 10:00:00",
+            "UPDATE_BY": "tester",
+            "SeriesCount": None,
+        }
     ]
 
 
@@ -196,7 +223,6 @@ def test_send_account_list_copies_record_to_recipient():
     recipient_rows = list_account_lists(db_engine, "recipient")
     assert len(recipient_rows) == 1
     assert recipient_rows[0]["ListName"] == "Send Me"
-    assert recipient_rows[0]["ConfigJson"] == saved["ConfigJson"]
     assert recipient_rows[0]["UPDATE_BY"] == "tester"
     assert len(list_account_lists(db_engine, "tester")) == 1
 

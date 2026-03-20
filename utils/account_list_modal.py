@@ -12,6 +12,7 @@ from utils.ag_grid import literal_field_dash_grid_options
 from utils.account_lists import (
     ACCOUNT_LIST_CAPTURE_STORE_IDS,
     account_list_tables_available,
+    account_list_preview_rows,
     build_account_list_payload,
     build_account_list_session_payload,
     delete_account_list,
@@ -24,6 +25,7 @@ from utils.account_lists import (
     send_account_list,
     users_table_available,
 )
+from utils.perf_timing import timed_block
 
 
 ACCOUNT_LIST_MODAL_BASE_CLASS = "dashmat-modal dashmat-account-list-modal"
@@ -48,6 +50,8 @@ def load_selected_account_list_session(
     *,
     n_clicks,
     selected_id,
+    selected_detail,
+    rows,
     apply_settings,
     raw_data,
     original_periodicity,
@@ -62,7 +66,13 @@ def load_selected_account_list_session(
         raise PreventUpdate
     if selected_id is None:
         return no_update, {"message": "Select an account list to load.", "color": "orange"}, build_account_list_load_state("error")
-    row = load_account_list_by_id(db_engine, selected_id, _account_list_username(userinfo))
+    row = resolve_selected_account_list_detail(
+        selected_id=selected_id,
+        selected_detail=selected_detail,
+        rows=rows,
+        userinfo=userinfo,
+        db_engine=db_engine,
+    )
     if row is None:
         return no_update, {"message": "Saved account list no longer exists.", "color": "red"}, build_account_list_load_state("error")
     try:
@@ -84,6 +94,43 @@ def load_selected_account_list_session(
             build_account_list_load_state("error"),
         )
     return session_payload, no_update, build_account_list_load_state("success")
+
+
+def load_selected_account_list_detail(*, selected_id, userinfo, db_engine: Engine):
+    if selected_id is None:
+        return None
+    with timed_block("account_list.selected_detail", account_list_id=selected_id):
+        return load_account_list_by_id(db_engine, selected_id, _account_list_username(userinfo))
+
+
+def render_selected_account_list_preview(selected_detail):
+    if not isinstance(selected_detail, dict):
+        return []
+    with timed_block("account_list.preview_rows", account_list_id=selected_detail.get("AccountListID")):
+        preview_rows = account_list_preview_rows(selected_detail.get("ConfigJson"))
+    return preview_rows if isinstance(preview_rows, list) else []
+
+
+def resolve_selected_account_list_detail(*, selected_id, selected_detail, rows, userinfo, db_engine: Engine):
+    selected_row = next(
+        (row for row in (rows or []) if isinstance(row, dict) and row.get("AccountListID") == selected_id),
+        None,
+    )
+    expected_update = selected_row.get("UPDATE_DATE") if isinstance(selected_row, dict) else None
+    if (
+        isinstance(selected_detail, dict)
+        and selected_detail.get("AccountListID") == selected_id
+        and (
+            expected_update is None
+            or selected_detail.get("UPDATE_DATE") == expected_update
+        )
+    ):
+        return selected_detail
+    return load_selected_account_list_detail(
+        selected_id=selected_id,
+        userinfo=userinfo,
+        db_engine=db_engine,
+    )
 
 
 def build_account_list_modal_components() -> list:
@@ -427,7 +474,7 @@ def account_list_send_controls_state(mode, selected_id, recipient_options, recip
     return visible, False, selected_id is None or not str(recipient_value or "").strip(), "Select a user"
 
 
-def render_account_list_modal_view(opened, mode, rows, selected_id):
+def render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail):
     hidden = {"display": "none"}
     visible = {}
     if not opened:
@@ -449,7 +496,7 @@ def render_account_list_modal_view(opened, mode, rows, selected_id):
     rows = rows if isinstance(rows, list) else []
     selected_row = next((row for row in rows if row.get("AccountListID") == selected_id), None)
     list_row_data = _account_list_row_data(rows)
-    preview_rows = selected_row.get("PreviewRows") if isinstance(selected_row, dict) else []
+    preview_rows = render_selected_account_list_preview(selected_detail)
 
     if str(mode or "load") == "save":
         return (
@@ -473,7 +520,7 @@ def render_account_list_modal_view(opened, mode, rows, selected_id):
         hidden,
         visible,
         list_row_data,
-        preview_rows if isinstance(preview_rows, list) else [],
+        preview_rows,
         "Load adds latest DB data for saved series. Apply Saved Settings restores all saved page controls; off keeps the current series-dialog restore behavior.",
         selected_row is None,
         selected_row is None,
@@ -544,9 +591,26 @@ def register_account_list_callbacks(
             if (!sessionPayload || typeof sessionPayload !== "object") {
                 return window.dash_clientside.no_update;
             }
+            const start = (window.performance && typeof window.performance.now === "function")
+                ? window.performance.now()
+                : Date.now();
+            let keyCount = 0;
+            let totalBytes = 0;
             Object.keys(sessionPayload).forEach(function(key) {
-                sessionStorage.setItem(key, JSON.stringify(sessionPayload[key]));
+                const serialized = JSON.stringify(sessionPayload[key]);
+                sessionStorage.setItem(key, serialized);
+                keyCount += 1;
+                totalBytes += serialized ? serialized.length : 0;
             });
+            const end = (window.performance && typeof window.performance.now === "function")
+                ? window.performance.now()
+                : Date.now();
+            console.info(
+                "timing name=account_list.session_apply elapsed_ms=%s key_count=%s payload_bytes=%s",
+                (end - start).toFixed(2),
+                keyCount,
+                totalBytes
+            );
             window.location.reload();
             return window.dash_clientside.no_update;
         }
@@ -775,14 +839,32 @@ def register_account_list_callbacks(
         return list_account_lists(db_engine, _account_list_username(userinfo))
 
     @app.callback(
-        Output("dashmat-account-list-send-user-select", "data"),
+        Output("dashmat-account-list-selected-detail-store", "data"),
         Input("dashmat-account-list-modal", "opened"),
         Input("dashmat-account-list-modal-mode-store", "data"),
+        Input("dashmat-account-list-selected-id-store", "data"),
         State("userinfo", "data"),
         prevent_initial_call=False,
     )
-    def _refresh_account_list_send_users(opened, mode, userinfo):
-        if not opened or str(mode or "load") != "load":
+    def _refresh_account_list_selected_detail(opened, mode, selected_id, userinfo):
+        if not opened or str(mode or "load") != "load" or selected_id is None:
+            return None
+        return load_selected_account_list_detail(
+            selected_id=selected_id,
+            userinfo=userinfo,
+            db_engine=db_engine,
+        )
+
+    @app.callback(
+        Output("dashmat-account-list-send-user-select", "data"),
+        Input("dashmat-account-list-modal", "opened"),
+        Input("dashmat-account-list-modal-mode-store", "data"),
+        Input("dashmat-account-list-selected-id-store", "data"),
+        State("userinfo", "data"),
+        prevent_initial_call=False,
+    )
+    def _refresh_account_list_send_users(opened, mode, selected_id, userinfo):
+        if not opened or str(mode or "load") != "load" or selected_id is None:
             return []
         if not users_table_available(db_engine):
             return []
@@ -839,10 +921,11 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal-mode-store", "data"),
         Input("dashmat-account-list-rows-store", "data"),
         Input("dashmat-account-list-selected-id-store", "data"),
+        Input("dashmat-account-list-selected-detail-store", "data"),
         prevent_initial_call=False,
     )
-    def _render_account_list_modal_view(opened, mode, rows, selected_id):
-        return render_account_list_modal_view(opened, mode, rows, selected_id)
+    def _render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail):
+        return render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail)
 
     @app.callback(
         Output("dashmat-account-list-duplicate-text", "children"),
@@ -950,6 +1033,8 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-load-button", "n_clicks"),
         State("dashmat-account-list-selected-id-store", "data"),
+        State("dashmat-account-list-selected-detail-store", "data"),
+        State("dashmat-account-list-rows-store", "data"),
         State("dashmat-account-list-apply-settings-switch", "checked"),
         State("dashmat-raw-data-store", "data"),
         State("dashmat-original-periodicity-store", "data"),
@@ -961,6 +1046,8 @@ def register_account_list_callbacks(
     def _load_selected_account_list(
         n_clicks,
         selected_id,
+        selected_detail,
+        rows,
         apply_settings,
         raw_data,
         original_periodicity,
@@ -971,6 +1058,8 @@ def register_account_list_callbacks(
         return load_selected_account_list_session(
             n_clicks=n_clicks,
             selected_id=selected_id,
+            selected_detail=selected_detail,
+            rows=rows,
             apply_settings=apply_settings,
             raw_data=raw_data,
             original_periodicity=original_periodicity,

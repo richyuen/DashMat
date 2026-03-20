@@ -25,6 +25,8 @@ def test_load_selected_account_list_session_requires_click():
         modal_module.load_selected_account_list_session(
             n_clicks=0,
             selected_id=1,
+            selected_detail=None,
+            rows=[],
             apply_settings=True,
             raw_data=None,
             original_periodicity="daily",
@@ -41,6 +43,8 @@ def test_load_selected_account_list_session_handles_missing_selection():
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=2,
         selected_id=None,
+        selected_detail=None,
+        rows=[],
         apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
@@ -63,6 +67,8 @@ def test_load_selected_account_list_session_handles_missing_row(monkeypatch):
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=4,
         selected_id=8,
+        selected_detail=None,
+        rows=[],
         apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
@@ -94,6 +100,8 @@ def test_load_selected_account_list_session_handles_loader_error(monkeypatch):
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=5,
         selected_id=9,
+        selected_detail=None,
+        rows=[],
         apply_settings=False,
         raw_data=None,
         original_periodicity="daily",
@@ -125,6 +133,8 @@ def test_load_selected_account_list_session_reports_success(monkeypatch):
     payload, notice, load_state = modal_module.load_selected_account_list_session(
         n_clicks=6,
         selected_id=10,
+        selected_detail=None,
+        rows=[],
         apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
@@ -147,6 +157,8 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
     first = modal_module.load_selected_account_list_session(
         n_clicks=7,
         selected_id=11,
+        selected_detail=None,
+        rows=[],
         apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
@@ -160,6 +172,8 @@ def test_load_selected_account_list_session_repeated_failures_return_same_error_
     second = modal_module.load_selected_account_list_session(
         n_clicks=8,
         selected_id=11,
+        selected_detail=None,
+        rows=[],
         apply_settings=True,
         raw_data=None,
         original_periodicity="daily",
@@ -198,3 +212,69 @@ def test_account_list_send_user_options_and_control_state():
     assert hidden_state[0] == {"display": "none"}
     assert empty_state == ({}, True, True, "No other users available")
     assert ready_state == ({}, False, False, "Select a user")
+
+
+def test_resolve_selected_account_list_detail_reuses_matching_detail(monkeypatch):
+    reused_detail = {
+        "AccountListID": 7,
+        "UPDATE_DATE": "2026-03-20 09:00:00",
+        "ConfigJson": {"series_entries": []},
+    }
+
+    monkeypatch.setattr(
+        modal_module,
+        "load_selected_account_list_detail",
+        lambda **_kwargs: pytest.fail("detail should be reused"),
+    )
+
+    resolved = modal_module.resolve_selected_account_list_detail(
+        selected_id=7,
+        selected_detail=reused_detail,
+        rows=[{"AccountListID": 7, "UPDATE_DATE": "2026-03-20 09:00:00"}],
+        userinfo={"username": "tester"},
+        db_engine=None,
+    )
+
+    assert resolved == reused_detail
+
+
+def test_resolve_selected_account_list_detail_refetches_when_row_version_changes(monkeypatch):
+    monkeypatch.setattr(
+        modal_module,
+        "load_selected_account_list_detail",
+        lambda **_kwargs: {"AccountListID": 7, "UPDATE_DATE": "2026-03-20 10:00:00", "ConfigJson": {}},
+    )
+
+    resolved = modal_module.resolve_selected_account_list_detail(
+        selected_id=7,
+        selected_detail={"AccountListID": 7, "UPDATE_DATE": "2026-03-20 09:00:00", "ConfigJson": {}},
+        rows=[{"AccountListID": 7, "UPDATE_DATE": "2026-03-20 10:00:00"}],
+        userinfo={"username": "tester"},
+        db_engine=None,
+    )
+
+    assert resolved["UPDATE_DATE"] == "2026-03-20 10:00:00"
+
+
+def test_render_selected_account_list_preview_parses_selected_detail():
+    preview_rows = modal_module.render_selected_account_list_preview(
+        {
+            "AccountListID": 4,
+            "ConfigJson": {
+                "series_entries": [
+                    {
+                        "entry_id": "row-1",
+                        "loader_type": "cma_bench",
+                        "loader_args": {"selected_benches": ["SPX_TRIndex"]},
+                        "emitted_series": ["SPX_TRIndex"],
+                        "primary_series": "SPX_TRIndex",
+                    }
+                ],
+                "control_values": {"at-series-select": ["SPX_TRIndex"]},
+            },
+        }
+    )
+
+    assert preview_rows == [
+        {"Series": "SPX_TRIndex", "SourceType": "cma_bench", "AT": True, "PO": False, "REG": False}
+    ]

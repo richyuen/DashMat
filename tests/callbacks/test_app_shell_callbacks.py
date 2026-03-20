@@ -69,6 +69,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dcc.Store(id="dashmat-db-import-provenance-store"' in app_text
     assert 'dcc.Store(id="dashmat-account-list-session-apply-store"' in app_text
     assert 'dcc.Store(id="dashmat-account-list-load-state-store"' in app_text
+    assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' in app_text
     assert "build_account_list_modal_components" in app_text
     assert "register_account_list_callbacks" in app_text
     assert 'id="dashmat-account-list-modal"' in account_list_text
@@ -80,17 +81,20 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'id="dashmat-account-list-send-button"' in account_list_text
     assert 'dashmat-series-modal-grid' in account_list_text
     assert 'ACCOUNT_LIST_MODAL_LOAD_CLASS' in account_list_text
+    assert 'Output("dashmat-account-list-selected-detail-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True)' in account_list_text
     assert 'Output("dashmat-account-list-load-overlay", "visible")' in account_list_text
     assert 'Output("dashmat-account-list-load-overlay-shell", "style")' in account_list_text
     assert 'Input("dashmat-account-list-load-button", "n_clicks")' in account_list_text
     assert 'Input("dashmat-account-list-modal", "opened")' in account_list_text
+    assert 'Input("dashmat-account-list-selected-id-store", "data")' in account_list_text
     assert '"welcome-load-account-list-btn"' in welcome_text
     assert '"Load Account List"' in welcome_text
     assert 'Input("at-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text
     assert 'Input("po-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text
     assert 'Input("reg-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text
-    assert 'sessionStorage.setItem(key, JSON.stringify(sessionPayload[key]));' in account_list_text
+    assert 'sessionStorage.setItem(key, serialized);' in account_list_text
+    assert 'timing name=account_list.session_apply' in account_list_text
     assert "configure_timing_logger" in app_text
 
 
@@ -122,13 +126,27 @@ def test_account_list_load_view_keeps_static_grid_structure():
             "ListName": "Seed",
             "UPDATE_DATE": "2026-01-01 10:00:00",
             "UPDATE_BY": "seed",
-            "SeriesCount": 2,
-            "PreviewRows": [{"Series": "SPX_TRIndex", "SourceType": "cma_bench", "AT": True, "PO": False, "REG": False}],
+            "SeriesCount": None,
         }
     ]
+    selected_detail = {
+        "AccountListID": 1,
+        "ConfigJson": {
+            "series_entries": [
+                {
+                    "entry_id": "seed-1",
+                    "loader_type": "cma_bench",
+                    "loader_args": {"selected_benches": ["SPX_TRIndex"]},
+                    "emitted_series": ["SPX_TRIndex"],
+                    "primary_series": "SPX_TRIndex",
+                }
+            ],
+            "control_values": {"at-series-select": ["SPX_TRIndex"]},
+        },
+    }
 
-    out_empty = render_account_list_modal_view(True, "load", rows, None)
-    out_selected = render_account_list_modal_view(True, "load", rows, 1)
+    out_empty = render_account_list_modal_view(True, "load", rows, None, None)
+    out_selected = render_account_list_modal_view(True, "load", rows, 1, selected_detail)
 
     assert out_empty[1] == ACCOUNT_LIST_MODAL_LOAD_CLASS
     assert out_selected[1] == ACCOUNT_LIST_MODAL_LOAD_CLASS

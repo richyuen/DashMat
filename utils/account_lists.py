@@ -14,6 +14,7 @@ from utils.portfolio_series import load_portfolio_series
 from utils.raw_data_imports import load_factor_series, load_fund_series, load_performance_series
 from utils.date_range_flow import ACCOUNT_LIST_MAX_END_SENTINEL, compute_date_range_candidates
 from utils.raw_dataset import build_raw_data_store_payload, get_dataset_key, get_raw_dataset_df, resolve_dataset_key
+from utils.perf_timing import timed_block
 from utils.returns import (
     align_monthly_index_to_month_end,
     merge_returns,
@@ -541,6 +542,25 @@ def _account_list_summary_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _account_list_list_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "AccountListID": int(row.get("AccountListID")),
+        "Username": str(row.get("Username") or "").strip(),
+        "ListName": str(row.get("ListName") or "").strip(),
+        "UPDATE_DATE": _iso_or_none(row.get("UPDATE_DATE")),
+        "UPDATE_BY": str(row.get("UPDATE_BY") or "").strip(),
+        "SeriesCount": None,
+    }
+
+
+def _account_list_detail_row(row: dict[str, Any]) -> dict[str, Any]:
+    payload = normalize_account_list_payload(row.get("ConfigJson"))
+    return {
+        **_account_list_list_row(row),
+        "ConfigJson": canonical_json_dumps(payload),
+    }
+
+
 def save_account_list(
     db_engine: Engine,
     *,
@@ -639,14 +659,15 @@ def list_account_lists(db_engine: Engine, username: str) -> list[dict[str, Any]]
         return []
     table_name = _table_name(db_engine, "DMAccountLists")
     q = text(
-        f"SELECT AccountListID, Username, ListName, ConfigJson, UPDATE_DATE, UPDATE_BY "
+        f"SELECT AccountListID, Username, ListName, UPDATE_DATE, UPDATE_BY "
         f"FROM {table_name} "
         "WHERE LOWER(LTRIM(RTRIM(Username))) = LOWER(LTRIM(RTRIM(:username))) "
         "ORDER BY UPDATE_DATE DESC, AccountListID DESC"
     )
-    with db_engine.connect() as conn:
-        rows = conn.execute(q, {"username": clean_username}).mappings().all()
-    return [_account_list_summary_row(dict(row)) for row in rows]
+    with timed_block("account_list.list_rows", username=clean_username):
+        with db_engine.connect() as conn:
+            rows = conn.execute(q, {"username": clean_username}).mappings().all()
+    return [_account_list_list_row(dict(row)) for row in rows]
 
 
 def load_account_list_by_id(db_engine: Engine, account_list_id: Any, username: str) -> dict[str, Any] | None:
@@ -655,9 +676,10 @@ def load_account_list_by_id(db_engine: Engine, account_list_id: Any, username: s
     clean_username = str(username or "").strip()
     if not clean_username:
         return None
-    with db_engine.connect() as conn:
-        row = _load_account_list_row_by_id(conn, db_engine, account_list_id, clean_username)
-    return _account_list_summary_row(row) if row else None
+    with timed_block("account_list.load_detail", account_list_id=account_list_id):
+        with db_engine.connect() as conn:
+            row = _load_account_list_row_by_id(conn, db_engine, account_list_id, clean_username)
+    return _account_list_detail_row(row) if row else None
 
 
 def _archive_account_list_row(conn, db_engine: Engine, row: dict[str, Any]) -> None:
@@ -964,173 +986,189 @@ def build_account_list_session_payload(
     mrd_engine: Engine,
     perf_engine: Engine,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    normalized_payload = normalize_account_list_payload(payload)
-    if not normalized_payload.get("series_entries"):
-        raise ValueError("Saved account list has no DB-backed series.")
+    with timed_block("account_list.build_session_payload", apply_settings=bool(apply_settings)):
+        normalized_payload = normalize_account_list_payload(payload)
+        if not normalized_payload.get("series_entries"):
+            raise ValueError("Saved account list has no DB-backed series.")
 
-    dataset_key = get_dataset_key(current_raw_data) if current_raw_data else None
-    existing_df = get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
-    existing_set = set(existing_df.columns)
-    merged_df = existing_df.copy()
-    combined_periodicity = str(current_original_periodicity or "daily")
-    updated_provenance = normalize_db_import_provenance_store(current_provenance)
+        dataset_key = get_dataset_key(current_raw_data) if current_raw_data else None
+        existing_df = get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
+        existing_set = set(existing_df.columns)
+        merged_df = existing_df.copy()
+        combined_periodicity = str(current_original_periodicity or "daily")
+        updated_provenance = normalize_db_import_provenance_store(current_provenance)
 
-    added_series: list[str] = []
-    skipped_conflicts: list[str] = []
-    missing_series: list[str] = []
-    added_set: set[str] = set()
+        added_series: list[str] = []
+        skipped_conflicts: list[str] = []
+        missing_series: list[str] = []
+        added_set: set[str] = set()
 
-    entries_to_load = sorted(
-        normalized_payload.get("series_entries", []),
-        key=_entry_load_priority_key,
-    )
-
-    for entry in entries_to_load:
-        entry_emitted = _dedupe_strings(entry.get("emitted_series"))
-        if not entry_emitted:
-            continue
-        pending_series = [
-            series
-            for series in entry_emitted
-            if series not in existing_set and series not in added_set
-        ]
-        if not pending_series:
-            skipped_conflicts.extend(entry_emitted)
-            continue
-
-        entry_df, entry_periodicity = _load_entry_frame(
-            entry,
-            db_engine=db_engine,
-            mrd_engine=mrd_engine,
-            perf_engine=perf_engine,
+        entries_to_load = sorted(
+            normalized_payload.get("series_entries", []),
+            key=_entry_load_priority_key,
         )
-        if entry_df.empty:
-            missing_series.extend(entry.get("emitted_series", []))
-            continue
 
-        candidate_cols = [col for col in entry_df.columns if col not in existing_set and col not in added_set]
-        conflict_cols = [col for col in entry_df.columns if col in existing_set or col in added_set]
-        if conflict_cols:
-            skipped_conflicts.extend(conflict_cols)
-        if not candidate_cols:
-            continue
-
-        filtered_df = entry_df[candidate_cols].copy()
-        merged_df, combined_periodicity = _merge_imported_with_existing(
-            merged_df if not merged_df.empty else None,
-            combined_periodicity,
-            filtered_df,
-            entry_periodicity,
-        )
-        added_series.extend(candidate_cols)
-        added_set.update(candidate_cols)
-        existing_set = set(merged_df.columns)
-        updated_provenance = add_db_import_provenance_entry(
-            updated_provenance,
-            loader_type=str(entry.get("loader_type") or ""),
-            loader_args=dict(entry.get("loader_args") or {}),
-            emitted_series=candidate_cols,
-            primary_series=str(entry.get("primary_series") or candidate_cols[0]).strip() or candidate_cols[0],
-        )
-        missing_series.extend([series for series in entry.get("emitted_series", []) if series not in entry_df.columns])
-
-    updated_provenance = prune_db_import_provenance(updated_provenance, list(merged_df.columns))
-    loaded_set = set(added_series)
-    available_series = set(merged_df.columns)
-    merged_columns = list(merged_df.columns)
-    current_snapshot = current_session_snapshot if isinstance(current_session_snapshot, dict) else {}
-
-    control_values = normalized_payload.get("control_values") if isinstance(normalized_payload.get("control_values"), dict) else {}
-
-    at_selected = _merge_selected_list(current_snapshot.get(AT_STORE_IDS["selected"]), control_values.get(AT_STORE_IDS["selected"]), loaded_set)
-    at_order = _merge_order_list(current_snapshot.get(AT_STORE_IDS["order"]), control_values.get(AT_STORE_IDS["order"]), merged_columns, loaded_set)
-    at_bench = _normalize_benchmark_map(current_snapshot.get(AT_STORE_IDS["bench"]), control_values.get(AT_STORE_IDS["bench"]), loaded_set, available_series)
-    at_ls = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["long_short"]), control_values.get(AT_STORE_IDS["long_short"]), loaded_set)
-    at_vol = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["vol"]), control_values.get(AT_STORE_IDS["vol"]), loaded_set)
-
-    po_selected = _merge_selected_list(current_snapshot.get(PO_STORE_IDS["selected"]), control_values.get(PO_STORE_IDS["selected"]), loaded_set)
-    po_order = _merge_order_list(current_snapshot.get(PO_STORE_IDS["order"]), control_values.get(PO_STORE_IDS["order"]), merged_columns, loaded_set)
-    po_bench = _normalize_benchmark_map(current_snapshot.get(PO_STORE_IDS["bench"]), control_values.get(PO_STORE_IDS["bench"]), loaded_set, available_series)
-    po_cmabench = dict(current_snapshot.get(PO_STORE_IDS["cmabench"]) or {})
-    for key, value in dict(control_values.get(PO_STORE_IDS["cmabench"]) or {}).items():
-        clean_key = str(key or "").strip()
-        if clean_key in loaded_set:
-            po_cmabench[clean_key] = str(value or "").strip()
-    po_ls = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["long_short"]), control_values.get(PO_STORE_IDS["long_short"]), loaded_set)
-    po_vol = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["vol"]), control_values.get(PO_STORE_IDS["vol"]), loaded_set)
-    po_min = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["min_wt"]), control_values.get(PO_STORE_IDS["min_wt"]), loaded_set)
-    po_max = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["max_wt"]), control_values.get(PO_STORE_IDS["max_wt"]), loaded_set)
-    po_force = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["force_max"]), control_values.get(PO_STORE_IDS["force_max"]), loaded_set)
-
-    reg_selected = _merge_selected_list(current_snapshot.get(REG_STORE_IDS["selected"]), control_values.get(REG_STORE_IDS["selected"]), loaded_set)
-    reg_order = _merge_order_list(current_snapshot.get(REG_STORE_IDS["order"]), control_values.get(REG_STORE_IDS["order"]), merged_columns, loaded_set)
-    reg_bench = _normalize_benchmark_map(current_snapshot.get(REG_STORE_IDS["bench"]), control_values.get(REG_STORE_IDS["bench"]), loaded_set, available_series)
-    reg_ls = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["long_short"]), control_values.get(REG_STORE_IDS["long_short"]), loaded_set)
-    reg_vol = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["vol"]), control_values.get(REG_STORE_IDS["vol"]), loaded_set)
-    reg_lag = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["lag"]), control_values.get(REG_STORE_IDS["lag"]), loaded_set)
-    reg_min = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["min_beta"]), control_values.get(REG_STORE_IDS["min_beta"]), loaded_set)
-    reg_max = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["max_beta"]), control_values.get(REG_STORE_IDS["max_beta"]), loaded_set)
-    reg_enable = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["enable"]), control_values.get(REG_STORE_IDS["enable"]), loaded_set)
-    current_dep = str(current_snapshot.get(REG_STORE_IDS["dep"]) or "").strip()
-    saved_dep = str(control_values.get(REG_STORE_IDS["dep"]) or "").strip()
-    if current_dep and current_dep in available_series:
-        reg_dep = current_dep
-    elif saved_dep and saved_dep in available_series and saved_dep in loaded_set:
-        reg_dep = saved_dep
-    else:
-        reg_dep = None
-
-    notice = {
-        "message": (
-            f"Loaded account list with {len(added_series)} added series, "
-            f"{len(_dedupe_strings(skipped_conflicts))} skipped conflicts, and {len(_dedupe_strings(missing_series))} missing series."
-        ),
-        "color": "orange" if skipped_conflicts or missing_series else "green",
-    }
-
-    session_payload = {
-        "dashmat-raw-data-store": build_raw_data_store_payload(merged_df),
-        "dashmat-original-periodicity-store": combined_periodicity,
-        "dashmat-db-import-provenance-store": updated_provenance,
-        "dashmat-account-list-notice-store": notice,
-        AT_STORE_IDS["selected"]: at_selected,
-        AT_STORE_IDS["selected_value"]: at_selected,
-        AT_STORE_IDS["bench"]: at_bench,
-        AT_STORE_IDS["long_short"]: at_ls,
-        AT_STORE_IDS["order"]: at_order,
-        AT_STORE_IDS["vol"]: at_vol,
-        PO_STORE_IDS["selected"]: po_selected,
-        PO_STORE_IDS["selected_value"]: po_selected,
-        PO_STORE_IDS["bench"]: po_bench,
-        PO_STORE_IDS["cmabench"]: po_cmabench,
-        PO_STORE_IDS["long_short"]: po_ls,
-        PO_STORE_IDS["order"]: po_order,
-        PO_STORE_IDS["vol"]: po_vol,
-        PO_STORE_IDS["min_wt"]: po_min,
-        PO_STORE_IDS["max_wt"]: po_max,
-        PO_STORE_IDS["force_max"]: po_force,
-        REG_STORE_IDS["selected"]: reg_selected,
-        REG_STORE_IDS["selected_value"]: reg_selected,
-        REG_STORE_IDS["bench"]: reg_bench,
-        REG_STORE_IDS["long_short"]: reg_ls,
-        REG_STORE_IDS["order"]: reg_order,
-        REG_STORE_IDS["vol"]: reg_vol,
-        REG_STORE_IDS["dep"]: reg_dep,
-        REG_STORE_IDS["lag"]: reg_lag,
-        REG_STORE_IDS["min_beta"]: reg_min,
-        REG_STORE_IDS["max_beta"]: reg_max,
-        REG_STORE_IDS["enable"]: reg_enable,
-    }
-
-    if apply_settings:
-        for store_id in ACCOUNT_LIST_EXTRA_CONTROL_STORE_IDS:
-            if store_id not in control_values:
+        for entry in entries_to_load:
+            entry_emitted = _dedupe_strings(entry.get("emitted_series"))
+            if not entry_emitted:
                 continue
-            session_payload[store_id] = _filtered_extra_control_value(
-                store_id,
-                control_values.get(store_id),
-                available_series,
+            pending_series = [
+                series
+                for series in entry_emitted
+                if series not in existing_set and series not in added_set
+            ]
+            if not pending_series:
+                skipped_conflicts.extend(entry_emitted)
+                continue
+
+            with timed_block(
+                "account_list.build_session_payload.load_entry_frame",
+                loader_type=str(entry.get("loader_type") or ""),
+                emitted_count=len(entry_emitted),
+            ):
+                entry_df, entry_periodicity = _load_entry_frame(
+                    entry,
+                    db_engine=db_engine,
+                    mrd_engine=mrd_engine,
+                    perf_engine=perf_engine,
+                )
+            if entry_df.empty:
+                missing_series.extend(entry.get("emitted_series", []))
+                continue
+
+            candidate_cols = [col for col in entry_df.columns if col not in existing_set and col not in added_set]
+            conflict_cols = [col for col in entry_df.columns if col in existing_set or col in added_set]
+            if conflict_cols:
+                skipped_conflicts.extend(conflict_cols)
+            if not candidate_cols:
+                continue
+
+            filtered_df = entry_df[candidate_cols].copy()
+            with timed_block(
+                "account_list.build_session_payload.merge_entry_frame",
+                incoming_series=len(candidate_cols),
+                periodicity=entry_periodicity,
+            ):
+                merged_df, combined_periodicity = _merge_imported_with_existing(
+                    merged_df if not merged_df.empty else None,
+                    combined_periodicity,
+                    filtered_df,
+                    entry_periodicity,
+                )
+            added_series.extend(candidate_cols)
+            added_set.update(candidate_cols)
+            existing_set = set(merged_df.columns)
+            updated_provenance = add_db_import_provenance_entry(
+                updated_provenance,
+                loader_type=str(entry.get("loader_type") or ""),
+                loader_args=dict(entry.get("loader_args") or {}),
+                emitted_series=candidate_cols,
+                primary_series=str(entry.get("primary_series") or candidate_cols[0]).strip() or candidate_cols[0],
             )
+            missing_series.extend([series for series in entry.get("emitted_series", []) if series not in entry_df.columns])
+
+        with timed_block(
+            "account_list.build_session_payload.assemble",
+            added_series=len(added_series),
+            apply_settings=bool(apply_settings),
+        ):
+            updated_provenance = prune_db_import_provenance(updated_provenance, list(merged_df.columns))
+            loaded_set = set(added_series)
+            available_series = set(merged_df.columns)
+            merged_columns = list(merged_df.columns)
+            current_snapshot = current_session_snapshot if isinstance(current_session_snapshot, dict) else {}
+
+            control_values = normalized_payload.get("control_values") if isinstance(normalized_payload.get("control_values"), dict) else {}
+
+            at_selected = _merge_selected_list(current_snapshot.get(AT_STORE_IDS["selected"]), control_values.get(AT_STORE_IDS["selected"]), loaded_set)
+            at_order = _merge_order_list(current_snapshot.get(AT_STORE_IDS["order"]), control_values.get(AT_STORE_IDS["order"]), merged_columns, loaded_set)
+            at_bench = _normalize_benchmark_map(current_snapshot.get(AT_STORE_IDS["bench"]), control_values.get(AT_STORE_IDS["bench"]), loaded_set, available_series)
+            at_ls = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["long_short"]), control_values.get(AT_STORE_IDS["long_short"]), loaded_set)
+            at_vol = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["vol"]), control_values.get(AT_STORE_IDS["vol"]), loaded_set)
+
+            po_selected = _merge_selected_list(current_snapshot.get(PO_STORE_IDS["selected"]), control_values.get(PO_STORE_IDS["selected"]), loaded_set)
+            po_order = _merge_order_list(current_snapshot.get(PO_STORE_IDS["order"]), control_values.get(PO_STORE_IDS["order"]), merged_columns, loaded_set)
+            po_bench = _normalize_benchmark_map(current_snapshot.get(PO_STORE_IDS["bench"]), control_values.get(PO_STORE_IDS["bench"]), loaded_set, available_series)
+            po_cmabench = dict(current_snapshot.get(PO_STORE_IDS["cmabench"]) or {})
+            for key, value in dict(control_values.get(PO_STORE_IDS["cmabench"]) or {}).items():
+                clean_key = str(key or "").strip()
+                if clean_key in loaded_set:
+                    po_cmabench[clean_key] = str(value or "").strip()
+            po_ls = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["long_short"]), control_values.get(PO_STORE_IDS["long_short"]), loaded_set)
+            po_vol = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["vol"]), control_values.get(PO_STORE_IDS["vol"]), loaded_set)
+            po_min = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["min_wt"]), control_values.get(PO_STORE_IDS["min_wt"]), loaded_set)
+            po_max = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["max_wt"]), control_values.get(PO_STORE_IDS["max_wt"]), loaded_set)
+            po_force = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["force_max"]), control_values.get(PO_STORE_IDS["force_max"]), loaded_set)
+
+            reg_selected = _merge_selected_list(current_snapshot.get(REG_STORE_IDS["selected"]), control_values.get(REG_STORE_IDS["selected"]), loaded_set)
+            reg_order = _merge_order_list(current_snapshot.get(REG_STORE_IDS["order"]), control_values.get(REG_STORE_IDS["order"]), merged_columns, loaded_set)
+            reg_bench = _normalize_benchmark_map(current_snapshot.get(REG_STORE_IDS["bench"]), control_values.get(REG_STORE_IDS["bench"]), loaded_set, available_series)
+            reg_ls = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["long_short"]), control_values.get(REG_STORE_IDS["long_short"]), loaded_set)
+            reg_vol = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["vol"]), control_values.get(REG_STORE_IDS["vol"]), loaded_set)
+            reg_lag = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["lag"]), control_values.get(REG_STORE_IDS["lag"]), loaded_set)
+            reg_min = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["min_beta"]), control_values.get(REG_STORE_IDS["min_beta"]), loaded_set)
+            reg_max = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["max_beta"]), control_values.get(REG_STORE_IDS["max_beta"]), loaded_set)
+            reg_enable = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["enable"]), control_values.get(REG_STORE_IDS["enable"]), loaded_set)
+            current_dep = str(current_snapshot.get(REG_STORE_IDS["dep"]) or "").strip()
+            saved_dep = str(control_values.get(REG_STORE_IDS["dep"]) or "").strip()
+            if current_dep and current_dep in available_series:
+                reg_dep = current_dep
+            elif saved_dep and saved_dep in available_series and saved_dep in loaded_set:
+                reg_dep = saved_dep
+            else:
+                reg_dep = None
+
+            notice = {
+                "message": (
+                    f"Loaded account list with {len(added_series)} added series, "
+                    f"{len(_dedupe_strings(skipped_conflicts))} skipped conflicts, and {len(_dedupe_strings(missing_series))} missing series."
+                ),
+                "color": "orange" if skipped_conflicts or missing_series else "green",
+            }
+
+            session_payload = {
+                "dashmat-raw-data-store": build_raw_data_store_payload(merged_df),
+                "dashmat-original-periodicity-store": combined_periodicity,
+                "dashmat-db-import-provenance-store": updated_provenance,
+                "dashmat-account-list-notice-store": notice,
+                AT_STORE_IDS["selected"]: at_selected,
+                AT_STORE_IDS["selected_value"]: at_selected,
+                AT_STORE_IDS["bench"]: at_bench,
+                AT_STORE_IDS["long_short"]: at_ls,
+                AT_STORE_IDS["order"]: at_order,
+                AT_STORE_IDS["vol"]: at_vol,
+                PO_STORE_IDS["selected"]: po_selected,
+                PO_STORE_IDS["selected_value"]: po_selected,
+                PO_STORE_IDS["bench"]: po_bench,
+                PO_STORE_IDS["cmabench"]: po_cmabench,
+                PO_STORE_IDS["long_short"]: po_ls,
+                PO_STORE_IDS["order"]: po_order,
+                PO_STORE_IDS["vol"]: po_vol,
+                PO_STORE_IDS["min_wt"]: po_min,
+                PO_STORE_IDS["max_wt"]: po_max,
+                PO_STORE_IDS["force_max"]: po_force,
+                REG_STORE_IDS["selected"]: reg_selected,
+                REG_STORE_IDS["selected_value"]: reg_selected,
+                REG_STORE_IDS["bench"]: reg_bench,
+                REG_STORE_IDS["long_short"]: reg_ls,
+                REG_STORE_IDS["order"]: reg_order,
+                REG_STORE_IDS["vol"]: reg_vol,
+                REG_STORE_IDS["dep"]: reg_dep,
+                REG_STORE_IDS["lag"]: reg_lag,
+                REG_STORE_IDS["min_beta"]: reg_min,
+                REG_STORE_IDS["max_beta"]: reg_max,
+                REG_STORE_IDS["enable"]: reg_enable,
+            }
+
+            if apply_settings:
+                for store_id in ACCOUNT_LIST_EXTRA_CONTROL_STORE_IDS:
+                    if store_id not in control_values:
+                        continue
+                    session_payload[store_id] = _filtered_extra_control_value(
+                        store_id,
+                        control_values.get(store_id),
+                        available_series,
+                    )
 
     return session_payload, {
         "added_series": added_series,
