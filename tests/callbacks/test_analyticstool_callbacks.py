@@ -300,7 +300,7 @@ def test_at_range_candidates_use_raw_data_meta_dataset_key(monkeypatch, page_mod
     monkeypatch.setattr(analyticstool, "compute_date_range_candidates", _fake_compute)
 
     result = analyticstool.update_at_range_candidates(
-        {"dataset_key": "ds-123"},
+        "ds-123",
         "monthly",
         ["Asset_A", "Asset_B"],
     )
@@ -325,7 +325,7 @@ def test_at_common_daily_candidates_use_raw_data_meta_dataset_key(monkeypatch, p
     monkeypatch.setattr(analyticstool, "compute_common_daily_candidates", _fake_compute)
 
     result = analyticstool.update_at_common_daily_candidates(
-        {"dataset_key": "ds-123"},
+        "ds-123",
         ["Asset_A", "Asset_B"],
     )
 
@@ -344,7 +344,7 @@ def test_at_date_candidate_stores_dedupe_unchanged_outputs(monkeypatch, page_mod
     monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
 
     result = analyticstool.update_at_date_candidate_stores(
-        {"dataset_key": "ds-123"},
+        "ds-123",
         "monthly",
         ["Asset_A"],
         candidates,
@@ -538,6 +538,7 @@ def test_at_hidden_tab_trigger_stores_exist(page_modules):
         "at-correlogram-tab-trigger-store",
         "at-factor-preview-trigger-store",
         "at-regime-preview-trigger-store",
+        "at-dataset-key-store",
     ]:
         assert _find_component_by_id(analyticstool.layout, component_id) is not None
 
@@ -1021,7 +1022,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     monkeypatch.setattr(analyticstool, "calculate_statistics_cached", _fake_stats)
 
     target_key = analyticstool._statistics_tab_signature(
-        {"dataset_key": "unit-test-dataset"},
+        "unit-test-dataset",
         "daily",
         ["Asset_A", "Asset_B"],
         {},
@@ -1036,7 +1037,7 @@ def test_update_statistics_transposes_series_into_columns(monkeypatch, page_modu
     column_defs, row_data, loaded, rendered_key = analyticstool.update_statistics(
         {"tab": "statistics"},
         "statistics",
-        {"dataset_key": "unit-test-dataset"},
+        "unit-test-dataset",
         "daily",
         ["Asset_A", "Asset_B"],
         {},
@@ -1106,7 +1107,7 @@ def test_update_statistics_requires_ready_state(page_modules):
         analyticstool.update_statistics(
             {"tab": "statistics"},
             "statistics",
-            {"dataset_key": "unit-test-dataset"},
+            "unit-test-dataset",
             "daily",
             ["Asset_A"],
             {},
@@ -1129,7 +1130,7 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
         analyticstool.update_statistics(
             {"tab": "statistics"},
             "returns",
-            {"dataset_key": "unit-test-dataset"},
+            "unit-test-dataset",
             "daily",
             ["Asset_A"],
             {},
@@ -1148,7 +1149,7 @@ def test_update_statistics_requires_selected_tab_and_initial_ready(page_modules)
         analyticstool.update_statistics(
             {"tab": "statistics"},
             "statistics",
-            {"dataset_key": "unit-test-dataset"},
+            "unit-test-dataset",
             "daily",
             ["Asset_A"],
             {},
@@ -1203,7 +1204,7 @@ def test_update_returns_grid_skips_unchanged_tab_revisit(monkeypatch, page_modul
 def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_modules, raw_json):
     analyticstool, _ = page_modules
     signature = analyticstool._statistics_tab_signature(
-        {"dataset_key": analyticstool._dataset_key(raw_json)},
+        analyticstool._dataset_key(raw_json),
         "daily",
         ["Asset_A"],
         {},
@@ -1220,7 +1221,7 @@ def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_
         analyticstool.update_statistics(
             {"tab": "statistics"},
             "statistics",
-            {"dataset_key": analyticstool._dataset_key(raw_json)},
+            analyticstool._dataset_key(raw_json),
             "daily",
             ["Asset_A"],
             {},
@@ -1236,11 +1237,33 @@ def test_update_statistics_skips_when_target_already_rendered(monkeypatch, page_
         )
 
 
+def test_update_at_dataset_key_store_dedupes_unchanged(page_modules):
+    analyticstool, _ = page_modules
+
+    assert (
+        analyticstool.update_at_dataset_key_store({"dataset_key": "unit-test-dataset"}, None)
+        == "unit-test-dataset"
+    )
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_at_dataset_key_store(
+            {"dataset_key": "unit-test-dataset"},
+            "unit-test-dataset",
+        )
+
+
 def test_statistics_render_schedules_from_statistics_trigger_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     assert 'Input("at-statistics-tab-trigger-store", "data")' in page_text
     assert 'Input("at-statistics-target-key-store", "data")' not in page_text
     assert 'dcc.Store(id="at-statistics-target-key-store"' not in page_text
+    assert 'State("at-dataset-key-store", "data")' in page_text
+
+
+def test_analytics_date_candidate_callback_uses_dataset_key_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'Input("at-dataset-key-store", "data")' in page_text
+
 
 
 def test_statistics_loading_uses_native_loading_without_manual_display_callback():

@@ -283,6 +283,10 @@ def _dataset_key_from_meta(raw_meta) -> str | None:
 
 
 def _dataset_key_from_source(dataset_source) -> str | None:
+    if isinstance(dataset_source, str):
+        direct_key = dataset_source.strip()
+        if direct_key and not direct_key.startswith("{"):
+            return direct_key
     return _dataset_key_from_meta(dataset_source) or _dataset_key(dataset_source)
 
 
@@ -2854,6 +2858,18 @@ def refresh_saved_series_cache(raw_data, cache_data):
 
 
 @callback(
+    Output("at-dataset-key-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    State("at-dataset-key-store", "data"),
+)
+def update_at_dataset_key_store(raw_meta, current_dataset_key):
+    next_dataset_key = _dataset_key_from_meta(raw_meta)
+    if next_dataset_key == current_dataset_key:
+        raise PreventUpdate
+    return next_dataset_key
+
+
+@callback(
     Output("at-db-add-error-alert", "children"),
     Output("at-db-add-error-alert", "hide"),
     Output("at-db-add-ok-button", "disabled"),
@@ -4902,6 +4918,7 @@ layout = dmc.Container(
         dcc.Store(id="at-regime-def-db-available-store", data=False, storage_type="session"),
         dcc.Store(id="at-regime-def-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-regime-series-store", data={"series_data": {}}, storage_type="session"),
+        dcc.Store(id="at-dataset-key-store", data=None, storage_type="memory"),
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="at-common-daily-candidates-store", data=None, storage_type="memory"),
@@ -8814,17 +8831,17 @@ def on_modal_cancel(n_clicks):
     return False
 
 
-def update_at_range_candidates(raw_meta, periodicity, selected_series):
+def update_at_range_candidates(dataset_key, periodicity, selected_series):
     return compute_date_range_candidates(
-        _dataset_key_from_meta(raw_meta),
+        dataset_key,
         periodicity or "daily",
         tuple(selected_series or ()),
     )
 
 
-def update_at_common_daily_candidates(raw_meta, selected_series):
+def update_at_common_daily_candidates(dataset_key, selected_series):
     return compute_common_daily_candidates(
-        _dataset_key_from_meta(raw_meta),
+        dataset_key,
         tuple(selected_series or ()),
     )
 
@@ -8832,7 +8849,7 @@ def update_at_common_daily_candidates(raw_meta, selected_series):
 @callback(
     Output("at-range-candidates-store", "data"),
     Output("at-common-daily-candidates-store", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
+    Input("at-dataset-key-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
     State("at-range-candidates-store", "data"),
@@ -8840,14 +8857,14 @@ def update_at_common_daily_candidates(raw_meta, selected_series):
     prevent_initial_call="initial_duplicate",
 )
 def update_at_date_candidate_stores(
-    raw_meta,
+    dataset_key,
     periodicity,
     selected_series,
     current_candidates,
     current_common_daily_candidates,
 ):
-    next_candidates = update_at_range_candidates(raw_meta, periodicity, selected_series)
-    next_common_daily = update_at_common_daily_candidates(raw_meta, selected_series)
+    next_candidates = update_at_range_candidates(dataset_key, periodicity, selected_series)
+    next_common_daily = update_at_common_daily_candidates(dataset_key, selected_series)
     return (
         no_update if next_candidates == current_candidates else next_candidates,
         no_update if next_common_daily == current_common_daily_candidates else next_common_daily,
@@ -9544,7 +9561,7 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
     Input("at-statistics-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
-    State("dashmat-raw-data-meta-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -9559,18 +9576,17 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     State("at-statistics-rendered-key-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(trigger_payload, active_tab="statistics", raw_meta=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
+def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, saved_series_store=None, initial_tab_ready=True, rendered_key=None):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     _at_require_tab_trigger(trigger_payload, "statistics")
     if active_tab != "statistics" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
-    dataset_key = _dataset_key_from_meta(raw_meta)
     if not dataset_key or not selected_series:
         return [], [], True, None
 
     next_key = _statistics_tab_signature(
-        raw_meta,
+        dataset_key,
         periodicity,
         selected_series,
         benchmark_assignments,
