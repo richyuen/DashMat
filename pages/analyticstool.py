@@ -290,6 +290,14 @@ def _has_complete_date_range(value) -> bool:
     )
 
 
+def _at_require_tab_trigger(trigger_payload, expected_tab: str) -> dict:
+    if not isinstance(trigger_payload, dict):
+        raise PreventUpdate
+    if str(trigger_payload.get("tab") or "") != expected_tab:
+        raise PreventUpdate
+    return trigger_payload
+
+
 def _coerce_positive_int(value, default: int = 1) -> int:
     parsed = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     if pd.isna(parsed):
@@ -4893,6 +4901,15 @@ layout = dmc.Container(
         dcc.Store(id="at-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="at-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="at-common-daily-candidates-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-returns-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-rolling-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-calendar-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-growth-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-drawdown-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-factor-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-regime-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-conditional-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-correlogram-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-target-key-store", data=None, storage_type="memory"),
@@ -5807,6 +5824,233 @@ clientside_callback(
     Input("at-page-load-trigger", "n_intervals"),
     State("at-partial-period-store", "data"),
     State("at-partial-period-select", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("returns", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-returns-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("rolling", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-rolling-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-rolling-window-select", "value"),
+    Input("at-rolling-return-type-select", "value"),
+    Input("at-rolling-metric-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-use-risk-free-store", "data"),
+    Input("at-rolling-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("calendar", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-calendar-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-monthly-view-checkbox", "value"),
+    Input("at-monthly-series-select", "value"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-partial-period-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("growth", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-growth-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-growth-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("drawdown", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-drawdown-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-drawdown-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("factor_analysis", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-factor-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-factor-mode-select", "value"),
+    Input("at-factor-qq-reference-select", "value"),
+    Input("at-factor-series-select", "value"),
+    Input("at-factor-quantiles-input", "value"),
+    Input("at-factor-transform-select", "value"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-factor-definitions-db-store", "data"),
+    Input("at-factor-definitions-local-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("regime_analysis", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-regime-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-regime-definition-select", "value"),
+    Input("at-regime-detail-display-mode-select", "value"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-regime-definitions-db-store", "data"),
+    Input("at-regime-definitions-local-store", "data"),
+    Input("at-regime-series-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("conditional_returns", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-conditional-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-conditional-display-mode-select", "value"),
+    Input("at-conditional-view-select", "value"),
+    Input("at-conditional-comparator-select", "value"),
+    Input("at-conditional-threshold-input", "value"),
+    Input("at-conditional-window-conversion-select", "value"),
+    Input("at-conditional-step-input", "value"),
+    Input("at-conditional-step-unit-select", "value"),
+    Input("at-factor-series-select-conditional", "value"),
+    Input("at-factor-transform-select-conditional", "value"),
+    Input("at-factor-definitions-db-store", "data"),
+    Input("at-factor-definitions-local-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady, stateReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("correlogram", activeTab, initialTabReady, stateReady);
+    }
+    """,
+    Output("at-correlogram-tab-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-range-candidates-store", "data"),
+    Input("at-correlation-view-switch", "value"),
+    Input("at-correlation-exp-wt-switch", "checked"),
+    Input("at-correlation-halflife-input", "value"),
+    Input("at-correlation-shrinkage-select", "value"),
+    Input("at-correlation-shrinkage-target-select", "value"),
+    Input("at-correlogram-block-width", "value"),
     prevent_initial_call=True,
 )
 
@@ -8672,23 +8916,25 @@ def update_date_range_store(start_date, end_date, existing_range):
     Output("at-returns-grid", "columnDefs"),
     Output("at-returns-grid", "rowData"),
     Output("at-tab-render-signatures-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-main-tabs", "value"),
-    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-returns-tab-trigger-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-initial-tab-render-ready-store", "data"),
     State("at-tab-render-signatures-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True, tab_render_signatures=None):
+def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True, tab_render_signatures=None):
     """Update the AG Grid based on selections (optimized with caching)."""
+    _at_require_tab_trigger(trigger_payload, "returns")
     if active_tab != "returns" or not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
@@ -8859,26 +9105,28 @@ def control_statistics_loading_display(active_tab, state_ready, target_key, rend
 @callback(
     Output("at-rolling-grid", "columnDefs"),
     Output("at-rolling-grid", "rowData"),
-    Input("at-main-tabs", "value"),
-    Input("at-rolling-chart-switch", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-rolling-window-select", "value"),
-    Input("at-rolling-return-type-select", "value"),
-    Input("at-rolling-metric-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-use-risk-free-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("at-rolling-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-rolling-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-rolling-window-select", "value"),
+    State("at-rolling-return-type-select", "value"),
+    State("at-rolling-metric-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-use-risk-free-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store):
+def update_rolling_grid(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store):
     """Update the Rolling Returns grid with rolling window calculations."""
+    _at_require_tab_trigger(trigger_payload, "rolling")
     # Lazy loading: only calculate when rolling tab/table view is active and ready.
     if active_tab != "rolling" or chart_checked != "table" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
@@ -8946,27 +9194,29 @@ def update_rolling_grid(active_tab, chart_checked, raw_data, periodicity, select
 
 @callback(
     Output("at-rolling-chart-wrapper", "children"),
-    Input("at-main-tabs", "value"),
-    Input("at-rolling-chart-switch", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-rolling-window-select", "value"),
-    Input("at-rolling-return-type-select", "value"),
-    Input("at-rolling-metric-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-use-risk-free-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("at-rolling-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-rolling-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-rolling-window-select", "value"),
+    State("at-rolling-return-type-select", "value"),
+    State("at-rolling-metric-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-use-risk-free-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store, theme):
+def update_rolling_chart(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store, theme):
     """Update the Rolling Returns chart with rolling window calculations."""
+    _at_require_tab_trigger(trigger_payload, "rolling")
     # Create empty figure
     empty_fig = go.Figure()
     empty_fig.update_layout(
@@ -9134,25 +9384,27 @@ def update_monthly_series_select(monthly_view, selected_series, stored_monthly_s
 @callback(
     Output("at-calendar-grid", "columnDefs"),
     Output("at-calendar-grid", "rowData"),
-    Input("at-main-tabs", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("dashmat-original-periodicity-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-monthly-view-checkbox", "value"),
-    Input("at-monthly-series-select", "value"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-partial-period-store", "data"),
+    Input("at-calendar-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-monthly-view-checkbox", "value"),
+    State("at-monthly-series-select", "value"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-partial-period-store", "data"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, partial_mode):
+def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, partial_mode):
     """Update the Calendar Year Returns grid (lazy loaded)."""
+    _at_require_tab_trigger(trigger_payload, "calendar")
     # Lazy loading: only calculate when calendar tab is active
     if active_tab != "calendar" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
@@ -9418,29 +9670,29 @@ def update_correlogram_meta(selected_series, active_tab):
 
 @callback(
     Output("at-correlogram-target-key-store", "data"),
-    Input("at-main-tabs", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-range-candidates-store", "data"),
-    Input("at-correlation-view-switch", "value"),
-    Input("at-correlation-exp-wt-switch", "checked"),
-    Input("at-correlation-halflife-input", "value"),
-    Input("at-correlation-shrinkage-select", "value"),
-    Input("at-correlation-shrinkage-target-select", "value"),
-    Input("at-correlogram-block-width", "value"),
+    Input("at-correlogram-tab-trigger-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-range-candidates-store", "data"),
+    State("at-correlation-view-switch", "value"),
+    State("at-correlation-exp-wt-switch", "checked"),
+    State("at-correlation-halflife-input", "value"),
+    State("at-correlation-shrinkage-select", "value"),
+    State("at-correlation-shrinkage-target-select", "value"),
+    State("at-correlogram-block-width", "value"),
     State("at-correlogram-target-key-store", "data"),
     prevent_initial_call=True,
 )
 def update_correlogram_target_key(
-    active_tab,
+    trigger_payload,
     raw_data,
     periodicity,
     selected_series,
@@ -9460,8 +9712,7 @@ def update_correlogram_target_key(
     block_width,
     current_target_key,
 ):
-    if active_tab != "correlogram":
-        return no_update
+    _at_require_tab_trigger(trigger_payload, "correlogram")
     if not state_ready:
         return no_update
 
@@ -9933,28 +10184,30 @@ def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_ser
 @callback(
     Output("at-factor-analysis-warning", "children"),
     Output("at-factor-analysis-container", "children"),
-    Input("at-main-tabs", "value"),
-    Input("at-factor-mode-select", "value"),
-    Input("at-factor-qq-reference-select", "value"),
-    Input("at-factor-series-select", "value"),
-    Input("at-factor-quantiles-input", "value"),
-    Input("at-factor-transform-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-factor-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-factor-mode-select", "value"),
+    State("at-factor-qq-reference-select", "value"),
+    State("at-factor-series-select", "value"),
+    State("at-factor-quantiles-input", "value"),
+    State("at-factor-transform-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
     prevent_initial_call=True,
 )
 def update_factor_analysis(
+    trigger_payload,
     active_tab,
     factor_mode,
     factor_qq_reference,
@@ -9976,6 +10229,7 @@ def update_factor_analysis(
     factor_definitions_local=None,
 ):
     """Render Factor Analysis charts for selected series."""
+    _at_require_tab_trigger(trigger_payload, "factor_analysis")
     if (
         active_tab != "factor_analysis"
         or not state_ready
@@ -11180,32 +11434,34 @@ def _write_export_sheet_specs(writer, sheet_specs: list[_ExcelSheetSpec]) -> Non
 
 @callback(
     Output("at-conditional-returns-target-key-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-conditional-display-mode-select", "value"),
-    Input("at-conditional-view-select", "value"),
-    Input("at-conditional-comparator-select", "value"),
-    Input("at-conditional-threshold-input", "value"),
-    Input("at-conditional-window-conversion-select", "value"),
-    Input("at-conditional-step-input", "value"),
-    Input("at-conditional-step-unit-select", "value"),
-    Input("at-factor-series-select-conditional", "value"),
-    Input("at-factor-transform-select-conditional", "value"),
-    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-conditional-tab-trigger-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-conditional-display-mode-select", "value"),
+    State("at-conditional-view-select", "value"),
+    State("at-conditional-comparator-select", "value"),
+    State("at-conditional-threshold-input", "value"),
+    State("at-conditional-window-conversion-select", "value"),
+    State("at-conditional-step-input", "value"),
+    State("at-conditional-step-unit-select", "value"),
+    State("at-factor-series-select-conditional", "value"),
+    State("at-factor-transform-select-conditional", "value"),
+    State("at-initial-tab-render-ready-store", "data"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
     State("at-conditional-returns-target-key-store", "data"),
     prevent_initial_call=True,
 )
 def update_conditional_returns_target_key(
+    trigger_payload,
     raw_data,
     periodicity,
     selected_series,
@@ -11230,6 +11486,7 @@ def update_conditional_returns_target_key(
     factor_definitions_local=None,
     current_target_key=None,
 ):
+    _at_require_tab_trigger(trigger_payload, "conditional_returns")
     if not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         return None
     if raw_data is None or not selected_series or not factor_series:
@@ -11291,8 +11548,9 @@ def control_conditional_returns_loading_display(active_tab, state_ready, initial
     Output("at-conditional-returns-warning", "children"),
     Output("at-conditional-returns-container", "children"),
     Output("at-conditional-returns-rendered-key-store", "data", allow_duplicate=True),
-    Input("at-main-tabs", "value"),
+    Input("at-conditional-tab-trigger-store", "data"),
     Input("at-conditional-returns-target-key-store", "data"),
+    State("at-main-tabs", "value"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
     State("at-factor-series-select-conditional", "value"),
@@ -11318,6 +11576,7 @@ def control_conditional_returns_loading_display(active_tab, state_ready, initial
     prevent_initial_call=True,
 )
 def update_conditional_returns(
+    trigger_payload,
     active_tab,
     target_key,
     factor_definitions_db=None,
@@ -11343,6 +11602,7 @@ def update_conditional_returns(
     conditional_step_unit=None,
     rendered_key=None,
 ):
+    _at_require_tab_trigger(trigger_payload, "conditional_returns")
     if (
         active_tab != "conditional_returns"
         or not state_ready
@@ -11601,19 +11861,20 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
 @callback(
     Output("at-regime-analysis-warning", "children"),
     Output("at-regime-analysis-container", "children"),
-    Input("at-main-tabs", "value"),
-    Input("at-regime-definition-select", "value"),
-    Input("at-regime-detail-display-mode-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-regime-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-regime-definition-select", "value"),
+    State("at-regime-detail-display-mode-select", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("at-regime-definitions-db-store", "data"),
     State("at-regime-definitions-local-store", "data"),
@@ -11621,6 +11882,7 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     prevent_initial_call=True,
 )
 def update_regime_analysis(
+    trigger_payload,
     active_tab,
     regime_definition_key,
     regime_display_mode,
@@ -11639,6 +11901,7 @@ def update_regime_analysis(
     regime_definitions_local=None,
     regime_series_store=None,
 ):
+    _at_require_tab_trigger(trigger_payload, "regime_analysis")
     if (
         active_tab != "regime_analysis"
         or not state_ready
@@ -11786,22 +12049,24 @@ def update_regime_analysis(
 
 @callback(
     Output("at-growth-charts-container", "children"),
-    Input("at-main-tabs", "value"),
-    Input("at-growth-chart-switch", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-growth-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-growth-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
+def update_growth_charts(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
     """Update Growth of $1 charts (lazy loaded)."""
+    _at_require_tab_trigger(trigger_payload, "growth")
     # Lazy loading: only generate when growth tab is active and chart view is selected
     if (
         active_tab != "growth"
@@ -11979,21 +12244,23 @@ def update_growth_charts(active_tab, chart_checked, raw_data, periodicity, selec
 @callback(
     Output("at-growth-grid", "columnDefs"),
     Output("at-growth-grid", "rowData"),
-    Input("at-main-tabs", "value"),
-    Input("at-growth-chart-switch", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-growth-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-growth-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
+def update_growth_grid(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update Growth of $1 grid (lazy loaded)."""
+    _at_require_tab_trigger(trigger_payload, "growth")
     # Lazy loading: only generate when growth tab is active and table view is selected
     if (
         active_tab != "growth"
@@ -12054,23 +12321,25 @@ def update_growth_grid(active_tab, chart_checked, raw_data, periodicity, selecte
 
 @callback(
     Output("at-drawdown-charts", "children"),
-    Input("at-main-tabs", "value"),
-    Input("at-drawdown-chart-switch", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-drawdown-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-drawdown-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
+def update_drawdown_charts(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
     """Update Drawdown charts (lazy loaded)."""
+    _at_require_tab_trigger(trigger_payload, "drawdown")
     # Lazy loading: only generate when drawdown tab is active and chart view is selected
     if (
         active_tab != "drawdown"
@@ -12136,22 +12405,24 @@ def update_drawdown_charts(active_tab, chart_checked, raw_data, periodicity, sel
 @callback(
     Output("at-drawdown-grid", "columnDefs"),
     Output("at-drawdown-grid", "rowData"),
-    Input("at-main-tabs", "value"),
-    Input("at-drawdown-chart-switch", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
+    Input("at-drawdown-tab-trigger-store", "data"),
+    State("at-main-tabs", "value"),
+    State("at-drawdown-chart-switch", "value"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-series-select", "data"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-state-ready-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_grid(active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
+def update_drawdown_grid(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update Drawdown grid (lazy loaded)."""
+    _at_require_tab_trigger(trigger_payload, "drawdown")
     # Lazy loading: only generate when drawdown tab is active and table view is selected
     if (
         active_tab != "drawdown"

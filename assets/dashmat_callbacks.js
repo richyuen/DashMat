@@ -2404,6 +2404,20 @@
     ];
   }
 
+  function analyticsTabTrigger(targetTab, activeTab, initialTabReady, stateReady) {
+    if (String(activeTab || "statistics") !== String(targetTab || "")) {
+      return noUpdate();
+    }
+    if (initialTabReady === false || !stateReady) {
+      return noUpdate();
+    }
+    return {
+      tab: String(targetTab || ""),
+      stamp: Date.now(),
+      reason: triggeredId() || "unknown"
+    };
+  }
+
   function analyticsFactorRegimeSync(factorMode, factorQuantiles, factorTransform, factorSeries, factorQqReference, regimeDefinition, regimeMethodType) {
     let quantiles = 5;
     if (factorQuantiles !== null && factorQuantiles !== undefined) {
@@ -2839,6 +2853,7 @@
       openAnalyticsSeriesModal: openAnalyticsSeriesModal,
       analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
+      analyticsTabTrigger: analyticsTabTrigger,
       analyticsViewSync: analyticsViewSync,
       analyticsInitDateRange: analyticsInitDateRange,
       analyticsResolveInitialRange: analyticsResolveInitialRange,

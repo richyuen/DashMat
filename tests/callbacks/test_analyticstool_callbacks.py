@@ -415,6 +415,79 @@ def test_analytics_init_date_range_clientside_idempotent():
     ]
 
 
+def test_at_hidden_tab_trigger_stores_exist(page_modules):
+    analyticstool, _ = page_modules
+    for component_id in [
+        "at-returns-tab-trigger-store",
+        "at-rolling-tab-trigger-store",
+        "at-calendar-tab-trigger-store",
+        "at-growth-tab-trigger-store",
+        "at-drawdown-tab-trigger-store",
+        "at-factor-tab-trigger-store",
+        "at-regime-tab-trigger-store",
+        "at-conditional-tab-trigger-store",
+        "at-correlogram-tab-trigger-store",
+    ]:
+        assert _find_component_by_id(analyticstool.layout, component_id) is not None
+
+
+def test_analytics_tab_trigger_clientside_helper_respects_active_tab():
+    matched = _run_dashmat_callbacks_js(
+        'ns.analyticsTabTrigger("returns", "returns", true, true)'
+    )
+    assert matched["tab"] == "returns"
+    assert matched["reason"]
+    assert isinstance(matched["stamp"], int)
+
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsTabTrigger("returns", "statistics", true, true)'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsTabTrigger("returns", "returns", false, true)'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsTabTrigger("returns", "returns", true, false)'
+    ) == "__NO_UPDATE__"
+
+
+def test_at_require_tab_trigger_accepts_match_and_raises_for_mismatch(page_modules):
+    analyticstool, _ = page_modules
+
+    payload = {"tab": "returns", "stamp": 1, "reason": "selection"}
+    assert analyticstool._at_require_tab_trigger(payload, "returns") == payload
+
+    with pytest.raises(PreventUpdate):
+        analyticstool._at_require_tab_trigger({"tab": "rolling"}, "returns")
+
+    with pytest.raises(PreventUpdate):
+        analyticstool._at_require_tab_trigger(None, "returns")
+
+
+def test_hidden_at_callbacks_use_family_trigger_inputs():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    for trigger_id in [
+        'Input("at-returns-tab-trigger-store", "data")',
+        'Input("at-rolling-tab-trigger-store", "data")',
+        'Input("at-calendar-tab-trigger-store", "data")',
+        'Input("at-growth-tab-trigger-store", "data")',
+        'Input("at-drawdown-tab-trigger-store", "data")',
+        'Input("at-factor-tab-trigger-store", "data")',
+        'Input("at-regime-tab-trigger-store", "data")',
+        'Input("at-conditional-tab-trigger-store", "data")',
+        'Input("at-correlogram-tab-trigger-store", "data")',
+    ]:
+        assert trigger_id in page_text
+
+
+def test_hidden_at_trigger_emitters_include_restore_ready_guards():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'Input("at-main-tabs", "value")' in page_text
+    assert 'Input("at-initial-tab-render-ready-store", "data")' in page_text
+    assert 'Input("at-state-ready-store", "data")' in page_text
+    assert 'analyticsTabTrigger("returns"' in page_text
+    assert 'analyticsTabTrigger("correlogram"' in page_text
+
+
 def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
     analyticstool, _ = page_modules
 
@@ -952,6 +1025,7 @@ def test_update_returns_grid_skips_unchanged_tab_revisit(monkeypatch, page_modul
     monkeypatch.setattr(analyticstool, "_compute_selected_returns", lambda *_args, **_kwargs: pytest.fail("should skip unchanged revisit"))
 
     result = analyticstool.update_grid(
+        {"tab": "returns"},
         raw_json,
         "daily",
         ["Asset_A"],
@@ -1019,6 +1093,7 @@ def test_update_growth_grid_requires_growth_table_view(page_modules):
     analyticstool, _ = page_modules
     with pytest.raises(PreventUpdate):
         analyticstool.update_growth_grid(
+            {"tab": "growth"},
             "returns",
             "table",
             "raw-json",
@@ -1043,6 +1118,7 @@ def test_update_growth_grid_builds_columns_and_rows(monkeypatch, page_modules):
     monkeypatch.setattr(analyticstool, "calculate_growth_of_dollar", lambda *args, **kwargs: growth_df)
 
     column_defs, row_data = analyticstool.update_growth_grid(
+        {"tab": "growth"},
         "growth",
         "table",
         "raw-json",
@@ -1071,6 +1147,7 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
     monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *args, **kwargs: drawdown_df)
 
     column_defs, row_data = analyticstool.update_drawdown_grid(
+        {"tab": "drawdown"},
         "drawdown",
         "table",
         "raw-json",
@@ -1100,6 +1177,7 @@ def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules)
     monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *args, **kwargs: drawdown_df)
 
     graph = analyticstool.update_drawdown_charts(
+        {"tab": "drawdown"},
         "drawdown",
         "chart",
         "raw-json",
@@ -1185,7 +1263,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
     date_range = {"start": "2024-01-01", "end": "2024-12-31"}
 
     key_unweighted = analyticstool.update_correlogram_target_key(
-        "correlogram",
+        {"tab": "correlogram"},
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1206,7 +1284,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
         None,
     )
     key_weighted = analyticstool.update_correlogram_target_key(
-        "correlogram",
+        {"tab": "correlogram"},
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1232,7 +1310,7 @@ def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules
     assert key_unweighted != key_weighted
     assert (
         analyticstool.update_correlogram_target_key(
-            "correlogram",
+            {"tab": "correlogram"},
             None,
             "daily",
             ["Asset_A", "Asset_B"],
@@ -1261,7 +1339,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
     date_range = {"start": "2024-01-01", "end": "2024-12-31"}
 
     key_none = analyticstool.update_correlogram_target_key(
-        "correlogram",
+        {"tab": "correlogram"},
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1282,7 +1360,7 @@ def test_update_correlogram_target_key_changes_on_shrinkage_for_matrix_views(pag
         None,
     )
     key_shrunk = analyticstool.update_correlogram_target_key(
-        "correlogram",
+        {"tab": "correlogram"},
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1313,7 +1391,7 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
     date_range = {"start": "2024-01-01", "end": "2024-12-31"}
 
     key_scatter = analyticstool.update_correlogram_target_key(
-        "correlogram",
+        {"tab": "correlogram"},
         None,
         "daily",
         ["Asset_A", "Asset_B"],
@@ -1336,7 +1414,7 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
 
     assert (
         analyticstool.update_correlogram_target_key(
-            "correlogram",
+            {"tab": "correlogram"},
             None,
             "daily",
             ["Asset_A", "Asset_B"],
@@ -1857,6 +1935,7 @@ def test_update_factor_analysis_renders_one_scatter_per_selected_series(monkeypa
     )
 
     warning, content = analyticstool.update_factor_analysis(
+        {"tab": "factor_analysis"},
         "factor_analysis",
         "scatter",
         "normal",
@@ -1894,6 +1973,7 @@ def test_update_factor_analysis_renders_raw_detail_grid(monkeypatch, page_module
     monkeypatch.setattr(analyticstool, "_compute_factor_artifacts", lambda *_args, **_kwargs: artifacts)
 
     warning, content = analyticstool.update_factor_analysis(
+        {"tab": "factor_analysis"},
         "factor_analysis",
         "detail",
         "normal",
@@ -1980,6 +2060,7 @@ def test_update_factor_analysis_renders_qq_normal_without_reference(monkeypatch,
     )
 
     warning, content = analyticstool.update_factor_analysis(
+        {"tab": "factor_analysis"},
         "factor_analysis",
         "qq",
         "normal",
@@ -2022,6 +2103,7 @@ def test_update_factor_analysis_renders_qq_reference_with_zscore_axes(monkeypatc
     )
 
     warning, content = analyticstool.update_factor_analysis(
+        {"tab": "factor_analysis"},
         "factor_analysis",
         "qq",
         "reference",
@@ -2228,6 +2310,7 @@ def test_update_conditional_returns_skips_when_target_already_rendered(monkeypat
 
     with pytest.raises(PreventUpdate):
         analyticstool.update_conditional_returns(
+            {"tab": "conditional_returns"},
             "conditional_returns",
             signature,
             None,
@@ -2649,6 +2732,7 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
     )
 
     warning, content = analyticstool.update_regime_analysis(
+        {"tab": "regime_analysis"},
         "regime_analysis",
         "def::SavedRegime",
         "summary",
@@ -2703,6 +2787,7 @@ def test_update_regime_analysis_renders_raw_detail_grid(monkeypatch, page_module
     )
 
     warning, content = analyticstool.update_regime_analysis(
+        {"tab": "regime_analysis"},
         "regime_analysis",
         "def::SavedRegime",
         "detail",

@@ -793,6 +793,40 @@ def wait_analytics_statistics_idle(page, timeout: int = 30000) -> None:
     )
 
 
+def wait_analytics_tab_ready(page, active_tab: str = "statistics", timeout: int = 30000) -> None:
+    normalized_tab = str(active_tab or "statistics")
+    if normalized_tab == "statistics":
+        wait_analytics_statistics_idle(page, timeout=timeout)
+        return
+    selector_map = {
+        "returns": "#at-returns-grid",
+        "rolling": "#at-rolling-grid",
+        "calendar": "#at-calendar-grid",
+        "growth": "#at-growth-grid",
+        "drawdown": "#at-drawdown-grid",
+        "factor_analysis": "#at-factor-analysis-container",
+        "regime_analysis": "#at-regime-analysis-container",
+        "conditional_returns": "#at-conditional-returns-container",
+        "correlogram": "#at-correlogram-container",
+    }
+    selector = selector_map.get(normalized_tab, "#at-main-app-container")
+    wait_visible(page, selector, timeout=timeout)
+    page.wait_for_function(
+        """
+        (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          const title = (document.title || "").trim();
+          return !!title && title !== "Updating..." && style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        }
+        """,
+        arg=selector,
+        timeout=timeout,
+    )
+
+
 def wait_for_analytics_state_ready(page, timeout: int = 30000) -> None:
     deadline = time.time() + max(timeout, 1000) / 1000.0
     while time.time() < deadline:
@@ -803,13 +837,20 @@ def wait_for_analytics_state_ready(page, timeout: int = 30000) -> None:
     raise RuntimeError("Timed out waiting for AnalyticsTool state-ready store.")
 
 
-def ensure_analytics_selection(page, selected_series: list[str], timeout: int = 30000) -> None:
+def ensure_analytics_selection(page, selected_series: list[str], active_tab: str = "statistics", timeout: int = 30000) -> None:
     target_series = list(selected_series or [])
-    set_component_value_if_needed(page, "at-main-tabs", "statistics", store_id="at-active-tab-store")
-    wait_for_persisted_store_value(page, "at-active-tab-store", "statistics", timeout=timeout)
+    normalized_tab = str(active_tab or "statistics")
+    set_component_value_if_needed(page, "at-main-tabs", normalized_tab, store_id="at-active-tab-store")
+    wait_for_persisted_store_value(page, "at-active-tab-store", normalized_tab, timeout=timeout)
     set_component_props(page, "at-series-select", {"data": target_series})
     wait_for_persisted_store_value(page, "at-series-select-value-store", target_series, timeout=timeout)
-    wait_for_analytics_state_ready(page, timeout=timeout)
+    deadline = time.time() + max(timeout, 1000) / 1000.0
+    while time.time() < deadline:
+        if get_persisted_store_value(page, "at-state-ready-store") is True:
+            wait_analytics_tab_ready(page, normalized_tab, timeout=timeout)
+            return
+        time.sleep(0.1)
+    raise RuntimeError("Timed out waiting for AnalyticsTool state-ready store.")
 
 
 def _analytics_target_selection(db_series: list[str]) -> list[str]:
@@ -835,23 +876,31 @@ def _analytics_narrow_date_range(page, selected_series: list[str]) -> dict[str, 
     return {"start": max_start, "end": max_end}
 
 
-def measure_analytics_selection_flow(page, request_tracker: DashUpdateRequestTracker, db_series: list[str]) -> dict[str, object]:
+def measure_analytics_selection_flow(page, request_tracker: DashUpdateRequestTracker, db_series: list[str], active_tab: str = "statistics") -> dict[str, object]:
     baseline_series = list(db_series or DEFAULT_DB_SERIES)
     target_series = _analytics_target_selection(baseline_series)
-    ensure_analytics_selection(page, baseline_series)
+    normalized_tab = str(active_tab or "statistics")
+    ensure_analytics_selection(page, baseline_series, active_tab=normalized_tab)
     request_tracker.wait_for_settle()
     start = time.perf_counter()
     request_tracker.start_window()
     set_component_props(page, "at-series-select", {"data": target_series})
     wait_for_persisted_store_value(page, "at-series-select-value-store", target_series)
-    wait_for_analytics_state_ready(page)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if get_persisted_store_value(page, "at-state-ready-store") is True:
+            wait_analytics_tab_ready(page, normalized_tab, timeout=30000)
+            break
+        time.sleep(0.1)
+    else:
+        raise RuntimeError("Timed out waiting for AnalyticsTool state-ready store during selection flow.")
     request_tracker.wait_for_settle()
     request_tracker.stop_window()
     summary = request_tracker.summary()
     flow_ms = round((time.perf_counter() - start) * 1000)
-    ensure_analytics_selection(page, baseline_series)
+    ensure_analytics_selection(page, baseline_series, active_tab=normalized_tab)
     request_tracker.wait_for_settle()
-    return {"flowMs": flow_ms, **summary}
+    return {"flowMs": flow_ms, "activeTab": normalized_tab, **summary}
 
 
 def measure_analytics_date_range_flow(page, request_tracker: DashUpdateRequestTracker, db_series: list[str]) -> dict[str, object]:
@@ -1359,6 +1408,7 @@ def run_harness(
             {
                 "selectionFlowRuns": [],
                 "dateRangeFlowRuns": [],
+                "returnsSelectionFlowRuns": [],
             }
         )
         results["portopt"].update(
@@ -1423,12 +1473,16 @@ def run_harness(
             results["analytics"]["dateRangeFlowRuns"].append(
                 measure_analytics_date_range_flow(page, request_tracker, db_series)
             )
+            results["analytics"]["returnsSelectionFlowRuns"].append(
+                measure_analytics_selection_flow(page, request_tracker, db_series, active_tab="returns")
+            )
 
         for data in results.values():
             data["shellMedian"] = round(median(data["shellMs"]))
             data["readyMedian"] = round(median(data["readyMs"]))
         results["analytics"]["selectionFlow"] = summarize_dash_update_runs(results["analytics"]["selectionFlowRuns"])
         results["analytics"]["dateRangeFlow"] = summarize_dash_update_runs(results["analytics"]["dateRangeFlowRuns"])
+        results["analytics"]["returnsSelectionFlow"] = summarize_dash_update_runs(results["analytics"]["returnsSelectionFlowRuns"])
         results["portopt"]["restoredTabReadyMedian"] = round(median(results["portopt"]["restoredTabReadyMs"]))
         if not entry_only:
             results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))
