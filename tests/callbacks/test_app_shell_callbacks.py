@@ -67,12 +67,16 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     welcome_text = Path("utils/dashmat_welcome_modal.py").read_text(encoding="utf-8")
 
     assert 'dcc.Store(id="dashmat-db-import-provenance-store"' in app_text
-    assert 'dcc.Store(id="dashmat-account-list-session-apply-store"' in app_text
-    assert 'dcc.Store(id="dashmat-account-list-load-state-store"' in app_text
-    assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' in app_text
-    assert 'dcc.Store(id="dashmat-account-list-load-snapshot-store"' in app_text
-    assert "build_account_list_modal_components" in app_text
+    assert 'dcc.Store(id="dashmat-account-list-session-apply-store"' not in app_text
+    assert 'dcc.Store(id="dashmat-account-list-load-state-store"' not in app_text
+    assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' not in app_text
+    assert 'dcc.Store(id="dashmat-account-list-load-snapshot-store"' not in app_text
+    assert "build_account_list_components" in app_text
     assert "register_account_list_callbacks" in app_text
+    assert 'dcc.Store(id="dashmat-account-list-session-apply-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-load-state-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-load-snapshot-store"' in account_list_text
     assert 'id="dashmat-account-list-modal"' in account_list_text
     assert 'id="dashmat-account-list-load-overlay"' in account_list_text
     assert 'id="dashmat-account-list-load-overlay-shell"' in account_list_text

@@ -4,7 +4,7 @@ import json
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
-from dash import Input, Output, State, clientside_callback, html, no_update
+from dash import Input, Output, State, clientside_callback, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 from sqlalchemy.engine import Engine
 from utils.ag_grid import literal_field_dash_grid_options
@@ -144,8 +144,20 @@ def resolve_selected_account_list_detail(*, selected_id, selected_detail, rows, 
     )
 
 
-def build_account_list_modal_components() -> list:
+def build_account_list_components() -> list:
     return [
+        dcc.Store(id="dashmat-account-list-notice-store", data=None, storage_type="session"),
+        dcc.Store(id="dashmat-account-list-modal-mode-store", data="load"),
+        dcc.Store(id="dashmat-account-list-rows-store", data=[]),
+        dcc.Store(id="dashmat-account-list-selected-id-store", data=None),
+        dcc.Store(id="dashmat-account-list-selected-detail-store", data=None),
+        dcc.Store(id="dashmat-account-list-session-snapshot-store", data={}),
+        dcc.Store(id="dashmat-account-list-load-snapshot-store", data=None),
+        dcc.Store(id="dashmat-account-list-refresh-store", data=0),
+        dcc.Store(id="dashmat-account-list-session-apply-store", data=None),
+        dcc.Store(id="dashmat-account-list-load-state-store", data={"status": "idle"}),
+        dcc.Store(id="dashmat-account-list-enter-submit-dummy", data=None),
+        dcc.Store(id="dashmat-account-list-focus-dummy", data=None),
         html.Div(
             id="dashmat-account-list-load-overlay-shell",
             style={"display": "none"},
