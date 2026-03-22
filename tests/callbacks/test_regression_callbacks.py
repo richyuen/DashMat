@@ -470,6 +470,11 @@ def test_reg_bootstrap_uses_only_page_load_interval_for_tab_ready():
     assert 'Input("reg-page-load-trigger", "n_intervals")' in visibility_block
 
 
+def test_regression_page_consumes_shared_raw_data_metadata():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
+
+
 def test_reg_layout_uses_diagnostics_first_tab_order(regression_page):
     tabs = _find_component_by_id(regression_page.layout, "reg-tabs")
     tabs_list = getattr(tabs, "children", [])[0]

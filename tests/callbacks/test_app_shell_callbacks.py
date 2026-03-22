@@ -59,6 +59,24 @@ def test_guard_protected_pages_redirects_or_prevent_update():
         app_module.guard_protected_pages("/", {"role": "Test"})
 
 
+def test_refresh_raw_data_meta_store_uses_identity_store(monkeypatch):
+    import app as app_module
+
+    captured = {}
+
+    def fake_builder(dataset_key, original_periodicity):
+        captured["dataset_key"] = dataset_key
+        captured["original_periodicity"] = original_periodicity
+        return {"dataset_key": dataset_key, "original_periodicity": original_periodicity}
+
+    monkeypatch.setattr(app_module, "_build_raw_data_metadata_cached", fake_builder)
+
+    result = app_module.refresh_raw_data_meta_store({"dataset_key": "seed-key", "has_data": True}, "daily")
+
+    assert captured == {"dataset_key": "seed-key", "original_periodicity": "daily"}
+    assert result == {"dataset_key": "seed-key", "original_periodicity": "daily"}
+
+
 def test_app_shell_hosts_shared_account_list_modal_and_store():
     from pathlib import Path
 
@@ -67,6 +85,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     welcome_text = Path("utils/dashmat_welcome_modal.py").read_text(encoding="utf-8")
 
     assert 'dcc.Store(id="dashmat-db-import-provenance-store"' in app_text
+    assert 'dcc.Store(id="dashmat-raw-data-identity-store"' in app_text
     assert 'dcc.Store(id="dashmat-account-list-session-apply-store"' not in app_text
     assert 'dcc.Store(id="dashmat-account-list-load-state-store"' not in app_text
     assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' not in app_text
@@ -79,6 +98,8 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-load-snapshot-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-prefetch-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-prefetch-trigger-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-modal-view-trigger-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-load-timing-dummy"' in account_list_text
     assert 'id="dashmat-account-list-modal"' in account_list_text
     assert 'id="dashmat-account-list-load-overlay"' in account_list_text
@@ -91,6 +112,8 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'ACCOUNT_LIST_MODAL_LOAD_CLASS' in account_list_text
     assert 'Output("dashmat-account-list-selected-detail-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-prefetch-store", "data")' in account_list_text
+    assert 'Output("dashmat-account-list-prefetch-trigger-store", "data")' in account_list_text
+    assert 'Output("dashmat-account-list-modal-view-trigger-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-snapshot-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True)' in account_list_text
     assert 'Output("dashmat-account-list-load-timing-dummy", "data")' in account_list_text
@@ -99,6 +122,9 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'Input("dashmat-account-list-load-button", "n_clicks")' in account_list_text
     assert 'Input("dashmat-account-list-modal", "opened")' in account_list_text
     assert 'Input("dashmat-account-list-selected-id-store", "data")' in account_list_text
+    assert 'Input("dashmat-raw-data-store", "data")' in app_text
+    assert 'State("dashmat-raw-data-identity-store", "data")' in app_text
+    assert 'Input("dashmat-raw-data-identity-store", "data")' in app_text
     assert '"welcome-load-account-list-btn"' in welcome_text
     assert '"Load Account List"' in welcome_text
     assert 'Input("at-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text

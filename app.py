@@ -5,7 +5,7 @@ import os
 
 import dash
 import dash_mantine_components as dmc
-from dash import ClientsideFunction, Dash, Input, Output, dcc, html, page_container
+from dash import ClientsideFunction, Dash, Input, Output, State, dcc, html, page_container
 from dash_iconify import DashIconify
 from dash.exceptions import PreventUpdate
 from cache_config import init_cache
@@ -15,7 +15,7 @@ from utils.account_list_modal import (
     register_account_list_callbacks,
 )
 from utils.perf_timing import configure_timing_logger
-from utils.returns import build_raw_data_metadata
+from utils.returns import _build_raw_data_metadata_cached
 
 
 def _compression_enabled() -> bool:
@@ -81,6 +81,7 @@ REGRESSION_PATH = _registry_path("pages.regression", "/regression")
 _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-raw-data-identity-store", data=None, storage_type="memory"),
     dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
@@ -218,14 +219,44 @@ def guard_protected_pages(pathname, userinfo):
     return restricted_href
 
 
+app.clientside_callback(
+    """
+    function(rawData, currentIdentity) {
+        let datasetKey = null;
+        let hasData = false;
+        if (rawData && typeof rawData === "object" && !Array.isArray(rawData)) {
+            datasetKey = (rawData.dataset_key || "").toString().trim() || null;
+            hasData = !!datasetKey;
+        }
+        const nextIdentity = {dataset_key: datasetKey, has_data: hasData};
+        if (currentIdentity) {
+            const currentDatasetKey = ((currentIdentity.dataset_key || "").toString().trim()) || null;
+            const currentHasData = !!currentIdentity.has_data;
+            if (currentDatasetKey === datasetKey && currentHasData === hasData) {
+                return window.dash_clientside.no_update;
+            }
+        }
+        return nextIdentity;
+    }
+    """,
+    Output("dashmat-raw-data-identity-store", "data"),
+    Input("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
+    prevent_initial_call=False,
+)
+
+
 @app.callback(
     Output("dashmat-raw-data-meta-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-identity-store", "data"),
     Input("dashmat-original-periodicity-store", "data"),
     prevent_initial_call=False,
 )
-def refresh_raw_data_meta_store(raw_data, original_periodicity):
-    return build_raw_data_metadata(raw_data, original_periodicity)
+def refresh_raw_data_meta_store(raw_data_identity, original_periodicity):
+    dataset_key = None
+    if isinstance(raw_data_identity, dict):
+        dataset_key = str(raw_data_identity.get("dataset_key") or "").strip() or None
+    return _build_raw_data_metadata_cached(dataset_key, original_periodicity)
 
 
 register_account_list_callbacks(

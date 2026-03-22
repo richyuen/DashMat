@@ -2493,12 +2493,20 @@ clientside_callback(
 )
 
 
-@callback(
+def at_toggle_save_session(raw_meta):
+    return not (isinstance(raw_meta, dict) and raw_meta.get("has_data"))
+
+
+clientside_callback(
+    """
+    function(rawMeta) {
+        return !(rawMeta && rawMeta.has_data);
+    }
+    """,
     Output("at-menu-save-session", "disabled"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    prevent_initial_call=False,
 )
-def at_toggle_save_session(raw_data):
-    return not bool(raw_data)
 
 
 @callback(
@@ -9081,30 +9089,16 @@ def update_at_common_daily_candidates(dataset_key, selected_series):
     )
 
 
-def _resolve_visible_at_candidates_and_range(
-    dataset_key,
-    periodicity,
-    selected_series,
-    date_range,
-    current_candidates=None,
-    current_common_daily_candidates=None,
-):
-    next_candidates = update_at_range_candidates(dataset_key, periodicity, selected_series)
-    next_common_daily = update_at_common_daily_candidates(dataset_key, selected_series)
-
+def _resolve_effective_at_date_range(candidates, date_range):
     effective_date_range = date_range
     try:
-        start_date, end_date = resolve_initial_range(next_candidates or {}, date_range)
+        start_date, end_date = resolve_initial_range(candidates or {}, date_range)
         if start_date and end_date:
             effective_date_range = {"start": start_date, "end": end_date}
     except Exception:
         effective_date_range = date_range
 
-    return (
-        no_update if next_candidates == current_candidates else next_candidates,
-        no_update if next_common_daily == current_common_daily_candidates else next_common_daily,
-        effective_date_range,
-    )
+    return effective_date_range
 
 
 @callback(
@@ -9292,8 +9286,6 @@ def update_date_range_store(start_date, end_date, existing_range):
     Output("at-returns-grid", "columnDefs"),
     Output("at-returns-grid", "rowData"),
     Output("at-tab-render-signatures-store", "data", allow_duplicate=True),
-    Output("at-range-candidates-store", "data", allow_duplicate=True),
-    Output("at-common-daily-candidates-store", "data", allow_duplicate=True),
     Input("at-returns-tab-trigger-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("at-periodicity-select", "value"),
@@ -9309,29 +9301,24 @@ def update_date_range_store(start_date, end_date, existing_range):
     State("at-initial-tab-render-ready-store", "data"),
     State("at-tab-render-signatures-store", "data"),
     State("at-range-candidates-store", "data"),
-    State("at-common-daily-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True, tab_render_signatures=None, current_candidates=None, current_common_daily_candidates=None):
+def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True, tab_render_signatures=None, current_candidates=None):
     """Update the AG Grid based on selections (optimized with caching)."""
     _at_require_tab_trigger(trigger_payload, "returns")
     if active_tab != "returns" or not initial_tab_ready or not state_ready:
         raise PreventUpdate
 
-    next_candidates_output, next_common_daily_output, effective_date_range = _resolve_visible_at_candidates_and_range(
-        _dataset_key(raw_data),
-        periodicity,
-        selected_series,
-        date_range,
+    effective_date_range = _resolve_effective_at_date_range(
         current_candidates,
-        current_common_daily_candidates,
+        date_range,
     )
 
     if raw_data is None or not selected_series:
-        return [], [], no_update, next_candidates_output, next_common_daily_output
+        return [], [], no_update
 
     if not _has_complete_date_range(effective_date_range):
-        return no_update, no_update, no_update, next_candidates_output, next_common_daily_output
+        return no_update, no_update, no_update
 
     next_signature = _returns_tab_signature(
         raw_data,
@@ -9345,7 +9332,7 @@ def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_
         vol_scaling_assignments,
     )
     if _should_skip_tab_revisit("returns", next_signature, tab_render_signatures):
-        return no_update, no_update, no_update, next_candidates_output, next_common_daily_output
+        return no_update, no_update, no_update
 
     try:
         with timed_block("analyticstool.render_returns_grid", series_count=len(selected_series)):
@@ -9362,7 +9349,7 @@ def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_
             )
 
         if display_df.empty:
-            return [], [], _update_tab_render_signatures(tab_render_signatures, "returns", next_signature), next_candidates_output, next_common_daily_output
+            return [], [], _update_tab_render_signatures(tab_render_signatures, "returns", next_signature)
 
         # Create column definitions
         column_defs = [
@@ -9386,10 +9373,10 @@ def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_
         df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
         row_data = df_reset.to_dict("records")
 
-        return column_defs, row_data, _update_tab_render_signatures(tab_render_signatures, "returns", next_signature), next_candidates_output, next_common_daily_output
+        return column_defs, row_data, _update_tab_render_signatures(tab_render_signatures, "returns", next_signature)
 
     except Exception:
-        return [], [], no_update, next_candidates_output, next_common_daily_output
+        return [], [], no_update
 
 
 clientside_callback(
@@ -9869,8 +9856,6 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     Output("at-statistics-grid", "rowData"),
     Output("at-statistics-loaded-store", "data", allow_duplicate=True),
     Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
-    Output("at-range-candidates-store", "data", allow_duplicate=True),
-    Output("at-common-daily-candidates-store", "data", allow_duplicate=True),
     Input("at-statistics-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
     State("at-dataset-key-store", "data"),
@@ -9887,29 +9872,21 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
     State("at-initial-tab-render-ready-store", "data"),
     State("at-statistics-rendered-key-store", "data"),
     State("at-range-candidates-store", "data"),
-    State("at-common-daily-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, shared_benchmark_stamp=None, initial_tab_ready=True, rendered_key=None, current_candidates=None, current_common_daily_candidates=None):
+def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None, periodicity=None, selected_series=None, benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, use_risk_free=True, shared_benchmark_stamp=None, initial_tab_ready=True, rendered_key=None, current_candidates=None):
     """Update the Statistics grid with transposed data (optimized with caching)."""
     _at_require_tab_trigger(trigger_payload, "statistics")
     if active_tab != "statistics" or not initial_tab_ready or not state_ready:
         raise PreventUpdate
 
-    next_candidates_output, next_common_daily_output, effective_date_range = _resolve_visible_at_candidates_and_range(
-        dataset_key,
-        periodicity,
-        selected_series,
-        date_range,
-        current_candidates,
-        current_common_daily_candidates,
-    )
+    effective_date_range = _resolve_effective_at_date_range(current_candidates, date_range)
 
     if not dataset_key or not selected_series:
-        return [], [], True, None, next_candidates_output, next_common_daily_output
+        return [], [], True, None
 
     if not _has_complete_date_range(effective_date_range):
-        return no_update, no_update, no_update, no_update, next_candidates_output, next_common_daily_output
+        return no_update, no_update, no_update, no_update
 
     next_key = _statistics_tab_signature(
         dataset_key,
@@ -9924,7 +9901,7 @@ def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None
         shared_benchmark_stamp,
     )
     if next_key == rendered_key:
-        return no_update, no_update, no_update, no_update, next_candidates_output, next_common_daily_output
+        return no_update, no_update, no_update, no_update
 
     shared_benchmark_payload = _resolve_shared_benchmark_payload(shared_benchmark_stamp)
     try:
@@ -9945,7 +9922,7 @@ def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None
             )
 
         if not stats:
-            return [], [], True, next_key, next_candidates_output, next_common_daily_output
+            return [], [], True, next_key
 
         # Transpose: rows become statistics, columns become series
         # First column is "Statistic" (pinned), then one column per series
@@ -9979,10 +9956,10 @@ def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None
 
             row_data.append(row)
             
-        return column_defs, row_data, True, next_key, next_candidates_output, next_common_daily_output
+        return column_defs, row_data, True, next_key
 
     except Exception:
-        return [], [], True, no_update, next_candidates_output, next_common_daily_output
+        return [], [], True, no_update
 
 
 clientside_callback(
