@@ -1557,6 +1557,18 @@ def test_warm_switch_harness_tracks_regression_render_timing():
     assert 'measure_regression(page, pages["regression"], server_log)' in harness_text
 
 
+def test_warm_switch_harness_tracks_regression_account_list_load():
+    harness_text = Path("tools/playwright/warm_switch_harness.py").read_text(encoding="utf-8")
+
+    assert 'results["regression"]["accountListLoadRuns"]' in harness_text
+    assert 'results["regression"]["accountListLoad"] = summarize_account_list_runs' in harness_text
+    assert "def _wait_for_regression_account_list_ready" in harness_text
+    assert '"reg-menu-load-account-list"' in harness_text
+    assert '"clickToReloadStartMedian"' in harness_text
+    assert '"reloadStartToReadyMedian"' in harness_text
+    assert '"totalClickToReadyMedian"' in harness_text
+
+
 def test_warm_switch_harness_recognizes_restored_regression_timing_lines():
     import tools.playwright.warm_switch_harness as harness
 
@@ -1631,6 +1643,42 @@ def test_warm_switch_harness_regression_timing_preflight_requires_restored_event
 
         harness.validate_regression_timing_preflight({"timingValidated": True}, server_log)
     harness.validate_regression_timing_preflight({"timingValidated": False}, None)
+
+
+def test_warm_switch_harness_summarizes_account_list_runs():
+    import tools.playwright.warm_switch_harness as harness
+
+    summary = harness.summarize_account_list_runs(
+        [
+            {
+                "clickToReloadStartMs": 120,
+                "reloadStartToReadyMs": 880,
+                "totalClickToReadyMs": 1000,
+                "dashUpdateRequestCount": 5,
+                "dashUpdateTotalMs": 700,
+                "dashUpdateRequestBytes": 12000,
+                "dashUpdateResponseBytes": 8000,
+                "dashUpdateRequests": [{"outputs": ["reg-results-store.data"]}],
+            },
+            {
+                "clickToReloadStartMs": 140,
+                "reloadStartToReadyMs": 860,
+                "totalClickToReadyMs": 1000,
+                "dashUpdateRequestCount": 4,
+                "dashUpdateTotalMs": 680,
+                "dashUpdateRequestBytes": 11000,
+                "dashUpdateResponseBytes": 7500,
+                "dashUpdateRequests": [{"outputs": ["reg-results-store.data"]}],
+            },
+        ]
+    )
+
+    assert summary["runs"] == 2
+    assert summary["clickToReloadStartMedian"] == 130
+    assert summary["reloadStartToReadyMedian"] == 870
+    assert summary["totalClickToReadyMedian"] == 1000
+    assert summary["dashUpdateRequestCountMedian"] == 4
+    assert summary["dashUpdateTotalMsMedian"] == 690
 
 
 def test_reg_render_scatter_renders_residual_qq_plot(regression_page):

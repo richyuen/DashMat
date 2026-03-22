@@ -10,6 +10,7 @@ param(
     [string]$ServerLog = '',
     [string]$PortoptRestoreTab = 'weight',
     [switch]$PortoptEntryOnly,
+    [switch]$MeasureAccountListLoad,
     [switch]$SkipDbBuild,
     [switch]$Headed
 )
@@ -38,6 +39,9 @@ if ($Headed) {
 }
 if ($PortoptEntryOnly) {
   $args += '--portopt-entry-only'
+}
+if ($MeasureAccountListLoad) {
+  $args += '--measure-account-list-load'
 }
 if ($SkipDbBuild) {
   $args += '--skip-db-build'

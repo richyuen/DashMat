@@ -574,12 +574,28 @@ def test_warm_switch_harness_tracks_portopt_performance_frames():
     assert '"portopt.performance_frames"' in harness_text
 
 
+def test_warm_switch_harness_tracks_portopt_account_list_load():
+    harness_text = Path("tools/playwright/warm_switch_harness.py").read_text(encoding="utf-8")
+    assert 'def _measure_account_list_load' in harness_text
+    assert 'def _save_account_list_fixture' in harness_text
+    assert 'results["portopt"]["accountListLoadRuns"]' in harness_text
+    assert 'results["portopt"]["accountListLoad"] = summarize_account_list_runs' in harness_text
+    assert '"clickToReloadStartMedian"' in harness_text
+    assert '"reloadStartToReadyMedian"' in harness_text
+    assert '"totalClickToReadyMedian"' in harness_text
+    assert 'list_account_lists(DB_ENGINE, username)' in harness_text
+    assert '"dashmat-account-list-selected-detail-store"' in harness_text
+    assert '"frontier"' in harness_text
+
+
 def test_warm_switch_wrapper_forwards_restore_tab_and_entry_only():
     wrapper_text = Path("tools/playwright/warm_switch_harness.ps1").read_text(encoding="utf-8")
     assert '[string]$PortoptRestoreTab = \'weight\'' in wrapper_text
     assert '[switch]$PortoptEntryOnly' in wrapper_text
+    assert '[switch]$MeasureAccountListLoad' in wrapper_text
     assert "'--portopt-restore-tab', $PortoptRestoreTab" in wrapper_text
     assert "$args += '--portopt-entry-only'" in wrapper_text
+    assert "$args += '--measure-account-list-load'" in wrapper_text
 
 
 def test_po_common_daily_button_uses_shared_clientside_helper():

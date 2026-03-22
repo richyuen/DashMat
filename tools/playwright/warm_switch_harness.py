@@ -25,6 +25,14 @@ if str(REPO_ROOT) not in sys.path:
 
 from utils.date_range_flow import compute_date_range_candidates
 from utils.raw_dataset import resolve_dataset_key
+from utils.account_lists import (
+    ACCOUNT_LIST_CAPTURE_STORE_IDS,
+    build_account_list_payload,
+    list_account_lists,
+    load_account_list_by_id,
+    save_account_list,
+)
+from dbengine import engine as DB_ENGINE
 
 
 DEFAULT_DB_SERIES = [
@@ -225,6 +233,40 @@ def summarize_dash_update_runs(run_results: list[dict[str, object]]) -> dict[str
     }
 
 
+def summarize_account_list_runs(run_results: list[dict[str, object]]) -> dict[str, object]:
+    click_to_reload = [int(run["clickToReloadStartMs"]) for run in run_results]
+    reload_to_ready = [int(run["reloadStartToReadyMs"]) for run in run_results]
+    total_click_to_ready = [int(run["totalClickToReadyMs"]) for run in run_results]
+    dash_request_counts = [int(run["dashUpdateRequestCount"]) for run in run_results]
+    dash_request_durations = [int(run["dashUpdateTotalMs"]) for run in run_results]
+    dash_request_bytes = [int(run["dashUpdateRequestBytes"]) for run in run_results]
+    dash_response_bytes = [int(run["dashUpdateResponseBytes"]) for run in run_results]
+    callback_counter: Counter[str] = Counter()
+    for run in run_results:
+        for request in run.get("dashUpdateRequests", []):
+            for output_id in request.get("outputs", []):
+                callback_counter[output_id] += 1
+
+    return {
+        "runs": len(run_results),
+        "clickToReloadStartMs": click_to_reload,
+        "reloadStartToReadyMs": reload_to_ready,
+        "totalClickToReadyMs": total_click_to_ready,
+        "clickToReloadStartMedian": round(median(click_to_reload)) if click_to_reload else 0,
+        "reloadStartToReadyMedian": round(median(reload_to_ready)) if reload_to_ready else 0,
+        "totalClickToReadyMedian": round(median(total_click_to_ready)) if total_click_to_ready else 0,
+        "dashUpdateRequestCountMedian": round(median(dash_request_counts)) if dash_request_counts else 0,
+        "dashUpdateTotalMsMedian": round(median(dash_request_durations)) if dash_request_durations else 0,
+        "dashUpdateRequestBytesMedian": round(median(dash_request_bytes)) if dash_request_bytes else 0,
+        "dashUpdateResponseBytesMedian": round(median(dash_response_bytes)) if dash_response_bytes else 0,
+        "topDashUpdateCallbacksByFrequency": [
+            {"callback": callback_id, "count": count}
+            for callback_id, count in callback_counter.most_common(12)
+        ],
+        "runResults": run_results,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", default="")
@@ -238,6 +280,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db-series", nargs="+", default=DEFAULT_DB_SERIES)
     parser.add_argument("--portopt-restore-tab", default="weight")
     parser.add_argument("--portopt-entry-only", action="store_true")
+    parser.add_argument("--measure-account-list-load", action="store_true")
     parser.add_argument("--server-log", default="")
     parser.add_argument("--pages", nargs="+", default=PAGE_ORDER)
     return parser.parse_args()
@@ -1056,6 +1099,24 @@ def replay_store_data(page, component_id: str) -> bool:
     )
 
 
+def fire_component_click(page, component_id: str) -> bool:
+    return bool(
+        page.evaluate(
+            """
+            (componentId) => {
+              try {
+                window.dash_clientside.set_props(componentId, { n_clicks: Date.now() });
+                return true;
+              } catch (err) {
+                return false;
+              }
+            }
+            """,
+            component_id,
+        )
+    )
+
+
 def wait_plotly_content(page, container_selector: str, timeout: int = 30000) -> None:
     wait_visible(page, container_selector, timeout=timeout)
     page.wait_for_function(
@@ -1152,6 +1213,17 @@ def wait_for_persisted_store_value(page, component_id: str, expected, timeout: i
     raise RuntimeError(f"Timed out waiting for {component_id} to become {expected!r}")
 
 
+def set_persisted_store_value(page, component_id: str, value) -> None:
+    page.evaluate(
+        """
+        ([componentId, nextValue]) => {
+          window.sessionStorage.setItem(componentId, JSON.stringify(nextValue));
+        }
+        """,
+        [component_id, value],
+    )
+
+
 def set_component_value_if_needed(page, component_id: str, value, *, store_id: str | None = None) -> bool:
     current_value = get_persisted_store_value(page, store_id or component_id)
     if current_value == value:
@@ -1163,16 +1235,32 @@ def set_component_value_if_needed(page, component_id: str, value, *, store_id: s
 def seed_portopt_restore_tab(page, restore_tab: str) -> None:
     resolved_restore_tab = normalize_portopt_restore_tab(restore_tab)
     cfg = PORTOPT_RESTORE_TAB_CONFIG[resolved_restore_tab]
-    set_component_value_if_needed(page, "po-vis-tabs", resolved_restore_tab, store_id="po-active-tab-store")
-    set_component_value_if_needed(page, cfg["switch"], "chart", store_id=cfg["switch_store"])
-    wait_plotly_content(page, cfg["content"], timeout=60000)
+    current_active_tab = get_persisted_store_value(page, "po-active-tab-store")
+    if current_active_tab != resolved_restore_tab:
+        set_persisted_store_value(page, "po-active-tab-store", resolved_restore_tab)
+        wait_for_persisted_store_value(page, "po-active-tab-store", resolved_restore_tab, timeout=30000)
+
+    current_switch = get_persisted_store_value(page, cfg["switch_store"])
+    if current_switch != "chart":
+        set_persisted_store_value(page, cfg["switch_store"], "chart")
+        wait_for_persisted_store_value(page, cfg["switch_store"], "chart", timeout=30000)
+
+
+def seed_regression_restore_tab(page, tab_value: str) -> None:
+    cfg = REGRESSION_TAB_CONFIG[tab_value]
+    set_component_value(page, "reg-tabs", tab_value)
+    set_component_props(page, "reg-active-tab-store", {"data": tab_value})
+    wait_for_persisted_store_value(page, "reg-active-tab-store", tab_value, timeout=30000)
+    if cfg.get("switch"):
+        set_component_value(page, cfg["switch"], cfg["switch_value"])
+    wait_content_ready(page, cfg["content"], timeout=60000)
 
 
 def warm_portopt_results(page, base_url: str, db_series: list[str], restore_tab: str) -> None:
     page.goto(base_url + "/portopt", wait_until="domcontentloaded")
-    wait_visible(page, "#po-main-container")
-    wait_ready(page, "#po-periodicity-select")
-    wait_dash_hydrated(page)
+    wait_dash_hydrated(page, timeout=120000)
+    wait_visible(page, "#po-main-container", timeout=120000)
+    wait_ready(page, "#po-periodicity-select", timeout=120000)
     opt_series = resolve_portopt_series(db_series)
     if len(opt_series) < 2:
         raise RuntimeError(f"Need at least 2 series for PortOpt harness solve, got: {opt_series}")
@@ -1235,9 +1323,9 @@ REGRESSION_TAB_CONFIG = {
 
 def warm_regression_results(page, base_url: str, db_series: list[str]) -> None:
     page.goto(base_url + "/regression", wait_until="domcontentloaded")
-    wait_visible(page, "#reg-main-container")
-    wait_ready(page, "#reg-periodicity-select")
-    wait_dash_hydrated(page)
+    wait_dash_hydrated(page, timeout=120000)
+    wait_visible(page, "#reg-main-container", timeout=120000)
+    wait_ready(page, "#reg-periodicity-select", timeout=120000)
 
     dep_var, x_series = resolve_regression_series(db_series)
     series_order = [dep_var] + x_series
@@ -1391,6 +1479,288 @@ def measure_portopt(page, cfg: dict[str, str], restore_tab: str, entry_only: boo
     }
 
 
+def _get_session_storage_json(page, key: str):
+    try:
+        return page.evaluate(
+            """
+            (storageKey) => {
+              try {
+                const raw = window.sessionStorage.getItem(storageKey);
+                return raw ? JSON.parse(raw) : null;
+              } catch (err) {
+                return null;
+              }
+            }
+            """,
+            key,
+        )
+    except Exception:
+        return None
+
+
+def _wait_for_account_list_row(page, list_name: str, timeout: int = 30000) -> dict[str, object]:
+    deadline = time.time() + max(timeout, 1000) / 1000.0
+    while time.time() < deadline:
+        rows = get_persisted_store_value(page, "dashmat-account-list-rows-store") or []
+        if isinstance(rows, list):
+            for row in rows:
+                if str((row or {}).get("ListName") or "") == list_name:
+                    return row
+        time.sleep(0.1)
+    raise RuntimeError(f"Timed out waiting for account list row '{list_name}'.")
+
+
+def _capture_account_list_session_snapshot(page) -> dict[str, object]:
+    return page.evaluate(
+        """
+        (keys) => {
+          const out = {};
+          for (const key of keys) {
+            const raw = window.sessionStorage.getItem(key);
+            if (raw == null) {
+              continue;
+            }
+            try {
+              out[key] = JSON.parse(raw);
+            } catch (err) {
+              out[key] = null;
+            }
+          }
+          return out;
+        }
+        """,
+        ACCOUNT_LIST_CAPTURE_STORE_IDS,
+    )
+
+
+def _save_account_list_fixture(page, list_name: str) -> None:
+    session_snapshot = _capture_account_list_session_snapshot(page)
+    provenance_store = get_persisted_store_value(page, "dashmat-db-import-provenance-store")
+    raw_data_store = get_persisted_store_value(page, "dashmat-raw-data-store")
+    userinfo = get_persisted_store_value(page, "userinfo") or {}
+    username = str((userinfo or {}).get("username") or "").strip()
+    if not username:
+        raise RuntimeError("Harness could not resolve account-list username from userinfo store.")
+
+    payload = build_account_list_payload(
+        provenance_store,
+        session_snapshot,
+        raw_data_store,
+    )
+    ok, message, _saved = save_account_list(
+        DB_ENGINE,
+        username=username,
+        update_by=username,
+        list_name=list_name,
+        payload=payload,
+    )
+    if not ok:
+        raise RuntimeError(f"Unable to save account-list fixture '{list_name}': {message}")
+
+
+def _account_list_username_from_page(page) -> str:
+    userinfo = get_persisted_store_value(page, "userinfo") or {}
+    username = str((userinfo or {}).get("username") or "").strip()
+    if not username:
+        raise RuntimeError("Harness could not resolve account-list username from userinfo store.")
+    return username
+
+
+def _open_account_list_modal(page, trigger_id: str) -> None:
+    wait_dash_hydrated(page, timeout=120000)
+    trigger = page.locator(f"#{trigger_id}")
+    if "-menu-" in trigger_id:
+        try:
+            page.get_by_role("button", name="File", exact=True).click(force=True)
+            page.wait_for_timeout(250)
+        except Exception:
+            pass
+    try:
+        if trigger.count() and trigger.is_visible(timeout=500):
+            trigger.click(force=True)
+        elif not fire_component_click(page, trigger_id):
+            try:
+                page.get_by_role("button", name="File", exact=True).click(force=True)
+            except Exception:
+                page.get_by_role("button", name="Menu").click(force=True)
+            page.locator(f"#{trigger_id}").click(force=True)
+    except Exception:
+        if not fire_component_click(page, trigger_id):
+            raise
+    wait_visible(page, "#dashmat-account-list-modal")
+    wait_ready(page, "#dashmat-account-list-close-button")
+
+
+def _close_account_list_modal_if_open(page) -> None:
+    try:
+        if page.locator("#dashmat-account-list-close-button").is_visible(timeout=500):
+            page.locator("#dashmat-account-list-close-button").click(force=True)
+            page.wait_for_selector("#dashmat-account-list-modal", state="hidden", timeout=10000)
+    except Exception:
+        pass
+
+
+def _save_current_account_list(page, trigger_id: str, list_name: str) -> None:
+    _open_account_list_modal(page, trigger_id)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        snapshot = get_persisted_store_value(page, "dashmat-account-list-session-snapshot-store")
+        if isinstance(snapshot, dict) and snapshot:
+            break
+        time.sleep(0.1)
+    else:
+        raise RuntimeError("Timed out waiting for account-list save snapshot capture.")
+    set_component_props(page, "dashmat-account-list-name-input", {"value": list_name})
+    wait_ready(page, "#dashmat-account-list-save-button")
+    page.locator("#dashmat-account-list-save-button").click(force=True)
+    page.wait_for_selector("#dashmat-account-list-modal", state="hidden", timeout=30000)
+
+
+def _prepare_account_list_load(page, trigger_id: str, list_name: str) -> dict[str, object]:
+    username = _account_list_username_from_page(page)
+    rows = list_account_lists(DB_ENGINE, username)
+    row = next(
+        (next_row for next_row in rows if str((next_row or {}).get("ListName") or "") == list_name),
+        None,
+    )
+    if not isinstance(row, dict):
+        raise RuntimeError(f"Account list '{list_name}' not found for username '{username}'.")
+    set_component_props(page, "dashmat-account-list-modal-mode-store", {"data": "load"})
+    set_component_props(page, "dashmat-account-list-rows-store", {"data": rows})
+    selected_id = row.get("AccountListID")
+    if selected_id is None:
+        raise RuntimeError(f"Account list '{list_name}' is missing AccountListID.")
+    detail = load_account_list_by_id(DB_ENGINE, selected_id, username)
+    if not isinstance(detail, dict):
+        raise RuntimeError(f"Timed out resolving selected detail for account list '{list_name}'.")
+    set_component_props(page, "dashmat-account-list-selected-id-store", {"data": selected_id})
+    set_component_props(page, "dashmat-account-list-selected-detail-store", {"data": detail})
+    return detail
+
+
+def _wait_for_account_list_reload_start(page, timeout: int = 30000) -> dict[str, object] | None:
+    deadline = time.time() + max(timeout, 1000) / 1000.0
+    while time.time() < deadline:
+        payload = _get_session_storage_json(page, "dashmat-account-list-load-timing")
+        if isinstance(payload, dict) and payload.get("reloadStartEpochMs"):
+            return payload
+        time.sleep(0.1)
+    return None
+
+
+def _extract_click_to_ready_from_console(console_lines: list[str], page_path: str) -> int | None:
+    for line in reversed(console_lines):
+        if "timing name=account_list.click_to_ready" not in line:
+            continue
+        fields = parse_timing_fields(line)
+        if str(fields.get("page", "")).strip() != page_path:
+            continue
+        for key in ("click_to_reload_start_ms", "click_to_live_apply_commit_ms"):
+            if key not in fields:
+                continue
+            try:
+                return int(fields[key])
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _perturb_session_for_account_list_load(page, page_name: str) -> None:
+    if page_name == "portopt":
+        set_persisted_store_value(page, "po-active-tab-store", "weight")
+        wait_for_persisted_store_value(page, "po-active-tab-store", "weight", timeout=30000)
+        set_persisted_store_value(page, "po-weight-chart-switch-store", "chart")
+        wait_for_persisted_store_value(page, "po-weight-chart-switch-store", "chart", timeout=30000)
+        return
+    if page_name == "regression":
+        seed_regression_restore_tab(page, "anova")
+        return
+    raise RuntimeError(f"Unsupported account-list perturbation page: {page_name}")
+
+
+def _wait_for_portopt_account_list_ready(page, restore_tab: str) -> None:
+    resolved_tab = normalize_portopt_restore_tab(restore_tab)
+    wait_dash_hydrated(page, timeout=120000)
+    wait_visible(page, "#po-main-container", timeout=120000)
+    wait_ready(page, "#po-periodicity-select", timeout=120000)
+    wait_for_persisted_store_value(page, "po-active-tab-store", resolved_tab, timeout=120000)
+    wait_plotly_content(page, PORTOPT_RESTORE_TAB_CONFIG[resolved_tab]["content"], timeout=120000)
+
+
+def _wait_for_regression_account_list_ready(page, restore_tab: str) -> None:
+    wait_dash_hydrated(page, timeout=120000)
+    wait_visible(page, "#reg-main-container", timeout=120000)
+    wait_ready(page, "#reg-periodicity-select", timeout=120000)
+    wait_for_persisted_store_value(page, "reg-active-tab-store", restore_tab, timeout=120000)
+    wait_for_regression_restore_state(page, timeout=120000)
+    wait_content_ready(page, REGRESSION_TAB_CONFIG[restore_tab]["content"], timeout=120000)
+
+
+def _measure_account_list_load(
+    page,
+    request_tracker: DashUpdateRequestTracker,
+    *,
+    page_name: str,
+    page_path: str,
+    load_trigger_id: str,
+    list_name: str,
+    restore_tab: str,
+    timing_messages: list[str],
+) -> dict[str, object]:
+    _perturb_session_for_account_list_load(page, page_name)
+    request_tracker.wait_for_settle()
+    page.evaluate("() => { window.sessionStorage.removeItem('dashmat-account-list-load-timing'); }")
+    timing_start = len(timing_messages)
+    _prepare_account_list_load(page, load_trigger_id, list_name)
+    start = time.perf_counter()
+    request_tracker.start_window()
+    click_to_reload_start = None
+    triggered_load = False
+    reload_start_measure = time.perf_counter()
+    try:
+        with page.expect_navigation(wait_until="commit", timeout=30000):
+            triggered_load = fire_component_click(page, "dashmat-account-list-load-button")
+        if triggered_load:
+            click_to_reload_start = round((time.perf_counter() - reload_start_measure) * 1000)
+    except Exception:
+        if not triggered_load:
+            triggered_load = fire_component_click(page, "dashmat-account-list-load-button")
+    if not triggered_load:
+        raise RuntimeError("Harness could not trigger dashmat-account-list-load-button.")
+    timing_payload = None if click_to_reload_start is not None else _wait_for_account_list_reload_start(page, timeout=30000)
+    if page_name == "portopt":
+        _wait_for_portopt_account_list_ready(page, restore_tab)
+    elif page_name == "regression":
+        _wait_for_regression_account_list_ready(page, restore_tab)
+    else:
+        raise RuntimeError(f"Unsupported account-list measurement page: {page_name}")
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    total_click_to_ready = round((time.perf_counter() - start) * 1000)
+    if click_to_reload_start is None and isinstance(timing_payload, dict):
+        try:
+            click_to_reload_start = int(
+                int(timing_payload.get("reloadStartEpochMs")) - int(timing_payload.get("clickStartEpochMs"))
+            )
+        except (TypeError, ValueError):
+            click_to_reload_start = None
+    if click_to_reload_start is None:
+        click_to_reload_start = _extract_click_to_ready_from_console(timing_messages[timing_start:], page_path)
+    if click_to_reload_start is None:
+        raise RuntimeError(f"Timed out waiting for account-list reload start timing on {page_path}.")
+    reload_to_ready = max(total_click_to_ready - click_to_reload_start, 0)
+    summary = request_tracker.summary()
+    _close_account_list_modal_if_open(page)
+    return {
+        "page": page_name,
+        "restoredTab": restore_tab,
+        "clickToReloadStartMs": click_to_reload_start,
+        "reloadStartToReadyMs": reload_to_ready,
+        "totalClickToReadyMs": total_click_to_ready,
+        **summary,
+    }
+
+
 def run_harness(
     base_url: str,
     runs: int,
@@ -1399,6 +1769,7 @@ def run_harness(
     headed: bool,
     restore_tab: str,
     entry_only: bool,
+    measure_account_list_load: bool,
     server_log: Path | None,
     selected_pages: list[str],
 ) -> dict:
@@ -1412,8 +1783,11 @@ def run_harness(
         browser = pw.chromium.launch(headless=not headed)
         page = browser.new_page(viewport={"width": 1440, "height": 960})
         request_tracker = DashUpdateRequestTracker(page)
+        timing_messages: list[str] = []
 
         def on_console(msg) -> None:
+            if "timing name=account_list.click_to_ready" in msg.text:
+                timing_messages.append(msg.text)
             if len(console_messages) >= 120:
                 return
             if msg.type in {"error", "warning"}:
@@ -1428,15 +1802,45 @@ def run_harness(
         page.on("pageerror", on_page_error)
 
         renderer_mode = None
+        account_list_fixtures: dict[str, dict[str, str]] = {}
         if "analytics" in selected_pages:
+            renderer_mode = warm_analytics_db(page, base_url, db_series)
+        elif measure_account_list_load and any(page_name in selected_pages for page_name in ("portopt", "regression")):
             renderer_mode = warm_analytics_db(page, base_url, db_series)
         if "portopt" in selected_pages:
             warm_portopt_results(page, base_url, db_series, restore_tab)
+            if measure_account_list_load:
+                portopt_list_name = f"codex-phase16-portopt-frontier-{int(time.time())}"
+                wait_dash_hydrated(page, timeout=120000)
+                wait_visible(page, "#po-main-container", timeout=120000)
+                wait_ready(page, "#po-periodicity-select", timeout=120000)
+                seed_portopt_restore_tab(page, "frontier")
+                _save_account_list_fixture(page, portopt_list_name)
+                seed_portopt_restore_tab(page, restore_tab)
+                account_list_fixtures["portopt"] = {
+                    "triggerId": "po-welcome-load-account-list-btn",
+                    "listName": portopt_list_name,
+                    "restoreTab": "frontier",
+                }
             measure_portopt(page, pages["portopt"], restore_tab, entry_only)
         if "regression" in selected_pages:
             warm_regression_results(page, base_url, db_series)
+            if measure_account_list_load:
+                regression_list_name = f"codex-phase16-regression-returns-{int(time.time())}"
+                wait_dash_hydrated(page, timeout=120000)
+                wait_visible(page, "#reg-main-container", timeout=120000)
+                wait_ready(page, "#reg-periodicity-select", timeout=120000)
+                seed_regression_restore_tab(page, "returns")
+                _save_account_list_fixture(page, regression_list_name)
+                seed_regression_restore_tab(page, "anova")
+                account_list_fixtures["regression"] = {
+                    "triggerId": "reg-menu-load-account-list",
+                    "listName": regression_list_name,
+                    "restoreTab": "returns",
+                }
             regression_preflight = measure_regression(page, pages["regression"], server_log)
-            validate_regression_timing_preflight(regression_preflight, server_log)
+            if not measure_account_list_load:
+                validate_regression_timing_preflight(regression_preflight, server_log)
         timing_start_offset = server_log.stat().st_size if server_log and server_log.exists() else 0
 
         results = {
@@ -1456,6 +1860,8 @@ def run_harness(
                 "restoredTabReadyMs": [],
             }
         )
+        if measure_account_list_load and "portopt" in selected_pages:
+            results["portopt"]["accountListLoadRuns"] = []
         if not entry_only:
             results["portopt"].update(
                 {
@@ -1477,6 +1883,8 @@ def run_harness(
                 "drawdownOpenMs": [],
             }
         )
+        if measure_account_list_load and "regression" in selected_pages:
+            results["regression"]["accountListLoadRuns"] = []
         order = [name for name in PAGE_ORDER if name in selected_pages]
         for _ in range(runs):
             for name in order:
@@ -1505,6 +1913,20 @@ def run_harness(
                     results[name]["rollingOpenMs"].append(metrics["rollingOpenMs"])
                     results[name]["growthOpenMs"].append(metrics["growthOpenMs"])
                     results[name]["drawdownOpenMs"].append(metrics["drawdownOpenMs"])
+                if measure_account_list_load and name in account_list_fixtures:
+                    fixture = account_list_fixtures[name]
+                    results[name]["accountListLoadRuns"].append(
+                        _measure_account_list_load(
+                            page,
+                            request_tracker,
+                            page_name=name,
+                            page_path=pages[name]["path"],
+                            load_trigger_id=fixture["triggerId"],
+                            list_name=fixture["listName"],
+                            restore_tab=fixture["restoreTab"],
+                            timing_messages=timing_messages,
+                        )
+                    )
             if "analytics" in selected_pages:
                 measure(page, pages["analytics"])
                 results["analytics"]["selectionFlowRuns"].append(
@@ -1527,6 +1949,8 @@ def run_harness(
             results["analytics"]["returnsSelectionFlow"] = summarize_dash_update_runs(results["analytics"]["returnsSelectionFlowRuns"])
         if "portopt" in selected_pages:
             results["portopt"]["restoredTabReadyMedian"] = round(median(results["portopt"]["restoredTabReadyMs"]))
+            if measure_account_list_load and results["portopt"].get("accountListLoadRuns"):
+                results["portopt"]["accountListLoad"] = summarize_account_list_runs(results["portopt"]["accountListLoadRuns"])
             if not entry_only:
                 results["portopt"]["weightsReadyMedian"] = round(median(results["portopt"]["weightsReadyMs"]))
                 results["portopt"]["frontierOpenMedian"] = round(median(results["portopt"]["frontierOpenMs"]))
@@ -1545,6 +1969,8 @@ def run_harness(
             results["regression"]["rollingOpenMedian"] = round(median(results["regression"]["rollingOpenMs"]))
             results["regression"]["growthOpenMedian"] = round(median(results["regression"]["growthOpenMs"]))
             results["regression"]["drawdownOpenMedian"] = round(median(results["regression"]["drawdownOpenMs"]))
+            if measure_account_list_load and results["regression"].get("accountListLoadRuns"):
+                results["regression"]["accountListLoad"] = summarize_account_list_runs(results["regression"]["accountListLoadRuns"])
 
         browser.close()
 
@@ -1563,6 +1989,7 @@ def run_harness(
         "dbSeries": db_series,
         "portoptRestoreTab": normalize_portopt_restore_tab(restore_tab),
         "portoptEntryOnly": bool(entry_only),
+        "measureAccountListLoad": bool(measure_account_list_load),
         "selectedPages": selected_pages,
         "runs": runs,
         "warmupFlow": "+".join(warmup_segments),
@@ -1606,6 +2033,7 @@ def main() -> int:
             headed=args.headed,
             restore_tab=args.portopt_restore_tab,
             entry_only=args.portopt_entry_only,
+            measure_account_list_load=args.measure_account_list_load,
             server_log=server_log_path,
             selected_pages=selected_pages,
         )
@@ -1674,6 +2102,7 @@ def main() -> int:
         "dbSeries": result["dbSeries"],
         "portoptRestoreTab": result["portoptRestoreTab"],
         "portoptEntryOnly": result["portoptEntryOnly"],
+        "measureAccountListLoad": result["measureAccountListLoad"],
         "selectedPages": result["selectedPages"],
         "warmupFlow": result["warmupFlow"],
         "runs": result["runs"],
