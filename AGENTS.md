@@ -34,6 +34,7 @@
 - Do not assume collapsing many clientside startup emitters into one union-input router is a win; if the merged callback broadens wakeups or startup medians regress, keep the per-family emitters.
 - Start measured sub-flow windows only after prior Dash traffic has settled, and count requests by request start time.
 - Use callback/request attribution to choose the next perf phase; do not pick targets from medians alone.
+- If a slower page already honors the intended restored-tab/bootstrap rule, do not force a symmetry-based fix for that rule; choose the next perf phase from the measured bottleneck instead.
 - Prefer reducing fan-out first:
   - metadata/routing stores over full payload stores
   - `no_update` for unchanged UI/store state
