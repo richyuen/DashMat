@@ -30,8 +30,13 @@
 - For reload-based flows, measure `click -> reload start` separately from `reload start -> controls ready`; pre-reload wins do not prove the post-reload wait improved.
 - For same-page live-apply flows, measure `click -> live-apply commit` separately from `live-apply commit -> controls ready`; skipping a reload does not guarantee the post-apply ready path is fast.
 - For same-page live-apply perf paths, internal-only payload retention is not free; if a retained client payload/store makes end-to-end medians worse, roll it back even when Dash request count stays flat.
+- Before bypassing a page's generic restore/bootstrap path, prove the retained same-page payload is complete and durable enough to reproduce that page's restore inputs; if the payload contract is incomplete or too short-lived, harden it first instead of forcing the bypass.
+- When a perf phase intentionally changes the ready outcome to an empty/cleared state, update the harness ready criteria first; do not judge timing with stale "content must render" assumptions from the old flow.
+- For account-list timing runs, verify the chosen fixture can actually reach the intended ready state; do not use a saved list with an empty restored selection when measuring click-to-ready.
 - Do not add an extra startup callback hop just to dedupe server-side restore/bootstrap work unless timed runs show an end-to-end startup win; tiny restore callback timings usually mean the real bottleneck is elsewhere.
 - Do not assume collapsing many clientside startup emitters into one union-input router is a win; if the merged callback broadens wakeups or startup medians regress, keep the per-family emitters.
+- Do not assume a shared visible-trigger store removes hidden-tab fan-out; if one trigger update still schedules many result families, split scheduling by family instead of gating inside callback bodies.
+- Do not assume a partial per-family trigger split will reduce request count or medians; if the `1`-run smoke stays flat or regresses, roll it back and re-attribute before migrating more families.
 - Start measured sub-flow windows only after prior Dash traffic has settled, and count requests by request start time.
 - Use callback/request attribution to choose the next perf phase; do not pick targets from medians alone.
 - If a slower page already honors the intended restored-tab/bootstrap rule, do not force a symmetry-based fix for that rule; choose the next perf phase from the measured bottleneck instead.
@@ -49,6 +54,7 @@
 - Avoid cycles in trigger-store graphs: do not feed a trigger emitter from a control whose value is derived downstream from that same trigger path.
 - If moving pure browser-visible logic clientside for perf, keep the Python path as the reference and add parity tests.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
+- Do not assume a reload-era bootstrap callback can be reused for same-page live apply by only clearing results, resetting bootstrap state, and replaying stores; prove that the same-page retrigger path actually re-enters bootstrap and reaches a stable ready state before committing to that design.
 - PortOpt-specific guardrails:
   - preserve the modal snapshot-on-OK contract
   - keep the stable `po-series-selection-grid` shell; update `rowData` / `columnDefs` instead of rebuilding the grid
@@ -65,6 +71,7 @@
 - New worktrees do not inherit local SQLite files; copy `data/dashmat_local.db`, `data/MRD.db`, and `data/Performance.db` before DB-backed browser runs.
 - For timed browser runs, use `tools/playwright/start_timed_server.ps1` instead of launching the app directly.
 - For harness timing correlation, pass the timed server `STDOUT` log path to the harness; do not use stderr.
+- If a timed run reports callback outputs that no longer exist in source, verify the serving port is not backed by a stale timed-server process before attributing the result to the current code.
 - Prefer extending the existing harnesses before creating new ones.
 - Keep Playwright/runtime artifacts out of commits unless explicitly needed, and clean `output/` after ad hoc runs.
 - If upward-opening modal dropdowns clip at the top, fix `utils/dashmat_welcome_modal.py`, not page-specific modal instances.
