@@ -37,6 +37,7 @@
 - Do not assume collapsing many clientside startup emitters into one union-input router is a win; if the merged callback broadens wakeups or startup medians regress, keep the per-family emitters.
 - Do not assume a shared visible-trigger store removes hidden-tab fan-out; if one trigger update still schedules many result families, split scheduling by family instead of gating inside callback bodies.
 - Do not assume a partial per-family trigger split will reduce request count or medians; if the `1`-run smoke stays flat or regresses, roll it back and re-attribute before migrating more families.
+- Do not assume forcing Analytics fresh bootstrap to `statistics` or suppressing restored active tabs will reduce hidden-family startup; if the `1`-run smoke stays flat or worse and hidden result families still wake, roll it back and re-attribute before changing restore/bootstrap tab policy further.
 - Start measured sub-flow windows only after prior Dash traffic has settled, and count requests by request start time.
 - Use callback/request attribution to choose the next perf phase; do not pick targets from medians alone.
 - If a slower page already honors the intended restored-tab/bootstrap rule, do not force a symmetry-based fix for that rule; choose the next perf phase from the measured bottleneck instead.
