@@ -25,6 +25,19 @@ def test_find_duplicate_series_filters_to_existing(sample_returns_df):
     assert duplicates == ["Asset_A"]
 
 
+def test_get_existing_columns_prefers_raw_metadata():
+    columns = get_existing_columns(raw_meta={"columns": ["Asset_A", "Asset_B"]})
+    assert columns == {"Asset_A", "Asset_B"}
+
+
+def test_find_duplicate_series_supports_raw_metadata():
+    duplicates = find_duplicate_series(
+        ["Asset_A", "Missing"],
+        raw_meta={"columns": ["Asset_A", "Asset_B"]},
+    )
+    assert duplicates == ["Asset_A"]
+
+
 def test_import_selected_disabled():
     assert import_selected_disabled([]) is True
     assert import_selected_disabled(["Sheet1"]) is False

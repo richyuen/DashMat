@@ -658,6 +658,14 @@ def test_hidden_at_trigger_emitters_include_restore_ready_guards():
     assert 'analyticsModalPreviewTrigger(opened)' in page_text
 
 
+def test_at_account_list_live_apply_restores_from_raw_meta_without_secondary_restore_ready():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'dcc.Store(id="at-account-list-live-apply-trigger-store"' not in page_text
+    assert 'Input("at-account-list-live-apply-trigger-store", "data")' not in page_text
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in page_text
+    assert 'Input("at-secondary-restore-ready-store", "data")' not in page_text
+
+
 def test_analytics_download_excel_disabled_clientside_helper():
     assert _run_dashmat_callbacks_js(
         'ns.analyticsDownloadExcelDisabled(null, ["Asset_A"], {"start":"2024-01-01","end":"2024-12-31"}, true)'
@@ -667,11 +675,15 @@ def test_analytics_download_excel_disabled_clientside_helper():
     ) is False
 
 
-def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(page_modules, raw_json):
+def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(monkeypatch, page_modules, raw_json):
     analyticstool, _ = page_modules
 
+    monkeypatch.setattr(
+        analyticstool,
+        "get_raw_dataset_df",
+        lambda *_args, **_kwargs: pytest.fail("should not fetch full dataset when metadata already has columns"),
+    )
     children, _order, blocker = analyticstool.update_series_selectors(
-        raw_json,
         _raw_meta(raw_json),
         ["Asset_A"],
         ["Asset_A", "Asset_B"],
@@ -691,6 +703,43 @@ def test_at_series_selection_blocker_release_uses_virtual_rows():
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="releaseBlockerOnSeriesGridReady")' in page_text
     assert 'Input("at-series-selection-grid", "virtualRowData", allow_optional=True)' in page_text
     assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
+
+
+def test_refresh_saved_series_cache_uses_raw_meta_max_date(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    raw_meta = _raw_meta(raw_json)
+    saved_df = pd.DataFrame(
+        {
+            analyticstool.RISK_FREE_SERIES: [0.001, 0.0015],
+            analyticstool.MARKET_BETA_SERIES: [0.01, -0.005],
+        },
+        index=pd.to_datetime(["2025-01-31", "2025-02-28"]),
+    )
+    saved_df.index.name = "Date"
+
+    monkeypatch.setattr(analyticstool, "load_cma_returns_for_benches", lambda *_args, **_kwargs: saved_df)
+
+    result = analyticstool.refresh_saved_series_cache(raw_meta, None)
+
+    assert set(result["series_data"]) == {
+        analyticstool.RISK_FREE_SERIES,
+        analyticstool.MARKET_BETA_SERIES,
+    }
+    assert result["series_data"][analyticstool.MARKET_BETA_SERIES]["max_date"] == "2025-02-28"
+
+
+def test_validate_db_add_selection_uses_raw_metadata(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    message, hidden, disabled = analyticstool.validate_db_add_selection(
+        ["Asset_A"],
+        _raw_meta(raw_json),
+        True,
+    )
+
+    assert message == "Cannot add duplicate series: Asset_A"
+    assert hidden is False
+    assert disabled is True
 
 
 def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(page_modules, raw_json):
@@ -834,17 +883,18 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
     assert restored[26] == ["Asset_A"]
 
 
-def test_at_restore_secondary_controls_restores_deferred_values(page_modules, raw_json):
+def test_at_restore_secondary_controls_restores_only_active_tab_family(page_modules, raw_json):
     analyticstool, _ = page_modules
 
     restored = analyticstool.at_restore_secondary_controls(
+        "rolling",
         True,
         _raw_meta(raw_json),
         stored_periodicity="daily_trading",
         stored_series=["Asset_A"],
         stored_returns="excess",
         stored_vol=7,
-        stored_tab="statistics",
+        stored_tab="rolling",
         stored_roll_win="3y",
         stored_roll_metric="volatility",
         stored_roll_type="cumulative",
@@ -867,27 +917,107 @@ def test_at_restore_secondary_controls_restores_deferred_values(page_modules, ra
         stored_order=["Asset_A"],
         po_origin_series=[],
         page_visited=True,
+        current_roll_win=None,
+        current_roll_metric=None,
+        current_roll_type=None,
+        current_roll_type_disabled=None,
+        current_roll_type_style=None,
+        current_roll_chart=None,
+        current_dd_chart=None,
+        current_gr_chart=None,
+        current_factor_mode=None,
+        current_factor_quantiles=None,
+        current_factor_transform=None,
+        current_factor_qq_reference=None,
+        current_conditional_view=None,
+        current_conditional_comparator=None,
+        current_conditional_threshold=None,
+        current_conditional_window_conversion=None,
+        current_conditional_step=None,
+        current_conditional_step_unit=None,
+        current_conditional_display_mode=None,
+        current_regime_display_mode=None,
+        current_monthly_view=None,
     )
 
     assert restored[0] == "3y"
     assert restored[1] == "volatility"
     assert restored[2] == "cumulative"
     assert restored[5] == "table"
-    assert restored[6] == "table"
-    assert restored[7] == "table"
-    assert restored[8] == "scatter"
-    assert restored[9] == 7
-    assert restored[10] == "zscore"
-    assert restored[11] == "reference"
-    assert restored[12] == "forward"
-    assert restored[13] == "le"
-    assert restored[14] == 0
-    assert restored[15] == "compound"
-    assert restored[16] == 1
-    assert restored[17] == "months"
-    assert restored[18] == "summary"
-    assert restored[19] == "detail"
-    assert restored[20] == "monthly"
+    assert restored[6] is no_update
+    assert restored[7] is no_update
+    assert restored[8] is no_update
+    assert restored[9] is no_update
+    assert restored[10] is no_update
+    assert restored[11] is no_update
+    assert restored[12] is no_update
+    assert restored[13] is no_update
+    assert restored[14] is no_update
+    assert restored[15] is no_update
+    assert restored[16] is no_update
+    assert restored[17] is no_update
+    assert restored[18] is no_update
+    assert restored[19] is no_update
+    assert restored[20] is no_update
+
+
+def test_at_restore_secondary_controls_skips_when_active_family_is_already_hydrated(page_modules, raw_json):
+    analyticstool, _ = page_modules
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.at_restore_secondary_controls(
+            "rolling",
+            True,
+            _raw_meta(raw_json),
+            stored_periodicity="daily_trading",
+            stored_series=["Asset_A"],
+            stored_returns="excess",
+            stored_vol=7,
+            stored_tab="rolling",
+            stored_roll_win="3y",
+            stored_roll_metric="volatility",
+            stored_roll_type="cumulative",
+            stored_roll_chart="table",
+            stored_dd_chart="table",
+            stored_gr_chart="table",
+            stored_factor_mode="scatter",
+            stored_factor_quantiles=7,
+            stored_factor_transform="zscore",
+            stored_factor_qq_reference="reference",
+            stored_conditional_view=None,
+            stored_conditional_comparator=None,
+            stored_conditional_threshold=None,
+            stored_conditional_window_conversion=None,
+            stored_conditional_step=None,
+            stored_conditional_step_unit=None,
+            stored_conditional_display_mode=None,
+            stored_regime_display_mode="detail",
+            stored_monthly_view="monthly",
+            stored_order=["Asset_A"],
+            po_origin_series=[],
+            page_visited=True,
+            current_roll_win="3y",
+            current_roll_metric="volatility",
+            current_roll_type="cumulative",
+            current_roll_type_disabled=True,
+            current_roll_type_style={"opacity": 0.5, "pointerEvents": "none"},
+            current_roll_chart="table",
+            current_dd_chart=None,
+            current_gr_chart=None,
+            current_factor_mode=None,
+            current_factor_quantiles=None,
+            current_factor_transform=None,
+            current_factor_qq_reference=None,
+            current_conditional_view=None,
+            current_conditional_comparator=None,
+            current_conditional_threshold=None,
+            current_conditional_window_conversion=None,
+            current_conditional_step=None,
+            current_conditional_step_unit=None,
+            current_conditional_display_mode=None,
+            current_regime_display_mode=None,
+            current_monthly_view=None,
+        )
 
 
 def test_at_series_modal_open_is_clientside():
@@ -1038,14 +1168,15 @@ def test_at_series_modal_has_bulk_action_controls_and_dummy_sink():
     assert '"unselect-all-button"' in modal_text
 
 
-def test_at_bootstrap_uses_only_page_load_interval_and_real_secondary_ready_signal():
+def test_at_bootstrap_uses_only_page_load_interval_without_live_apply_trigger_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     assert 'dcc.Interval(id="at-page-load-trigger"' in page_text
     assert 'at-initial-tab-render-trigger' not in page_text
     assert 'at-secondary-restore-trigger' not in page_text
     assert 'Output("at-initial-tab-render-ready-store", "data")' in page_text
     assert 'Input("at-page-load-trigger", "n_intervals")' in page_text
-    assert 'Output("at-secondary-restore-ready-store", "data")' in page_text
+    assert 'dcc.Store(id="at-account-list-live-apply-trigger-store"' not in page_text
+    assert 'Input("at-account-list-live-apply-trigger-store", "data")' not in page_text
     assert 'Input("at-state-ready-store", "data")' in page_text
     assert 'Output("at-welcome-screen-container", "style")' in page_text
     assert 'Input("dashmat-raw-data-store", "data")' in page_text

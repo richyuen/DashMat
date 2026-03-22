@@ -231,7 +231,6 @@ AT_WELCOME_MODAL_CONFIG = PagePrefixConfig(
     welcome_switch_buttons=(),
 )
 
-
 def _build_help_control() -> dmc.Anchor | dmc.Button:
     help_button = dmc.Button(
         "Help",
@@ -256,6 +255,10 @@ def _build_help_control() -> dmc.Anchor | dmc.Button:
 
 def _mapping_payload(value) -> str:
     return mapping_payload_for_cache(value)
+
+
+def _no_update_if_equal(next_value, current_value):
+    return no_update if next_value == current_value else next_value
 
 
 def _date_range_payload(value) -> str:
@@ -2943,23 +2946,17 @@ def _build_saved_series_cache_series_data(saved_df: pd.DataFrame) -> dict:
 
 @callback(
     Output("dashmat-saved-series-cache-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     State("dashmat-saved-series-cache-store", "data"),
 )
-def refresh_saved_series_cache(raw_data, cache_data):
+def refresh_saved_series_cache(raw_meta, cache_data):
     """Cache shared saved benchmark series and refresh if raw data extends beyond them."""
-    if not raw_data:
+    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
         raise PreventUpdate
 
-    try:
-        raw_df = _raw_df(raw_data)
-    except Exception:
+    raw_end = pd.to_datetime(raw_meta.get("max_date"), errors="coerce")
+    if pd.isna(raw_end):
         raise PreventUpdate
-
-    if raw_df.empty:
-        raise PreventUpdate
-
-    raw_end = pd.to_datetime(raw_df.index.max())
 
     cache_is_fresh = isinstance(cache_data, dict) and isinstance(cache_data.get("series_data"), dict)
     if cache_is_fresh:
@@ -3028,12 +3025,12 @@ def update_at_shared_benchmark_stamp_store(saved_series_store, current_stamp):
     Output("at-db-add-error-alert", "hide"),
     Output("at-db-add-ok-button", "disabled"),
     Input("at-db-add-series-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
     Input("at-db-add-modal", "opened"),
     prevent_initial_call=True,
 )
-def validate_db_add_selection(selected_benches, raw_data, opened):
-    return compute_validate_db_add_selection(selected_benches, raw_data, opened)
+def validate_db_add_selection(selected_benches, raw_meta, opened):
+    return compute_validate_db_add_selection(selected_benches, None, opened, raw_meta=raw_meta)
 
 
 @callback(
@@ -5095,7 +5092,6 @@ layout = dmc.Container(
         dcc.Store(id="at-statistics-loaded-store", data=False, storage_type="session"),
         dcc.Store(id="at-statistics-rendered-key-store", data=None, storage_type="memory"),
         dcc.Store(id="at-initial-tab-render-ready-store", data=False, storage_type="memory"),
-        dcc.Store(id="at-secondary-restore-ready-store", data=False, storage_type="memory"),
         dcc.Store(id="at-tab-render-signatures-store", data={}, storage_type="memory"),
         dcc.Store(id="at-vol-scaler-value-store", data=0, storage_type="session"),
         dcc.Store(id="at-vol-scaling-assignments-store", data={}, storage_type="session"),
@@ -5187,16 +5183,6 @@ clientside_callback(
     """,
     Output("at-initial-tab-render-ready-store", "data"),
     Input("at-page-load-trigger", "n_intervals"),
-)
-
-clientside_callback(
-    """
-    function(stateReady) {
-        return !!stateReady;
-    }
-    """,
-    Output("at-secondary-restore-ready-store", "data"),
-    Input("at-state-ready-store", "data"),
 )
 
 
@@ -5345,7 +5331,6 @@ def _at_resolve_restore_state(
         }
     )
     return resolved
-
 
 @callback(
     Output("at-periodicity-select", "data", allow_duplicate=True),
@@ -5635,7 +5620,8 @@ def sync_at_returns_type_mirrors(
     Output("at-conditional-display-mode-select", "value", allow_duplicate=True),
     Output("at-regime-detail-display-mode-select", "value", allow_duplicate=True),
     Output("at-monthly-view-checkbox", "value", allow_duplicate=True),
-    Input("at-secondary-restore-ready-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-state-ready-store", "data"),
     State("dashmat-raw-data-meta-store", "data"),
     State("at-periodicity-value-store", "data"),
     State("at-series-select-value-store", "data"),
@@ -5664,10 +5650,32 @@ def sync_at_returns_type_mirrors(
     State("at-series-order-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
     State("at-page-visited-store", "data"),
+    State("at-rolling-window-select", "value"),
+    State("at-rolling-metric-select", "value"),
+    State("at-rolling-return-type-select", "value"),
+    State("at-rolling-return-type-select", "disabled"),
+    State("at-rolling-return-type-select", "style"),
+    State("at-rolling-chart-switch", "value"),
+    State("at-drawdown-chart-switch", "value"),
+    State("at-growth-chart-switch", "value"),
+    State("at-factor-mode-select", "value"),
+    State("at-factor-quantiles-input", "value"),
+    State("at-factor-transform-select", "value"),
+    State("at-factor-qq-reference-select", "value"),
+    State("at-conditional-view-select", "value"),
+    State("at-conditional-comparator-select", "value"),
+    State("at-conditional-threshold-input", "value"),
+    State("at-conditional-window-conversion-select", "value"),
+    State("at-conditional-step-input", "value"),
+    State("at-conditional-step-unit-select", "value"),
+    State("at-conditional-display-mode-select", "value"),
+    State("at-regime-detail-display-mode-select", "value"),
+    State("at-monthly-view-checkbox", "value"),
     prevent_initial_call=True,
 )
 def at_restore_secondary_controls(
-    secondary_ready,
+    active_tab,
+    state_ready,
     raw_meta,
     stored_periodicity,
     stored_series,
@@ -5696,8 +5704,29 @@ def at_restore_secondary_controls(
     stored_order,
     po_origin_series,
     page_visited,
+    current_roll_win,
+    current_roll_metric,
+    current_roll_type,
+    current_roll_type_disabled,
+    current_roll_type_style,
+    current_roll_chart,
+    current_dd_chart,
+    current_gr_chart,
+    current_factor_mode,
+    current_factor_quantiles,
+    current_factor_transform,
+    current_factor_qq_reference,
+    current_conditional_view,
+    current_conditional_comparator,
+    current_conditional_threshold,
+    current_conditional_window_conversion,
+    current_conditional_step,
+    current_conditional_step_unit,
+    current_conditional_display_mode,
+    current_regime_display_mode,
+    current_monthly_view,
 ):
-    if not secondary_ready:
+    if not state_ready:
         raise PreventUpdate
 
     resolved = _at_resolve_restore_state(
@@ -5730,30 +5759,45 @@ def at_restore_secondary_controls(
         po_origin_series,
         page_visited,
     )
-    active_tab = resolved["active_tab"]
-    return (
-        no_update if active_tab == "rolling" else resolved["roll_win"],
-        no_update if active_tab == "rolling" else resolved["roll_metric"],
-        no_update if active_tab == "rolling" else resolved["roll_type"],
-        no_update if active_tab == "rolling" else resolved["roll_type_disabled"],
-        no_update if active_tab == "rolling" else resolved["roll_type_style"],
-        no_update if active_tab == "rolling" else resolved["roll_chart"],
-        no_update if active_tab == "drawdown" else resolved["dd_chart"],
-        no_update if active_tab == "growth" else resolved["gr_chart"],
-        no_update if active_tab == "factor_analysis" else resolved["factor_mode"],
-        no_update if active_tab == "factor_analysis" else resolved["factor_quantiles"],
-        no_update if active_tab == "factor_analysis" else resolved["factor_transform"],
-        no_update if active_tab == "factor_analysis" else resolved["factor_qq_reference"],
-        no_update if active_tab == "conditional_returns" else resolved["conditional_view"],
-        no_update if active_tab == "conditional_returns" else resolved["conditional_comparator"],
-        no_update if active_tab == "conditional_returns" else resolved["conditional_threshold"],
-        no_update if active_tab == "conditional_returns" else resolved["conditional_window_conversion"],
-        no_update if active_tab == "conditional_returns" else resolved["conditional_step"],
-        no_update if active_tab == "conditional_returns" else resolved["conditional_step_unit"],
-        no_update if active_tab == "conditional_returns" else resolved["conditional_display_mode"],
-        no_update if active_tab == "regime_analysis" else resolved["regime_display_mode"],
-        no_update if active_tab == "calendar" else resolved["monthly_view"],
-    )
+    outputs = [no_update] * 21
+    if active_tab == "rolling":
+        outputs[:6] = [
+            _no_update_if_equal(resolved["roll_win"], current_roll_win),
+            _no_update_if_equal(resolved["roll_metric"], current_roll_metric),
+            _no_update_if_equal(resolved["roll_type"], current_roll_type),
+            _no_update_if_equal(resolved["roll_type_disabled"], current_roll_type_disabled),
+            _no_update_if_equal(resolved["roll_type_style"], current_roll_type_style),
+            _no_update_if_equal(resolved["roll_chart"], current_roll_chart),
+        ]
+    elif active_tab == "drawdown":
+        outputs[6] = _no_update_if_equal(resolved["dd_chart"], current_dd_chart)
+    elif active_tab == "growth":
+        outputs[7] = _no_update_if_equal(resolved["gr_chart"], current_gr_chart)
+    elif active_tab == "factor_analysis":
+        outputs[8:12] = [
+            _no_update_if_equal(resolved["factor_mode"], current_factor_mode),
+            _no_update_if_equal(resolved["factor_quantiles"], current_factor_quantiles),
+            _no_update_if_equal(resolved["factor_transform"], current_factor_transform),
+            _no_update_if_equal(resolved["factor_qq_reference"], current_factor_qq_reference),
+        ]
+    elif active_tab == "conditional_returns":
+        outputs[12:19] = [
+            _no_update_if_equal(resolved["conditional_view"], current_conditional_view),
+            _no_update_if_equal(resolved["conditional_comparator"], current_conditional_comparator),
+            _no_update_if_equal(resolved["conditional_threshold"], current_conditional_threshold),
+            _no_update_if_equal(resolved["conditional_window_conversion"], current_conditional_window_conversion),
+            _no_update_if_equal(resolved["conditional_step"], current_conditional_step),
+            _no_update_if_equal(resolved["conditional_step_unit"], current_conditional_step_unit),
+            _no_update_if_equal(resolved["conditional_display_mode"], current_conditional_display_mode),
+        ]
+    elif active_tab == "regime_analysis":
+        outputs[19] = _no_update_if_equal(resolved["regime_display_mode"], current_regime_display_mode)
+    elif active_tab == "calendar":
+        outputs[20] = _no_update_if_equal(resolved["monthly_view"], current_monthly_view)
+
+    if all(output is no_update for output in outputs):
+        raise PreventUpdate
+    return tuple(outputs)
 
 
 @callback(
@@ -8721,7 +8765,6 @@ clientside_callback(
     Output("at-series-selection-container", "children"),
     Output("at-temp-series-order-store", "data", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-store", "data"),
     Input("dashmat-raw-data-meta-store", "data"),
     Input("at-temp-series-select", "data"),
     Input("at-temp-series-order-store", "data"),
@@ -8732,7 +8775,6 @@ clientside_callback(
     prevent_initial_call="initial_duplicate",
 )
 def update_series_selectors(
-    raw_data,
     raw_meta,
     selected_series,
     series_order,
@@ -8742,13 +8784,17 @@ def update_series_selectors(
     vol_scaling_assignments,
 ):
     """Render Select Series as a single AG Grid with in-grid controls."""
-    if raw_data is None:
+    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
     all_series = list((raw_meta or {}).get("columns") or [])
     if not all_series:
-        df = _raw_df(raw_data)
-        all_series = list(df.columns)
+        dataset_key = _dataset_key_from_meta(raw_meta)
+        if dataset_key:
+            try:
+                all_series = list(get_raw_dataset_df(dataset_key).columns)
+            except Exception:
+                all_series = []
     if not all_series:
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 

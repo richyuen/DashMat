@@ -1096,14 +1096,14 @@ def compute_close_db_add_modal(n_clicks):
     return False, []
 
 
-def compute_validate_db_add_selection(selected_benches, raw_data, opened):
+def compute_validate_db_add_selection(selected_benches, raw_data, opened, raw_meta=None):
     if not opened:
         raise PreventUpdate
 
     if not selected_benches:
         return no_update, True, True
 
-    duplicates = find_duplicate_series(selected_benches, raw_data)
+    duplicates = find_duplicate_series(selected_benches, raw_data=raw_data, raw_meta=raw_meta)
     if duplicates:
         return f"Cannot add duplicate series: {', '.join(duplicates)}", False, True
     return no_update, True, False

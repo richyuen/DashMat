@@ -116,6 +116,9 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dashmat-account-list-load-timing' in account_list_text
     assert 'State("_pages_location", "pathname")' in account_list_text
     assert 'window.dash_clientside.set_props("at-state-ready-store", {data: false});' in account_list_text
+    assert '__AT_STORE_IDS__.forEach(function(id)' in account_list_text
+    assert 'window.dash_clientside.set_props(id, {data: changedEntryMap[id]});' in account_list_text
+    assert 'State("dashmat-account-list-load-state-store", "data")' in account_list_text
     assert 'window.location.reload();' in account_list_text
     assert "configure_timing_logger" in app_text
 

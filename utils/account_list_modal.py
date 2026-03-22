@@ -42,6 +42,12 @@ def build_account_list_load_state(status: str) -> dict[str, object]:
     return {"status": str(status or "idle").strip().lower() or "idle"}
 
 
+def account_list_load_state_status(load_state) -> str:
+    if not isinstance(load_state, dict):
+        return "idle"
+    return str(load_state.get("status") or "idle").strip().lower() or "idle"
+
+
 def build_account_list_prefetch_state(account_list_id=None, update_date=None, status: str = "idle") -> dict[str, object]:
     return {
         "account_list_id": int(account_list_id) if account_list_id is not None else None,
@@ -51,10 +57,7 @@ def build_account_list_prefetch_state(account_list_id=None, update_date=None, st
 
 
 def account_list_loader_visible(load_state) -> bool:
-    return (
-        isinstance(load_state, dict)
-        and str(load_state.get("status") or "").strip().lower() in {"loading", "live_applying"}
-    )
+    return account_list_load_state_status(load_state) in {"loading", "live_applying"}
 
 
 def account_list_loader_wrapper_style(load_state) -> dict[str, object]:
@@ -872,13 +875,13 @@ def register_account_list_callbacks(
                         status: "live_applying"
                     });
                     window.dash_clientside.set_props("at-state-ready-store", {data: false});
-                    __AT_ORDERED_IDS__.forEach(function(id) {
+                    __AT_SHARED_IDS__.forEach(function(id) {
                         if (!Object.prototype.hasOwnProperty.call(changedEntryMap, id)) {
                             return;
                         }
                         window.dash_clientside.set_props(id, {data: changedEntryMap[id]});
                     });
-                    __SHARED_ORDERED_IDS__.forEach(function(id) {
+                    __AT_STORE_IDS__.forEach(function(id) {
                         if (!Object.prototype.hasOwnProperty.call(changedEntryMap, id)) {
                             return;
                         }
@@ -887,7 +890,7 @@ def register_account_list_callbacks(
                     return [
                         null,
                         false,
-                        window.dash_clientside.no_update,
+                        noticePayload,
                         {status: "live_applying"}
                     ];
                 } catch (err) {
@@ -898,14 +901,13 @@ def register_account_list_callbacks(
             return fallbackToReload();
         }
         """
-        .replace("__AT_ORDERED_IDS__", json.dumps(
+        .replace("__AT_STORE_IDS__", json.dumps(
             list(dict.fromkeys(list(AT_STORE_IDS.values()) + list(AT_EXTRA_CONTROL_STORE_IDS)))
         ))
-        .replace("__SHARED_ORDERED_IDS__", json.dumps([
+        .replace("__AT_SHARED_IDS__", json.dumps([
             "dashmat-db-import-provenance-store",
             "dashmat-original-periodicity-store",
             "dashmat-raw-data-store",
-            "dashmat-account-list-notice-store",
         ])),
         Output("dashmat-account-list-session-apply-store", "data", allow_duplicate=True),
         Output("dashmat-account-list-modal", "opened", allow_duplicate=True),
@@ -1003,10 +1005,14 @@ def register_account_list_callbacks(
 
     app.clientside_callback(
         """
-        function(modalOpened, loadClicks) {
+        function(modalOpened, loadClicks, currentLoadState) {
             const ctx = window.dash_clientside.callback_context;
             const triggered = (ctx && ctx.triggered && ctx.triggered.length) ? ctx.triggered[0].prop_id.split(".")[0] : null;
             if (triggered === "dashmat-account-list-modal") {
+                const status = (currentLoadState && currentLoadState.status) ? String(currentLoadState.status).toLowerCase() : "idle";
+                if (!modalOpened && (status === "loading" || status === "live_applying")) {
+                    return window.dash_clientside.no_update;
+                }
                 return {status: "idle"};
             }
             if (triggered === "dashmat-account-list-load-button" && loadClicks) {
@@ -1018,6 +1024,7 @@ def register_account_list_callbacks(
         Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-modal", "opened"),
         Input("dashmat-account-list-load-button", "n_clicks"),
+        State("dashmat-account-list-load-state-store", "data"),
         prevent_initial_call=True,
     )
 
@@ -1210,10 +1217,11 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal", "opened"),
         Input("dashmat-account-list-refresh-store", "data"),
         State("userinfo", "data"),
+        State("dashmat-account-list-load-state-store", "data"),
         prevent_initial_call=True,
     )
-    def _refresh_account_list_rows(opened, refresh_count, userinfo):
-        if not opened:
+    def _refresh_account_list_rows(opened, refresh_count, userinfo, load_state):
+        if not opened or account_list_load_state_status(load_state) != "idle":
             raise PreventUpdate
         if not account_list_tables_available(db_engine):
             return []
@@ -1225,9 +1233,12 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal-mode-store", "data"),
         Input("dashmat-account-list-selected-id-store", "data"),
         State("userinfo", "data"),
+        State("dashmat-account-list-load-state-store", "data"),
         prevent_initial_call=False,
     )
-    def _refresh_account_list_selected_detail(opened, mode, selected_id, userinfo):
+    def _refresh_account_list_selected_detail(opened, mode, selected_id, userinfo, load_state):
+        if account_list_load_state_status(load_state) != "idle":
+            raise PreventUpdate
         if not opened or str(mode or "load") != "load" or selected_id is None:
             return None
         return load_selected_account_list_detail(
@@ -1261,9 +1272,12 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal-mode-store", "data"),
         Input("dashmat-account-list-selected-id-store", "data"),
         State("userinfo", "data"),
+        State("dashmat-account-list-load-state-store", "data"),
         prevent_initial_call=False,
     )
-    def _refresh_account_list_send_users(opened, mode, selected_id, userinfo):
+    def _refresh_account_list_send_users(opened, mode, selected_id, userinfo, load_state):
+        if account_list_load_state_status(load_state) != "idle":
+            raise PreventUpdate
         if not opened or str(mode or "load") != "load" or selected_id is None:
             return []
         if not users_table_available(db_engine):
