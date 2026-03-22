@@ -1024,6 +1024,41 @@ def measure(page, cfg: dict[str, str]) -> dict[str, int]:
     return {"shellMs": shell_ms, "readyMs": ready_ms}
 
 
+def measure_analytics_welcome_load(browser, base_url: str) -> dict[str, object]:
+    context = browser.new_context(viewport={"width": 1440, "height": 960})
+    page = context.new_page()
+    request_tracker = DashUpdateRequestTracker(page)
+    console_counts = {"error": 0, "warning": 0, "pageerror": 0}
+
+    def on_console(msg) -> None:
+        if msg.type in {"error", "warning"}:
+            console_counts[msg.type] += 1
+
+    def on_page_error(_err) -> None:
+        console_counts["pageerror"] += 1
+
+    page.on("console", on_console)
+    page.on("pageerror", on_page_error)
+
+    start = time.perf_counter()
+    request_tracker.start_window()
+    page.goto(base_url + "/analyticstool", wait_until="domcontentloaded", timeout=30000)
+    wait_dash_hydrated(page, timeout=30000)
+    wait_visible(page, "#at-welcome-add-db-btn", timeout=30000)
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    flow_ms = round((time.perf_counter() - start) * 1000)
+    summary = request_tracker.summary()
+    context.close()
+    return {
+        "flowMs": flow_ms,
+        "consoleErrorCount": console_counts["error"],
+        "consoleWarningCount": console_counts["warning"],
+        "pageErrorCount": console_counts["pageerror"],
+        **summary,
+    }
+
+
 def set_component_value(page, component_id: str, value) -> None:
     set_component_props(page, component_id, {"value": value})
 
@@ -1849,6 +1884,7 @@ def run_harness(
         }
         results["analytics"].update(
             {
+                "welcomeLoadRuns": [],
                 "selectionFlowRuns": [],
                 "dateRangeFlowRuns": [],
                 "returnsSelectionFlowRuns": [],
@@ -1887,6 +1923,10 @@ def run_harness(
             results["regression"]["accountListLoadRuns"] = []
         order = [name for name in PAGE_ORDER if name in selected_pages]
         for _ in range(runs):
+            if "analytics" in selected_pages:
+                results["analytics"]["welcomeLoadRuns"].append(
+                    measure_analytics_welcome_load(browser, base_url)
+                )
             for name in order:
                 if name == "portopt":
                     metrics = measure_portopt(page, pages[name], restore_tab, entry_only)
@@ -1944,6 +1984,7 @@ def run_harness(
             data["shellMedian"] = round(median(data["shellMs"]))
             data["readyMedian"] = round(median(data["readyMs"]))
         if "analytics" in selected_pages:
+            results["analytics"]["welcomeLoad"] = summarize_dash_update_runs(results["analytics"]["welcomeLoadRuns"])
             results["analytics"]["selectionFlow"] = summarize_dash_update_runs(results["analytics"]["selectionFlowRuns"])
             results["analytics"]["dateRangeFlow"] = summarize_dash_update_runs(results["analytics"]["dateRangeFlowRuns"])
             results["analytics"]["returnsSelectionFlow"] = summarize_dash_update_runs(results["analytics"]["returnsSelectionFlowRuns"])
