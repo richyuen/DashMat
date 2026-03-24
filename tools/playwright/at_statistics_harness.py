@@ -1,0 +1,951 @@
+"""AT Statistics Harness — measures AT Statistics-ready timing via imports or account-list loads.
+
+Two measurement modes against 5 deterministic peer/index run specs:
+  - imports:       clear session, re-import each peer/index pair through the AT UI
+  - account-list:  clear session, load a pre-seeded account list containing each pair
+
+Reuses warm-switch helpers for AA DB warmup, AT state-ready waiting, statistics-idle
+waiting, Dash request/bytes/callback attribution, and failure artifacts.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import traceback
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from statistics import median
+
+from playwright.sync_api import sync_playwright
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils.account_lists import (
+    add_db_import_provenance_entry,
+    build_account_list_payload,
+    delete_account_list,
+    list_account_lists,
+    save_account_list,
+)
+from utils.portfolio_series import get_portfolio_options, has_portfolio_benchmark, load_portfolio_series
+from dbengine import engine as DB_ENGINE
+
+from tools.playwright.warm_switch_harness import (
+    DashUpdateRequestTracker,
+    build_artifact_stem,
+    copy_server_log,
+    current_log_offset,
+    ensure_local_seed_databases,
+    parse_timing_log,
+    resolve_git_ref,
+    resolve_repo_root,
+    sanitize_token,
+    summarize_dash_update_runs,
+    wait_analytics_statistics_idle,
+    wait_dash_hydrated,
+    wait_for_analytics_state_ready,
+    wait_for_app,
+    wait_for_persisted_store_value,
+    wait_ready,
+    wait_visible,
+    warm_analytics_db,
+    write_failure_artifacts,
+    get_persisted_store_value,
+    set_component_props,
+    set_persisted_store_value,
+    fire_component_click,
+    TIMING_EVENT_NAMES,
+)
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+HARNESS_PREFIX = "at-stats-harness"
+REQUIRED_PEER_COUNT = 5
+REQUIRED_INDEX_COUNT = 5
+
+DEFAULT_DB_SERIES = [
+    "SPX_TRIndex",
+    "R2000_TRIndex",
+    "EAFE_TRIndex",
+    "BCTBill13_TRIndex",
+]
+
+
+# ---------------------------------------------------------------------------
+# Run-spec builder
+# ---------------------------------------------------------------------------
+
+def _resolve_eligible_peer_portfolios(engine) -> list[dict]:
+    """Return peer portfolios that have Actual returns AND an Estimated peer benchmark.
+
+    The harness hardcodes ``benchmark_type="Estimated"``, so we must verify
+    that the specific ``MeanRet|Estimated`` row exists for each candidate's
+    vintage — not just any ``MeanRet`` row.
+    """
+    from sqlalchemy import text as sa_text
+
+    options = get_portfolio_options(engine, "peer")
+    eligible: list[dict] = []
+    for opt in options:
+        portfolio = str(opt.get("value", "")).strip()
+        if not portfolio:
+            continue
+        if not has_portfolio_benchmark(engine, "peer", portfolio):
+            continue
+        # Verify the specific Estimated benchmark exists for this vintage.
+        with engine.connect() as conn:
+            row = conn.execute(
+                sa_text(
+                    "SELECT PeerVintage FROM Portfolios WHERE Portfolio = :portfolio"
+                ),
+                {"portfolio": portfolio},
+            ).first()
+        if not row:
+            continue
+        vintage = str(row[0] or "").strip()
+        if not vintage:
+            continue
+        with engine.connect() as conn:
+            count = conn.execute(
+                sa_text(
+                    "SELECT COUNT(1) FROM PeerTS "
+                    "WHERE Item = 'MeanRet' AND [Desc] = 'Estimated' "
+                    "AND Portfolio = :vintage"
+                ),
+                {"vintage": vintage},
+            ).scalar()
+        if not count or int(count) == 0:
+            continue
+        eligible.append({"portfolio": portfolio, "label": opt.get("label", portfolio)})
+    return sorted(eligible, key=lambda x: x["portfolio"])
+
+
+def _resolve_eligible_index_portfolios(engine) -> list[dict]:
+    """Return index portfolios that have Actual returns AND a ``Benchmark`` desc.
+
+    The harness hardcodes ``benchmark_type="Benchmark"``, so we must verify
+    that the specific ``PortRet|Benchmark`` row exists — not just any desc
+    in ``INDEX_BENCHMARK_TYPE_OPTIONS`` (which also includes ``Calculated``).
+    """
+    from sqlalchemy import text as sa_text
+
+    options = get_portfolio_options(engine, "index")
+    eligible: list[dict] = []
+    for opt in options:
+        portfolio = str(opt.get("value", "")).strip()
+        if not portfolio:
+            continue
+        with engine.connect() as conn:
+            count = conn.execute(
+                sa_text(
+                    "SELECT COUNT(1) FROM IndexTS "
+                    "WHERE Portfolio = :portfolio "
+                    "AND Item = 'PortRet' AND [Desc] = 'Benchmark'"
+                ),
+                {"portfolio": portfolio},
+            ).scalar()
+        if not count or int(count) == 0:
+            continue
+        eligible.append({"portfolio": portfolio, "label": opt.get("label", portfolio)})
+    return sorted(eligible, key=lambda x: x["portfolio"])
+
+
+def build_run_specs(engine) -> list[dict]:
+    """Build 5 deterministic run specs, each pairing one peer + one index portfolio.
+
+    Peer portfolios are imported as Actual + Estimated (benchmark).
+    Index portfolios are imported as Actual + Benchmark.
+    """
+    peers = _resolve_eligible_peer_portfolios(engine)
+    indices = _resolve_eligible_index_portfolios(engine)
+
+    if len(peers) < REQUIRED_PEER_COUNT:
+        raise RuntimeError(
+            f"Need at least {REQUIRED_PEER_COUNT} eligible peer portfolios, got {len(peers)}: "
+            f"{[p['portfolio'] for p in peers]}"
+        )
+    if len(indices) < REQUIRED_INDEX_COUNT:
+        raise RuntimeError(
+            f"Need at least {REQUIRED_INDEX_COUNT} eligible index portfolios, got {len(indices)}: "
+            f"{[i['portfolio'] for i in indices]}"
+        )
+
+    specs: list[dict] = []
+    for i in range(5):
+        peer = peers[i]
+        index = indices[i]
+        specs.append({
+            "specIndex": i,
+            "peer": {
+                "portfolio": peer["portfolio"],
+                "type": "Actual",
+                "include_benchmark": True,
+                "benchmark_type": "Estimated",
+            },
+            "index": {
+                "portfolio": index["portfolio"],
+                "type": "Actual",
+                "include_benchmark": True,
+                "benchmark_type": "Benchmark",
+            },
+        })
+    return specs
+
+
+def _staged_row(portfolio: str, ret_type: str, include_benchmark: bool, benchmark_type: str) -> dict:
+    """Build a staged row dict matching the portfolio import modal format."""
+    return {
+        "Portfolio": portfolio,
+        "Type": ret_type,
+        "Include Benchmark": "Yes" if include_benchmark else "No",
+        "Benchmark Type": benchmark_type if include_benchmark else "",
+        "portfolio": portfolio,
+        "type": ret_type,
+        "include_benchmark": include_benchmark,
+        "benchmark_type": benchmark_type if include_benchmark else "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Account-list fixture builder
+# ---------------------------------------------------------------------------
+
+def _build_account_list_fixture_payload(spec: dict, engine) -> dict:
+    """Build a complete account-list payload for one run spec's peer/index pair.
+
+    Uses ``load_portfolio_series`` to resolve the real emitted column names
+    (including the correct peer vintage benchmark) so the fixture exactly
+    matches what the import-mode UI would produce.
+    """
+    peer = spec["peer"]
+    index_port = spec["index"]
+
+    peer_portfolio = peer["portfolio"]
+    peer_type = peer["type"]
+    peer_bm_type = peer["benchmark_type"]
+    index_portfolio = index_port["portfolio"]
+    index_type = index_port["type"]
+    index_bm_type = index_port["benchmark_type"]
+
+    # Resolve real emitted series via load_portfolio_series
+    peer_row = _staged_row(peer_portfolio, peer_type, True, peer_bm_type)
+    peer_result = load_portfolio_series(engine, "peer", [peer_row])
+    peer_cols = list(peer_result.returns_df.columns)
+    peer_benchmarks = peer_result.benchmark_assignments
+
+    index_row = _staged_row(index_portfolio, index_type, True, index_bm_type)
+    index_result = load_portfolio_series(engine, "index", [index_row])
+    index_cols = list(index_result.returns_df.columns)
+    index_benchmarks = index_result.benchmark_assignments
+
+    if not peer_cols:
+        raise RuntimeError(f"load_portfolio_series returned no columns for peer {peer_portfolio}")
+    if not index_cols:
+        raise RuntimeError(f"load_portfolio_series returned no columns for index {index_portfolio}")
+
+    peer_primary = peer_cols[0]
+
+    # Build provenance entries using the real emitted series
+    provenance: dict = {}
+    provenance = add_db_import_provenance_entry(
+        provenance,
+        loader_type="portfolio_peer",
+        loader_args={"rows": [peer_row]},
+        emitted_series=peer_cols,
+        primary_series=peer_primary,
+    )
+
+    index_primary = index_cols[0]
+    provenance = add_db_import_provenance_entry(
+        provenance,
+        loader_type="portfolio_index",
+        loader_args={"rows": [index_row]},
+        emitted_series=index_cols,
+        primary_series=index_primary,
+    )
+
+    all_series = peer_cols + index_cols
+    benchmark_map = {**peer_benchmarks, **index_benchmarks}
+
+    session_snapshot = {
+        "at-series-select": list(all_series),
+        "at-series-order-store": list(all_series),
+        "at-benchmark-assignments-store": benchmark_map,
+        "at-long-short-store": {},
+        "at-vol-scaling-assignments-store": {name: True for name in all_series},
+        "at-periodicity-value-store": "daily",
+        "at-returns-type-value-store": "total",
+        "at-active-tab-store": "statistics",
+        "at-date-range-store": None,
+        "at-vol-scaler-value-store": 0,
+    }
+
+    return build_account_list_payload(provenance, session_snapshot)
+
+
+def create_account_list_fixtures(engine, username: str, specs: list[dict]) -> list[dict]:
+    """Create account-list fixtures for all run specs. Returns fixture metadata."""
+    # Delete existing harness-prefixed lists for this user
+    existing = list_account_lists(engine, username)
+    for row in existing:
+        list_name = str(row.get("ListName") or "")
+        if list_name.startswith(HARNESS_PREFIX):
+            delete_account_list(
+                engine,
+                account_list_id=row["AccountListID"],
+                username=username,
+            )
+
+    fixtures: list[dict] = []
+    for spec in specs:
+        list_name = f"{HARNESS_PREFIX}-spec{spec['specIndex']}"
+        payload = _build_account_list_fixture_payload(spec, engine)
+        ok, message, saved = save_account_list(
+            engine,
+            username=username,
+            update_by=username,
+            list_name=list_name,
+            payload=payload,
+        )
+        if not ok:
+            raise RuntimeError(f"Failed to save account-list fixture '{list_name}': {message}")
+        fixtures.append({
+            "specIndex": spec["specIndex"],
+            "listName": list_name,
+            "accountListId": saved.get("AccountListID") if saved else None,
+        })
+
+    return fixtures
+
+
+# ---------------------------------------------------------------------------
+# AT UI interaction helpers
+# ---------------------------------------------------------------------------
+
+def _clear_session_and_reload(page, base_url: str) -> None:
+    """Clear sessionStorage, reload /analyticstool, and wait for welcome screen."""
+    page.evaluate("() => { window.sessionStorage.clear(); }")
+    page.goto(base_url + "/analyticstool", wait_until="domcontentloaded", timeout=30000)
+    wait_dash_hydrated(page, timeout=30000)
+    # The welcome screen should appear after a fresh load with no session data.
+    # Wait for the DB-import button as the anchor; portfolio buttons render nearby.
+    wait_visible(page, "#at-welcome-add-db-btn", timeout=30000)
+    # Give the welcome screen an extra moment for all buttons to mount.
+    page.wait_for_timeout(500)
+
+
+
+def _stage_portfolio_row(page, row: dict) -> None:
+    """Stage one portfolio row in the portfolio import modal."""
+    portfolio = row["portfolio"]
+    ret_type = row["type"]
+    include_benchmark = row["include_benchmark"]
+    benchmark_type = row.get("benchmark_type", "")
+
+    set_component_props(page, "at-portfolio-add-series-select", {"value": portfolio})
+    page.wait_for_timeout(300)
+    set_component_props(page, "at-portfolio-add-type-select", {"value": ret_type})
+    if include_benchmark:
+        set_component_props(page, "at-portfolio-add-include-benchmark", {"checked": True})
+        page.wait_for_timeout(200)
+        set_component_props(page, "at-portfolio-add-benchmark-type-select", {"value": benchmark_type})
+    else:
+        set_component_props(page, "at-portfolio-add-include-benchmark", {"checked": False})
+
+    page.wait_for_timeout(200)
+    wait_ready(page, "#at-portfolio-add-row-btn", timeout=10000)
+    fire_component_click(page, "at-portfolio-add-row-btn")
+    # Wait for the row to appear in the staged-rows store and OK to become enabled
+    page.wait_for_timeout(500)
+    wait_ready(page, "#at-portfolio-add-ok-button", timeout=10000)
+
+
+
+def _wait_statistics_ready(page, timeout: int = 60000) -> None:
+    """Wait for AT state-ready and statistics grid idle."""
+    wait_for_analytics_state_ready(page, timeout=timeout)
+
+
+def _open_portfolio_import_modal(page, mode: str) -> None:
+    """Open the portfolio import modal with retry logic.
+
+    Uses ``fire_component_click`` (``set_props(n_clicks=…)``) to trigger the
+    Dash callback reliably, retrying up to 3 times with Dash-hydrated waits
+    between attempts.
+    """
+    if mode == "peer":
+        welcome_id = "at-welcome-add-portfolios-peer-btn"
+        menu_id = "at-menu-add-portfolios-peer"
+    else:
+        welcome_id = "at-welcome-add-portfolios-index-btn"
+        menu_id = "at-menu-add-portfolios-index"
+
+    modal_ready = False
+    for _attempt in range(3):
+        # Use fire_component_click which works regardless of element visibility;
+        # try welcome button first, then fall back to the menu trigger.
+        welcome_btn = page.locator(f"#{welcome_id}")
+        triggered = False
+        try:
+            if welcome_btn.count() > 0 and welcome_btn.is_visible(timeout=1000):
+                triggered = fire_component_click(page, welcome_id)
+        except Exception:
+            pass
+        if not triggered:
+            triggered = fire_component_click(page, menu_id)
+
+        try:
+            # Mantine Modals render via a portal; the root #at-portfolio-add-modal
+            # may not appear as a queryable element. Wait for the OK button instead.
+            # The OK button starts disabled (no rows staged), so only check visibility.
+            wait_visible(page, "#at-portfolio-add-ok-button", timeout=10000)
+            modal_ready = True
+            break
+        except Exception:
+            wait_dash_hydrated(page, timeout=10000)
+
+    if not modal_ready:
+        raise RuntimeError(
+            f"Portfolio import modal ({mode}) did not become ready after 3 attempts."
+        )
+
+
+def _import_portfolio(page, mode: str, row: dict) -> dict:
+    """Import a single portfolio via the AT UI (open modal, stage, confirm).
+
+    Returns a dict of checkpoint timestamps (perf_counter values) so the
+    caller can compute granular timing windows::
+
+        modalOpenTs:       after modal is visible and ready for staging
+        seriesModalTs:     after portfolio OK is clicked and series modal appears
+        seriesConfirmedTs: after series modal OK is clicked
+    """
+    _open_portfolio_import_modal(page, mode)
+    _stage_portfolio_row(page, row)
+    modal_open_ts = time.perf_counter()
+
+    # Click portfolio OK → wait for series selection modal
+    wait_ready(page, "#at-portfolio-add-ok-button", timeout=10000)
+    page.locator("#at-portfolio-add-ok-button").click(force=True)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            if not page.locator("#at-portfolio-add-ok-button").is_visible(timeout=500):
+                break
+        except Exception:
+            break
+        time.sleep(0.2)
+    wait_visible(page, "#at-modal-ok-button", timeout=30000)
+    series_modal_ts = time.perf_counter()
+
+    # Confirm series selection
+    wait_ready(page, "#at-modal-ok-button", timeout=10000)
+    page.locator("#at-modal-ok-button").click(force=True)
+    series_confirmed_ts = time.perf_counter()
+
+    return {
+        "modalOpenTs": modal_open_ts,
+        "seriesModalTs": series_modal_ts,
+        "seriesConfirmedTs": series_confirmed_ts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Account-list load helpers
+# ---------------------------------------------------------------------------
+
+def _open_welcome_account_list_load(page) -> None:
+    """Open the account-list modal in load mode from the AT welcome screen."""
+    wait_visible(page, "#at-welcome-load-account-list-btn", timeout=10000)
+    modal_ready = False
+    for _attempt in range(3):
+        triggered = fire_component_click(page, "at-welcome-load-account-list-btn")
+        if not triggered:
+            page.locator("#at-welcome-load-account-list-btn").click(force=True)
+        try:
+            wait_visible(page, "#dashmat-account-list-modal-root", timeout=10000)
+            modal_ready = True
+            break
+        except Exception:
+            wait_dash_hydrated(page, timeout=10000)
+    if not modal_ready:
+        raise RuntimeError("Could not open account-list modal from AT welcome screen.")
+
+
+def _select_and_load_account_list(page, fixture: dict) -> None:
+    """Select and load an account list through the modal's real callback flow.
+
+    Waits for the modal's row-fetch callback to populate the grid, then
+    selects the target row in the AG Grid (which triggers the detail-load
+    callback), waits for the detail to resolve, and clicks Load.
+    """
+    account_list_id = fixture["accountListId"]
+
+    # 1. Wait for the modal's _refresh_account_list_rows callback to populate
+    #    the grid via the real callback chain.  The AG Grid eventually renders
+    #    rows from dashmat-account-list-grid-rows-store.  We detect that by
+    #    waiting for the grid to contain at least one DOM row element.
+    page.wait_for_function(
+        """
+        () => {
+          const grid = document.querySelector('#dashmat-account-list-grid');
+          if (!grid) return false;
+          return grid.querySelectorAll('.ag-row').length > 0;
+        }
+        """,
+        timeout=15000,
+    )
+
+    # 2. Select the target row by setting the AG Grid selectedRows property.
+    #    This triggers _sync_account_list_selected_id → selected-id-store →
+    #    _refresh_account_list_selected_detail → selected-detail-store.
+    #    We read the current rows from the grid's rowData to find our target.
+    rows = page.evaluate(
+        """
+        () => {
+          const grid = document.querySelector('#dashmat-account-list-grid');
+          if (!grid || !grid.props) return [];
+          return grid.props.rowData || [];
+        }
+        """
+    )
+    if not isinstance(rows, list) or not rows:
+        # Fallback: read from Dash store
+        rows = list_account_lists(DB_ENGINE, _get_username(page))
+    target_row = next(
+        (r for r in rows if r.get("AccountListID") == account_list_id),
+        None,
+    )
+    if target_row is None:
+        raise RuntimeError(
+            f"Account list ID {account_list_id} not found in grid rows. "
+            f"Available: {[r.get('AccountListID') for r in rows]}"
+        )
+    set_component_props(page, "dashmat-account-list-grid", {"selectedRows": [target_row]})
+
+    # 3. Wait for the Load button to become enabled (signals that both the
+    #    selected-id and selected-detail callbacks have completed).
+    wait_ready(page, "#dashmat-account-list-load-button", timeout=15000)
+
+    # 4. Click Load through the real callback.
+    fire_component_click(page, "dashmat-account-list-load-button")
+
+
+def _get_username(page) -> str:
+    """Resolve username from the page's userinfo store."""
+    userinfo = get_persisted_store_value(page, "userinfo") or {}
+    username = str((userinfo or {}).get("username") or "").strip()
+    if not username:
+        raise RuntimeError("Could not resolve username from userinfo store.")
+    return username
+
+
+# ---------------------------------------------------------------------------
+# Measurement flows
+# ---------------------------------------------------------------------------
+
+def _measure_import_run(
+    page,
+    request_tracker: DashUpdateRequestTracker,
+    base_url: str,
+    spec: dict,
+) -> dict:
+    """Measure a single import-mode run for one spec."""
+    # Reset to welcome
+    t0 = time.perf_counter()
+    _clear_session_and_reload(page, base_url)
+    request_tracker.wait_for_settle()
+    reset_ms = round((time.perf_counter() - t0) * 1000)
+
+    # Import peer
+    t_peer_start = time.perf_counter()
+    request_tracker.start_window()
+    peer_ts = _import_portfolio(page, "peer", spec["peer"])
+    # modalOpenTs → seriesModalTs: staging + OK click → series modal appears
+    peer_import_to_series_modal_ms = round((peer_ts["seriesModalTs"] - t_peer_start) * 1000)
+    # seriesConfirmedTs onward: series OK clicked → statistics ready
+    peer_series_confirm_ts = peer_ts["seriesConfirmedTs"]
+
+    # Wait for statistics ready after peer
+    _wait_statistics_ready(page)
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    peer_confirm_to_ready_ms = round((time.perf_counter() - peer_series_confirm_ts) * 1000)
+    peer_summary = request_tracker.summary()
+
+    # Import index
+    t_index_start = time.perf_counter()
+    request_tracker.start_window()
+    index_ts = _import_portfolio(page, "index", spec["index"])
+    index_import_to_series_modal_ms = round((index_ts["seriesModalTs"] - t_index_start) * 1000)
+    index_series_confirm_ts = index_ts["seriesConfirmedTs"]
+
+    # Wait for statistics ready after index
+    _wait_statistics_ready(page)
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    index_confirm_to_ready_ms = round((time.perf_counter() - index_series_confirm_ts) * 1000)
+    index_summary = request_tracker.summary()
+
+    total_ms = round((time.perf_counter() - t0) * 1000)
+
+    return {
+        "specIndex": spec["specIndex"],
+        "peerPortfolio": spec["peer"]["portfolio"],
+        "indexPortfolio": spec["index"]["portfolio"],
+        "resetToWelcomeMs": reset_ms,
+        "peerImportToSeriesModalMs": peer_import_to_series_modal_ms,
+        "peerSeriesConfirmToStatisticsReadyMs": peer_confirm_to_ready_ms,
+        "indexImportToSeriesModalMs": index_import_to_series_modal_ms,
+        "indexSeriesConfirmToStatisticsReadyMs": index_confirm_to_ready_ms,
+        "totalRunMs": total_ms,
+        "peerWindow": peer_summary,
+        "indexWindow": index_summary,
+    }
+
+
+def _measure_account_list_run(
+    page,
+    request_tracker: DashUpdateRequestTracker,
+    base_url: str,
+    spec: dict,
+    fixture: dict,
+) -> dict:
+    """Measure a single account-list-mode run for one spec."""
+    # Reset to welcome
+    t0 = time.perf_counter()
+    _clear_session_and_reload(page, base_url)
+    request_tracker.wait_for_settle()
+    reset_ms = round((time.perf_counter() - t0) * 1000)
+
+    # Open account-list load from welcome, select and trigger load
+    t_load_start = time.perf_counter()
+    request_tracker.start_window()
+    _open_welcome_account_list_load(page)
+    _select_and_load_account_list(page, fixture)
+
+    # Wait for statistics ready
+    try:
+        # Account list load triggers a full page reload
+        wait_dash_hydrated(page, timeout=60000)
+        wait_visible(page, "#at-main-app-container", timeout=60000)
+        _wait_statistics_ready(page, timeout=60000)
+    except Exception:
+        # Fallback: the load may navigate; re-wait
+        wait_dash_hydrated(page, timeout=60000)
+        _wait_statistics_ready(page, timeout=60000)
+
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    load_to_ready_ms = round((time.perf_counter() - t_load_start) * 1000)
+    load_summary = request_tracker.summary()
+    total_ms = round((time.perf_counter() - t0) * 1000)
+
+    return {
+        "specIndex": spec["specIndex"],
+        "peerPortfolio": spec["peer"]["portfolio"],
+        "indexPortfolio": spec["index"]["portfolio"],
+        "accountListName": fixture["listName"],
+        "accountListId": fixture["accountListId"],
+        "resetToWelcomeMs": reset_ms,
+        "accountListOpenToReadyMs": load_to_ready_ms,
+        "totalRunMs": total_ms,
+        "accountListWindow": load_summary,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Summarization
+# ---------------------------------------------------------------------------
+
+def _summarize_import_runs(run_results: list[dict]) -> dict:
+    """Summarize import-mode timing results."""
+    if not run_results:
+        return {"runs": 0}
+
+    reset_ms = [r["resetToWelcomeMs"] for r in run_results]
+    peer_import_ms = [r["peerImportToSeriesModalMs"] for r in run_results]
+    peer_ready_ms = [r["peerSeriesConfirmToStatisticsReadyMs"] for r in run_results]
+    index_import_ms = [r["indexImportToSeriesModalMs"] for r in run_results]
+    index_ready_ms = [r["indexSeriesConfirmToStatisticsReadyMs"] for r in run_results]
+    total_ms = [r["totalRunMs"] for r in run_results]
+
+    callback_counter: Counter[str] = Counter()
+    for run in run_results:
+        for window_key in ("peerWindow", "indexWindow"):
+            window = run.get(window_key, {})
+            for request in window.get("dashUpdateRequests", []):
+                for output_id in request.get("outputs", []):
+                    callback_counter[output_id] += 1
+
+    return {
+        "runs": len(run_results),
+        "resetToWelcomeMs": reset_ms,
+        "resetToWelcomeMedian": round(median(reset_ms)),
+        "peerImportToSeriesModalMs": peer_import_ms,
+        "peerImportToSeriesModalMedian": round(median(peer_import_ms)),
+        "peerSeriesConfirmToStatisticsReadyMs": peer_ready_ms,
+        "peerSeriesConfirmToStatisticsReadyMedian": round(median(peer_ready_ms)),
+        "indexImportToSeriesModalMs": index_import_ms,
+        "indexImportToSeriesModalMedian": round(median(index_import_ms)),
+        "indexSeriesConfirmToStatisticsReadyMs": index_ready_ms,
+        "indexSeriesConfirmToStatisticsReadyMedian": round(median(index_ready_ms)),
+        "totalRunMs": total_ms,
+        "totalRunMedian": round(median(total_ms)),
+        "topCallbacksByFrequency": [
+            {"callback": cb, "count": count}
+            for cb, count in callback_counter.most_common(12)
+        ],
+        "runResults": run_results,
+    }
+
+
+def _summarize_account_list_runs(run_results: list[dict]) -> dict:
+    """Summarize account-list-mode timing results."""
+    if not run_results:
+        return {"runs": 0}
+
+    reset_ms = [r["resetToWelcomeMs"] for r in run_results]
+    load_ms = [r["accountListOpenToReadyMs"] for r in run_results]
+    total_ms = [r["totalRunMs"] for r in run_results]
+
+    callback_counter: Counter[str] = Counter()
+    for run in run_results:
+        window = run.get("accountListWindow", {})
+        for request in window.get("dashUpdateRequests", []):
+            for output_id in request.get("outputs", []):
+                callback_counter[output_id] += 1
+
+    return {
+        "runs": len(run_results),
+        "resetToWelcomeMs": reset_ms,
+        "resetToWelcomeMedian": round(median(reset_ms)),
+        "accountListOpenToReadyMs": load_ms,
+        "accountListOpenToReadyMedian": round(median(load_ms)),
+        "totalRunMs": total_ms,
+        "totalRunMedian": round(median(total_ms)),
+        "topCallbacksByFrequency": [
+            {"callback": cb, "count": count}
+            for cb, count in callback_counter.most_common(12)
+        ],
+        "runResults": run_results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="AT Statistics harness")
+    parser.add_argument("--repo-root", default="")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8050")
+    parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--label", default="")
+    parser.add_argument("--git-ref", default="")
+    parser.add_argument("--startup-timeout", type=int, default=30)
+    parser.add_argument("--skip-db-build", action="store_true")
+    parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--server-log", default="")
+    parser.add_argument("--mode", choices=["imports", "account-list"], default="imports")
+    return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Main harness
+# ---------------------------------------------------------------------------
+
+def run_harness(
+    base_url: str,
+    runs: int,
+    label: str,
+    headed: bool,
+    server_log: Path | None,
+    mode: str,
+) -> dict:
+    console_messages: list[dict[str, str]] = []
+
+    # Build run specs
+    specs = build_run_specs(DB_ENGINE)
+    print(f"RUN_SPECS={json.dumps([{'peer': s['peer']['portfolio'], 'index': s['index']['portfolio']} for s in specs], separators=(',', ':'))}", flush=True)
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=not headed)
+        page = browser.new_page(viewport={"width": 1440, "height": 960})
+        request_tracker = DashUpdateRequestTracker(page)
+
+        def on_console(msg) -> None:
+            if len(console_messages) >= 120:
+                return
+            if msg.type in {"error", "warning"}:
+                console_messages.append({"type": msg.type, "text": msg.text})
+
+        def on_page_error(err) -> None:
+            if len(console_messages) >= 120:
+                return
+            console_messages.append({"type": "pageerror", "text": str(err)})
+
+        page.on("console", on_console)
+        page.on("pageerror", on_page_error)
+
+        # Warmup: open /analyticstool and run AA DB retrieval once
+        renderer_mode = warm_analytics_db(page, base_url, DEFAULT_DB_SERIES)
+        _wait_statistics_ready(page)
+        print("WARMUP=aa_db_complete", flush=True)
+
+        # Create account-list fixtures if needed
+        account_list_fixtures: list[dict] | None = None
+        if mode == "account-list":
+            username = _get_username(page)
+            account_list_fixtures = create_account_list_fixtures(DB_ENGINE, username, specs)
+            print(f"FIXTURES={json.dumps(account_list_fixtures, separators=(',', ':'))}", flush=True)
+
+        # Rehearsal: one unmeasured run with the first spec
+        print("REHEARSAL=starting", flush=True)
+        if mode == "imports":
+            _measure_import_run(page, request_tracker, base_url, specs[0])
+        else:
+            _measure_account_list_run(page, request_tracker, base_url, specs[0], account_list_fixtures[0])
+        print("REHEARSAL=complete", flush=True)
+
+        # Measured runs
+        timing_start_offset = current_log_offset(server_log)
+        run_results: list[dict] = []
+        for i in range(runs):
+            spec = specs[i % len(specs)]
+            print(f"RUN={i + 1}/{runs} spec={spec['specIndex']} peer={spec['peer']['portfolio']} index={spec['index']['portfolio']}", flush=True)
+
+            if mode == "imports":
+                result = _measure_import_run(page, request_tracker, base_url, spec)
+            else:
+                fixture = account_list_fixtures[spec["specIndex"]]
+                result = _measure_account_list_run(page, request_tracker, base_url, spec, fixture)
+
+            run_results.append(result)
+            print(f"RUN={i + 1}/{runs} totalMs={result['totalRunMs']}", flush=True)
+
+        browser.close()
+
+    # Summarize
+    if mode == "imports":
+        summary = _summarize_import_runs(run_results)
+    else:
+        summary = _summarize_account_list_runs(run_results)
+
+    warmup_flow = "analyticstool-aa-db-import+statistics-ready"
+    return {
+        "ok": True,
+        "label": label,
+        "baseUrl": base_url,
+        "mode": mode,
+        "warmupFlow": warmup_flow,
+        "rendererMode": renderer_mode,
+        "runs": runs,
+        "runSpecs": [
+            {
+                "specIndex": s["specIndex"],
+                "peerPortfolio": s["peer"]["portfolio"],
+                "peerType": s["peer"]["type"],
+                "peerBenchmarkType": s["peer"]["benchmark_type"],
+                "indexPortfolio": s["index"]["portfolio"],
+                "indexType": s["index"]["type"],
+                "indexBenchmarkType": s["index"]["benchmark_type"],
+            }
+            for s in specs
+        ],
+        "accountListFixtures": account_list_fixtures,
+        "summary": summary,
+        "consoleMessages": console_messages,
+        "timingStartOffset": timing_start_offset,
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    root = resolve_repo_root(args.repo_root)
+    out_dir = root / "output" / "playwright"
+    fail_dir = out_dir / "failures"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fail_dir.mkdir(parents=True, exist_ok=True)
+    resolved_git_ref = resolve_git_ref(root, args.git_ref)
+
+    if args.skip_db_build:
+        db_rebuilt = False
+        db_rebuild_reasons: list[str] = []
+    else:
+        db_rebuilt, db_rebuild_reasons = ensure_local_seed_databases(root)
+
+    timestamp_str = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    mode_token = sanitize_token(args.mode, "imports")
+    stem = f"at_statistics_{timestamp_str}_{sanitize_token(args.label, 'run')}_{mode_token}_{sanitize_token((resolved_git_ref or 'unknown')[:8], 'unknown')}"
+    server_log_path = Path(args.server_log).resolve() if args.server_log else None
+
+    try:
+        wait_for_app(args.base_url, args.startup_timeout)
+        result = run_harness(
+            base_url=args.base_url,
+            runs=args.runs,
+            label=args.label,
+            headed=args.headed,
+            server_log=server_log_path,
+            mode=args.mode,
+        )
+    except Exception as exc:
+        console_messages: list[dict[str, str]] = []
+        raw_path = write_failure_artifacts(
+            out_dir=out_dir,
+            fail_dir=fail_dir,
+            stem=stem,
+            repo_root=root,
+            base_url=args.base_url,
+            git_ref=resolved_git_ref,
+            label=args.label,
+            db_series=DEFAULT_DB_SERIES,
+            startup_timeout=args.startup_timeout,
+            console_messages=console_messages,
+            exc=exc,
+        )
+        print(f"RAW_PATH={raw_path}")
+        print(traceback.format_exc())
+        return 1
+
+    timing_summary = parse_timing_log(server_log_path, start_offset=result.get("timingStartOffset", 0))
+    timing_summary["copiedPath"] = copy_server_log(server_log_path, out_dir, stem)
+
+    out_path = out_dir / f"{stem}.json"
+    payload = {
+        "timestamp": datetime.now().astimezone().isoformat(),
+        "label": result["label"],
+        "gitRef": resolved_git_ref,
+        "rendererMode": result["rendererMode"],
+        "baseUrl": result["baseUrl"],
+        "repoRoot": str(root),
+        "mode": result["mode"],
+        "warmupFlow": result["warmupFlow"],
+        "runs": result["runs"],
+        "dbRebuilt": db_rebuilt,
+        "dbRebuildReasons": db_rebuild_reasons,
+        "runSpecs": result["runSpecs"],
+        "accountListFixtures": result["accountListFixtures"],
+        "summary": result["summary"],
+        "consoleMessages": result["consoleMessages"],
+        "timingSummary": timing_summary,
+    }
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    print(f"OUT_PATH={out_path}")
+    print("SUMMARY=" + json.dumps(result["summary"], separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
