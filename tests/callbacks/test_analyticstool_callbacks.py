@@ -2260,6 +2260,7 @@ def test_update_factor_series_select_includes_unselected_series(page_modules, ra
         [],
         None,
         None,
+        None,
     )
 
     ordered_values = [opt["value"] for opt in options]
@@ -2280,6 +2281,7 @@ def test_update_factor_series_select_includes_saved_and_session_definitions(page
         ["Asset_A"],
         [{"FactorName": "SavedFactor"}],
         [{"FactorName": "SessionFactor"}],
+        None,
         None,
         None,
     )

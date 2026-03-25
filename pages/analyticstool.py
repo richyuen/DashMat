@@ -6514,6 +6514,7 @@ clientside_callback(
     State("at-factor-definitions-local-store", "data"),
     State("at-factor-series-store", "data"),
     State("at-factor-series-select", "value"),
+    State("at-factor-series-select-conditional", "value"),
     prevent_initial_call="initial_duplicate",
 )
 def update_factor_series_select(
@@ -6525,6 +6526,7 @@ def update_factor_series_select(
     local_definitions,
     stored_factor_series,
     current_factor_series,
+    current_conditional_factor_series,
 ):
     """Expose raw and custom factor candidates, with selected raw series first."""
     trigger_payload = (
@@ -6566,8 +6568,20 @@ def update_factor_series_select(
 
     raw_name_set = set(ordered)
     definition_name_set = set(definition_names)
+    # Use the authoritative value from whichever tab triggered: the
+    # conditional select may not have mirrored to the factor select yet
+    # (clientside trigger fires before the server mirror callback).
+    triggered_by_conditional = isinstance(conditional_trigger_payload, dict) and (
+        not isinstance(factor_trigger_payload, dict)
+        or str(conditional_trigger_payload.get("tab") or "") == "conditional_returns"
+    )
+    authoritative_value = (
+        current_conditional_factor_series
+        if triggered_by_conditional
+        else current_factor_series
+    )
     candidate_order = [
-        current_factor_series,
+        authoritative_value,
         stored_factor_series,
         f"raw::{selected_order[0]}" if selected_order else None,
         f"raw::{ordered[0]}" if ordered else None,
