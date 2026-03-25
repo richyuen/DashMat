@@ -2272,7 +2272,9 @@ def test_reset_factor_draft_from_new_button_and_clear(monkeypatch, page_modules)
     analyticstool, _ = page_modules
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-new-btn"})())
-    draft, select_value, msg, color, hide = analyticstool.at_reset_factor_definition_draft(1, "db::DBFactor")
+    select_data, draft, select_value, msg, color, hide = analyticstool.at_factor_definition_selection(
+        [], [], "db::DBFactor", 1, None,
+    )
     assert draft["DraftMode"] == "new"
     assert select_value is None
     assert color == "blue"
@@ -2280,7 +2282,9 @@ def test_reset_factor_draft_from_new_button_and_clear(monkeypatch, page_modules)
     assert "New session factor draft started." in msg
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-select"})())
-    draft2, select_value2, msg2, color2, hide2 = analyticstool.at_reset_factor_definition_draft(0, None)
+    select_data2, draft2, select_value2, msg2, color2, hide2 = analyticstool.at_factor_definition_selection(
+        [], [], None, 0, None,
+    )
     assert draft2["DraftMode"] == "new"
     assert select_value2 is no_update
     assert color2 == "blue"
@@ -2297,24 +2301,18 @@ def test_use_factor_promotes_edited_db_draft_to_session(monkeypatch, page_module
     draft["sync_origin"] = "form"
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-use-btn"})())
-    out = analyticstool.at_manage_factor_definitions(
-        None,
-        None,
-        None,
-        1,
-        None,
-        draft,
-        [],
-        [db_def],
-        True,
+    out = analyticstool.at_factor_definition_actions(
+        None, None, None, None, 1, None,
+        True, draft, "daily", None,
+        [], [db_def], True,
         {"role": "Admin", "username": "tester"},
     )
 
-    local_rows = out[0]
+    local_rows = out[1]
     assert isinstance(local_rows, list)
     assert any(str(item.get("FactorName")) == "SessionFactor" for item in local_rows)
-    assert out[4] == "def::SessionFactor"
-    assert "Session factor selected for analysis." in out[6]
+    assert out[5] == "def::SessionFactor"
+    assert "Session factor selected for analysis." in out[7]
 
 
 def test_use_factor_keeps_db_selection_when_unchanged(monkeypatch, page_modules):
@@ -2324,22 +2322,16 @@ def test_use_factor_keeps_db_selection_when_unchanged(monkeypatch, page_modules)
     draft["DraftMode"] = "db"
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-use-btn"})())
-    out = analyticstool.at_manage_factor_definitions(
-        None,
-        None,
-        None,
-        1,
-        None,
-        draft,
-        [],
-        [db_def],
-        True,
+    out = analyticstool.at_factor_definition_actions(
+        None, None, None, None, 1, None,
+        True, draft, "daily", None,
+        [], [db_def], True,
         {"role": "Admin", "username": "tester"},
     )
 
-    assert out[0] is no_update
-    assert out[4] == "def::DBFactor"
-    assert "Database factor selected for analysis." in out[6]
+    assert out[1] is no_update
+    assert out[5] == "def::DBFactor"
+    assert "Database factor selected for analysis." in out[7]
 
 
 def test_use_factor_blocks_db_name_collision_for_edited_db_draft(monkeypatch, page_modules):
@@ -2351,28 +2343,23 @@ def test_use_factor_blocks_db_name_collision_for_edited_db_draft(monkeypatch, pa
     draft["sync_origin"] = "form"
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-use-btn"})())
-    out = analyticstool.at_manage_factor_definitions(
-        None,
-        None,
-        None,
-        1,
-        None,
-        draft,
-        [],
-        [db_def],
-        True,
+    out = analyticstool.at_factor_definition_actions(
+        None, None, None, None, 1, None,
+        True, draft, "daily", None,
+        [], [db_def], True,
         {"role": "Admin", "username": "tester"},
     )
 
-    assert out[0] is no_update
-    assert out[6].startswith("Rename the factor to create a session copy")
-    assert out[7] == "orange"
+    assert out[1] is no_update
+    assert out[7].startswith("Rename the factor to create a session copy")
+    assert out[8] == "orange"
 
 
-def test_sync_factor_definition_form_ignores_form_origin_updates(page_modules):
+def test_sync_factor_definition_form_ignores_form_origin_updates(monkeypatch, page_modules):
     analyticstool, _ = page_modules
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-modal-draft-store"})())
     with pytest.raises(PreventUpdate):
-        analyticstool.at_sync_factor_definition_form(
+        analyticstool.at_factor_definition_form_sync(
             {
                 "sync_origin": "form",
                 "FactorName": "MyFactor",
@@ -2381,15 +2368,19 @@ def test_sync_factor_definition_form_ignores_form_origin_updates(page_modules):
                 "LongAggType": 1,
                 "LongLag": 0,
                 "OutputTransform": 0,
-            }
+            },
+            "MyFactor", "line 1\nline 2", ["ACC1 TRIndex"], [],
+            "1", None, 0, "0",
         )
 
 
-def test_update_factor_definition_draft_preserves_description_text(page_modules):
+def test_update_factor_definition_draft_preserves_description_text(monkeypatch, page_modules):
     analyticstool, _ = page_modules
 
     current = analyticstool._default_factor_draft()
-    updated = analyticstool.at_update_factor_definition_draft_from_form(
+    monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-factor-def-name-input"})())
+    result = analyticstool.at_factor_definition_form_sync(
+        current,
         "MyFactor",
         "line 1\n",
         ["ACC1 TRIndex"],
@@ -2398,8 +2389,8 @@ def test_update_factor_definition_draft_preserves_description_text(page_modules)
         None,
         0,
         "0",
-        current,
     )
+    updated = result[0]
 
     assert updated["sync_origin"] == "form"
     assert updated["Description"] == "line 1\n"
@@ -3186,7 +3177,9 @@ def test_reset_regime_draft_from_new_button_and_clear(monkeypatch, page_modules)
     analyticstool, _ = page_modules
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-new-btn"})())
-    draft, select_value, msg, color, hide = analyticstool.at_reset_regime_definition_draft(1, "db::DBRegime")
+    select_data, draft, select_value, msg, color, hide = analyticstool.at_regime_definition_selection(
+        [], [], "db::DBRegime", 1, None,
+    )
     assert draft["DraftMode"] == "new"
     assert select_value is None
     assert color == "blue"
@@ -3194,7 +3187,9 @@ def test_reset_regime_draft_from_new_button_and_clear(monkeypatch, page_modules)
     assert "New session regime draft started." in msg
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-select"})())
-    draft2, select_value2, msg2, color2, hide2 = analyticstool.at_reset_regime_definition_draft(0, None)
+    select_data2, draft2, select_value2, msg2, color2, hide2 = analyticstool.at_regime_definition_selection(
+        [], [], None, 0, None,
+    )
     assert draft2["DraftMode"] == "new"
     assert select_value2 is no_update
     assert color2 == "blue"
@@ -3211,24 +3206,18 @@ def test_use_regime_promotes_edited_db_draft_to_session(monkeypatch, page_module
     draft["sync_origin"] = "form"
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-use-btn"})())
-    out = analyticstool.at_manage_regime_definitions(
-        None,
-        None,
-        None,
-        1,
-        None,
-        draft,
-        [],
-        [db_def],
-        True,
+    out = analyticstool.at_regime_definition_actions(
+        None, None, None, None, 1, None,
+        True, draft, None, "daily", None, None,
+        [], [db_def], True,
         {"role": "Admin", "username": "tester"},
     )
 
-    local_rows = out[0]
+    local_rows = out[2]
     assert isinstance(local_rows, list)
     assert any(str(item.get("RegimeName")) == "SessionRegime" for item in local_rows)
-    assert out[4] == "def::SessionRegime"
-    assert "Session regime selected for analysis." in out[6]
+    assert out[6] == "def::SessionRegime"
+    assert "Session regime selected for analysis." in out[8]
 
 
 def test_use_regime_keeps_db_selection_when_unchanged(monkeypatch, page_modules):
@@ -3238,22 +3227,16 @@ def test_use_regime_keeps_db_selection_when_unchanged(monkeypatch, page_modules)
     draft["DraftMode"] = "db"
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-use-btn"})())
-    out = analyticstool.at_manage_regime_definitions(
-        None,
-        None,
-        None,
-        1,
-        None,
-        draft,
-        [],
-        [db_def],
-        True,
+    out = analyticstool.at_regime_definition_actions(
+        None, None, None, None, 1, None,
+        True, draft, None, "daily", None, None,
+        [], [db_def], True,
         {"role": "Admin", "username": "tester"},
     )
 
-    assert out[0] is no_update
-    assert out[4] == "def::DBRegime"
-    assert "Database regime selected for analysis." in out[6]
+    assert out[2] is no_update
+    assert out[6] == "def::DBRegime"
+    assert "Database regime selected for analysis." in out[8]
 
 
 def test_use_regime_blocks_db_name_collision_for_edited_db_draft(monkeypatch, page_modules):
@@ -3265,22 +3248,16 @@ def test_use_regime_blocks_db_name_collision_for_edited_db_draft(monkeypatch, pa
     draft["sync_origin"] = "form"
 
     monkeypatch.setattr(analyticstool, "callback_context", type("Ctx", (), {"triggered_id": "at-regime-def-use-btn"})())
-    out = analyticstool.at_manage_regime_definitions(
-        None,
-        None,
-        None,
-        1,
-        None,
-        draft,
-        [],
-        [db_def],
-        True,
+    out = analyticstool.at_regime_definition_actions(
+        None, None, None, None, 1, None,
+        True, draft, None, "daily", None, None,
+        [], [db_def], True,
         {"role": "Admin", "username": "tester"},
     )
 
-    assert out[0] is no_update
-    assert out[6].startswith("Rename the regime to create a session copy")
-    assert out[7] == "orange"
+    assert out[2] is no_update
+    assert out[8].startswith("Rename the regime to create a session copy")
+    assert out[9] == "orange"
 
 
 def test_lazy_load_factor_and_regime_definitions_on_first_tab_open(monkeypatch, page_modules):

@@ -6474,18 +6474,6 @@ def sync_factor_control_mirrors(
 @callback(
     Output("at-factor-def-modal", "opened", allow_duplicate=True),
     Output("at-factor-def-status-alert", "hide", allow_duplicate=True),
-    Input("at-menu-add-factor", "n_clicks"),
-    Input("at-factor-open-modal-btn", "n_clicks"),
-    Input("at-factor-open-modal-btn-conditional", "n_clicks"),
-    prevent_initial_call=True,
-)
-def at_open_factor_definition_modal(menu_clicks, tab_clicks, conditional_tab_clicks):
-    if not menu_clicks and not tab_clicks and not conditional_tab_clicks:
-        raise PreventUpdate
-    return True, True
-
-
-@callback(
     Output("at-factor-def-db-available-store", "data", allow_duplicate=True),
     Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
     Output("at-factor-def-loaded-store", "data", allow_duplicate=True),
@@ -6493,88 +6481,83 @@ def at_open_factor_definition_modal(menu_clicks, tab_clicks, conditional_tab_cli
     Output("at-factor-def-short-components", "data"),
     Output("at-factor-def-db-available-note", "children"),
     Output("at-factor-def-save-db-btn", "disabled"),
-    Input("at-factor-def-modal", "opened"),
+    Input("at-menu-add-factor", "n_clicks"),
+    Input("at-factor-open-modal-btn", "n_clicks"),
+    Input("at-factor-open-modal-btn-conditional", "n_clicks"),
     prevent_initial_call=True,
 )
-def at_load_factor_modal_data(opened):
-    if not opened:
+def at_factor_modal_lifecycle(menu_clicks, tab_clicks, conditional_tab_clicks):
+    if not menu_clicks and not tab_clicks and not conditional_tab_clicks:
         raise PreventUpdate
     component_options = get_sec_factor_component_options_cached(MRD_ENGINE)
     db_available = factor_tables_available(DB_ENGINE)
     db_definitions = load_factor_definitions(DB_ENGINE) if db_available else []
     note = "" if db_available else "Database factor tables are unavailable. Session factors are still supported."
-    return db_available, db_definitions, True, component_options, component_options, note, (not db_available)
+    return True, True, db_available, db_definitions, True, component_options, component_options, note, (not db_available)
 
 
 @callback(
     Output("at-factor-def-select", "data"),
-    Input("at-factor-definitions-db-store", "data"),
-    Input("at-factor-definitions-local-store", "data"),
-    prevent_initial_call=True,
-)
-def at_update_factor_definition_select_options(db_definitions, local_definitions):
-    entries = _factor_option_definitions(db_definitions, local_definitions)
-    options = []
-    for entry in entries:
-        source_label = _source_badge(entry["source"])
-        options.append(
-            {
-                "value": _factor_select_key(entry["source"], entry["name"]),
-                "label": f"{source_label} {entry['name']}",
-            }
-        )
-    return options
-
-
-@callback(
-    Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
-    Input("at-factor-def-select", "value"),
-    State("at-factor-definitions-db-store", "data"),
-    State("at-factor-definitions-local-store", "data"),
-    State("at-factor-def-modal-draft-store", "data"),
-    prevent_initial_call=True,
-)
-def at_load_selected_factor_definition(selected_key, db_definitions, local_definitions, current_draft):
-    if not selected_key:
-        raise PreventUpdate
-    current = _ensure_factor_draft(current_draft)
-    if current.get("selected_key") == selected_key:
-        raise PreventUpdate
-
-    source, name = _split_factor_select_key(selected_key)
-    if source == "db":
-        definition = _lookup_factor_definition(name, db_definitions, [])
-        if not definition:
-            raise PreventUpdate
-        return _definition_to_draft(definition, "db", selected_key=selected_key)
-    if source == "session":
-        definition = _lookup_factor_definition(name, [], local_definitions)
-        if not definition:
-            raise PreventUpdate
-        return _definition_to_draft(definition, "session", selected_key=selected_key)
-    raise PreventUpdate
-
-
-@callback(
     Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
     Output("at-factor-def-select", "value", allow_duplicate=True),
     Output("at-factor-def-status-alert", "children", allow_duplicate=True),
     Output("at-factor-def-status-alert", "color", allow_duplicate=True),
     Output("at-factor-def-status-alert", "hide", allow_duplicate=True),
-    Input("at-factor-def-new-btn", "n_clicks"),
+    Input("at-factor-definitions-db-store", "data"),
+    Input("at-factor-definitions-local-store", "data"),
     Input("at-factor-def-select", "value"),
+    Input("at-factor-def-new-btn", "n_clicks"),
+    State("at-factor-def-modal-draft-store", "data"),
     prevent_initial_call=True,
 )
-def at_reset_factor_definition_draft(new_clicks, selected_key):
+def at_factor_definition_selection(
+    db_definitions, local_definitions, selected_key, new_clicks, current_draft
+):
     triggered = callback_context.triggered_id
-    if triggered == "at-factor-def-new-btn" and new_clicks:
-        return _default_factor_draft(), None, "New session factor draft started.", "blue", False
-    if triggered == "at-factor-def-select" and not selected_key:
-        return _default_factor_draft(), no_update, "New session factor draft started.", "blue", False
+    n_no = no_update
+
+    if triggered in ("at-factor-definitions-db-store", "at-factor-definitions-local-store"):
+        entries = _factor_option_definitions(db_definitions, local_definitions)
+        options = []
+        for entry in entries:
+            source_label = _source_badge(entry["source"])
+            options.append(
+                {
+                    "value": _factor_select_key(entry["source"], entry["name"]),
+                    "label": f"{source_label} {entry['name']}",
+                }
+            )
+        return options, n_no, n_no, n_no, n_no, n_no
+
+    if triggered == "at-factor-def-new-btn":
+        if not new_clicks:
+            raise PreventUpdate
+        return n_no, _default_factor_draft(), None, "New session factor draft started.", "blue", False
+
+    if triggered == "at-factor-def-select":
+        if not selected_key:
+            return n_no, _default_factor_draft(), n_no, "New session factor draft started.", "blue", False
+        current = _ensure_factor_draft(current_draft)
+        if current.get("selected_key") == selected_key:
+            raise PreventUpdate
+        source, name = _split_factor_select_key(selected_key)
+        if source == "db":
+            definition = _lookup_factor_definition(name, db_definitions, [])
+            if not definition:
+                raise PreventUpdate
+            return n_no, _definition_to_draft(definition, "db", selected_key=selected_key), n_no, n_no, n_no, True
+        if source == "session":
+            definition = _lookup_factor_definition(name, [], local_definitions)
+            if not definition:
+                raise PreventUpdate
+            return n_no, _definition_to_draft(definition, "session", selected_key=selected_key), n_no, n_no, n_no, True
+        raise PreventUpdate
+
     raise PreventUpdate
 
 
 @callback(
+    Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
     Output("at-factor-def-select", "value", allow_duplicate=True),
     Output("at-factor-def-name-input", "value"),
     Output("at-factor-def-description-input", "value"),
@@ -6585,32 +6568,6 @@ def at_reset_factor_definition_draft(new_clicks, selected_key):
     Output("at-factor-def-long-lag", "value"),
     Output("at-factor-def-output-transform", "value"),
     Input("at-factor-def-modal-draft-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def at_sync_factor_definition_form(draft_data):
-    draft = _ensure_factor_draft(draft_data)
-    if draft.get("sync_origin") == "form":
-        raise PreventUpdate
-
-    long_agg = str(int(draft.get("LongAggType") or 1))
-    short_agg = draft.get("ShortAggType")
-    short_agg_value = str(int(short_agg)) if short_agg is not None else None
-    output_transform = str(int(draft.get("OutputTransform") or 0))
-    return (
-        draft.get("selected_key"),
-        draft.get("FactorName") or "",
-        draft.get("Description") or "",
-        draft.get("LongComponentList") or [],
-        draft.get("ShortComponentList") or [],
-        long_agg,
-        short_agg_value,
-        int(draft.get("LongLag") or 0),
-        output_transform,
-    )
-
-
-@callback(
-    Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
     Input("at-factor-def-name-input", "value"),
     Input("at-factor-def-description-input", "value"),
     Input("at-factor-def-long-components", "value"),
@@ -6619,10 +6576,10 @@ def at_sync_factor_definition_form(draft_data):
     Input("at-factor-def-short-agg-type", "value"),
     Input("at-factor-def-long-lag", "value"),
     Input("at-factor-def-output-transform", "value"),
-    State("at-factor-def-modal-draft-store", "data"),
     prevent_initial_call=True,
 )
-def at_update_factor_definition_draft_from_form(
+def at_factor_definition_form_sync(
+    draft_data,
     factor_name,
     description,
     long_components,
@@ -6631,8 +6588,32 @@ def at_update_factor_definition_draft_from_form(
     short_agg_type,
     long_lag,
     output_transform,
-    draft_data,
 ):
+    triggered = callback_context.triggered_id
+    n_no = no_update
+
+    if triggered == "at-factor-def-modal-draft-store":
+        draft = _ensure_factor_draft(draft_data)
+        if draft.get("sync_origin") == "form":
+            raise PreventUpdate
+        long_agg = str(int(draft.get("LongAggType") or 1))
+        short_agg = draft.get("ShortAggType")
+        short_agg_value = str(int(short_agg)) if short_agg is not None else None
+        output_transform_val = str(int(draft.get("OutputTransform") or 0))
+        return (
+            n_no,
+            draft.get("selected_key"),
+            draft.get("FactorName") or "",
+            draft.get("Description") or "",
+            draft.get("LongComponentList") or [],
+            draft.get("ShortComponentList") or [],
+            long_agg,
+            short_agg_value,
+            int(draft.get("LongLag") or 0),
+            output_transform_val,
+        )
+
+    # Form field changed → update draft
     draft = _ensure_factor_draft(draft_data)
     next_draft = dict(draft)
     next_draft["sync_origin"] = "form"
@@ -6647,45 +6628,12 @@ def at_update_factor_definition_draft_from_form(
     next_draft["OutputTransform"] = int(pd.to_numeric(pd.Series([output_transform]), errors="coerce").iloc[0] or 0)
     if next_draft == draft:
         raise PreventUpdate
-    return next_draft
+    return next_draft, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+
 
 
 @callback(
     Output("at-factor-def-preview-lines", "children"),
-    Input("at-factor-preview-trigger-store", "data"),
-    State("at-factor-def-modal", "opened"),
-    State("at-factor-def-modal-draft-store", "data"),
-    State("at-periodicity-select", "value"),
-    State("at-date-range-store", "data"),
-    prevent_initial_call=True,
-)
-def at_update_factor_definition_preview(trigger_payload, opened, draft_data, periodicity, date_range):
-    if not isinstance(trigger_payload, dict) or not trigger_payload.get("opened"):
-        raise PreventUpdate
-    if not opened:
-        raise PreventUpdate
-
-    payload = _draft_to_definition_payload(draft_data or {})
-    normalized, error = validate_factor_definition_payload(payload)
-    if error or not normalized:
-        return "Define a valid factor to preview values."
-
-    lines = compute_factor_preview_lines(
-        MRD_ENGINE,
-        normalized,
-        periodicity or "daily",
-        date_range,
-        max_rows=6,
-    )
-    if not lines:
-        return "No rows returned for the current factor definition and date range."
-    return "\n".join(lines)
-
-
-
-
-
-@callback(
     Output("at-factor-definitions-local-store", "data", allow_duplicate=True),
     Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
     Output("at-factor-def-modal-draft-store", "data", allow_duplicate=True),
@@ -6695,25 +6643,33 @@ def at_update_factor_definition_preview(trigger_payload, opened, draft_data, per
     Output("at-factor-def-status-alert", "children", allow_duplicate=True),
     Output("at-factor-def-status-alert", "color", allow_duplicate=True),
     Output("at-factor-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-factor-preview-trigger-store", "data"),
     Input("at-factor-def-save-local-btn", "n_clicks"),
     Input("at-factor-def-save-db-btn", "n_clicks"),
     Input("at-factor-def-delete-btn", "n_clicks"),
     Input("at-factor-def-use-btn", "n_clicks"),
     Input("at-factor-def-close-btn", "n_clicks"),
+    State("at-factor-def-modal", "opened"),
     State("at-factor-def-modal-draft-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-date-range-store", "data"),
     State("at-factor-definitions-local-store", "data"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-def-db-available-store", "data"),
     State("userinfo", "data"),
     prevent_initial_call=True,
 )
-def at_manage_factor_definitions(
+def at_factor_definition_actions(
+    trigger_payload,
     save_local_clicks,
     save_db_clicks,
     delete_clicks,
     use_clicks,
     close_clicks,
+    modal_opened,
     draft_data,
+    periodicity,
+    date_range,
     local_definitions,
     db_definitions,
     db_available,
@@ -6721,18 +6677,37 @@ def at_manage_factor_definitions(
 ):
     triggered = callback_context.triggered_id
     n_no = no_update
+
+    # --- Preview path (merged from at_update_factor_definition_preview) ---
+    if triggered == "at-factor-preview-trigger-store":
+        if not isinstance(trigger_payload, dict) or not trigger_payload.get("opened"):
+            raise PreventUpdate
+        if not modal_opened:
+            raise PreventUpdate
+        payload = _draft_to_definition_payload(draft_data or {})
+        normalized, error = validate_factor_definition_payload(payload)
+        if error or not normalized:
+            return "Define a valid factor to preview values.", n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+        lines = compute_factor_preview_lines(
+            MRD_ENGINE, normalized, periodicity or "daily", date_range, max_rows=6,
+        )
+        if not lines:
+            return "No rows returned for the current factor definition and date range.", n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+        return "\n".join(lines), n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+
+    # --- Manage path (merged from at_manage_factor_definitions) ---
     draft = _ensure_factor_draft(draft_data)
     local_list = [dict(item) for item in (local_definitions or []) if isinstance(item, dict)]
     update_by = _factor_user_label(userinfo)
 
     if triggered == "at-factor-def-close-btn":
-        return n_no, n_no, n_no, n_no, n_no, False, n_no, n_no, True
+        return n_no, n_no, n_no, n_no, n_no, n_no, False, n_no, n_no, True
 
     payload = _draft_to_definition_payload(draft)
     normalized, error = validate_factor_definition_payload(payload)
     if triggered in {"at-factor-def-save-local-btn", "at-factor-def-save-db-btn", "at-factor-def-use-btn"}:
         if error or not normalized:
-            return n_no, n_no, n_no, n_no, n_no, n_no, error or "Invalid factor definition.", "red", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, error or "Invalid factor definition.", "red", False
     else:
         normalized = normalized or {}
 
@@ -6750,6 +6725,7 @@ def at_manage_factor_definitions(
 
         next_draft = _definition_to_draft(saved_item, "session")
         return (
+            n_no,
             updated_local,
             n_no,
             next_draft,
@@ -6763,7 +6739,7 @@ def at_manage_factor_definitions(
 
     if triggered == "at-factor-def-save-db-btn":
         if not db_available:
-            return n_no, n_no, n_no, n_no, n_no, n_no, "Database factor tables are unavailable.", "orange", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Database factor tables are unavailable.", "orange", False
 
         original_name = draft.get("original_name") if draft.get("source") == "db" else None
         expected_update = draft.get("selected_update_date") if draft.get("source") == "db" else None
@@ -6775,7 +6751,7 @@ def at_manage_factor_definitions(
             expected_update_date=expected_update,
         )
         if not success or not saved_row:
-            return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
 
         updated_db = load_factor_definitions(DB_ENGINE)
         saved_name = str(saved_row.get("FactorName", "")).strip().lower()
@@ -6784,6 +6760,7 @@ def at_manage_factor_definitions(
         ]
         next_draft = _definition_to_draft(saved_row, "db")
         return (
+            n_no,
             updated_local,
             updated_db,
             next_draft,
@@ -6798,11 +6775,11 @@ def at_manage_factor_definitions(
     if triggered == "at-factor-def-delete-btn":
         name = str(draft.get("FactorName", "")).strip()
         if not name:
-            return n_no, n_no, n_no, n_no, n_no, n_no, "Select or enter a factor name to delete.", "orange", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Select or enter a factor name to delete.", "orange", False
 
         if draft.get("source") == "db":
             if not db_available:
-                return n_no, n_no, n_no, n_no, n_no, n_no, "Database factor tables are unavailable.", "orange", False
+                return n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Database factor tables are unavailable.", "orange", False
             target_name = str(draft.get("original_name") or name).strip()
             success, message = delete_factor_definition(
                 DB_ENGINE,
@@ -6810,13 +6787,14 @@ def at_manage_factor_definitions(
                 expected_update_date=draft.get("selected_update_date"),
             )
             if not success:
-                return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+                return n_no, n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
             updated_db = load_factor_definitions(DB_ENGINE)
-            return n_no, updated_db, _default_factor_draft(), None, n_no, n_no, message, "green", False
+            return n_no, n_no, updated_db, _default_factor_draft(), None, n_no, n_no, message, "green", False
 
         target_name = name.lower()
         updated_local = [item for item in local_list if str(item.get("FactorName", "")).strip().lower() != target_name]
         return (
+            n_no,
             updated_local,
             n_no,
             _default_factor_draft(),
@@ -6831,7 +6809,7 @@ def at_manage_factor_definitions(
     if triggered == "at-factor-def-use-btn":
         factor_name = str(normalized.get("FactorName", "")).strip()
         if not factor_name:
-            return n_no, n_no, n_no, n_no, n_no, n_no, "Factor name is required.", "red", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Factor name is required.", "red", False
 
         draft_mode = str(draft.get("DraftMode") or "").strip().lower()
         if draft_mode == "db":
@@ -6839,6 +6817,7 @@ def at_manage_factor_definitions(
             baseline = _lookup_factor_definition(baseline_name, db_definitions, [])
             if not baseline:
                 return (
+                    n_no,
                     n_no,
                     n_no,
                     _definition_to_draft(
@@ -6872,6 +6851,7 @@ def at_manage_factor_definitions(
                 return (
                     n_no,
                     n_no,
+                    n_no,
                     next_draft,
                     next_draft.get("selected_key"),
                     f"def::{baseline_name_actual}",
@@ -6883,6 +6863,7 @@ def at_manage_factor_definitions(
 
             if _factor_db_name_exists(factor_name, db_definitions):
                 return (
+                    n_no,
                     n_no,
                     n_no,
                     n_no,
@@ -6908,6 +6889,7 @@ def at_manage_factor_definitions(
         next_draft = _definition_to_draft(session_item, "session")
 
         return (
+            n_no,
             next_local,
             n_no,
             next_draft,
@@ -6968,17 +6950,6 @@ def at_update_regime_definition_analysis_select_options(
 @callback(
     Output("at-regime-def-modal", "opened", allow_duplicate=True),
     Output("at-regime-def-status-alert", "hide", allow_duplicate=True),
-    Input("at-menu-add-regime", "n_clicks"),
-    Input("at-regime-open-modal-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def at_open_regime_definition_modal(menu_clicks, tab_clicks):
-    if not menu_clicks and not tab_clicks:
-        raise PreventUpdate
-    return True, True
-
-
-@callback(
     Output("at-regime-def-db-available-store", "data", allow_duplicate=True),
     Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
     Output("at-regime-def-loaded-store", "data", allow_duplicate=True),
@@ -6987,7 +6958,8 @@ def at_open_regime_definition_modal(menu_clicks, tab_clicks):
     Output("at-regime-def-db-available-note", "children"),
     Output("at-regime-def-save-db-btn", "disabled"),
     Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
-    Input("at-regime-def-modal", "opened"),
+    Input("at-menu-add-regime", "n_clicks"),
+    Input("at-regime-open-modal-btn", "n_clicks"),
     State("dashmat-raw-data-store", "data"),
     State("at-series-select", "data"),
     State("at-regime-series-store", "data"),
@@ -6998,8 +6970,9 @@ def at_open_regime_definition_modal(menu_clicks, tab_clicks):
     State("at-vol-scaler-value-store", "data"),
     prevent_initial_call=True,
 )
-def at_load_regime_modal_data(
-    opened,
+def at_regime_modal_lifecycle(
+    menu_clicks,
+    tab_clicks,
     raw_data,
     selected_series,
     regime_series_store,
@@ -7009,7 +6982,7 @@ def at_load_regime_modal_data(
     vol_scaling_assignments,
     vol_scaler,
 ):
-    if not opened:
+    if not menu_clicks and not tab_clicks:
         raise PreventUpdate
 
     draft = _ensure_regime_draft(current_draft)
@@ -7049,6 +7022,8 @@ def at_load_regime_modal_data(
     draft["sync_origin"] = "system"
 
     return (
+        True,
+        True,
         db_available,
         db_definitions,
         True,
@@ -7062,69 +7037,61 @@ def at_load_regime_modal_data(
 
 @callback(
     Output("at-regime-def-select", "data"),
-    Input("at-regime-definitions-db-store", "data"),
-    Input("at-regime-definitions-local-store", "data"),
-    prevent_initial_call=True,
-)
-def at_update_regime_definition_select_options(db_definitions, local_definitions):
-    entries = _regime_option_definitions(db_definitions, local_definitions)
-    options = []
-    for entry in entries:
-        source_label = _source_badge(entry["source"])
-        options.append(
-            {
-                "value": _regime_select_key(entry["source"], entry["name"]),
-                "label": f"{source_label} {entry['name']}",
-            }
-        )
-    return options
-
-
-@callback(
-    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
-    Input("at-regime-def-select", "value"),
-    State("at-regime-definitions-db-store", "data"),
-    State("at-regime-definitions-local-store", "data"),
-    State("at-regime-def-modal-draft-store", "data"),
-    prevent_initial_call=True,
-)
-def at_load_selected_regime_definition(selected_key, db_definitions, local_definitions, current_draft):
-    if not selected_key:
-        raise PreventUpdate
-    current = _ensure_regime_draft(current_draft)
-    if current.get("selected_key") == selected_key:
-        raise PreventUpdate
-
-    source, name = _split_regime_select_key(selected_key)
-    if source == "db":
-        definition = _lookup_regime_definition(name, db_definitions, [])
-        if not definition:
-            raise PreventUpdate
-        return _regime_definition_to_draft(definition, "db", selected_key=selected_key)
-    if source == "session":
-        definition = _lookup_regime_definition(name, [], local_definitions)
-        if not definition:
-            raise PreventUpdate
-        return _regime_definition_to_draft(definition, "session", selected_key=selected_key)
-    raise PreventUpdate
-
-
-@callback(
     Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
     Output("at-regime-def-select", "value", allow_duplicate=True),
     Output("at-regime-def-status-alert", "children", allow_duplicate=True),
     Output("at-regime-def-status-alert", "color", allow_duplicate=True),
     Output("at-regime-def-status-alert", "hide", allow_duplicate=True),
-    Input("at-regime-def-new-btn", "n_clicks"),
+    Input("at-regime-definitions-db-store", "data"),
+    Input("at-regime-definitions-local-store", "data"),
     Input("at-regime-def-select", "value"),
+    Input("at-regime-def-new-btn", "n_clicks"),
+    State("at-regime-def-modal-draft-store", "data"),
     prevent_initial_call=True,
 )
-def at_reset_regime_definition_draft(new_clicks, selected_key):
+def at_regime_definition_selection(
+    db_definitions, local_definitions, selected_key, new_clicks, current_draft
+):
     triggered = callback_context.triggered_id
-    if triggered == "at-regime-def-new-btn" and new_clicks:
-        return _default_regime_draft(), None, "New session regime draft started.", "blue", False
-    if triggered == "at-regime-def-select" and not selected_key:
-        return _default_regime_draft(), no_update, "New session regime draft started.", "blue", False
+    n_no = no_update
+
+    if triggered in ("at-regime-definitions-db-store", "at-regime-definitions-local-store"):
+        entries = _regime_option_definitions(db_definitions, local_definitions)
+        options = []
+        for entry in entries:
+            source_label = _source_badge(entry["source"])
+            options.append(
+                {
+                    "value": _regime_select_key(entry["source"], entry["name"]),
+                    "label": f"{source_label} {entry['name']}",
+                }
+            )
+        return options, n_no, n_no, n_no, n_no, n_no
+
+    if triggered == "at-regime-def-new-btn":
+        if not new_clicks:
+            raise PreventUpdate
+        return n_no, _default_regime_draft(), None, "New session regime draft started.", "blue", False
+
+    if triggered == "at-regime-def-select":
+        if not selected_key:
+            return n_no, _default_regime_draft(), n_no, "New session regime draft started.", "blue", False
+        current = _ensure_regime_draft(current_draft)
+        if current.get("selected_key") == selected_key:
+            raise PreventUpdate
+        source, name = _split_regime_select_key(selected_key)
+        if source == "db":
+            definition = _lookup_regime_definition(name, db_definitions, [])
+            if not definition:
+                raise PreventUpdate
+            return n_no, _regime_definition_to_draft(definition, "db", selected_key=selected_key), n_no, n_no, n_no, True
+        if source == "session":
+            definition = _lookup_regime_definition(name, [], local_definitions)
+            if not definition:
+                raise PreventUpdate
+            return n_no, _regime_definition_to_draft(definition, "session", selected_key=selected_key), n_no, n_no, n_no, True
+        raise PreventUpdate
+
     raise PreventUpdate
 
 
@@ -7173,6 +7140,7 @@ def at_refresh_regime_series_options_for_definition(
 
 
 @callback(
+    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
     Output("at-regime-def-select", "value", allow_duplicate=True),
     Output("at-regime-def-name-input", "value"),
     Output("at-regime-def-description-input", "value"),
@@ -7184,31 +7152,6 @@ def at_refresh_regime_series_options_for_definition(
     Output("at-regime-def-single-series", "value"),
     Output("at-regime-def-vol-scaler", "value"),
     Input("at-regime-def-modal-draft-store", "data"),
-    prevent_initial_call="initial_duplicate",
-)
-def at_sync_regime_definition_form(draft_data):
-    draft = _ensure_regime_draft(draft_data)
-    if draft.get("sync_origin") == "form":
-        raise PreventUpdate
-    method = int(draft.get("MethodType") or 1)
-    num_regimes = int(draft.get("NumRegimes") or 3)
-    max_regimes = 6 if method == 1 else 10
-    return (
-        draft.get("selected_key"),
-        draft.get("RegimeName") or "",
-        draft.get("Description") or "",
-        str(method),
-        max(2, min(num_regimes, max_regimes)),
-        int(draft.get("MinObservations") or 60),
-        bool(draft.get("PcaStandardize", True)),
-        draft.get("UniverseSeries") or [],
-        draft.get("SingleSeries"),
-        float(draft.get("VolScaler") or 0.0),
-    )
-
-
-@callback(
-    Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
     Input("at-regime-def-name-input", "value"),
     Input("at-regime-def-description-input", "value"),
     Input("at-regime-def-method-type", "value"),
@@ -7218,10 +7161,10 @@ def at_sync_regime_definition_form(draft_data):
     Input("at-regime-def-universe-series", "value"),
     Input("at-regime-def-single-series", "value"),
     Input("at-regime-def-vol-scaler", "value"),
-    State("at-regime-def-modal-draft-store", "data"),
     prevent_initial_call=True,
 )
-def at_update_regime_definition_draft_from_form(
+def at_regime_definition_form_sync(
+    draft_data,
     regime_name,
     description,
     method_type,
@@ -7231,8 +7174,32 @@ def at_update_regime_definition_draft_from_form(
     universe_series,
     single_series,
     vol_scaler_value,
-    draft_data,
 ):
+    triggered = callback_context.triggered_id
+    n_no = no_update
+
+    if triggered == "at-regime-def-modal-draft-store":
+        draft = _ensure_regime_draft(draft_data)
+        if draft.get("sync_origin") == "form":
+            raise PreventUpdate
+        method = int(draft.get("MethodType") or 1)
+        num_regimes_val = int(draft.get("NumRegimes") or 3)
+        max_regimes = 6 if method == 1 else 10
+        return (
+            n_no,
+            draft.get("selected_key"),
+            draft.get("RegimeName") or "",
+            draft.get("Description") or "",
+            str(method),
+            max(2, min(num_regimes_val, max_regimes)),
+            int(draft.get("MinObservations") or 60),
+            bool(draft.get("PcaStandardize", True)),
+            draft.get("UniverseSeries") or [],
+            draft.get("SingleSeries"),
+            float(draft.get("VolScaler") or 0.0),
+        )
+
+    # Form field changed → update draft
     draft = _ensure_regime_draft(draft_data)
     next_draft = dict(draft)
     next_draft["sync_origin"] = "form"
@@ -7257,83 +7224,12 @@ def at_update_regime_definition_draft_from_form(
     )
     if next_draft == draft:
         raise PreventUpdate
-    return next_draft
+    return next_draft, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
 
 
 @callback(
     Output("at-regime-def-preview-lines", "children"),
     Output("at-regime-series-store", "data", allow_duplicate=True),
-    Input("at-regime-preview-trigger-store", "data"),
-    State("at-regime-def-modal", "opened"),
-    State("at-regime-def-modal-draft-store", "data"),
-    State("dashmat-raw-data-store", "data"),
-    State("at-periodicity-select", "value"),
-    State("at-date-range-store", "data"),
-    State("at-regime-series-store", "data"),
-    prevent_initial_call=True,
-)
-def at_update_regime_definition_preview(
-    trigger_payload,
-    opened,
-    draft_data,
-    raw_data,
-    periodicity,
-    date_range,
-    regime_series_store,
-):
-    if not isinstance(trigger_payload, dict) or not trigger_payload.get("opened"):
-        raise PreventUpdate
-    if not opened:
-        raise PreventUpdate
-
-    payload = _regime_draft_to_definition_payload(draft_data or {})
-    normalized, error = validate_regime_definition_payload(payload)
-    if error or not normalized:
-        return "Define a valid regime to preview assignments.", no_update
-
-    required_series = regime_required_series(normalized)
-    combined_raw_data, next_regime_series_store, _resolved, unresolved = resolve_regime_source_data(
-        raw_data=raw_data,
-        regime_series_store=regime_series_store,
-        required_series=required_series,
-        db_engine=DB_ENGINE,
-        mrd_engine=MRD_ENGINE,
-    )
-    if not combined_raw_data:
-        return "Upload or load return data to preview regime assignments.", next_regime_series_store
-
-    states, diagnostics = compute_regime_assignments(
-        raw_data=combined_raw_data,
-        periodicity=periodicity or "daily",
-        definition=normalized,
-        date_range=date_range,
-    )
-    if states.empty:
-        warning = str((diagnostics or {}).get("warning") or "No assignments were produced for the current inputs.")
-        if unresolved:
-            warning = f"{warning} Missing source series: {', '.join(unresolved)}."
-        return f"No assignments returned.\nReason: {warning}", next_regime_series_store
-
-    timeline = build_regime_timeline_frame(states)
-    counts = states.value_counts().sort_index()
-    lines = [
-        f"Regime: {normalized.get('RegimeName')}",
-        f"Method: {normalized.get('MethodType')}",
-        f"Observations: {len(states)}",
-        f"Counts: {', '.join([f'R{int(idx)}={int(val)}' for idx, val in counts.items()])}",
-        "Date:Regime",
-    ]
-    for _, row in timeline.head(8).iterrows():
-        lines.append(f"{pd.Timestamp(row['Date']).strftime('%Y-%m-%d')}:{int(row['Regime'])}")
-    warning = (diagnostics or {}).get("warning")
-    if warning:
-        lines.append(f"Warning: {warning}")
-    if unresolved:
-        lines.append(f"Missing source series: {', '.join(unresolved)}")
-    return "\n".join(lines), next_regime_series_store
-
-
-@callback(
     Output("at-regime-definitions-local-store", "data", allow_duplicate=True),
     Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
     Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
@@ -7343,25 +7239,37 @@ def at_update_regime_definition_preview(
     Output("at-regime-def-status-alert", "children", allow_duplicate=True),
     Output("at-regime-def-status-alert", "color", allow_duplicate=True),
     Output("at-regime-def-status-alert", "hide", allow_duplicate=True),
+    Input("at-regime-preview-trigger-store", "data"),
     Input("at-regime-def-save-local-btn", "n_clicks"),
     Input("at-regime-def-save-db-btn", "n_clicks"),
     Input("at-regime-def-delete-btn", "n_clicks"),
     Input("at-regime-def-use-btn", "n_clicks"),
     Input("at-regime-def-close-btn", "n_clicks"),
+    State("at-regime-def-modal", "opened"),
     State("at-regime-def-modal-draft-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-date-range-store", "data"),
+    State("at-regime-series-store", "data"),
     State("at-regime-definitions-local-store", "data"),
     State("at-regime-definitions-db-store", "data"),
     State("at-regime-def-db-available-store", "data"),
     State("userinfo", "data"),
     prevent_initial_call=True,
 )
-def at_manage_regime_definitions(
+def at_regime_definition_actions(
+    trigger_payload,
     save_local_clicks,
     save_db_clicks,
     delete_clicks,
     use_clicks,
     close_clicks,
+    modal_opened,
     draft_data,
+    raw_data,
+    periodicity,
+    date_range,
+    regime_series_store,
     local_definitions,
     db_definitions,
     db_available,
@@ -7369,18 +7277,73 @@ def at_manage_regime_definitions(
 ):
     triggered = callback_context.triggered_id
     n_no = no_update
+
+    # --- Preview path (merged from at_update_regime_definition_preview) ---
+    if triggered == "at-regime-preview-trigger-store":
+        if not isinstance(trigger_payload, dict) or not trigger_payload.get("opened"):
+            raise PreventUpdate
+        if not modal_opened:
+            raise PreventUpdate
+
+        payload = _regime_draft_to_definition_payload(draft_data or {})
+        normalized, error = validate_regime_definition_payload(payload)
+        if error or not normalized:
+            return "Define a valid regime to preview assignments.", n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+
+        required_series = regime_required_series(normalized)
+        combined_raw_data, next_regime_series_store, _resolved, unresolved = resolve_regime_source_data(
+            raw_data=raw_data,
+            regime_series_store=regime_series_store,
+            required_series=required_series,
+            db_engine=DB_ENGINE,
+            mrd_engine=MRD_ENGINE,
+        )
+        if not combined_raw_data:
+            return "Upload or load return data to preview regime assignments.", next_regime_series_store, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+
+        states, diagnostics = compute_regime_assignments(
+            raw_data=combined_raw_data,
+            periodicity=periodicity or "daily",
+            definition=normalized,
+            date_range=date_range,
+        )
+        if states.empty:
+            warning = str((diagnostics or {}).get("warning") or "No assignments were produced for the current inputs.")
+            if unresolved:
+                warning = f"{warning} Missing source series: {', '.join(unresolved)}."
+            return f"No assignments returned.\nReason: {warning}", next_regime_series_store, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+
+        timeline = build_regime_timeline_frame(states)
+        counts = states.value_counts().sort_index()
+        lines = [
+            f"Regime: {normalized.get('RegimeName')}",
+            f"Method: {normalized.get('MethodType')}",
+            f"Observations: {len(states)}",
+            f"Counts: {', '.join([f'R{int(idx)}={int(val)}' for idx, val in counts.items()])}",
+            "Date:Regime",
+        ]
+        for _, row in timeline.head(8).iterrows():
+            lines.append(f"{pd.Timestamp(row['Date']).strftime('%Y-%m-%d')}:{int(row['Regime'])}")
+        warning = (diagnostics or {}).get("warning")
+        if warning:
+            lines.append(f"Warning: {warning}")
+        if unresolved:
+            lines.append(f"Missing source series: {', '.join(unresolved)}")
+        return "\n".join(lines), next_regime_series_store, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no
+
+    # --- Manage path (merged from at_manage_regime_definitions) ---
     draft = _ensure_regime_draft(draft_data)
     local_list = [dict(item) for item in (local_definitions or []) if isinstance(item, dict)]
     update_by = _factor_user_label(userinfo)
 
     if triggered == "at-regime-def-close-btn":
-        return n_no, n_no, n_no, n_no, n_no, False, n_no, n_no, True
+        return n_no, n_no, n_no, n_no, n_no, n_no, n_no, False, n_no, n_no, True
 
     payload = _regime_draft_to_definition_payload(draft)
     normalized, error = validate_regime_definition_payload(payload)
     if triggered in {"at-regime-def-save-local-btn", "at-regime-def-save-db-btn", "at-regime-def-use-btn"}:
         if error or not normalized:
-            return n_no, n_no, n_no, n_no, n_no, n_no, error or "Invalid regime definition.", "red", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, error or "Invalid regime definition.", "red", False
     else:
         normalized = normalized or {}
 
@@ -7398,6 +7361,8 @@ def at_manage_regime_definitions(
 
         next_draft = _regime_definition_to_draft(saved_item, "session")
         return (
+            n_no,
+            n_no,
             updated_local,
             n_no,
             next_draft,
@@ -7411,7 +7376,7 @@ def at_manage_regime_definitions(
 
     if triggered == "at-regime-def-save-db-btn":
         if not db_available:
-            return n_no, n_no, n_no, n_no, n_no, n_no, "Database regime tables are unavailable.", "orange", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Database regime tables are unavailable.", "orange", False
 
         original_name = draft.get("original_name") if draft.get("source") == "db" else None
         expected_update = draft.get("selected_update_date") if draft.get("source") == "db" else None
@@ -7423,7 +7388,7 @@ def at_manage_regime_definitions(
             expected_update_date=expected_update,
         )
         if not success or not saved_row:
-            return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
 
         updated_db = load_regime_definitions(DB_ENGINE)
         saved_name = str(saved_row.get("RegimeName", "")).strip().lower()
@@ -7432,6 +7397,8 @@ def at_manage_regime_definitions(
         ]
         next_draft = _regime_definition_to_draft(saved_row, "db")
         return (
+            n_no,
+            n_no,
             updated_local,
             updated_db,
             next_draft,
@@ -7446,11 +7413,11 @@ def at_manage_regime_definitions(
     if triggered == "at-regime-def-delete-btn":
         name = str(draft.get("RegimeName", "")).strip()
         if not name:
-            return n_no, n_no, n_no, n_no, n_no, n_no, "Select or enter a regime name to delete.", "orange", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Select or enter a regime name to delete.", "orange", False
 
         if draft.get("source") == "db":
             if not db_available:
-                return n_no, n_no, n_no, n_no, n_no, n_no, "Database regime tables are unavailable.", "orange", False
+                return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Database regime tables are unavailable.", "orange", False
             target_name = str(draft.get("original_name") or name).strip()
             success, message = delete_regime_definition(
                 DB_ENGINE,
@@ -7458,13 +7425,15 @@ def at_manage_regime_definitions(
                 expected_update_date=draft.get("selected_update_date"),
             )
             if not success:
-                return n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
+                return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, message, "red", False
             updated_db = load_regime_definitions(DB_ENGINE)
-            return n_no, updated_db, _default_regime_draft(), None, n_no, n_no, message, "green", False
+            return n_no, n_no, n_no, updated_db, _default_regime_draft(), None, n_no, n_no, message, "green", False
 
         target_name = name.lower()
         updated_local = [item for item in local_list if str(item.get("RegimeName", "")).strip().lower() != target_name]
         return (
+            n_no,
+            n_no,
             updated_local,
             n_no,
             _default_regime_draft(),
@@ -7479,7 +7448,7 @@ def at_manage_regime_definitions(
     if triggered == "at-regime-def-use-btn":
         regime_name = str(normalized.get("RegimeName", "")).strip()
         if not regime_name:
-            return n_no, n_no, n_no, n_no, n_no, n_no, "Regime name is required.", "red", False
+            return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, "Regime name is required.", "red", False
 
         draft_mode = str(draft.get("DraftMode") or "").strip().lower()
         if draft_mode == "db":
@@ -7487,6 +7456,8 @@ def at_manage_regime_definitions(
             baseline = _lookup_regime_definition(baseline_name, db_definitions, [])
             if not baseline:
                 return (
+                    n_no,
+                    n_no,
                     n_no,
                     n_no,
                     _regime_definition_to_draft(
@@ -7520,6 +7491,8 @@ def at_manage_regime_definitions(
                 return (
                     n_no,
                     n_no,
+                    n_no,
+                    n_no,
                     next_draft,
                     next_draft.get("selected_key"),
                     f"def::{baseline_name_actual}",
@@ -7531,6 +7504,8 @@ def at_manage_regime_definitions(
 
             if _regime_db_name_exists(regime_name, db_definitions):
                 return (
+                    n_no,
+                    n_no,
                     n_no,
                     n_no,
                     n_no,
@@ -7556,6 +7531,8 @@ def at_manage_regime_definitions(
         next_draft = _regime_definition_to_draft(session_item, "session")
 
         return (
+            n_no,
+            n_no,
             next_local,
             n_no,
             next_draft,
