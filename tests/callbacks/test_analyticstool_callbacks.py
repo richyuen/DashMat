@@ -759,18 +759,6 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
         stored_roll_chart=None,
         stored_dd_chart=None,
         stored_gr_chart=None,
-        stored_factor_mode=None,
-        stored_factor_quantiles=None,
-        stored_factor_transform=None,
-        stored_factor_qq_reference=None,
-        stored_conditional_view=None,
-        stored_conditional_comparator=None,
-        stored_conditional_threshold=None,
-        stored_conditional_window_conversion=None,
-        stored_conditional_step=None,
-        stored_conditional_step_unit=None,
-        stored_conditional_display_mode=None,
-        stored_regime_display_mode=None,
         stored_monthly_view=None,
         stored_monthly_series=[],
         stored_order=[],
@@ -778,9 +766,9 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
         page_visited=False,
     )
 
-    assert restored[26] == []
-    assert restored[27] == []
-    assert restored[28] is False
+    assert restored[14] == []
+    assert restored[15] == []
+    assert restored[16] is False
 
 
 def test_restore_application_state_silently_adds_po_series_after_first_visit(page_modules, raw_json):
@@ -800,18 +788,6 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
         stored_roll_chart=None,
         stored_dd_chart=None,
         stored_gr_chart=None,
-        stored_factor_mode=None,
-        stored_factor_quantiles=None,
-        stored_factor_transform=None,
-        stored_factor_qq_reference=None,
-        stored_conditional_view=None,
-        stored_conditional_comparator=None,
-        stored_conditional_threshold=None,
-        stored_conditional_window_conversion=None,
-        stored_conditional_step=None,
-        stored_conditional_step_unit=None,
-        stored_conditional_display_mode=None,
-        stored_regime_display_mode=None,
         stored_monthly_view=None,
         stored_monthly_series=None,
         stored_order=["Asset_A", "Asset_B"],
@@ -819,9 +795,9 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
         page_visited=True,
     )
 
-    assert restored[26] == ["Asset_A", "Asset_C"]
-    assert restored[27] == ["Asset_A", "Asset_B", "Asset_C"]
-    assert restored[28] is False
+    assert restored[14] == ["Asset_A", "Asset_C"]
+    assert restored[15] == ["Asset_A", "Asset_B", "Asset_C"]
+    assert restored[16] is False
 
 
 def test_restore_application_state_defers_non_active_tab_controls(page_modules, raw_json):
@@ -841,18 +817,6 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
         stored_roll_chart="table",
         stored_dd_chart="table",
         stored_gr_chart="table",
-        stored_factor_mode="scatter",
-        stored_factor_quantiles=7,
-        stored_factor_transform="zscore",
-        stored_factor_qq_reference="reference",
-        stored_conditional_view=None,
-        stored_conditional_comparator=None,
-        stored_conditional_threshold=None,
-        stored_conditional_window_conversion=None,
-        stored_conditional_step=None,
-        stored_conditional_step_unit=None,
-        stored_conditional_display_mode=None,
-        stored_regime_display_mode="detail",
         stored_monthly_view="monthly",
         stored_monthly_series=None,
         stored_order=["Asset_A"],
@@ -863,24 +827,14 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
     assert restored[2] == "excess"
     assert restored[3] == 7
     assert restored[4] == "statistics"
-    assert restored[5] is no_update
-    assert restored[10] is no_update
+    # Rolling outputs (5-10) deferred when not on rolling tab
+    for i in range(5, 11):
+        assert restored[i] is no_update
+    # Drawdown, growth, monthly deferred when not on those tabs
     assert restored[11] is no_update
     assert restored[12] is no_update
     assert restored[13] is no_update
-    assert restored[14] is no_update
-    assert restored[15] is no_update
-    assert restored[16] is no_update
-    assert restored[17] is no_update
-    assert restored[18] is no_update
-    assert restored[19] is no_update
-    assert restored[20] is no_update
-    assert restored[21] is no_update
-    assert restored[22] is no_update
-    assert restored[23] is no_update
-    assert restored[24] is no_update
-    assert restored[25] is no_update
-    assert restored[26] == ["Asset_A"]
+    assert restored[14] == ["Asset_A"]
 
 
 def test_at_restore_secondary_controls_restores_only_active_tab_family(page_modules, raw_json):
@@ -2757,48 +2711,6 @@ def test_update_factor_analysis_renders_qq_reference_with_zscore_axes(monkeypatc
     assert fig.layout.title.text == "Q-Q Plot: Asset_A vs Ref_X"
     assert fig.layout.xaxis.title.text.endswith("(Z-Score)")
     assert fig.layout.yaxis.title.text.endswith("(Z-Score)")
-
-
-def test_restore_application_state_restores_factor_analysis_qq_controls(page_modules, raw_json):
-    analyticstool, _ = page_modules
-
-    restored = analyticstool.restore_application_state(
-        1,
-        _raw_meta(raw_json),
-        stored_periodicity="daily_trading",
-        stored_series=["Asset_A"],
-        stored_returns="excess",
-        stored_vol=7,
-        stored_tab="factor_analysis",
-        stored_roll_win="3y",
-        stored_roll_metric="volatility",
-        stored_roll_type="cumulative",
-        stored_roll_chart="table",
-        stored_dd_chart="table",
-        stored_gr_chart="table",
-        stored_factor_mode="qq",
-        stored_factor_quantiles=7,
-        stored_factor_transform="zscore",
-        stored_factor_qq_reference="reference",
-        stored_conditional_view=None,
-        stored_conditional_comparator=None,
-        stored_conditional_threshold=None,
-        stored_conditional_window_conversion=None,
-        stored_conditional_step=None,
-        stored_conditional_step_unit=None,
-        stored_conditional_display_mode=None,
-        stored_regime_display_mode=None,
-        stored_monthly_view="monthly",
-        stored_monthly_series=None,
-        stored_order=["Asset_A"],
-        po_origin_series=[],
-        page_visited=True,
-    )
-
-    assert restored[13] == "qq"
-    assert restored[14] == 7
-    assert restored[15] == "zscore"
-    assert restored[16] == "reference"
 
 
 def test_conditional_window_specs_include_1w_for_daily_and_weekly(page_modules):

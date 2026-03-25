@@ -5209,18 +5209,6 @@ def _at_restore_defaults():
         "roll_chart": "chart",
         "dd_chart": "chart",
         "gr_chart": "chart",
-        "factor_mode": "box",
-        "factor_quantiles": 5,
-        "factor_transform": "raw",
-        "factor_qq_reference": "normal",
-        "conditional_view": "forward",
-        "conditional_comparator": "le",
-        "conditional_threshold": 0,
-        "conditional_window_conversion": "compound",
-        "conditional_step": 1,
-        "conditional_step_unit": "months",
-        "conditional_display_mode": "summary",
-        "regime_display_mode": "summary",
         "monthly_view": "annual",
         "valid_selection": [],
         "updated_order": [],
@@ -5240,18 +5228,6 @@ def _at_resolve_restore_state(
     stored_roll_chart,
     stored_dd_chart,
     stored_gr_chart,
-    stored_factor_mode,
-    stored_factor_quantiles,
-    stored_factor_transform,
-    stored_factor_qq_reference,
-    stored_conditional_view,
-    stored_conditional_comparator,
-    stored_conditional_threshold,
-    stored_conditional_window_conversion,
-    stored_conditional_step,
-    stored_conditional_step_unit,
-    stored_conditional_display_mode,
-    stored_regime_display_mode,
     stored_monthly_view,
     stored_order,
     po_origin_series,
@@ -5305,34 +5281,6 @@ def _at_resolve_restore_state(
             "roll_chart": stored_roll_chart if stored_roll_chart is not None else "chart",
             "dd_chart": stored_dd_chart if stored_dd_chart is not None else "chart",
             "gr_chart": stored_gr_chart if stored_gr_chart is not None else "chart",
-            "factor_mode": stored_factor_mode if stored_factor_mode in {"box", "scatter", "detail", "qq"} else "box",
-            "factor_quantiles": _coerce_factor_quantiles(stored_factor_quantiles, default=5),
-            "factor_transform": stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw",
-            "factor_qq_reference": (
-                stored_factor_qq_reference
-                if stored_factor_qq_reference in {"normal", "reference"}
-                else "normal"
-            ),
-            "conditional_view": stored_conditional_view if stored_conditional_view in {"coincident", "forward"} else "forward",
-            "conditional_comparator": stored_conditional_comparator if stored_conditional_comparator in {"le", "ge"} else "le",
-            "conditional_threshold": stored_conditional_threshold if stored_conditional_threshold is not None else 0,
-            "conditional_window_conversion": (
-                stored_conditional_window_conversion
-                if stored_conditional_window_conversion in {"compound", "end", "average", "sum"}
-                else "compound"
-            ),
-            "conditional_step": _coerce_positive_int(stored_conditional_step, default=1),
-            "conditional_step_unit": stored_conditional_step_unit if stored_conditional_step_unit in {"periods", "months"} else "months",
-            "conditional_display_mode": (
-                stored_conditional_display_mode
-                if stored_conditional_display_mode in {"summary", "detail"}
-                else "summary"
-            ),
-            "regime_display_mode": (
-                stored_regime_display_mode
-                if stored_regime_display_mode in {"summary", "detail"}
-                else "summary"
-            ),
             "monthly_view": stored_monthly_view if stored_monthly_view is not None else "annual",
             "valid_selection": valid_selection,
             "updated_order": updated_order,
@@ -5354,18 +5302,6 @@ def _at_resolve_restore_state(
     Output("at-rolling-chart-switch", "value"),
     Output("at-drawdown-chart-switch", "value"),
     Output("at-growth-chart-switch", "value"),
-    Output("at-factor-mode-select", "value"),
-    Output("at-factor-quantiles-input", "value"),
-    Output("at-factor-transform-select", "value"),
-    Output("at-factor-qq-reference-select", "value"),
-    Output("at-conditional-view-select", "value"),
-    Output("at-conditional-comparator-select", "value"),
-    Output("at-conditional-threshold-input", "value"),
-    Output("at-conditional-window-conversion-select", "value"),
-    Output("at-conditional-step-input", "value"),
-    Output("at-conditional-step-unit-select", "value"),
-    Output("at-conditional-display-mode-select", "value"),
-    Output("at-regime-detail-display-mode-select", "value"),
     Output("at-monthly-view-checkbox", "value"),
     Output("at-series-select", "data"),
     Output("at-series-order-store", "data", allow_duplicate=True),
@@ -5383,18 +5319,6 @@ def _at_resolve_restore_state(
     State("at-rolling-chart-switch-store", "data"),
     State("at-drawdown-chart-switch-store", "data"),
     State("at-growth-chart-switch-store", "data"),
-    State("at-factor-mode-store", "data"),
-    State("at-factor-quantiles-store", "data"),
-    State("at-factor-transform-store", "data"),
-    State("at-factor-qq-reference-store", "data"),
-    State("at-conditional-view-store", "data"),
-    State("at-conditional-comparator-store", "data"),
-    State("at-conditional-threshold-store", "data"),
-    State("at-conditional-window-conversion-store", "data"),
-    State("at-conditional-step-store", "data"),
-    State("at-conditional-step-unit-store", "data"),
-    State("at-conditional-display-mode-store", "data"),
-    State("at-regime-detail-display-mode-store", "data"),
     State("at-monthly-view-store", "data"),
     State("at-monthly-series-store", "data"),
     State("at-series-order-store", "data"),
@@ -5416,18 +5340,6 @@ def restore_application_state(
     stored_roll_chart,
     stored_dd_chart,
     stored_gr_chart,
-    stored_factor_mode,
-    stored_factor_quantiles,
-    stored_factor_transform,
-    stored_factor_qq_reference,
-    stored_conditional_view,
-    stored_conditional_comparator,
-    stored_conditional_threshold,
-    stored_conditional_window_conversion,
-    stored_conditional_step,
-    stored_conditional_step_unit,
-    stored_conditional_display_mode,
-    stored_regime_display_mode,
     stored_monthly_view,
     stored_monthly_series,
     stored_order,
@@ -5448,18 +5360,6 @@ def restore_application_state(
             stored_roll_chart,
             stored_dd_chart,
             stored_gr_chart,
-            stored_factor_mode,
-            stored_factor_quantiles,
-            stored_factor_transform,
-            stored_factor_qq_reference,
-            stored_conditional_view,
-            stored_conditional_comparator,
-            stored_conditional_threshold,
-            stored_conditional_window_conversion,
-            stored_conditional_step,
-            stored_conditional_step_unit,
-            stored_conditional_display_mode,
-            stored_regime_display_mode,
             stored_monthly_view,
             stored_order,
             po_origin_series,
@@ -5476,22 +5376,6 @@ def restore_application_state(
         ) if active_tab == "rolling" else (no_update, no_update, no_update, no_update, no_update, no_update)
         drawdown_output = resolved["dd_chart"] if active_tab == "drawdown" else no_update
         growth_output = resolved["gr_chart"] if active_tab == "growth" else no_update
-        factor_outputs = (
-            resolved["factor_mode"],
-            resolved["factor_quantiles"],
-            resolved["factor_transform"],
-            resolved["factor_qq_reference"],
-        ) if active_tab == "factor_analysis" else (no_update, no_update, no_update, no_update)
-        conditional_outputs = (
-            resolved["conditional_view"],
-            resolved["conditional_comparator"],
-            resolved["conditional_threshold"],
-            resolved["conditional_window_conversion"],
-            resolved["conditional_step"],
-            resolved["conditional_step_unit"],
-            resolved["conditional_display_mode"],
-        ) if active_tab == "conditional_returns" else (no_update, no_update, no_update, no_update, no_update, no_update, no_update)
-        regime_output = resolved["regime_display_mode"] if active_tab == "regime_analysis" else no_update
         monthly_output = resolved["monthly_view"] if active_tab == "calendar" else no_update
 
         return (
@@ -5503,9 +5387,6 @@ def restore_application_state(
             *roll_outputs,
             drawdown_output,
             growth_output,
-            *factor_outputs,
-            *conditional_outputs,
-            regime_output,
             monthly_output,
             resolved["valid_selection"],
             resolved["updated_order"],
@@ -5514,11 +5395,11 @@ def restore_application_state(
     except Exception:
         resolved = _at_restore_defaults()
         return (
-            resolved["periodicity_options"], resolved["valid_periodicity"], resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
-            no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
-            no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update,
-            no_update,
-            resolved["valid_selection"], resolved["updated_order"], False
+            resolved["periodicity_options"], resolved["valid_periodicity"],
+            resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
+            no_update, no_update, no_update, no_update, no_update, no_update,
+            no_update, no_update, no_update,
+            resolved["valid_selection"], resolved["updated_order"], False,
         )
 
 
@@ -5750,18 +5631,6 @@ def at_restore_secondary_controls(
         stored_roll_chart,
         stored_dd_chart,
         stored_gr_chart,
-        stored_factor_mode,
-        stored_factor_quantiles,
-        stored_factor_transform,
-        stored_factor_qq_reference,
-        stored_conditional_view,
-        stored_conditional_comparator,
-        stored_conditional_threshold,
-        stored_conditional_window_conversion,
-        stored_conditional_step,
-        stored_conditional_step_unit,
-        stored_conditional_display_mode,
-        stored_regime_display_mode,
         stored_monthly_view,
         stored_order,
         po_origin_series,
@@ -5782,24 +5651,29 @@ def at_restore_secondary_controls(
     elif active_tab == "growth":
         outputs[7] = _no_update_if_equal(resolved["gr_chart"], current_gr_chart)
     elif active_tab == "factor_analysis":
+        target_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter", "detail", "qq"} else "box"
+        target_quantiles = _coerce_factor_quantiles(stored_factor_quantiles, default=5)
+        target_transform = stored_factor_transform if stored_factor_transform in {"raw", "zscore"} else "raw"
+        target_qq_ref = stored_factor_qq_reference if stored_factor_qq_reference in {"normal", "reference"} else "normal"
         outputs[8:12] = [
-            _no_update_if_equal(resolved["factor_mode"], current_factor_mode),
-            _no_update_if_equal(resolved["factor_quantiles"], current_factor_quantiles),
-            _no_update_if_equal(resolved["factor_transform"], current_factor_transform),
-            _no_update_if_equal(resolved["factor_qq_reference"], current_factor_qq_reference),
+            _no_update_if_equal(target_mode, current_factor_mode),
+            _no_update_if_equal(target_quantiles, current_factor_quantiles),
+            _no_update_if_equal(target_transform, current_factor_transform),
+            _no_update_if_equal(target_qq_ref, current_factor_qq_reference),
         ]
     elif active_tab == "conditional_returns":
         outputs[12:19] = [
-            _no_update_if_equal(resolved["conditional_view"], current_conditional_view),
-            _no_update_if_equal(resolved["conditional_comparator"], current_conditional_comparator),
-            _no_update_if_equal(resolved["conditional_threshold"], current_conditional_threshold),
-            _no_update_if_equal(resolved["conditional_window_conversion"], current_conditional_window_conversion),
-            _no_update_if_equal(resolved["conditional_step"], current_conditional_step),
-            _no_update_if_equal(resolved["conditional_step_unit"], current_conditional_step_unit),
-            _no_update_if_equal(resolved["conditional_display_mode"], current_conditional_display_mode),
+            _no_update_if_equal(stored_conditional_view if stored_conditional_view in {"coincident", "forward"} else "forward", current_conditional_view),
+            _no_update_if_equal(stored_conditional_comparator if stored_conditional_comparator in {"le", "ge"} else "le", current_conditional_comparator),
+            _no_update_if_equal(stored_conditional_threshold if stored_conditional_threshold is not None else 0, current_conditional_threshold),
+            _no_update_if_equal(stored_conditional_window_conversion if stored_conditional_window_conversion in {"compound", "end", "average", "sum"} else "compound", current_conditional_window_conversion),
+            _no_update_if_equal(_coerce_positive_int(stored_conditional_step, default=1), current_conditional_step),
+            _no_update_if_equal(stored_conditional_step_unit if stored_conditional_step_unit in {"periods", "months"} else "months", current_conditional_step_unit),
+            _no_update_if_equal(stored_conditional_display_mode if stored_conditional_display_mode in {"summary", "detail"} else "summary", current_conditional_display_mode),
         ]
     elif active_tab == "regime_analysis":
-        outputs[19] = _no_update_if_equal(resolved["regime_display_mode"], current_regime_display_mode)
+        target_regime = stored_regime_display_mode if stored_regime_display_mode in {"summary", "detail"} else "summary"
+        outputs[19] = _no_update_if_equal(target_regime, current_regime_display_mode)
     elif active_tab == "calendar":
         outputs[20] = _no_update_if_equal(resolved["monthly_view"], current_monthly_view)
 
@@ -6229,75 +6103,44 @@ clientside_callback(
 clientside_callback(
     """
     function(activeTab, initialTabReady, stateReady) {
-        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("factor_analysis", activeTab, initialTabReady, stateReady);
+        var t = window.dash_clientside.dashmat_callbacks.analyticsTabTrigger;
+        return [
+            t("factor_analysis", activeTab, initialTabReady, stateReady),
+            t("regime_analysis", activeTab, initialTabReady, stateReady),
+            t("conditional_returns", activeTab, initialTabReady, stateReady),
+        ];
     }
     """,
     Output("at-factor-tab-trigger-store", "data"),
+    Output("at-regime-tab-trigger-store", "data"),
+    Output("at-conditional-tab-trigger-store", "data"),
     Input("at-main-tabs", "value"),
     Input("at-initial-tab-render-ready-store", "data"),
     Input("at-state-ready-store", "data"),
+    # Shared data inputs
+    Input("at-periodicity-select", "value"),
+    Input("at-series-select", "data"),
+    Input("at-returns-type-select", "value"),
+    Input("at-benchmark-assignments-store", "data"),
+    Input("at-long-short-store", "data"),
+    Input("at-date-range-store", "data"),
+    Input("at-vol-scaler-value-store", "data"),
+    Input("at-vol-scaling-assignments-store", "data"),
+    # Factor-specific inputs
     Input("at-factor-mode-select", "value"),
     Input("at-factor-qq-reference-select", "value"),
     Input("at-factor-series-select", "value"),
     Input("at-factor-quantiles-input", "value"),
     Input("at-factor-transform-select", "value"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
     Input("at-factor-definitions-db-store", "data"),
     Input("at-factor-definitions-local-store", "data"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(activeTab, initialTabReady, stateReady) {
-        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("regime_analysis", activeTab, initialTabReady, stateReady);
-    }
-    """,
-    Output("at-regime-tab-trigger-store", "data"),
-    Input("at-main-tabs", "value"),
-    Input("at-initial-tab-render-ready-store", "data"),
-    Input("at-state-ready-store", "data"),
+    # Regime-specific inputs
     Input("at-regime-definition-select", "value"),
     Input("at-regime-detail-display-mode-select", "value"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
     Input("at-regime-definitions-db-store", "data"),
     Input("at-regime-definitions-local-store", "data"),
     Input("at-regime-series-store", "data"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    """
-    function(activeTab, initialTabReady, stateReady) {
-        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("conditional_returns", activeTab, initialTabReady, stateReady);
-    }
-    """,
-    Output("at-conditional-tab-trigger-store", "data"),
-    Input("at-main-tabs", "value"),
-    Input("at-initial-tab-render-ready-store", "data"),
-    Input("at-state-ready-store", "data"),
-    Input("at-periodicity-select", "value"),
-    Input("at-series-select", "data"),
-    Input("at-returns-type-select", "value"),
-    Input("at-benchmark-assignments-store", "data"),
-    Input("at-long-short-store", "data"),
-    Input("at-date-range-store", "data"),
-    Input("at-vol-scaler-value-store", "data"),
-    Input("at-vol-scaling-assignments-store", "data"),
+    # Conditional-specific inputs
     Input("at-conditional-display-mode-select", "value"),
     Input("at-conditional-view-select", "value"),
     Input("at-conditional-comparator-select", "value"),
@@ -6307,8 +6150,6 @@ clientside_callback(
     Input("at-conditional-step-unit-select", "value"),
     Input("at-factor-series-select-conditional", "value"),
     Input("at-factor-transform-select-conditional", "value"),
-    Input("at-factor-definitions-db-store", "data"),
-    Input("at-factor-definitions-local-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -6384,7 +6225,7 @@ clientside_callback(
     Input("at-conditional-window-conversion-select", "value"),
     Input("at-conditional-step-input", "value"),
     Input("at-conditional-step-unit-select", "value"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def sync_conditional_returns_control_state(
     display_mode_value,
@@ -6410,7 +6251,7 @@ def sync_conditional_returns_control_state(
 @callback(
     Output("at-regime-detail-display-mode-store", "data"),
     Input("at-regime-detail-display-mode-select", "value"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 def sync_regime_detail_display_mode(value):
     return value if value in {"summary", "detail"} else "summary"
@@ -6497,7 +6338,7 @@ clientside_callback(
     Input("at-factor-qq-reference-select", "value"),
     Input("at-regime-definition-select", "value"),
     Input("at-regime-def-method-type", "value"),
-    prevent_initial_call=False,
+    prevent_initial_call=True,
 )
 
 
@@ -6669,6 +6510,7 @@ def at_load_factor_modal_data(opened):
     Output("at-factor-def-select", "data"),
     Input("at-factor-definitions-db-store", "data"),
     Input("at-factor-definitions-local-store", "data"),
+    prevent_initial_call=True,
 )
 def at_update_factor_definition_select_options(db_definitions, local_definitions):
     entries = _factor_option_definitions(db_definitions, local_definitions)
@@ -7222,6 +7064,7 @@ def at_load_regime_modal_data(
     Output("at-regime-def-select", "data"),
     Input("at-regime-definitions-db-store", "data"),
     Input("at-regime-definitions-local-store", "data"),
+    prevent_initial_call=True,
 )
 def at_update_regime_definition_select_options(db_definitions, local_definitions):
     entries = _regime_option_definitions(db_definitions, local_definitions)
