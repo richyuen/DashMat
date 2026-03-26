@@ -3320,13 +3320,14 @@ def test_update_regime_analysis_renders_content(monkeypatch, page_modules):
         "_build_regime_analysis_payload",
         lambda *_args, **_kwargs: analyticstool._RegimeAnalysisBuildResult("ok", payload=regime_payload),
     )
+    monkeypatch.setattr(analyticstool, "_raw_json_by_key", lambda _k: '{"dummy": "json"}')
 
     warning, content = analyticstool.update_regime_analysis(
         {"tab": "regime_analysis"},
         "regime_analysis",
         "def::SavedRegime",
         "summary",
-        "raw-json",
+        "ds-key-123",
         "daily",
         ["Asset_A"],
         "total",
@@ -3375,13 +3376,14 @@ def test_update_regime_analysis_renders_raw_detail_grid(monkeypatch, page_module
         "_build_regime_analysis_payload",
         lambda *_args, **_kwargs: analyticstool._RegimeAnalysisBuildResult("ok", payload=regime_payload),
     )
+    monkeypatch.setattr(analyticstool, "_raw_json_by_key", lambda _k: '{"dummy": "json"}')
 
     warning, content = analyticstool.update_regime_analysis(
         {"tab": "regime_analysis"},
         "regime_analysis",
         "def::SavedRegime",
         "detail",
-        "raw-json",
+        "ds-key-123",
         "daily",
         ["Asset_A"],
         "total",

@@ -285,6 +285,14 @@ def _raw_df(raw_data_store) -> pd.DataFrame:
     return get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
 
 
+def _raw_df_by_key(dataset_key: str | None) -> pd.DataFrame:
+    return get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
+
+
+def _raw_json_by_key(dataset_key: str | None) -> str | None:
+    return get_raw_dataset_json(dataset_key) if dataset_key else None
+
+
 def _dataset_key_from_meta(raw_meta) -> str | None:
     if not isinstance(raw_meta, dict):
         return None
@@ -451,7 +459,7 @@ def _coerce_positive_int(value, default: int = 1) -> int:
 
 
 def _correlogram_request_key(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -469,7 +477,7 @@ def _correlogram_request_key(
 ):
     payload = "|".join(
         [
-            str(_dataset_key(raw_data) or ""),
+            str(dataset_key or ""),
             str(periodicity or "daily"),
             ",".join(selected_series or ()),
             str(returns_type or "total"),
@@ -575,7 +583,7 @@ class _AnalyticsExportArtifacts:
 
 
 def _build_analytics_compute_bundle(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     benchmark_assignments,
@@ -586,7 +594,7 @@ def _build_analytics_compute_bundle(
 ) -> _AnalyticsComputeBundle:
     """Build canonicalized compute inputs once per callback."""
     return _AnalyticsComputeBundle(
-        dataset_key=_dataset_key(raw_data) or "",
+        dataset_key=dataset_key or "",
         periodicity=periodicity or "daily",
         selected_series=tuple(selected_series or ()),
         benchmark_payload=_mapping_payload(benchmark_assignments),
@@ -650,7 +658,7 @@ def _compute_selected_returns_cached(
 
 
 def _compute_selected_returns(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -661,7 +669,7 @@ def _compute_selected_returns(
     vol_scaling_assignments,
 ) -> pd.DataFrame:
     return _compute_selected_returns_cached(
-        _dataset_key(raw_data) or "",
+        dataset_key or "",
         periodicity or "daily",
         tuple(selected_series or ()),
         returns_type or "total",
@@ -832,7 +840,7 @@ def _build_regime_analysis_payload(
         )
 
     bundle = _build_analytics_compute_bundle(
-        build_raw_data_store_payload(combined_raw_data),
+        resolve_dataset_key(build_raw_data_store_payload(combined_raw_data)),
         periodicity,
         selected_series,
         benchmark_assignments,
@@ -1376,11 +1384,11 @@ def _regime_db_name_exists(name: str, db_definitions) -> bool:
     return False
 
 
-def _build_regime_series_options(raw_data, selected_series, regime_series_store, draft_data=None):
+def _build_regime_series_options(dataset_key, selected_series, regime_series_store, draft_data=None):
     raw_series_order = []
-    if raw_data:
+    if dataset_key:
         try:
-            df = _raw_df(raw_data)
+            df = _raw_df_by_key(dataset_key)
             all_series = list(df.columns)
             selected_order = [s for s in (selected_series or []) if s in all_series]
             remaining = [s for s in all_series if s not in selected_order]
@@ -1584,7 +1592,7 @@ def _compute_factor_artifacts_cached(
 
 
 def _compute_factor_artifacts(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     factor_series,
@@ -1605,7 +1613,7 @@ def _compute_factor_artifacts(
         if definition:
             definition_payload = _definition_payload_for_compute(definition)
     return _compute_factor_artifacts_cached(
-        _dataset_key(raw_data) or "",
+        dataset_key or "",
         periodicity or "daily",
         tuple(selected_series or ()),
         str(factor_series or ""),
@@ -1621,7 +1629,7 @@ def _compute_factor_artifacts(
 
 
 def _prepare_factor_analysis_frames(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     factor_series,
@@ -1637,7 +1645,7 @@ def _prepare_factor_analysis_frames(
 ):
     """Prepare dependent-series returns and factor returns for factor analysis."""
     artifacts = _compute_factor_artifacts(
-        raw_data,
+        dataset_key,
         periodicity,
         selected_series,
         factor_series,
@@ -1688,7 +1696,7 @@ def _build_factor_detail_frame(artifacts: _FactorArtifacts, selected_series, qua
 
 
 def _prepare_factor_analysis_selected_df(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -1699,7 +1707,7 @@ def _prepare_factor_analysis_selected_df(
     vol_scaling_assignments,
 ):
     return _compute_selected_returns(
-        raw_data,
+        dataset_key,
         periodicity,
         selected_series,
         returns_type,
@@ -1903,7 +1911,7 @@ def _update_tab_render_signatures(current_signatures, tab_key: str, next_signatu
 
 
 def _returns_tab_signature(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -1915,7 +1923,7 @@ def _returns_tab_signature(
 ) -> str:
     return _tab_render_signature(
         {
-            "dataset_key": _dataset_key(raw_data) or "",
+            "dataset_key": dataset_key or "",
             "periodicity": periodicity or "daily",
             "selected_series": tuple(selected_series or ()),
             "returns_type": returns_type or "total",
@@ -1957,7 +1965,7 @@ def _statistics_tab_signature(
 
 
 def _conditional_tab_signature(
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -1979,7 +1987,7 @@ def _conditional_tab_signature(
 ) -> str:
     return _tab_render_signature(
         {
-            "dataset_key": _dataset_key(raw_data) or "",
+            "dataset_key": dataset_key or "",
             "periodicity": periodicity or "daily",
             "selected_series": tuple(selected_series or ()),
             "returns_type": returns_type or "total",
@@ -2395,7 +2403,7 @@ def _compute_conditional_returns_cached(
 
 
 def _prepare_at_qq_reference_series(
-    raw_data,
+    dataset_key,
     periodicity,
     reference_series,
     returns_type,
@@ -2407,7 +2415,7 @@ def _prepare_at_qq_reference_series(
     factor_definitions_db=None,
     factor_definitions_local=None,
 ):
-    if not raw_data or not reference_series:
+    if not dataset_key or not reference_series:
         return pd.Series(dtype=float)
     reference_prefix, reference_name = _split_factor_select_key(reference_series)
     if reference_prefix == "def":
@@ -2434,7 +2442,7 @@ def _prepare_at_qq_reference_series(
 
     raw_reference = reference_name if reference_prefix == "raw" else str(reference_series or "")
     ref_df = _compute_selected_returns(
-        raw_data,
+        dataset_key,
         periodicity,
         (raw_reference,),
         returns_type,
@@ -6340,7 +6348,7 @@ clientside_callback(
     Output("at-factor-series-select-conditional", "value", allow_duplicate=True),
     Input("at-factor-tab-trigger-store", "data"),
     Input("at-conditional-tab-trigger-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-series-select", "data"),
     State("at-factor-definitions-db-store", "data"),
     State("at-factor-definitions-local-store", "data"),
@@ -6352,7 +6360,7 @@ clientside_callback(
 def update_factor_series_select(
     factor_trigger_payload,
     conditional_trigger_payload,
-    raw_data,
+    dataset_key,
     selected_series,
     db_definitions,
     local_definitions,
@@ -6370,11 +6378,11 @@ def update_factor_series_select(
         raise PreventUpdate
     if str(trigger_payload.get("tab") or "") not in {"factor_analysis", "conditional_returns"}:
         raise PreventUpdate
-    if raw_data is None:
+    if dataset_key is None:
         return [], None, [], None
 
     try:
-        df = _raw_df(raw_data)
+        df = _raw_df_by_key(dataset_key)
     except Exception:
         return [], None, [], None
 
@@ -6951,7 +6959,7 @@ def at_update_regime_definition_analysis_select_options(
     Output("at-regime-def-modal-draft-store", "data", allow_duplicate=True),
     Input("at-menu-add-regime", "n_clicks"),
     Input("at-regime-open-modal-btn", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-series-select", "data"),
     State("at-regime-series-store", "data"),
     State("at-regime-def-modal-draft-store", "data"),
@@ -6964,7 +6972,7 @@ def at_update_regime_definition_analysis_select_options(
 def at_regime_modal_lifecycle(
     menu_clicks,
     tab_clicks,
-    raw_data,
+    dataset_key,
     selected_series,
     regime_series_store,
     current_draft,
@@ -6978,7 +6986,7 @@ def at_regime_modal_lifecycle(
 
     draft = _ensure_regime_draft(current_draft)
     series_options, series_order, raw_series_order = _build_regime_series_options(
-        raw_data,
+        dataset_key,
         selected_series,
         regime_series_store,
         draft,
@@ -7090,7 +7098,7 @@ def at_regime_definition_selection(
     Output("at-regime-def-universe-series", "data", allow_duplicate=True),
     Output("at-regime-def-single-series", "data", allow_duplicate=True),
     Input("at-regime-def-select", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-series-select", "data"),
     State("at-regime-series-store", "data"),
     State("at-regime-definitions-db-store", "data"),
@@ -7100,7 +7108,7 @@ def at_regime_definition_selection(
 )
 def at_refresh_regime_series_options_for_definition(
     selected_key,
-    raw_data,
+    dataset_key,
     selected_series,
     regime_series_store,
     db_definitions,
@@ -7122,7 +7130,7 @@ def at_refresh_regime_series_options_for_definition(
             definition_draft = _regime_definition_to_draft(definition, "session", selected_key=selected_key)
 
     series_options, _series_order, _raw_series_order = _build_regime_series_options(
-        raw_data,
+        dataset_key,
         selected_series,
         regime_series_store,
         definition_draft,
@@ -7561,7 +7569,7 @@ def at_regime_definition_actions(
     Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-db-add-ok-button", "n_clicks"),
     State("at-db-add-series-select", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -7575,7 +7583,7 @@ def at_regime_definition_actions(
 def add_series_from_database(
     n_clicks,
     selected_benches,
-    existing_data,
+    existing_dataset_key,
     existing_periodicity,
     current_selection,
     current_bench,
@@ -7602,8 +7610,8 @@ def add_series_from_database(
         )
 
     try:
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
+        if existing_dataset_key:
+            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
             duplicates = [s for s in selected_benches if s in existing_cols]
             if duplicates:
                 return (
@@ -7646,8 +7654,8 @@ def add_series_from_database(
         if not any_daily_phase:
             new_periodicity = "monthly"
 
-        if existing_data is not None:
-            existing_df = _raw_df(existing_data)
+        if existing_dataset_key is not None:
+            existing_df = _raw_df_by_key(existing_dataset_key)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -7754,7 +7762,7 @@ def add_series_from_database(
     Input("at-raw-db-add-ok-button", "n_clicks"),
     State("at-raw-db-add-mode-store", "data"),
     State("at-raw-db-add-rows-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -7769,7 +7777,7 @@ def at_add_raw_series_from_database(
     n_clicks,
     mode,
     staged_rows,
-    existing_data,
+    existing_dataset_key,
     existing_periodicity,
     current_selection,
     current_bench,
@@ -7811,8 +7819,8 @@ def at_add_raw_series_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged raw-data requests.")
 
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
+        if existing_dataset_key:
+            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -7830,8 +7838,8 @@ def at_add_raw_series_from_database(
                 )
 
         new_periodicity = load_result.periodicity
-        if existing_data is not None:
-            existing_df = _raw_df(existing_data)
+        if existing_dataset_key is not None:
+            existing_df = _raw_df_by_key(existing_dataset_key)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -7932,7 +7940,7 @@ def at_add_raw_series_from_database(
     Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-underlying-add-ok-button", "n_clicks"),
     State("at-underlying-add-rows-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -7946,7 +7954,7 @@ def at_add_raw_series_from_database(
 def at_add_underlying_categories_from_database(
     n_clicks,
     staged_rows,
-    existing_data,
+    existing_dataset_key,
     existing_periodicity,
     current_selection,
     current_bench,
@@ -7984,8 +7992,8 @@ def at_add_underlying_categories_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged underlying category requests.")
 
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
+        if existing_dataset_key:
+            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
             duplicates = [series_name for series_name in new_df.columns if series_name in existing_cols]
             if duplicates:
                 duplicate_text = f"Cannot add duplicate series: {', '.join(duplicates)}"
@@ -8005,7 +8013,7 @@ def at_add_underlying_categories_from_database(
                     n_no,
                 )
 
-        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merge_result = _shared_merge_uploaded_with_existing(None, existing_periodicity, new_df, dataset_key=existing_dataset_key)
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
         periodicity_options = merge_result.periodicity_options
@@ -8093,7 +8101,7 @@ def at_add_underlying_categories_from_database(
     Input("at-portfolio-add-ok-button", "n_clicks"),
     State("at-portfolio-add-mode-store", "data"),
     State("at-portfolio-add-rows-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -8108,7 +8116,7 @@ def at_add_portfolios_from_database(
     n_clicks,
     mode,
     staged_rows,
-    existing_data,
+    existing_dataset_key,
     existing_periodicity,
     current_selection,
     current_bench,
@@ -8151,8 +8159,8 @@ def at_add_portfolios_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged portfolio requests.")
 
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
+        if existing_dataset_key:
+            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
             duplicates = [s for s in new_df.columns if s in existing_cols]
             if duplicates:
                 return (
@@ -8172,8 +8180,8 @@ def at_add_portfolios_from_database(
                 )
 
         new_periodicity = load_result.periodicity or "monthly"
-        if existing_data is not None:
-            existing_df = _raw_df(existing_data)
+        if existing_dataset_key is not None:
+            existing_df = _raw_df_by_key(existing_dataset_key)
             if existing_periodicity == "monthly" and new_periodicity == "daily":
                 new_df = resample_returns(new_df, "monthly")
                 combined_periodicity = "monthly"
@@ -8275,7 +8283,7 @@ def at_add_portfolios_from_database(
     Output("at-sheet-select-sheetnames-store", "data", allow_duplicate=True),
     Input("at-upload-data", "contents"),
     State("at-upload-data", "filename"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -8285,7 +8293,7 @@ def at_add_portfolios_from_database(
     State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def handle_upload(contents, filename, existing_data, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load, current_vol_scaling):
+def handle_upload(contents, filename, existing_dataset_key, existing_periodicity, current_selection, current_bench, current_ls, current_order, first_load, current_vol_scaling):
     """Handle file upload, parse data, and update stores."""
     if contents is None:
         raise PreventUpdate
@@ -8311,7 +8319,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
 
         # Parse and merge upload
         new_df = _shared_import_single_upload(contents, filename)
-        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merge_result = _shared_merge_uploaded_with_existing(None, existing_periodicity, new_df, dataset_key=existing_dataset_key)
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
         periodicity_options = merge_result.periodicity_options
@@ -8403,7 +8411,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     State("at-sheet-select-contents-store", "data"),
     State("at-sheet-select-filename-store", "data"),
     State("at-sheet-select-sheetnames-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -8414,7 +8422,7 @@ def handle_upload(contents, filename, existing_data, existing_periodicity, curre
     prevent_initial_call=True,
 )
 def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed_contents, stashed_filename, stashed_sheet_names,
-                       existing_data, existing_periodicity, current_selection,
+                       existing_dataset_key, existing_periodicity, current_selection,
                        current_bench, current_ls, current_order, first_load, current_vol_scaling):
     """Parse selected sheet(s) and complete the import."""
     if not stashed_contents:
@@ -8451,7 +8459,7 @@ def on_sheet_select_ok(n_clicks_selected, n_clicks_all, selected_sheets, stashed
             target_sheets,
             workbook_sheets=workbook_sheets,
         )
-        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merge_result = _shared_merge_uploaded_with_existing(None, existing_periodicity, new_df, dataset_key=existing_dataset_key)
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
         periodicity_options = merge_result.periodicity_options
@@ -8779,7 +8787,7 @@ clientside_callback(
     Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
     Input("at-series-grid-snapshot-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
@@ -8790,7 +8798,7 @@ clientside_callback(
 )
 def on_modal_ok(
     snapshot_data,
-    raw_data,
+    dataset_key,
     current_select,
     current_bench,
     current_ls,
@@ -8801,10 +8809,10 @@ def on_modal_ok(
     rows = []
     if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
         rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
-    if not rows or not raw_data:
+    if not rows or not dataset_key:
         raise PreventUpdate
 
-    df = _raw_df(raw_data)
+    df = _raw_df_by_key(dataset_key)
     existing_cols = list(df.columns)
     existing_set = set(existing_cols)
 
@@ -9112,7 +9120,7 @@ def update_date_range_store(start_date, end_date, existing_range):
     Output("at-returns-grid", "rowData"),
     Output("at-tab-render-signatures-store", "data", allow_duplicate=True),
     Input("at-returns-tab-trigger-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -9128,7 +9136,7 @@ def update_date_range_store(start_date, end_date, existing_range):
     State("at-range-candidates-store", "data"),
     prevent_initial_call=True,
 )
-def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True, tab_render_signatures=None, current_candidates=None):
+def update_grid(trigger_payload=None, dataset_key=None, periodicity=None, selected_series=None, returns_type="total", benchmark_assignments=None, long_short_assignments=None, date_range=None, state_ready=False, vol_scaler=0, vol_scaling_assignments=None, active_tab="returns", initial_tab_ready=True, tab_render_signatures=None, current_candidates=None):
     """Update the AG Grid based on selections (optimized with caching)."""
     _at_require_tab_trigger(trigger_payload, "returns")
     if active_tab != "returns" or not initial_tab_ready or not state_ready:
@@ -9139,14 +9147,14 @@ def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_
         date_range,
     )
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return [], [], no_update
 
     if not _has_complete_date_range(effective_date_range):
         return no_update, no_update, no_update
 
     next_signature = _returns_tab_signature(
-        raw_data,
+        dataset_key,
         periodicity,
         selected_series,
         returns_type,
@@ -9162,7 +9170,7 @@ def update_grid(trigger_payload=None, raw_data=None, periodicity=None, selected_
     try:
         with timed_block("analyticstool.render_returns_grid", series_count=len(selected_series)):
             display_df = _compute_selected_returns(
-                raw_data,
+                dataset_key,
                 periodicity,
                 selected_series,
                 returns_type,
@@ -9243,7 +9251,7 @@ def reset_statistics_loaded_on_hydration(state_ready):
     Input("at-rolling-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
     State("at-rolling-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-rolling-window-select", "value"),
@@ -9259,21 +9267,21 @@ def reset_statistics_loaded_on_hydration(state_ready):
     State("dashmat-saved-series-cache-store", "data"),
     prevent_initial_call=True,
 )
-def update_rolling_grid(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store):
+def update_rolling_grid(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store):
     """Update the Rolling Returns grid with rolling window calculations."""
     _at_require_tab_trigger(trigger_payload, "rolling")
     # Lazy loading: only calculate when rolling tab/table view is active and ready.
     if active_tab != "rolling" or chart_checked != "table" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return [], []
 
     try:
         # Use shared calculate_rolling_returns function
         # We pass "total" for returns_type as it's ignored by the new logic in favor of rolling_metric
         rolling_df = calculate_rolling_returns(
-            _dataset_key(raw_data),
+            dataset_key,
             periodicity,
             tuple(selected_series),
             "total",
@@ -9332,7 +9340,7 @@ def update_rolling_grid(trigger_payload, active_tab, chart_checked, raw_data, pe
     Input("at-rolling-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
     State("at-rolling-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-rolling-window-select", "value"),
@@ -9349,7 +9357,7 @@ def update_rolling_grid(trigger_payload, active_tab, chart_checked, raw_data, pe
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store, theme):
+def update_rolling_chart(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store, theme):
     """Update the Rolling Returns chart with rolling window calculations."""
     _at_require_tab_trigger(trigger_payload, "rolling")
     # Create empty figure
@@ -9367,13 +9375,13 @@ def update_rolling_chart(trigger_payload, active_tab, chart_checked, raw_data, p
     if active_tab != "rolling" or chart_checked != "chart" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return empty_graph
 
     try:
         # Use shared calculate_rolling_returns function
         rolling_df = calculate_rolling_returns(
-            _dataset_key(raw_data),
+            dataset_key,
             periodicity,
             tuple(selected_series),
             "total",
@@ -9521,7 +9529,7 @@ def update_monthly_series_select(trigger_payload, monthly_view, selected_series,
     Output("at-calendar-grid", "rowData"),
     Input("at-calendar-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
@@ -9537,14 +9545,14 @@ def update_monthly_series_select(trigger_payload, monthly_view, selected_series,
     State("at-partial-period-store", "data"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, partial_mode):
+def update_calendar_grid(trigger_payload, active_tab, dataset_key, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, partial_mode):
     """Update the Calendar Year Returns grid (lazy loaded)."""
     _at_require_tab_trigger(trigger_payload, "calendar")
     # Lazy loading: only calculate when calendar tab is active
     if active_tab != "calendar" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return [], []
 
     # Only calculate for daily or monthly original data
@@ -9557,7 +9565,7 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
         if monthly_view == "monthly" and monthly_series and monthly_series in selected_series:
             # Handle monthly view if selected
             return create_monthly_view(
-                _dataset_key(raw_data),
+                dataset_key,
                 monthly_series,
                 original_periodicity,
                 selected_periodicity,
@@ -9574,7 +9582,7 @@ def update_calendar_grid(trigger_payload, active_tab, raw_data, original_periodi
         else:
             # Calculate calendar returns for the selected periodicity
             calendar_returns = calculate_calendar_year_returns(
-                _dataset_key(raw_data),
+                dataset_key,
                 original_periodicity,
                 selected_periodicity,
                 selected_series,
@@ -9829,7 +9837,7 @@ def update_correlogram_meta(trigger_payload, selected_series):
     Output("at-correlogram-target-key-store", "data"),
     Input("at-correlogram-tab-trigger-store", "data"),
     Input("at-correlogram-block-width", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -9851,7 +9859,7 @@ def update_correlogram_meta(trigger_payload, selected_series):
 def update_correlogram_target_key(
     trigger_payload,
     block_width,
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -9896,7 +9904,7 @@ def update_correlogram_target_key(
     else:
         effective_shrinkage, effective_target = "none", "scaled_identity"
     next_key = _correlogram_request_key(
-        raw_data,
+        dataset_key,
         periodicity,
         tuple(selected_series or ()),
         returns_type,
@@ -9973,7 +9981,7 @@ clientside_callback(
     Output("at-correlogram-rendered-key-store", "data", allow_duplicate=True),
     Input("at-correlogram-target-key-store", "data"),
     State("at-main-tabs", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -9992,7 +10000,7 @@ clientside_callback(
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, shrinkage_target, correlation_view, block_width, theme):
+def update_correlogram(target_key, active_tab, dataset_key, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, shrinkage_target, correlation_view, block_width, theme):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -10020,7 +10028,7 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
 
     request_key = target_key
 
-    if raw_data is None or not selected_series or len(selected_series) < 2:
+    if dataset_key is None or not selected_series or len(selected_series) < 2:
         return empty_graph, request_key
 
     use_weighted_matrix = bool(
@@ -10036,7 +10044,7 @@ def update_correlogram(target_key, active_tab, raw_data, periodicity, selected_s
         effective_shrinkage, effective_target = "none", "scaled_identity"
     try:
         result = generate_correlogram_cached(
-            _dataset_key(raw_data),
+            dataset_key,
             periodicity or "daily",
             tuple(selected_series),
             returns_type,
@@ -10348,7 +10356,7 @@ def _build_factor_scatter_summary_rows(selected_series, dependent_df, factor_ser
     State("at-factor-series-select", "value"),
     State("at-factor-quantiles-input", "value"),
     State("at-factor-transform-select", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -10371,7 +10379,7 @@ def update_factor_analysis(
     factor_series,
     factor_quantiles,
     factor_transform,
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -10394,7 +10402,7 @@ def update_factor_analysis(
     ):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return None, dmc.Text("Select series to view factor analysis.", size="sm", c="dimmed")
     mode = factor_mode if factor_mode in {"box", "scatter", "detail", "qq"} else "box"
     qq_reference = factor_qq_reference if factor_qq_reference in {"normal", "reference"} else "normal"
@@ -10403,7 +10411,7 @@ def update_factor_analysis(
 
     if mode == "qq":
         dependent_df = _prepare_factor_analysis_selected_df(
-            raw_data,
+            dataset_key,
             periodicity,
             selected_series,
             returns_type,
@@ -10416,7 +10424,7 @@ def update_factor_analysis(
         factor_values = pd.Series(dtype=float)
     else:
         factor_artifacts = _compute_factor_artifacts(
-            raw_data,
+            dataset_key,
             periodicity,
             selected_series,
             factor_series,
@@ -10469,7 +10477,7 @@ def update_factor_analysis(
         if not factor_series:
             return None, dmc.Text("Select a reference series to view this Q-Q plot.", size="sm", c="dimmed")
         qq_reference_series = _prepare_at_qq_reference_series(
-            raw_data,
+            dataset_key,
             periodicity,
             factor_series,
             returns_type,
@@ -11593,7 +11601,7 @@ def _write_export_sheet_specs(writer, sheet_specs: list[_ExcelSheetSpec]) -> Non
 @callback(
     Output("at-conditional-returns-target-key-store", "data"),
     Input("at-conditional-tab-trigger-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -11620,7 +11628,7 @@ def _write_export_sheet_specs(writer, sheet_specs: list[_ExcelSheetSpec]) -> Non
 )
 def update_conditional_returns_target_key(
     trigger_payload,
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -11647,7 +11655,7 @@ def update_conditional_returns_target_key(
     _at_require_tab_trigger(trigger_payload, "conditional_returns")
     if not initial_tab_ready or not state_ready or not _has_complete_date_range(date_range):
         return None
-    if raw_data is None or not selected_series or not factor_series:
+    if dataset_key is None or not selected_series or not factor_series:
         return None
 
     definition_payload = ""
@@ -11659,7 +11667,7 @@ def update_conditional_returns_target_key(
         definition_payload = _definition_payload_for_compute(definition)
 
     next_key = _conditional_tab_signature(
-        raw_data,
+        dataset_key,
         periodicity,
         tuple(selected_series or ()),
         returns_type,
@@ -11713,7 +11721,7 @@ def control_conditional_returns_loading_display(active_tab, state_ready, initial
     State("at-factor-definitions-local-store", "data"),
     State("at-factor-series-select-conditional", "value"),
     State("at-factor-transform-select-conditional", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -11741,7 +11749,7 @@ def update_conditional_returns(
     factor_definitions_local=None,
     factor_series=None,
     factor_transform=None,
-    raw_data=None,
+    dataset_key=None,
     periodicity=None,
     selected_series=None,
     returns_type=None,
@@ -11770,7 +11778,7 @@ def update_conditional_returns(
     if not target_key or target_key == rendered_key:
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return None, dmc.Text("Select series to view conditional returns.", size="sm", c="dimmed"), None
     if not factor_series:
         return None, dmc.Text("Select a factor series.", size="sm", c="dimmed"), None
@@ -11801,7 +11809,7 @@ def update_conditional_returns(
     warning_children = None
 
     payload = _compute_conditional_returns_cached(
-        _dataset_key(raw_data) or "",
+        dataset_key or "",
         normalized_periodicity,
         selected_series_tuple,
         normalized_returns_type,
@@ -12023,7 +12031,7 @@ def _build_regime_settings_text_component(payload: _RegimeAnalysisPayload):
     State("at-main-tabs", "value"),
     State("at-regime-definition-select", "value"),
     State("at-regime-detail-display-mode-select", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -12044,7 +12052,7 @@ def update_regime_analysis(
     active_tab,
     regime_definition_key,
     regime_display_mode,
-    raw_data,
+    dataset_key,
     periodicity,
     selected_series,
     returns_type,
@@ -12067,7 +12075,7 @@ def update_regime_analysis(
     ):
         raise PreventUpdate
 
-    if not raw_data:
+    if not dataset_key:
         return None, dmc.Text("Load return data to run regime analysis.", size="sm", c="dimmed")
     if not selected_series:
         return None, dmc.Text("Select one or more series for regime statistics.", size="sm", c="dimmed")
@@ -12075,7 +12083,7 @@ def update_regime_analysis(
         return None, dmc.Text("Select a regime definition.", size="sm", c="dimmed")
 
     build_result = _build_regime_analysis_payload(
-        _raw_json(raw_data),
+        _raw_json_by_key(dataset_key),
         periodicity,
         selected_series,
         returns_type,
@@ -12210,7 +12218,7 @@ def update_regime_analysis(
     Input("at-growth-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
     State("at-growth-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -12222,7 +12230,7 @@ def update_regime_analysis(
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_growth_charts(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
+def update_growth_charts(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
     """Update Growth of $1 charts (lazy loaded)."""
     _at_require_tab_trigger(trigger_payload, "growth")
     # Lazy loading: only generate when growth tab is active and chart view is selected
@@ -12234,13 +12242,13 @@ def update_growth_charts(trigger_payload, active_tab, chart_checked, raw_data, p
     ):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return dmc.Text("Select series to view growth charts", size="sm", c="dimmed")
 
     try:
         # Use get_working_returns to get aligned data + benchmarks
         df = get_working_returns_by_key(
-            _dataset_key(raw_data) or "", periodicity or "daily", tuple(selected_series),
+            dataset_key or "", periodicity or "daily", tuple(selected_series),
             _mapping_payload(benchmark_assignments), _mapping_payload(long_short_assignments), _date_range_payload(date_range),
             vol_scaler or 0, _mapping_payload(vol_scaling_assignments)
         )
@@ -12271,7 +12279,7 @@ def update_growth_charts(trigger_payload, active_tab, chart_checked, raw_data, p
         # Use shared calculate_growth_of_dollar function for the main chart
         # (It calls get_working_returns internally, but it's cached)
         growth_df = calculate_growth_of_dollar(
-            _dataset_key(raw_data),
+            dataset_key,
             periodicity,
             tuple(selected_series),
             _mapping_payload(benchmark_assignments),
@@ -12405,7 +12413,7 @@ def update_growth_charts(trigger_payload, active_tab, chart_checked, raw_data, p
     Input("at-growth-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
     State("at-growth-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
@@ -12416,7 +12424,7 @@ def update_growth_charts(trigger_payload, active_tab, chart_checked, raw_data, p
     State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_growth_grid(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
+def update_growth_grid(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update Growth of $1 grid (lazy loaded)."""
     _at_require_tab_trigger(trigger_payload, "growth")
     # Lazy loading: only generate when growth tab is active and table view is selected
@@ -12428,13 +12436,13 @@ def update_growth_grid(trigger_payload, active_tab, chart_checked, raw_data, per
     ):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return [], []
 
     try:
         # Use shared calculate_growth_of_dollar function
         growth_df = calculate_growth_of_dollar(
-            _dataset_key(raw_data),
+            dataset_key,
             periodicity,
             tuple(selected_series),
             _mapping_payload(benchmark_assignments),
@@ -12482,7 +12490,7 @@ def update_growth_grid(trigger_payload, active_tab, chart_checked, raw_data, per
     Input("at-drawdown-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
     State("at-drawdown-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -12495,7 +12503,7 @@ def update_growth_grid(trigger_payload, active_tab, chart_checked, raw_data, per
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_drawdown_charts(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
+def update_drawdown_charts(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, theme):
     """Update Drawdown charts (lazy loaded)."""
     _at_require_tab_trigger(trigger_payload, "drawdown")
     # Lazy loading: only generate when drawdown tab is active and chart view is selected
@@ -12507,13 +12515,13 @@ def update_drawdown_charts(trigger_payload, active_tab, chart_checked, raw_data,
     ):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return dmc.Text("Select series to view drawdown charts", size="sm", c="dimmed")
 
     try:
         # Use shared calculate_drawdown function
         drawdown_df = calculate_drawdown(
-            _dataset_key(raw_data),
+            dataset_key,
             periodicity,
             tuple(selected_series),
             returns_type,
@@ -12566,7 +12574,7 @@ def update_drawdown_charts(trigger_payload, active_tab, chart_checked, raw_data,
     Input("at-drawdown-tab-trigger-store", "data"),
     State("at-main-tabs", "value"),
     State("at-drawdown-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
     State("at-returns-type-select", "value"),
@@ -12578,7 +12586,7 @@ def update_drawdown_charts(trigger_payload, active_tab, chart_checked, raw_data,
     State("at-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
-def update_drawdown_grid(trigger_payload, active_tab, chart_checked, raw_data, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
+def update_drawdown_grid(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update Drawdown grid (lazy loaded)."""
     _at_require_tab_trigger(trigger_payload, "drawdown")
     # Lazy loading: only generate when drawdown tab is active and table view is selected
@@ -12590,13 +12598,13 @@ def update_drawdown_grid(trigger_payload, active_tab, chart_checked, raw_data, p
     ):
         raise PreventUpdate
 
-    if raw_data is None or not selected_series:
+    if dataset_key is None or not selected_series:
         return [], []
 
     try:
         # Use shared calculate_drawdown function
         drawdown_df = calculate_drawdown(
-            _dataset_key(raw_data),
+            dataset_key,
             periodicity,
             tuple(selected_series),
             returns_type,
@@ -12644,7 +12652,7 @@ def update_drawdown_grid(trigger_payload, active_tab, chart_checked, raw_data, p
 @callback(
     Output("at-download-excel", "data"),
     Input("at-menu-download-excel", "n_clicks"),
-    State("dashmat-raw-data-store", "data"),
+    State("at-dataset-key-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("at-periodicity-select", "value"),
     State("at-series-select", "data"),
@@ -12684,7 +12692,7 @@ def update_drawdown_grid(trigger_payload, active_tab, chart_checked, raw_data, p
 )
 def download_excel(
     n_clicks,
-    raw_data,
+    dataset_key,
     original_periodicity,
     selected_periodicity,
     selected_series,
@@ -12722,7 +12730,7 @@ def download_excel(
     partial_mode=None,
 ):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
-    if n_clicks is None or raw_data is None or not selected_series:
+    if n_clicks is None or dataset_key is None or not selected_series:
         raise PreventUpdate
 
     with timed_block(
@@ -12731,7 +12739,7 @@ def download_excel(
         returns_type=returns_type,
     ):
         bundle = _build_analytics_compute_bundle(
-            raw_data,
+            dataset_key,
             selected_periodicity,
             selected_series,
             benchmark_assignments,
