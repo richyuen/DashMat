@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
+import sys
+import types
+
 import numpy as np
 import pandas as pd
 import pytest
 from _pytest import pathlib as _pytest_pathlib
+from dash import html
 
 import cache_config
 from utils.raw_dataset import clear_raw_dataset_cache
@@ -24,6 +30,97 @@ def _safe_cleanup_dead_symlinks(root):
 
 
 _pytest_pathlib.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks
+
+
+def _noop_callback(*_args, **_kwargs):
+    def _decorator(func):
+        return func
+
+    return _decorator
+
+
+def _noop_clientside_callback(*_args, **_kwargs):
+    return None
+
+
+def _noop_register_page(*_args, **_kwargs):
+    return None
+
+
+def _load_analyticstool_advanced_source():
+    source_path = Path(__file__).resolve().parents[1] / "utils" / "analyticstool_advanced_source.py.txt"
+    source_text = source_path.read_text(encoding="utf-8")
+    dash_import_pattern = re.compile(
+        r"from dash import .*?callback_context\s*",
+        re.DOTALL,
+    )
+    source_text = dash_import_pattern.sub(
+        (
+            "from dash import ClientsideFunction, Input, Output, State, dcc, html, no_update, ALL, callback_context\n"
+            "callback = _noop_callback\n"
+            "clientside_callback = _noop_clientside_callback\n"
+            "register_page = _noop_register_page\n"
+        ),
+        source_text,
+        count=1,
+    )
+
+    module = types.ModuleType("tests_analyticstool_advanced_source")
+    module.__file__ = str(source_path)
+    module.__dict__.update(
+        {
+            "__name__": module.__name__,
+            "_noop_callback": _noop_callback,
+            "_noop_clientside_callback": _noop_clientside_callback,
+            "_noop_register_page": _noop_register_page,
+        }
+    )
+    sys.modules[module.__name__] = module
+    exec(compile(source_text, str(source_path), "exec"), module.__dict__)
+    return module
+
+
+class _AnalyticsToolProxy:
+    def __init__(self, main_module, advanced_module):
+        object.__setattr__(self, "_main_module", main_module)
+        object.__setattr__(self, "_advanced_module", advanced_module)
+        object.__setattr__(self, "layout", html.Div([main_module.layout, advanced_module.layout]))
+
+    def __getattr__(self, name):
+        if hasattr(self._main_module, name):
+            return getattr(self._main_module, name)
+        return getattr(self._advanced_module, name)
+
+    def __setattr__(self, name, value):
+        if name in {"_main_module", "_advanced_module", "layout"}:
+            object.__setattr__(self, name, value)
+            return
+        if name == "callback_context":
+            setattr(self._main_module, name, value)
+            setattr(self._advanced_module, name, value)
+            return
+        main_has = hasattr(self._main_module, name)
+        advanced_has = hasattr(self._advanced_module, name)
+        if main_has and advanced_has:
+            setattr(self._main_module, name, value)
+            setattr(self._advanced_module, name, value)
+            return
+        if main_has:
+            setattr(self._main_module, name, value)
+            return
+        setattr(self._advanced_module, name, value)
+
+    def at_restore_secondary_controls(self, *args, **kwargs):
+        return self._advanced_module.at_restore_secondary_controls(*args, **kwargs)
+
+    def sync_at_returns_type_from_mirrors(self, *args, **kwargs):
+        return self._advanced_module.sync_at_returns_type_from_mirrors(*args, **kwargs)
+
+    def sync_at_returns_type_mirrors(self, *args, **kwargs):
+        return self._advanced_module.sync_at_returns_type_mirrors(*args, **kwargs)
+
+    def download_excel(self, *args, **kwargs):
+        return self._advanced_module.download_excel(*args, **kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -72,5 +169,6 @@ def page_modules():
     import app  # noqa: F401
     import pages.analyticstool as analyticstool
     import pages.portopt as portopt
+    analyticstool_advanced = _load_analyticstool_advanced_source()
 
-    return analyticstool, portopt
+    return _AnalyticsToolProxy(analyticstool, analyticstool_advanced), portopt

@@ -14,6 +14,7 @@ from utils.account_list_modal import (
     build_account_list_components,
     register_account_list_callbacks,
 )
+from utils.analyticstool_advanced_app import mount_analyticstool_advanced
 from utils.perf_timing import configure_timing_logger
 from utils.returns import _build_raw_data_metadata_cached
 
@@ -65,6 +66,8 @@ def _restricted_href_for_path(pathname: str | None, userinfo: dict | None) -> st
 
     if pathname in ("/analyticstool", "/analyticstool/"):
         return "/restricted?target=Analytics%20Tool"
+    if pathname in ("/analyticstool-advanced", "/analyticstool-advanced/"):
+        return "/restricted?target=Analytics%20Tool%20Advanced"
     if pathname in ("/portopt", "/portopt/"):
         return "/restricted?target=Portfolio%20Optimization"
     if pathname in ("/regression", "/regression/"):
@@ -261,6 +264,12 @@ def refresh_raw_data_meta_store(raw_data_identity, original_periodicity):
 
 register_account_list_callbacks(
     app,
+    db_engine=DB_ENGINE,
+    mrd_engine=MRD_ENGINE,
+    perf_engine=PERF_ENGINE,
+)
+mount_analyticstool_advanced(
+    app.server,
     db_engine=DB_ENGINE,
     mrd_engine=MRD_ENGINE,
     perf_engine=PERF_ENGINE,

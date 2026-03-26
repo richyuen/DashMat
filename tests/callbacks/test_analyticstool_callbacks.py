@@ -14,6 +14,18 @@ from dash.exceptions import PreventUpdate
 from utils.returns import build_raw_data_metadata
 
 
+def _main_analyticstool_page_text() -> str:
+    return Path("pages/analyticstool.py").read_text(encoding="utf-8")
+
+
+def _advanced_analyticstool_page_text() -> str:
+    return Path("utils/analyticstool_advanced_source.py.txt").read_text(encoding="utf-8")
+
+
+def _combined_analyticstool_page_text() -> str:
+    return _main_analyticstool_page_text() + "\n" + _advanced_analyticstool_page_text()
+
+
 def _collect_component_text(node):
     if node is None:
         return []
@@ -629,7 +641,7 @@ def test_at_require_tab_trigger_accepts_match_and_raises_for_mismatch(page_modul
 
 
 def test_hidden_at_callbacks_use_family_trigger_inputs():
-    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    main_page_text = _main_analyticstool_page_text()
     for trigger_id in [
         'Input("at-statistics-tab-trigger-store", "data")',
         'Input("at-returns-tab-trigger-store", "data")',
@@ -637,25 +649,32 @@ def test_hidden_at_callbacks_use_family_trigger_inputs():
         'Input("at-calendar-tab-trigger-store", "data")',
         'Input("at-growth-tab-trigger-store", "data")',
         'Input("at-drawdown-tab-trigger-store", "data")',
+        'Input("at-correlogram-tab-trigger-store", "data")',
+    ]:
+        assert trigger_id in main_page_text
+
+    advanced_page_text = _advanced_analyticstool_page_text()
+    for trigger_id in [
         'Input("at-factor-tab-trigger-store", "data")',
         'Input("at-regime-tab-trigger-store", "data")',
         'Input("at-conditional-tab-trigger-store", "data")',
-        'Input("at-correlogram-tab-trigger-store", "data")',
     ]:
-        assert trigger_id in page_text
+        assert trigger_id in advanced_page_text
 
 
 def test_hidden_at_trigger_emitters_include_restore_ready_guards():
-    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
-    assert 'Input("at-main-tabs", "value")' in page_text
-    assert 'Input("at-initial-tab-render-ready-store", "data")' in page_text
-    assert 'Input("at-state-ready-store", "data")' in page_text
-    assert 'analyticsTabTrigger("statistics"' in page_text
-    assert 'analyticsTabTrigger("returns"' in page_text
-    assert 'analyticsTabTrigger("correlogram"' in page_text
-    assert 'analyticsBootstrapCandidateTrigger' in page_text
-    assert 'analyticsCandidateRefreshTrigger' in page_text
-    assert 'analyticsModalPreviewTrigger(opened)' in page_text
+    main_page_text = _main_analyticstool_page_text()
+    assert 'Input("at-main-tabs", "value")' in main_page_text
+    assert 'Input("at-initial-tab-render-ready-store", "data")' in main_page_text
+    assert 'Input("at-state-ready-store", "data")' in main_page_text
+    assert 'analyticsTabTrigger("statistics"' in main_page_text
+    assert 'analyticsTabTrigger("returns"' in main_page_text
+    assert 'analyticsTabTrigger("correlogram"' in main_page_text
+    assert 'analyticsBootstrapCandidateTrigger' in main_page_text
+    assert 'analyticsCandidateRefreshTrigger' in main_page_text
+
+    advanced_page_text = _advanced_analyticstool_page_text()
+    assert 'analyticsModalPreviewTrigger(opened)' in advanced_page_text
 
 
 def test_at_account_list_live_apply_restores_from_raw_meta_without_secondary_restore_ready():
@@ -1044,6 +1063,22 @@ def test_analyticstool_save_session_disabled_without_raw_data(page_modules):
 def test_analyticstool_save_session_disable_is_clientside_and_uses_raw_meta():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     callback_text = page_text.split('Output("at-menu-save-session", "disabled")', 1)[-1]
+    callback_text = callback_text.split("@callback(", 1)[0]
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in callback_text
+    assert 'Input("dashmat-raw-data-store", "data")' not in callback_text
+
+
+def test_analyticstool_open_advanced_disabled_without_raw_data(page_modules):
+    analyticstool, _ = page_modules
+
+    assert analyticstool.at_toggle_open_advanced(None) is True
+    assert analyticstool.at_toggle_open_advanced({}) is True
+    assert analyticstool.at_toggle_open_advanced({"has_data": True}) is False
+
+
+def test_analyticstool_open_advanced_disable_is_clientside_and_uses_raw_meta():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    callback_text = page_text.split('Output("at-menu-open-advanced", "disabled")', 1)[-1]
     callback_text = callback_text.split("@callback(", 1)[0]
     assert 'Input("dashmat-raw-data-meta-store", "data")' in callback_text
     assert 'Input("dashmat-raw-data-store", "data")' not in callback_text
@@ -2926,16 +2961,17 @@ def test_update_conditional_returns_renders_with_decorator_argument_order(monkey
 
 def test_target_key_render_callbacks_keep_decorator_and_signature_order(page_modules):
     analyticstool, _ = page_modules
-    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    advanced_page_text = _advanced_analyticstool_page_text()
+    main_page_text = _main_analyticstool_page_text()
 
-    conditional_block = _callback_block(page_text, "update_conditional_returns")
+    conditional_block = _callback_block(advanced_page_text, "update_conditional_returns")
     conditional_params = list(inspect.signature(analyticstool.update_conditional_returns).parameters)
     assert 'Input("at-conditional-tab-trigger-store", "data")' in conditional_block
     assert 'Input("at-conditional-returns-target-key-store", "data")' in conditional_block
     assert 'State("at-main-tabs", "value")' in conditional_block
     assert conditional_params[:3] == ["trigger_payload", "target_key", "active_tab"]
 
-    correlogram_block = _callback_block(page_text, "update_correlogram")
+    correlogram_block = _callback_block(main_page_text, "update_correlogram")
     correlogram_params = list(inspect.signature(analyticstool.update_correlogram).parameters)
     assert 'Input("at-correlogram-target-key-store", "data")' in correlogram_block
     assert 'State("at-main-tabs", "value")' in correlogram_block
