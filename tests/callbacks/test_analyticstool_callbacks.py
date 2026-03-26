@@ -1486,7 +1486,7 @@ def test_update_at_dataset_key_store_dedupes_unchanged(page_modules):
     analyticstool, _ = page_modules
 
     assert (
-        analyticstool.update_at_dataset_key_store({"dataset_key": "unit-test-dataset"}, None, None)
+        analyticstool.update_at_dataset_key_store({"dataset_key": "unit-test-dataset"}, None)
         == "unit-test-dataset"
     )
 
@@ -1494,44 +1494,7 @@ def test_update_at_dataset_key_store_dedupes_unchanged(page_modules):
         analyticstool.update_at_dataset_key_store(
             {"dataset_key": "unit-test-dataset"},
             "unit-test-dataset",
-            None,
         )
-
-
-def test_update_at_dataset_key_store_warms_cache_on_session_restore(page_modules):
-    """On session restore after server restart, the meta store fires this
-    callback before refresh_raw_data_meta_store rehydrates the cache.
-    Verify that passing the raw-data-store payload warms the cache so
-    downstream key-only callbacks succeed."""
-    analyticstool, _ = page_modules
-    import pandas as pd
-    from utils.raw_dataset import (
-        build_raw_data_store_payload,
-        clear_raw_dataset_cache,
-        get_raw_dataset_df,
-    )
-    from cache_config import cache as cache_proxy
-
-    idx = pd.date_range("2024-01-01", periods=3, freq="D")
-    df = pd.DataFrame({"X": [0.01, 0.02, 0.03]}, index=idx)
-    payload = build_raw_data_store_payload(df)
-    dataset_key = payload["dataset_key"]
-
-    # Simulate cold cache
-    clear_raw_dataset_cache()
-    cache_proxy.clear()
-
-    with pytest.raises(KeyError):
-        get_raw_dataset_df(dataset_key)
-
-    # Session restore: meta store has dataset_key, raw-data-store has payload
-    analyticstool.update_at_dataset_key_store(
-        {"dataset_key": dataset_key}, None, payload,
-    )
-
-    # Cache is now warm
-    result = get_raw_dataset_df(dataset_key)
-    assert list(result.columns) == ["X"]
 
 
 def test_shared_benchmark_stamp_store_helpers_round_trip(page_modules):

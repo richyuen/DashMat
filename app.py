@@ -83,7 +83,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-identity-store", data=None, storage_type="memory"),
-    dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="memory"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),

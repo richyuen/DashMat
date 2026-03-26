@@ -122,6 +122,16 @@ def test_refresh_raw_data_meta_store_warms_cache_from_raw_data_store(monkeypatch
     assert len(result) == 3
 
 
+def test_raw_data_meta_store_is_memory_backed():
+    """The meta store must be memory-backed so it starts as None on reload,
+    preventing a race where stale session data propagates a dataset key
+    before the server cache is warm."""
+    from pathlib import Path
+
+    app_text = Path("app.py").read_text(encoding="utf-8")
+    assert 'dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="memory")' in app_text
+
+
 def test_app_shell_hosts_shared_account_list_modal_and_store():
     from pathlib import Path
 
