@@ -135,6 +135,7 @@ from utils.raw_data_imports import (
 )
 from utils.raw_dataset import (
     build_raw_data_store_payload,
+    cache_raw_dataset,
     get_raw_data_json_from_store,
     get_raw_dataset_df,
     get_raw_dataset_json,
@@ -2991,8 +2992,15 @@ def refresh_saved_series_cache(raw_meta, cache_data):
     Output("at-dataset-key-store", "data"),
     Input("dashmat-raw-data-meta-store", "data"),
     State("at-dataset-key-store", "data"),
+    State("dashmat-raw-data-store", "data"),
 )
-def update_at_dataset_key_store(raw_meta, current_dataset_key):
+def update_at_dataset_key_store(raw_meta, current_dataset_key, raw_data_store):
+    # Ensure the server-side dataset cache is warm before propagating the
+    # key to downstream callbacks.  On session restore after a server
+    # restart the session-backed meta store fires this callback before
+    # refresh_raw_data_meta_store has had a chance to rehydrate the cache.
+    if raw_data_store is not None:
+        cache_raw_dataset(raw_data_store)
     next_dataset_key = _dataset_key_from_meta(raw_meta)
     if next_dataset_key == current_dataset_key:
         raise PreventUpdate
