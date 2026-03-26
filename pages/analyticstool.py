@@ -2516,20 +2516,15 @@ clientside_callback(
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-from-db", "n_clicks"),
     Input("at-welcome-add-db-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def open_db_add_modal(menu_clicks, welcome_clicks):
-    return compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
-
-
-@callback(
-    Output("at-db-add-modal", "opened", allow_duplicate=True),
-    Output("at-db-add-series-select", "value", allow_duplicate=True),
     Input("at-db-add-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def close_db_add_modal(n_clicks):
-    return compute_close_db_add_modal(n_clicks)
+def db_add_modal_lifecycle(menu_clicks, welcome_clicks, cancel_clicks):
+    if callback_context.triggered_id == "at-db-add-cancel-button":
+        if not cancel_clicks:
+            raise PreventUpdate
+        return False, no_update, [], no_update
+    return compute_open_db_add_modal(menu_clicks, welcome_clicks, DB_ENGINE)
 
 
 @callback(
@@ -2555,16 +2550,24 @@ def close_db_add_modal(n_clicks):
     Input("at-welcome-add-raw-factor-btn", "n_clicks"),
     Input("at-welcome-add-raw-funds-btn", "n_clicks"),
     Input("at-welcome-add-raw-performance-btn", "n_clicks"),
+    Input("at-raw-db-add-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def at_open_raw_db_add_modal(
+def at_raw_db_add_modal_lifecycle(
     factor_clicks,
     funds_clicks,
     performance_clicks,
     welcome_factor_clicks,
     welcome_funds_clicks,
     welcome_performance_clicks,
+    cancel_clicks,
 ):
+    n_no = no_update
+    if callback_context.triggered_id == "at-raw-db-add-cancel-button":
+        if not cancel_clicks:
+            raise PreventUpdate
+        preview = "Select a series to preview option-adjusted results (first 6 rows)."
+        return False, n_no, n_no, n_no, None, n_no, n_no, n_no, n_no, n_no, True, [], [], preview, True, n_no
     return compute_open_raw_db_add_modal(
         prefix="at",
         triggered_id=callback_context.triggered_id,
@@ -2580,22 +2583,6 @@ def at_open_raw_db_add_modal(
 
 
 @callback(
-    Output("at-raw-db-add-modal", "opened", allow_duplicate=True),
-    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
-    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
-    Output("at-raw-db-preview-lines", "children", allow_duplicate=True),
-    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
-    Output("at-raw-db-add-ok-button", "disabled", allow_duplicate=True),
-    Output("at-raw-db-add-series-select", "value", allow_duplicate=True),
-    Input("at-raw-db-add-cancel-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def at_close_raw_db_add_modal(n_clicks):
-    opened, rows, grid_rows, preview = compute_close_raw_db_add_modal(n_clicks)
-    return opened, rows, grid_rows, preview, True, True, None
-
-
-@callback(
     Output("at-raw-db-add-table-select", "disabled"),
     Output("at-raw-db-add-fee-select", "data"),
     Output("at-raw-db-add-fee-select", "value"),
@@ -2604,27 +2591,36 @@ def at_close_raw_db_add_modal(n_clicks):
     Output("at-raw-db-add-include-benchmark", "checked", allow_duplicate=True),
     Output("at-raw-db-factor-controls", "style"),
     Output("at-raw-db-add-convert-returns", "checked", allow_duplicate=True),
+    Output("at-raw-db-add-divide-by", "disabled"),
     Input("at-raw-db-add-mode-store", "data"),
     Input("at-raw-db-add-series-select", "value"),
+    Input("at-raw-db-add-convert-returns", "checked"),
     Input("at-raw-db-add-modal", "opened"),
     State("at-raw-db-add-fee-select", "value"),
     State("at-raw-db-add-include-benchmark", "checked"),
-    State("at-raw-db-add-convert-returns", "checked"),
     prevent_initial_call=True,
 )
-def at_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_include_benchmark, current_convert):
+def at_sync_raw_modal_controls(mode, series_key, convert_to_returns, opened, current_fee, current_include_benchmark):
     if not opened:
         raise PreventUpdate
 
     triggered_id = callback_context.triggered_id
-    preserve_series_selection_state = triggered_id == "at-raw-db-add-series-select"
     mode_key = str(mode or "").strip().lower()
+
+    # Divide-by disabled logic (merged from at_toggle_raw_divide_by)
+    divide_disabled = not (mode_key == "factor" and not bool(convert_to_returns))
+
+    # If only convert-returns changed, just update divide-by
+    if triggered_id == "at-raw-db-add-convert-returns":
+        n_no = no_update
+        return n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, divide_disabled
+
+    preserve_series_selection_state = triggered_id == "at-raw-db-add-series-select"
     if mode_key == "factor":
         default_convert = False
         if series_key:
             meta = get_factor_option_meta_cached(MRD_ENGINE).get(str(series_key), {})
             default_convert = factor_defaults_to_returns(meta.get("factor_name"))
-        # Factor series selection should always apply its default conversion rule.
         convert_value = default_convert
         fee_options = [
             {"value": "gross", "label": "Gross"},
@@ -2632,6 +2628,7 @@ def at_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_in
         ]
         fee_values = {str(opt["value"]) for opt in fee_options}
         fee_value = str(current_fee) if preserve_series_selection_state and str(current_fee) in fee_values else "net"
+        factor_divide_disabled = not (not bool(convert_value))
         return (
             True,
             fee_options,
@@ -2641,6 +2638,7 @@ def at_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_in
             False,
             {},
             convert_value,
+            factor_divide_disabled,
         )
 
     if mode_key == "funds":
@@ -2659,6 +2657,7 @@ def at_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_in
             False,
             {"display": "none"},
             False,
+            True,
         )
 
     fee_options = [
@@ -2677,20 +2676,8 @@ def at_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_in
         include_value,
         {"display": "none"},
         False,
+        True,
     )
-
-
-@callback(
-    Output("at-raw-db-add-divide-by", "disabled"),
-    Input("at-raw-db-add-mode-store", "data"),
-    Input("at-raw-db-add-convert-returns", "checked"),
-    Input("at-raw-db-add-modal", "opened"),
-    prevent_initial_call=True,
-)
-def at_toggle_raw_divide_by(mode, convert_to_returns, opened):
-    if not opened:
-        raise PreventUpdate
-    return not (str(mode or "").strip().lower() == "factor" and not bool(convert_to_returns))
 
 
 @callback(
@@ -2699,6 +2686,8 @@ def at_toggle_raw_divide_by(mode, convert_to_returns, opened):
     Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
     Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
     Input("at-raw-db-add-row-btn", "n_clicks"),
+    Input("at-raw-db-delete-row-btn", "n_clicks"),
+    Input("at-raw-db-clear-rows-btn", "n_clicks"),
     State("at-raw-db-add-rows-store", "data"),
     State("at-raw-db-add-mode-store", "data"),
     State("at-raw-db-add-series-select", "value"),
@@ -2707,10 +2696,13 @@ def at_toggle_raw_divide_by(mode, convert_to_returns, opened):
     State("at-raw-db-add-include-benchmark", "checked"),
     State("at-raw-db-add-convert-returns", "checked"),
     State("at-raw-db-add-divide-by", "value"),
+    State("at-raw-db-add-grid", "selectedRows"),
     prevent_initial_call=True,
 )
-def at_stage_raw_db_row(
+def at_manage_raw_db_staged_rows(
     n_add,
+    n_delete,
+    n_clear,
     staged_rows,
     mode,
     series_key,
@@ -2719,8 +2711,31 @@ def at_stage_raw_db_row(
     include_benchmark,
     convert_to_returns,
     divide_by,
+    selected_rows,
 ):
+    triggered = callback_context.triggered_id
     n_no = no_update
+
+    # --- Clear all rows ---
+    if triggered == "at-raw-db-clear-rows-btn":
+        if not n_clear:
+            raise PreventUpdate
+        return [], [], n_no, True
+
+    # --- Delete selected row ---
+    if triggered == "at-raw-db-delete-row-btn":
+        if not n_delete:
+            raise PreventUpdate
+        rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
+        if not selected_rows:
+            return rows, rows, "Select one staged row to delete.", False
+        selected_id = str((selected_rows[0] or {}).get("row_id", "")).strip()
+        if not selected_id:
+            return rows, rows, "Select one staged row to delete.", False
+        kept = [r for r in rows if str(r.get("row_id", "")).strip() != selected_id]
+        return kept, kept, n_no, True
+
+    # --- Add row ---
     if not n_add:
         raise PreventUpdate
 
@@ -2834,44 +2849,6 @@ def at_stage_raw_db_row(
     }
     rows.append(row)
     return rows, rows, n_no, True
-
-
-@callback(
-    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
-    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
-    Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
-    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
-    Input("at-raw-db-delete-row-btn", "n_clicks"),
-    State("at-raw-db-add-rows-store", "data"),
-    State("at-raw-db-add-grid", "selectedRows"),
-    prevent_initial_call=True,
-)
-def at_delete_raw_db_row(n_delete, staged_rows, selected_rows):
-    n_no = no_update
-    if not n_delete:
-        raise PreventUpdate
-    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
-    if not selected_rows:
-        return rows, rows, "Select one staged row to delete.", False
-    selected_id = str((selected_rows[0] or {}).get("row_id", "")).strip()
-    if not selected_id:
-        return rows, rows, "Select one staged row to delete.", False
-    kept = [r for r in rows if str(r.get("row_id", "")).strip() != selected_id]
-    return kept, kept, n_no, True
-
-
-@callback(
-    Output("at-raw-db-add-rows-store", "data", allow_duplicate=True),
-    Output("at-raw-db-add-grid", "rowData", allow_duplicate=True),
-    Output("at-raw-db-add-error-alert", "children", allow_duplicate=True),
-    Output("at-raw-db-add-error-alert", "hide", allow_duplicate=True),
-    Input("at-raw-db-clear-rows-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-def at_clear_raw_db_rows(n_clear):
-    if not n_clear:
-        raise PreventUpdate
-    return [], [], no_update, True
 
 
 clientside_callback(
@@ -3063,16 +3040,23 @@ def validate_db_add_selection(selected_benches, raw_meta, opened):
     Input("at-welcome-add-portfolios-peer-btn", "n_clicks"),
     Input("at-welcome-add-portfolios-index-btn", "n_clicks"),
     Input("at-welcome-add-portfolios-other-btn", "n_clicks"),
+    Input("at-portfolio-add-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def at_open_portfolio_add_modal(
+def at_portfolio_add_modal_lifecycle(
     peer_clicks,
     index_clicks,
     other_clicks,
     welcome_peer_clicks,
     welcome_index_clicks,
     welcome_other_clicks,
+    cancel_clicks,
 ):
+    n_no = no_update
+    if callback_context.triggered_id == "at-portfolio-add-cancel-button":
+        if not cancel_clicks:
+            raise PreventUpdate
+        return False, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, n_no, [], [], n_no, n_no
     return compute_open_portfolio_add_modal(
         prefix="at",
         triggered_id=callback_context.triggered_id,
@@ -3100,9 +3084,15 @@ def at_open_portfolio_add_modal(
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
     Input("at-menu-add-portfolios-underlying", "n_clicks"),
     Input("at-welcome-add-portfolios-underlying-btn", "n_clicks"),
+    Input("at-underlying-add-cancel-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def at_open_underlying_add_modal(menu_clicks, welcome_clicks):
+def at_underlying_add_modal_lifecycle(menu_clicks, welcome_clicks, cancel_clicks):
+    n_no = no_update
+    if callback_context.triggered_id == "at-underlying-add-cancel-button":
+        if not cancel_clicks:
+            raise PreventUpdate
+        return False, n_no, None, [], [], [], True, [], [], n_no, n_no
     return compute_open_underlying_add_modal(menu_clicks, welcome_clicks)
 
 
@@ -3206,91 +3196,92 @@ def at_sync_include_benchmark_enabled(mode, selected_portfolio, current_checked)
 
 
 clientside_callback(
-    js_portfolio_add_row(),
+    """
+    function(nAdd, nDelete, nClear, stagedRows, selectedPortfolio, selectedType, includeBenchmark, benchmarkType, selectedRows) {
+        var noUpdate = window.dash_clientside.no_update;
+        var ctx = dash_clientside.callback_context;
+        if (!ctx.triggered.length) return [noUpdate, noUpdate, noUpdate, noUpdate];
+        var tid = ctx.triggered[0].prop_id.split(".")[0];
+
+        if (tid === "at-portfolio-clear-rows-btn") {
+            if (!nClear) return [noUpdate, noUpdate, noUpdate, noUpdate];
+            return [[], [], noUpdate, true];
+        }
+        if (tid === "at-portfolio-delete-row-btn") {
+            if (!nDelete) return [noUpdate, noUpdate, noUpdate, noUpdate];
+            var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
+            if (!selectedRows || !selectedRows.length) return [rows, rows, "Select one staged row to delete.", false];
+            var selectedKey = String((selectedRows[0] || {}).Portfolio || "").trim();
+            var kept = rows.filter(function(r) { return String((r && r.Portfolio) || "").trim() !== selectedKey; });
+            return [kept, kept, noUpdate, true];
+        }
+        if (!nAdd) return [noUpdate, noUpdate, noUpdate, noUpdate];
+        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
+        var portfolio = String(selectedPortfolio || "").trim();
+        var retType = String(selectedType || "").trim();
+        var bmType = String(benchmarkType || "").trim();
+        var includeBm = !!includeBenchmark;
+        if (!portfolio) return [rows, rows, "Select a portfolio series.", false];
+        if (!retType) return [rows, rows, "Select a portfolio type.", false];
+        if (includeBm && !bmType) return [rows, rows, "Select a benchmark type when benchmark is included.", false];
+        var exists = rows.some(function(r) {
+            var key = String((r && (r.portfolio || r.Portfolio)) || "").trim();
+            var eType = String((r && (r.type || r.Type)) || "").trim();
+            return key === portfolio && eType === retType;
+        });
+        if (exists) return [rows, rows, "Portfolio `" + portfolio + "` with type `" + retType + "` is already staged.", false];
+        rows.push({"Portfolio": portfolio, "Type": retType, "Include Benchmark": includeBm ? "Yes" : "No", "Benchmark Type": includeBm ? bmType : "", "portfolio": portfolio, "type": retType, "include_benchmark": includeBm, "benchmark_type": includeBm ? bmType : ""});
+        return [rows, rows, noUpdate, true];
+    }
+    """,
     Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
     Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
     Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
     Input("at-portfolio-add-row-btn", "n_clicks"),
+    Input("at-portfolio-delete-row-btn", "n_clicks"),
+    Input("at-portfolio-clear-rows-btn", "n_clicks"),
     State("at-portfolio-add-rows-store", "data"),
     State("at-portfolio-add-series-select", "value"),
     State("at-portfolio-add-type-select", "value"),
     State("at-portfolio-add-include-benchmark", "checked"),
     State("at-portfolio-add-benchmark-type-select", "value"),
-    prevent_initial_call=True,
-)
-
-clientside_callback(
-    js_portfolio_delete_row(),
-    Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
-    Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
-    Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
-    Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
-    Input("at-portfolio-delete-row-btn", "n_clicks"),
-    State("at-portfolio-add-rows-store", "data"),
     State("at-portfolio-add-grid", "selectedRows"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    js_portfolio_clear_rows(),
-    Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
-    Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
-    Output("at-portfolio-add-error-alert", "children", allow_duplicate=True),
-    Output("at-portfolio-add-error-alert", "hide", allow_duplicate=True),
-    Input("at-portfolio-clear-rows-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
-
 
 clientside_callback(
-    js_underlying_delete_row(),
+    """
+    function(nDelete, nClear, stagedRows, selectedRows) {
+        var noUpdate = window.dash_clientside.no_update;
+        var ctx = dash_clientside.callback_context;
+        if (!ctx.triggered.length) return [noUpdate, noUpdate, noUpdate, noUpdate];
+        var tid = ctx.triggered[0].prop_id.split(".")[0];
+        if (tid === "at-underlying-clear-rows-btn") {
+            if (!nClear) return [noUpdate, noUpdate, noUpdate, noUpdate];
+            return [[], [], noUpdate, true];
+        }
+        if (!nDelete) return [noUpdate, noUpdate, noUpdate, noUpdate];
+        var rows = Array.isArray(stagedRows) ? stagedRows.slice() : [];
+        if (!selectedRows || !selectedRows.length) return [rows, rows, "Select one staged row to delete.", false];
+        var selectedSeries = String((selectedRows[0] || {}).Series || "").trim();
+        var kept = rows.filter(function(r) { return String((r && r.Series) || "").trim() !== selectedSeries; });
+        return [kept, kept, noUpdate, true];
+    }
+    """,
     Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
     Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
     Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
     Input("at-underlying-delete-row-btn", "n_clicks"),
+    Input("at-underlying-clear-rows-btn", "n_clicks"),
     State("at-underlying-add-rows-store", "data"),
     State("at-underlying-add-grid", "selectedRows"),
     prevent_initial_call=True,
 )
 
-clientside_callback(
-    js_portfolio_clear_rows(),
-    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
-    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
-    Output("at-underlying-add-error-alert", "children", allow_duplicate=True),
-    Output("at-underlying-add-error-alert", "hide", allow_duplicate=True),
-    Input("at-underlying-clear-rows-btn", "n_clicks"),
-    prevent_initial_call=True,
-)
 
-
-@callback(
-    Output("at-portfolio-add-modal", "opened", allow_duplicate=True),
-    Output("at-portfolio-add-rows-store", "data", allow_duplicate=True),
-    Output("at-portfolio-add-grid", "rowData", allow_duplicate=True),
-    Input("at-portfolio-add-cancel-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def at_close_portfolio_add_modal(n_clicks):
-    return compute_close_portfolio_add_modal(n_clicks)
-
-
-@callback(
-    Output("at-underlying-add-modal", "opened", allow_duplicate=True),
-    Output("at-underlying-add-base-select", "value", allow_duplicate=True),
-    Output("at-underlying-add-type-multiselect", "value", allow_duplicate=True),
-    Output("at-underlying-add-desc-multiselect", "data", allow_duplicate=True),
-    Output("at-underlying-add-desc-multiselect", "value", allow_duplicate=True),
-    Output("at-underlying-add-desc-multiselect", "disabled", allow_duplicate=True),
-    Output("at-underlying-add-rows-store", "data", allow_duplicate=True),
-    Output("at-underlying-add-grid", "rowData", allow_duplicate=True),
-    Input("at-underlying-add-cancel-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def at_close_underlying_add_modal(n_clicks):
-    return compute_close_underlying_add_modal(n_clicks)
 
 
 clientside_callback(
