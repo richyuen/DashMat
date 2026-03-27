@@ -347,12 +347,43 @@ def test_at_common_daily_candidates_use_raw_data_meta_dataset_key(monkeypatch, p
     assert result == {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"}
 
 
+def test_at_candidate_bundle_uses_raw_data_meta_dataset_key(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    captured = {}
+
+    def _fake_compute(dataset_key, periodicity, selected_series):
+        captured["dataset_key"] = dataset_key
+        captured["periodicity"] = periodicity
+        captured["selected_series"] = selected_series
+        return (
+            {"available_series": list(selected_series)},
+            {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"},
+        )
+
+    monkeypatch.setattr(analyticstool, "compute_date_candidate_bundle", _fake_compute)
+
+    result = analyticstool.update_at_candidate_bundle(
+        "ds-123",
+        "monthly",
+        ["Asset_A", "Asset_B"],
+    )
+
+    assert captured == {
+        "dataset_key": "ds-123",
+        "periodicity": "monthly",
+        "selected_series": ("Asset_A", "Asset_B"),
+    }
+    assert result == (
+        {"available_series": ["Asset_A", "Asset_B"]},
+        {"common_daily_start": "2024-01-01", "common_daily_end": "2024-12-31"},
+    )
+
+
 def test_at_date_candidate_stores_dedupe_unchanged_outputs(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     candidates = {"available_series": ["Asset_A"], "max_start": "2020-01-31", "max_end": "2025-12-31"}
     common_daily = {"common_daily_start": "2020-01-31", "common_daily_end": "2025-12-31"}
-    monkeypatch.setattr(analyticstool, "update_at_range_candidates", lambda *_args: candidates)
-    monkeypatch.setattr(analyticstool, "update_at_common_daily_candidates", lambda *_args: common_daily)
+    monkeypatch.setattr(analyticstool, "update_at_candidate_bundle", lambda *_args: (candidates, common_daily))
 
     result = analyticstool.update_at_date_candidate_stores(
         {"phase": "bootstrap"},

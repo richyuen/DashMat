@@ -20,6 +20,7 @@ import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
 from utils.date_range_flow import (
+    compute_date_candidate_bundle,
     compute_common_daily_candidates,
     compute_date_range_candidates,
     resolve_button_range,
@@ -8918,6 +8919,14 @@ def update_at_common_daily_candidates(dataset_key, selected_series):
     )
 
 
+def update_at_candidate_bundle(dataset_key, periodicity, selected_series):
+    return compute_date_candidate_bundle(
+        dataset_key,
+        periodicity or "daily",
+        tuple(selected_series or ()),
+    )
+
+
 def _resolve_effective_at_date_range(candidates, date_range):
     effective_date_range = date_range
     try:
@@ -8951,8 +8960,16 @@ def update_at_date_candidate_stores(
 ):
     if not isinstance(trigger_payload, dict):
         raise PreventUpdate
-    next_candidates = update_at_range_candidates(dataset_key, periodicity, selected_series)
-    next_common_daily = update_at_common_daily_candidates(dataset_key, selected_series)
+    with timed_block(
+        "analyticstool.compute_date_candidates",
+        periodicity=periodicity or "daily",
+        series_count=len(selected_series or ()),
+    ):
+        next_candidates, next_common_daily = update_at_candidate_bundle(
+            dataset_key,
+            periodicity,
+            selected_series,
+        )
     return (
         no_update if next_candidates == current_candidates else next_candidates,
         no_update if next_common_daily == current_common_daily_candidates else next_common_daily,
@@ -8980,8 +8997,16 @@ def refresh_correlogram_candidate_stores(
 ):
     if not isinstance(trigger_payload, dict) or trigger_payload.get("tab") != "correlogram":
         raise PreventUpdate
-    next_candidates = update_at_range_candidates(dataset_key, periodicity, selected_series)
-    next_common_daily = update_at_common_daily_candidates(dataset_key, selected_series)
+    with timed_block(
+        "analyticstool.compute_date_candidates",
+        periodicity=periodicity or "daily",
+        series_count=len(selected_series or ()),
+    ):
+        next_candidates, next_common_daily = update_at_candidate_bundle(
+            dataset_key,
+            periodicity,
+            selected_series,
+        )
     return (
         no_update if next_candidates == current_candidates else next_candidates,
         no_update if next_common_daily == current_common_daily_candidates else next_common_daily,

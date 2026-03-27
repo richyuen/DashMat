@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import cache_config
-from utils.core_categories import get_common_daily_range
+import numpy as np
+import pandas as pd
+from utils.perf_timing import timed_block
 from utils.returns import resample_returns_by_key
 
 
@@ -34,23 +36,12 @@ def _normalize_selected_series(selected_series) -> tuple[str, ...]:
     return tuple(sorted(normalized))
 
 
-@cache_config.cache.memoize(timeout=0)
-def _compute_date_range_candidates_cached(
-    dataset_key: str | None,
-    periodicity: str,
-    selected_series: tuple[str, ...],
-) -> dict:
-    """Compute reusable range candidates for selected series.
-
-    This function is memoized so repeat callbacks with identical inputs reuse
-    computed bounds instead of repeatedly slicing/resampling dataframes.
-    """
-    if not dataset_key or not selected_series:
+def _build_range_candidates_from_df(df, selected_series: tuple[str, ...]) -> dict:
+    if df.empty or not selected_series:
         return dict(_EMPTY_CANDIDATES)
 
-    df = resample_returns_by_key(dataset_key, periodicity or "daily")
     available_series = tuple(series for series in selected_series if series in df.columns)
-    if not available_series or df.empty:
+    if not available_series:
         return dict(_EMPTY_CANDIDATES)
 
     result = dict(_EMPTY_CANDIDATES)
@@ -66,6 +57,111 @@ def _compute_date_range_candidates_cached(
     return result
 
 
+def _build_common_daily_series_metadata_from_df(
+    daily_df: pd.DataFrame,
+) -> dict[str, tuple[pd.Timestamp | None, pd.Timestamp | None]]:
+    if daily_df.empty:
+        return {}
+
+    index = pd.DatetimeIndex(daily_df.index)
+    if len(index) == 0:
+        return {}
+
+    values = daily_df.to_numpy(dtype=float, copy=False)
+    valid = ~np.isnan(values)
+    if not valid.any():
+        return {}
+
+    nonzero = valid & (values != 0.0)
+    pair_candidates = nonzero[:-1] & nonzero[1:] if len(index) > 1 else np.empty((0, values.shape[1]), dtype=bool)
+    if pair_candidates.size:
+        pair_candidates &= (~np.asarray(index.is_month_end[:-1], dtype=bool))[:, None]
+
+    metadata: dict[str, tuple[pd.Timestamp | None, pd.Timestamp | None]] = {}
+    row_count = len(index)
+
+    for col_idx, series in enumerate(daily_df.columns):
+        valid_col = valid[:, col_idx]
+        if not valid_col.any():
+            continue
+
+        last_valid_pos = row_count - 1 - int(np.argmax(valid_col[::-1]))
+
+        daily_start: pd.Timestamp | None = None
+        if pair_candidates.size:
+            pair_col = pair_candidates[:, col_idx]
+            if pair_col.any():
+                daily_start = pd.Timestamp(index[int(np.argmax(pair_col))])
+
+        metadata[str(series)] = (daily_start, pd.Timestamp(index[last_valid_pos]))
+
+    return metadata
+
+
+def _reduce_common_daily_candidates(
+    metadata: dict[str, tuple[pd.Timestamp | None, pd.Timestamp | None]],
+    selected_series: tuple[str, ...],
+) -> dict:
+    if not metadata or not selected_series:
+        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+
+    starts: list[pd.Timestamp] = []
+    ends: list[pd.Timestamp] = []
+
+    for series in selected_series:
+        daily_meta = metadata.get(series)
+        if not daily_meta:
+            return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+        daily_start, last_valid = daily_meta
+        if daily_start is None or last_valid is None:
+            return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+        starts.append(pd.Timestamp(daily_start))
+        ends.append(pd.Timestamp(last_valid))
+
+    if not starts or not ends:
+        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+
+    common_start = max(starts)
+    common_end = min(ends)
+    if common_start > common_end:
+        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+
+    return {
+        "common_daily_start": common_start.strftime("%Y-%m-%d"),
+        "common_daily_end": common_end.strftime("%Y-%m-%d"),
+    }
+
+
+@cache_config.cache.memoize(timeout=0)
+def _compute_date_range_candidates_cached(
+    dataset_key: str | None,
+    periodicity: str,
+    selected_series: tuple[str, ...],
+) -> dict:
+    """Compute reusable range candidates for selected series.
+
+    This function is memoized so repeat callbacks with identical inputs reuse
+    computed bounds instead of repeatedly slicing/resampling dataframes.
+    """
+    if not dataset_key or not selected_series:
+        return dict(_EMPTY_CANDIDATES)
+
+    df = resample_returns_by_key(dataset_key, periodicity or "daily")
+    return _build_range_candidates_from_df(df, selected_series)
+
+
+@cache_config.cache.memoize(timeout=0)
+def _compute_common_daily_series_metadata_cached(
+    dataset_key: str | None,
+) -> dict[str, tuple[pd.Timestamp | None, pd.Timestamp | None]]:
+    if not dataset_key:
+        return {}
+
+    with timed_block("analyticstool.common_daily_metadata"):
+        daily_df = resample_returns_by_key(dataset_key, "daily_trading")
+        return _build_common_daily_series_metadata_from_df(daily_df)
+
+
 @cache_config.cache.memoize(timeout=0)
 def _compute_common_daily_candidates_cached(
     dataset_key: str | None,
@@ -75,22 +171,21 @@ def _compute_common_daily_candidates_cached(
     if not dataset_key or not selected_series:
         return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
 
-    daily_df = resample_returns_by_key(dataset_key, "daily_trading")
-    if daily_df.empty:
-        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
+    metadata = _compute_common_daily_series_metadata_cached(dataset_key)
+    with timed_block("analyticstool.common_daily_reduce", series_count=len(selected_series)):
+        return _reduce_common_daily_candidates(metadata, selected_series)
 
-    daily_available = [series for series in selected_series if series in daily_df.columns]
-    if not daily_available:
-        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
 
-    common_daily = get_common_daily_range(daily_df, daily_available)
-    if not common_daily:
-        return dict(_EMPTY_COMMON_DAILY_CANDIDATES)
-
-    return {
-        "common_daily_start": common_daily[0].strftime("%Y-%m-%d"),
-        "common_daily_end": common_daily[1].strftime("%Y-%m-%d"),
-    }
+def compute_date_candidate_bundle(
+    dataset_key: str | None,
+    periodicity: str,
+    selected_series: tuple[str, ...],
+) -> tuple[dict, dict]:
+    normalized_series = _normalize_selected_series(selected_series)
+    return (
+        _compute_date_range_candidates_cached(dataset_key, periodicity, normalized_series),
+        _compute_common_daily_candidates_cached(dataset_key, normalized_series),
+    )
 
 
 def compute_date_range_candidates(

@@ -5,6 +5,7 @@ import pandas as pd
 from utils.date_range_flow import (
     ACCOUNT_LIST_MAX_END_SENTINEL,
     compute_common_daily_candidates,
+    compute_date_candidate_bundle,
     compute_date_range_candidates,
     resolve_button_range,
     resolve_initial_range,
@@ -55,6 +56,55 @@ def test_compute_common_daily_candidates_produces_bounds():
 
     assert candidates["common_daily_start"] == "2024-01-02"
     assert candidates["common_daily_end"] == "2024-01-03"
+
+
+def test_compute_date_candidate_bundle_matches_individual_helpers():
+    range_candidates, common_daily = compute_date_candidate_bundle(
+        _raw_daily_df(),
+        "daily_trading",
+        ("A", "B"),
+    )
+
+    assert range_candidates == compute_date_range_candidates(_raw_daily_df(), "daily_trading", ("A", "B"))
+    assert common_daily == compute_common_daily_candidates(_raw_daily_df(), ("A", "B"))
+
+
+def test_compute_common_daily_candidates_skips_month_end_pair_for_daily_start():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-01", "2024-02-02"])
+    df = pd.DataFrame(
+        {
+            "A": [0.01, 0.02, 0.03],
+            "B": [0.01, 0.02, 0.03],
+        },
+        index=idx,
+    )
+    df.index.name = "Date"
+
+    candidates = compute_common_daily_candidates(df_to_json(df), ("A", "B"))
+
+    assert candidates == {
+        "common_daily_start": "2024-02-01",
+        "common_daily_end": "2024-02-02",
+    }
+
+
+def test_compute_common_daily_candidates_waits_for_first_consecutive_nonzero_pair():
+    idx = pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"])
+    df = pd.DataFrame(
+        {
+            "A": [0.01, 0.0, 0.02, 0.03],
+            "B": [0.01, 0.0, 0.02, 0.03],
+        },
+        index=idx,
+    )
+    df.index.name = "Date"
+
+    candidates = compute_common_daily_candidates(df_to_json(df), ("A", "B"))
+
+    assert candidates == {
+        "common_daily_start": "2024-01-04",
+        "common_daily_end": "2024-01-05",
+    }
 
 
 def test_resolve_initial_range_prefers_stored_when_in_bounds():
