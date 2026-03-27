@@ -50,9 +50,11 @@
 - For hidden-tab gating, use per-family triggers when the goal is to stop inactive callbacks from being scheduled at all.
 - When a visible-tab signature/render path only needs dataset identity, pass raw-data metadata or dataset keys instead of the full raw-data store.
 - For modal-only preview callbacks, gate scheduling with a modal-open trigger store instead of letting closed modals wake on shared control changes.
+- For modal-local UI validation where the backend action already re-validates authoritatively, prefer a clientside callback with metadata as `State` over a server callback or extra routing-store graph.
 - When two stores are recomputed from the same inputs, prefer one deduped multi-output callback over parallel sibling callbacks.
 - Avoid cycles in trigger-store graphs: do not feed a trigger emitter from a control whose value is derived downstream from that same trigger path.
 - If moving pure browser-visible logic clientside for perf, keep the Python path as the reference and add parity tests.
+- Do not keep a perf change just because one sub-phase median improves; a fresh clean-`HEAD` A/B must still show an end-to-end median win.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
 - Do not assume a reload-era bootstrap callback can be reused for same-page live apply by only clearing results, resetting bootstrap state, and replaying stores; prove that the same-page retrigger path actually re-enters bootstrap and reaches a stable ready state before committing to that design.
 - PortOpt-specific guardrails:
