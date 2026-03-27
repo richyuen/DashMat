@@ -981,6 +981,159 @@ def test_at_series_modal_open_is_clientside():
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="openAnalyticsSeriesModal")' in page_text
     assert "function openAnalyticsSeriesModal(" in js_text
     assert "def open_modal(" not in page_text
+    open_block = page_text.split(
+        'ClientsideFunction(namespace="dashmat_callbacks", function_name="openAnalyticsSeriesModal")',
+        1,
+    )[1]
+    open_callback = open_block.split(
+        'ClientsideFunction(namespace="dashmat_callbacks", function_name="bulkUpdateSeriesSelection")',
+        1,
+    )[0]
+    assert 'Input("at-page-load-trigger", "n_intervals")' in open_callback
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in open_callback
+    assert 'State("dashmat-raw-data-meta-store", "data")' not in open_callback
+
+
+def test_at_series_modal_ignores_empty_page_load_until_raw_meta_arrives():
+    page_load_result = _run_dashmat_callbacks_js(
+        """
+(() => {
+  window.dash_clientside.callback_context = {
+    triggered: [{prop_id: "at-page-load-trigger.n_intervals"}],
+  };
+  return ns.openAnalyticsSeriesModal(
+    null,
+    1,
+    null,
+    "/analyticstool",
+    [],
+    {},
+    {},
+    [],
+    {},
+    {},
+    false
+  );
+})()
+"""
+    )
+    assert page_load_result == [
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        False,
+    ]
+
+    meta_result = _run_dashmat_callbacks_js(
+        """
+(() => {
+  window.dash_clientside.callback_context = {
+    triggered: [{prop_id: "dashmat-raw-data-meta-store.data"}],
+  };
+  return ns.openAnalyticsSeriesModal(
+    null,
+    1,
+    {columns: ["Asset_A", "Asset_B"]},
+    "/analyticstool",
+    [],
+    {},
+    {},
+    [],
+    {},
+    {},
+    false
+  );
+})()
+"""
+    )
+    assert meta_result == [
+        True,
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        [],
+        [],
+        {},
+        True,
+        True,
+    ]
+
+
+def test_at_series_modal_opens_when_raw_meta_arrives_after_page_load_visit():
+    result = _run_dashmat_callbacks_js(
+        """
+(() => {
+  window.dash_clientside.callback_context = {
+    triggered: [{prop_id: "dashmat-raw-data-meta-store.data"}],
+  };
+  return ns.openAnalyticsSeriesModal(
+    null,
+    1,
+    {columns: ["Asset_A", "Asset_B"]},
+    "/analyticstool",
+    ["Asset_A"],
+    {"Asset_A": "None"},
+    {"Asset_A": false},
+    ["Asset_A"],
+    {"Asset_A": true},
+    {},
+    true
+  );
+})()
+"""
+    )
+    assert result == [
+        True,
+        ["Asset_A", "Asset_B"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        [],
+        {"Asset_A": True},
+        True,
+        True,
+    ]
+
+
+def test_at_series_modal_manual_open_path_is_unchanged():
+    result = _run_dashmat_callbacks_js(
+        """
+(() => {
+  window.dash_clientside.callback_context = {
+    triggered: [{prop_id: "at-open-series-modal-button.n_clicks"}],
+  };
+  return ns.openAnalyticsSeriesModal(
+    1,
+    1,
+    {columns: ["Asset_A", "Asset_B"]},
+    "/analyticstool",
+    ["Asset_A"],
+    {"Asset_A": "None"},
+    {"Asset_A": false},
+    ["Asset_A"],
+    {"Asset_A": true},
+    {},
+    true
+  );
+})()
+"""
+    )
+    assert result == [
+        True,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        [],
+        {"Asset_A": True},
+        "__NO_UPDATE__",
+        True,
+    ]
 
 
 def test_at_series_modal_bulk_actions_use_shared_clientside_helper():
