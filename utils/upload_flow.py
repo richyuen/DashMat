@@ -92,14 +92,14 @@ class UploadMergeResult:
     imported_df: pd.DataFrame
 
 
-def merge_uploaded_with_existing(existing_data, existing_periodicity, new_df) -> UploadMergeResult:
+def merge_uploaded_with_existing(existing_data, existing_periodicity, new_df, *, dataset_key=None) -> UploadMergeResult:
     """Apply periodicity compatibility and merge new upload data."""
     new_periodicity = detect_periodicity(new_df)
     effective_new_df = new_df
 
-    if existing_data is not None:
-        dataset_key = get_dataset_key(existing_data)
-        existing_df = get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
+    if existing_data is not None or dataset_key is not None:
+        key = dataset_key or get_dataset_key(existing_data)
+        existing_df = get_raw_dataset_df(key) if key else pd.DataFrame()
 
         if existing_periodicity == "monthly" and new_periodicity == "daily":
             effective_new_df = resample_returns(new_df, "monthly")

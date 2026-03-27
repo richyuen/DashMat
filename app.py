@@ -15,6 +15,7 @@ from utils.account_list_modal import (
     register_account_list_callbacks,
 )
 from utils.perf_timing import configure_timing_logger
+from utils.raw_dataset import cache_raw_dataset
 from utils.returns import _build_raw_data_metadata_cached
 
 
@@ -82,7 +83,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="userinfo", data=USERINFO_DATA, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-identity-store", data=None, storage_type="memory"),
-    dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="memory"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
@@ -250,9 +251,16 @@ app.clientside_callback(
     Output("dashmat-raw-data-meta-store", "data"),
     Input("dashmat-raw-data-identity-store", "data"),
     Input("dashmat-original-periodicity-store", "data"),
+    State("dashmat-raw-data-store", "data"),
     prevent_initial_call=False,
 )
-def refresh_raw_data_meta_store(raw_data_identity, original_periodicity):
+def refresh_raw_data_meta_store(raw_data_identity, original_periodicity, raw_data_store):
+    # Ensure the server-side dataset cache is warm before any downstream
+    # callbacks that look up data by key alone.  This is the single callback
+    # that receives the full raw-data payload; all others use the lightweight
+    # dataset-key store.
+    if raw_data_store is not None:
+        cache_raw_dataset(raw_data_store)
     dataset_key = None
     if isinstance(raw_data_identity, dict):
         dataset_key = str(raw_data_identity.get("dataset_key") or "").strip() or None

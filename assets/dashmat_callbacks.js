@@ -1968,8 +1968,8 @@
   function openAnalyticsSeriesModal(
     nClicks,
     pageLoadIntervals,
-    pathname,
     rawMeta,
+    pathname,
     currentSelect,
     currentBench,
     currentLs,
@@ -1979,7 +1979,11 @@
     pageVisited
   ) {
     const trigger = triggeredId();
-    if (trigger !== "at-open-series-modal-button" && trigger !== "at-page-load-trigger") {
+    if (
+      trigger !== "at-open-series-modal-button" &&
+      trigger !== "at-page-load-trigger" &&
+      trigger !== "dashmat-raw-data-meta-store"
+    ) {
       return [
         noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
       ];
@@ -2004,7 +2008,10 @@
       ];
     }
 
-    if (pageLoadIntervals === null || pageLoadIntervals === undefined) {
+    if (
+      trigger === "at-page-load-trigger" &&
+      (pageLoadIntervals === null || pageLoadIntervals === undefined)
+    ) {
       return [
         noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
       ];
@@ -2019,8 +2026,13 @@
 
     const columns = rawMetaColumns(rawMeta);
     if (!columns.length) {
+      if (trigger === "dashmat-raw-data-meta-store") {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
       return [
-        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), true, false
+        noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), false
       ];
     }
 
@@ -2047,7 +2059,24 @@
 
     let shouldOpen = false;
     let tempSelect = noUpdate();
-    if (!pageVisited && !selectedValid.length) {
+    if (trigger === "dashmat-raw-data-meta-store") {
+      if (!pageVisited && !selectedValid.length) {
+        shouldOpen = true;
+        tempSelect = columns.slice();
+      } else if (pageVisited && genericNew.length > 0) {
+        shouldOpen = true;
+        const selectedSet = new Set(selectedValid);
+        genericNew.forEach(function (series) {
+          selectedSet.add(series);
+        });
+        poNew.forEach(function (series) {
+          selectedSet.add(series);
+        });
+        tempSelect = columns.filter(function (series) {
+          return selectedSet.has(series);
+        });
+      }
+    } else if (!pageVisited && !selectedValid.length) {
       shouldOpen = true;
       tempSelect = columns.slice();
     } else if (genericNew.length) {
