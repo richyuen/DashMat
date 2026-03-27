@@ -97,7 +97,6 @@ from utils.dashmat_welcome_modal import (
     compute_open_portfolio_add_modal,
     compute_open_raw_db_add_modal,
     compute_sync_include_benchmark_enabled,
-    compute_validate_db_add_selection,
     js_portfolio_add_row,
     js_portfolio_benchmark_toggle,
     js_portfolio_clear_rows,
@@ -3013,19 +3012,16 @@ def update_at_shared_benchmark_stamp_store(saved_series_store, current_stamp):
     return next_stamp
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="validateAnalyticsDbAddSelection"),
     Output("at-db-add-error-alert", "children"),
     Output("at-db-add-error-alert", "hide"),
     Output("at-db-add-ok-button", "disabled"),
     Input("at-db-add-series-select", "value"),
-    Input("dashmat-raw-data-meta-store", "data"),
     Input("at-db-add-modal", "opened"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
-def validate_db_add_selection(selected_benches, raw_meta, opened):
-    return compute_validate_db_add_selection(selected_benches, None, opened, raw_meta=raw_meta)
-
-
 @callback(
     Output("at-portfolio-add-modal", "opened", allow_duplicate=True),
     Output("at-portfolio-add-modal", "title", allow_duplicate=True),

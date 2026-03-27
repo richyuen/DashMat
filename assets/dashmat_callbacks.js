@@ -1074,6 +1074,30 @@
     return [];
   }
 
+  function validateAnalyticsDbAddSelection(selectedBenches, opened, rawMeta) {
+    if (!opened) {
+      return [noUpdate(), noUpdate(), noUpdate()];
+    }
+
+    const selected = Array.isArray(selectedBenches)
+      ? selectedBenches.filter(function (series) {
+          return typeof series === "string" && series.length > 0;
+        })
+      : (typeof selectedBenches === "string" && selectedBenches.length > 0 ? [selectedBenches] : []);
+    if (!selected.length) {
+      return [noUpdate(), true, true];
+    }
+
+    const existing = new Set(rawMetaColumns(rawMeta));
+    const duplicates = selected.filter(function (series) {
+      return existing.has(series);
+    });
+    if (duplicates.length) {
+      return ["Cannot add duplicate series: " + duplicates.join(", "), false, true];
+    }
+    return [noUpdate(), true, false];
+  }
+
   function latestGridEvent(payload) {
     let evt = payload;
     if (Array.isArray(evt)) {
@@ -3009,6 +3033,7 @@
       analyticsDateRangeButtons: analyticsDateRangeButtons,
       analyticsDateRangeStoreUpdate: analyticsDateRangeStoreUpdate,
       analyticsResolveInitialRange: analyticsResolveInitialRange,
+      validateAnalyticsDbAddSelection: validateAnalyticsDbAddSelection,
       clearWorkspaceSession: clearWorkspaceSession,
       commonDailyButtonDisabled: commonDailyButtonDisabled,
       loadWorkspaceSession: loadWorkspaceSession,
