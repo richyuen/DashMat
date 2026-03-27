@@ -18,6 +18,7 @@ from tools.playwright.at_statistics_harness import (
     HARNESS_PREFIX,
     REQUIRED_INDEX_COUNT,
     REQUIRED_PEER_COUNT,
+    _last_dash_response_to_ready_ms,
     _build_account_list_fixture_payload,
     _staged_row,
     build_run_specs,
@@ -448,3 +449,25 @@ class TestCreateAccountListFixtures:
             index_rows = index_entry.get("loader_args", {}).get("rows", [])
             assert len(index_rows) == 1
             assert index_rows[0]["portfolio"] == spec["index"]["portfolio"]
+
+
+def test_last_dash_response_to_ready_uses_last_dash_finish():
+    result = _last_dash_response_to_ready_ms(
+        {"dashUpdateLastFinishedOffsetMs": 450},
+        window_start_at=10.0,
+        ready_ts=10.7,
+        fallback_start_ts=10.2,
+    )
+
+    assert result == 250
+
+
+def test_last_dash_response_to_ready_falls_back_when_no_requests():
+    result = _last_dash_response_to_ready_ms(
+        {"dashUpdateLastFinishedOffsetMs": None},
+        window_start_at=10.0,
+        ready_ts=10.8,
+        fallback_start_ts=10.3,
+    )
+
+    assert result == 500

@@ -96,21 +96,33 @@ class DashUpdateRequestTracker:
             return
 
         response_bytes = 0
+        server_ms = None
         response = request.response()
         if response is not None:
             try:
-                content_length = response.headers.get("content-length")
+                content_length = response.header_value("content-length")
                 if content_length:
                     response_bytes = int(content_length)
                 else:
                     response_bytes = len(response.body())
             except Exception:
                 response_bytes = 0
+            try:
+                server_ms = warm.parse_server_timing_duration(response.header_value("server-timing"))
+            except Exception:
+                server_ms = None
 
-        duration_ms = round((time.perf_counter() - record["started_at"]) * 1000)
+        finished_at = time.perf_counter()
+        duration_ms = round((finished_at - record["started_at"]) * 1000)
+        window_start_at = self.window_start_at or started_at
         self.records.append(
             {
+                "_started_at": started_at,
+                "_finished_at": finished_at,
                 "durationMs": duration_ms,
+                "serverMs": round(server_ms, 2) if server_ms is not None else None,
+                "startedOffsetMs": round((started_at - window_start_at) * 1000),
+                "finishedOffsetMs": round((finished_at - window_start_at) * 1000),
                 "requestBytes": record["requestBytes"],
                 "responseBytes": response_bytes,
                 "outputs": record["outputs"],
@@ -136,25 +148,50 @@ class DashUpdateRequestTracker:
         while self.active_requests and time.perf_counter() < deadline:
             self.page.wait_for_timeout(50)
 
+    def _public_record(self, record: dict[str, object]) -> dict[str, object]:
+        return {
+            "durationMs": int(record.get("durationMs", 0) or 0),
+            "serverMs": record.get("serverMs"),
+            "startedOffsetMs": int(record.get("startedOffsetMs", 0) or 0),
+            "finishedOffsetMs": int(record.get("finishedOffsetMs", 0) or 0),
+            "requestBytes": int(record.get("requestBytes", 0) or 0),
+            "responseBytes": int(record.get("responseBytes", 0) or 0),
+            "outputs": list(record.get("outputs", [])),
+        }
+
     def summary(self) -> dict[str, object]:
         callback_ids: list[str] = []
         total_duration = 0
+        total_server_ms = 0.0
+        missing_server_timing = 0
         total_request_bytes = 0
         total_response_bytes = 0
+        last_finished_offset_ms = None
         for record in self.records:
             total_duration += int(record.get("durationMs", 0) or 0)
+            server_ms = record.get("serverMs")
+            if server_ms is None:
+                missing_server_timing += 1
+            else:
+                total_server_ms += float(server_ms)
             total_request_bytes += int(record.get("requestBytes", 0) or 0)
             total_response_bytes += int(record.get("responseBytes", 0) or 0)
+            finished_offset_ms = int(record.get("finishedOffsetMs", 0) or 0)
+            if last_finished_offset_ms is None or finished_offset_ms > last_finished_offset_ms:
+                last_finished_offset_ms = finished_offset_ms
             for output_id in record.get("outputs", []):
                 if output_id not in callback_ids:
                     callback_ids.append(output_id)
         return {
             "dashUpdateRequestCount": len(self.records),
             "dashUpdateTotalMs": total_duration,
+            "dashUpdateSummedServerMs": round(total_server_ms),
+            "dashUpdateServerTimingMissingCount": missing_server_timing,
             "dashUpdateRequestBytes": total_request_bytes,
             "dashUpdateResponseBytes": total_response_bytes,
+            "dashUpdateLastFinishedOffsetMs": last_finished_offset_ms,
             "dashUpdateCallbacks": callback_ids,
-            "dashUpdateRequests": self.records,
+            "dashUpdateRequests": [self._public_record(record) for record in self.records],
         }
 
 
@@ -743,6 +780,8 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
     ok_confirm_values = [run["okConfirmMs"] for run in run_results]
     dash_request_counts = [run["dashUpdateRequestCount"] for run in run_results]
     dash_request_durations = [run["dashUpdateTotalMs"] for run in run_results]
+    dash_server_durations = [run.get("dashUpdateSummedServerMs", 0) for run in run_results]
+    dash_server_missing = [run.get("dashUpdateServerTimingMissingCount", 0) for run in run_results]
     dash_request_bytes = [run["dashUpdateRequestBytes"] for run in run_results]
     dash_response_bytes = [run["dashUpdateResponseBytes"] for run in run_results]
     callback_frequency: Counter[str] = Counter()
@@ -771,6 +810,8 @@ def run_harness(args: argparse.Namespace, resolved_git_ref: str) -> dict[str, ob
             "okConfirmMedian": round(median(ok_confirm_values)),
             "dashUpdateRequestCountMedian": round(median(dash_request_counts)),
             "dashUpdateTotalMsMedian": round(median(dash_request_durations)),
+            "dashUpdateSummedServerMsMedian": round(median(dash_server_durations)),
+            "dashUpdateServerTimingMissingCountMedian": round(median(dash_server_missing)),
             "dashUpdateRequestBytesMedian": round(median(dash_request_bytes)),
             "dashUpdateResponseBytesMedian": round(median(dash_response_bytes)),
             "topDashUpdateCallbacksByFrequency": [

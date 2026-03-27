@@ -517,6 +517,23 @@ def _import_portfolio(page, mode: str, row: dict) -> dict:
     }
 
 
+def _last_dash_response_to_ready_ms(
+    window_summary: dict[str, object],
+    window_start_at: float | None,
+    ready_ts: float,
+    fallback_start_ts: float,
+) -> int:
+    if window_start_at is None:
+        return max(0, round((ready_ts - fallback_start_ts) * 1000))
+
+    last_finished_offset_ms = window_summary.get("dashUpdateLastFinishedOffsetMs")
+    if last_finished_offset_ms is None:
+        return max(0, round((ready_ts - fallback_start_ts) * 1000))
+
+    last_finished_ts = window_start_at + (float(last_finished_offset_ms) / 1000.0)
+    return max(0, round((ready_ts - last_finished_ts) * 1000))
+
+
 # ---------------------------------------------------------------------------
 # Account-list load helpers
 # ---------------------------------------------------------------------------
@@ -616,6 +633,7 @@ def _measure_import_run(
     request_tracker: DashUpdateRequestTracker,
     base_url: str,
     spec: dict,
+    server_log: Path | None,
 ) -> dict:
     """Measure a single import-mode run for one spec."""
     # Reset to welcome
@@ -625,8 +643,10 @@ def _measure_import_run(
     reset_ms = round((time.perf_counter() - t0) * 1000)
 
     # Import peer
+    peer_timing_start = current_log_offset(server_log)
     t_peer_start = time.perf_counter()
     request_tracker.start_window()
+    peer_window_start_at = request_tracker.window_start_at
     peer_ts = _import_portfolio(page, "peer", spec["peer"])
     # modalOpenTs → seriesModalTs: staging + OK click → series modal appears
     peer_import_to_series_modal_ms = round((peer_ts["seriesModalTs"] - t_peer_start) * 1000)
@@ -635,24 +655,54 @@ def _measure_import_run(
 
     # Wait for statistics ready after peer
     _wait_statistics_ready(page)
+    peer_ready_ts = time.perf_counter()
     request_tracker.wait_for_settle()
     request_tracker.stop_window()
-    peer_confirm_to_ready_ms = round((time.perf_counter() - peer_series_confirm_ts) * 1000)
+    peer_timing_end = current_log_offset(server_log)
+    peer_confirm_to_ready_ms = round((peer_ready_ts - peer_series_confirm_ts) * 1000)
     peer_summary = request_tracker.summary()
+    peer_summary["timingSummary"] = parse_timing_log(
+        server_log,
+        start_offset=peer_timing_start,
+        end_offset=peer_timing_end,
+    )
+    peer_confirm_phase_summary = request_tracker.summary(start_at=peer_series_confirm_ts)
+    peer_last_response_to_ready_ms = _last_dash_response_to_ready_ms(
+        peer_confirm_phase_summary,
+        peer_window_start_at,
+        peer_ready_ts,
+        peer_series_confirm_ts,
+    )
 
     # Import index
+    index_timing_start = current_log_offset(server_log)
     t_index_start = time.perf_counter()
     request_tracker.start_window()
+    index_window_start_at = request_tracker.window_start_at
     index_ts = _import_portfolio(page, "index", spec["index"])
     index_import_to_series_modal_ms = round((index_ts["seriesModalTs"] - t_index_start) * 1000)
     index_series_confirm_ts = index_ts["seriesConfirmedTs"]
 
     # Wait for statistics ready after index
     _wait_statistics_ready(page)
+    index_ready_ts = time.perf_counter()
     request_tracker.wait_for_settle()
     request_tracker.stop_window()
-    index_confirm_to_ready_ms = round((time.perf_counter() - index_series_confirm_ts) * 1000)
+    index_timing_end = current_log_offset(server_log)
+    index_confirm_to_ready_ms = round((index_ready_ts - index_series_confirm_ts) * 1000)
     index_summary = request_tracker.summary()
+    index_summary["timingSummary"] = parse_timing_log(
+        server_log,
+        start_offset=index_timing_start,
+        end_offset=index_timing_end,
+    )
+    index_confirm_phase_summary = request_tracker.summary(start_at=index_series_confirm_ts)
+    index_last_response_to_ready_ms = _last_dash_response_to_ready_ms(
+        index_confirm_phase_summary,
+        index_window_start_at,
+        index_ready_ts,
+        index_series_confirm_ts,
+    )
 
     total_ms = round((time.perf_counter() - t0) * 1000)
 
@@ -663,11 +713,15 @@ def _measure_import_run(
         "resetToWelcomeMs": reset_ms,
         "peerImportToSeriesModalMs": peer_import_to_series_modal_ms,
         "peerSeriesConfirmToStatisticsReadyMs": peer_confirm_to_ready_ms,
+        "peerLastDashResponseToReadyMs": peer_last_response_to_ready_ms,
         "indexImportToSeriesModalMs": index_import_to_series_modal_ms,
         "indexSeriesConfirmToStatisticsReadyMs": index_confirm_to_ready_ms,
+        "indexLastDashResponseToReadyMs": index_last_response_to_ready_ms,
         "totalRunMs": total_ms,
         "peerWindow": peer_summary,
+        "peerConfirmPhaseWindow": peer_confirm_phase_summary,
         "indexWindow": index_summary,
+        "indexConfirmPhaseWindow": index_confirm_phase_summary,
     }
 
 
@@ -677,6 +731,7 @@ def _measure_account_list_run(
     base_url: str,
     spec: dict,
     fixture: dict,
+    server_log: Path | None,
 ) -> dict:
     """Measure a single account-list-mode run for one spec."""
     # Reset to welcome
@@ -686,8 +741,10 @@ def _measure_account_list_run(
     reset_ms = round((time.perf_counter() - t0) * 1000)
 
     # Open account-list load from welcome, select and trigger load
+    load_timing_start = current_log_offset(server_log)
     t_load_start = time.perf_counter()
     request_tracker.start_window()
+    load_window_start_at = request_tracker.window_start_at
     _open_welcome_account_list_load(page)
     _select_and_load_account_list(page, fixture)
 
@@ -702,10 +759,23 @@ def _measure_account_list_run(
         wait_dash_hydrated(page, timeout=_scaled_timeout(60000))
         _wait_statistics_ready(page, timeout=60000)
 
+    ready_ts = time.perf_counter()
     request_tracker.wait_for_settle()
     request_tracker.stop_window()
-    load_to_ready_ms = round((time.perf_counter() - t_load_start) * 1000)
+    load_timing_end = current_log_offset(server_log)
+    load_to_ready_ms = round((ready_ts - t_load_start) * 1000)
     load_summary = request_tracker.summary()
+    load_summary["timingSummary"] = parse_timing_log(
+        server_log,
+        start_offset=load_timing_start,
+        end_offset=load_timing_end,
+    )
+    load_last_response_to_ready_ms = _last_dash_response_to_ready_ms(
+        load_summary,
+        load_window_start_at,
+        ready_ts,
+        t_load_start,
+    )
     total_ms = round((time.perf_counter() - t0) * 1000)
 
     return {
@@ -716,6 +786,7 @@ def _measure_account_list_run(
         "accountListId": fixture["accountListId"],
         "resetToWelcomeMs": reset_ms,
         "accountListOpenToReadyMs": load_to_ready_ms,
+        "accountListLastDashResponseToReadyMs": load_last_response_to_ready_ms,
         "totalRunMs": total_ms,
         "accountListWindow": load_summary,
     }
@@ -733,8 +804,10 @@ def _summarize_import_runs(run_results: list[dict]) -> dict:
     reset_ms = [r["resetToWelcomeMs"] for r in run_results]
     peer_import_ms = [r["peerImportToSeriesModalMs"] for r in run_results]
     peer_ready_ms = [r["peerSeriesConfirmToStatisticsReadyMs"] for r in run_results]
+    peer_tail_ms = [r["peerLastDashResponseToReadyMs"] for r in run_results]
     index_import_ms = [r["indexImportToSeriesModalMs"] for r in run_results]
     index_ready_ms = [r["indexSeriesConfirmToStatisticsReadyMs"] for r in run_results]
+    index_tail_ms = [r["indexLastDashResponseToReadyMs"] for r in run_results]
     total_ms = [r["totalRunMs"] for r in run_results]
 
     callback_counter: Counter[str] = Counter()
@@ -753,10 +826,14 @@ def _summarize_import_runs(run_results: list[dict]) -> dict:
         "peerImportToSeriesModalMedian": round(median(peer_import_ms)),
         "peerSeriesConfirmToStatisticsReadyMs": peer_ready_ms,
         "peerSeriesConfirmToStatisticsReadyMedian": round(median(peer_ready_ms)),
+        "peerLastDashResponseToReadyMs": peer_tail_ms,
+        "peerLastDashResponseToReadyMedian": round(median(peer_tail_ms)),
         "indexImportToSeriesModalMs": index_import_ms,
         "indexImportToSeriesModalMedian": round(median(index_import_ms)),
         "indexSeriesConfirmToStatisticsReadyMs": index_ready_ms,
         "indexSeriesConfirmToStatisticsReadyMedian": round(median(index_ready_ms)),
+        "indexLastDashResponseToReadyMs": index_tail_ms,
+        "indexLastDashResponseToReadyMedian": round(median(index_tail_ms)),
         "totalRunMs": total_ms,
         "totalRunMedian": round(median(total_ms)),
         "topCallbacksByFrequency": [
@@ -774,6 +851,7 @@ def _summarize_account_list_runs(run_results: list[dict]) -> dict:
 
     reset_ms = [r["resetToWelcomeMs"] for r in run_results]
     load_ms = [r["accountListOpenToReadyMs"] for r in run_results]
+    tail_ms = [r["accountListLastDashResponseToReadyMs"] for r in run_results]
     total_ms = [r["totalRunMs"] for r in run_results]
 
     callback_counter: Counter[str] = Counter()
@@ -789,6 +867,8 @@ def _summarize_account_list_runs(run_results: list[dict]) -> dict:
         "resetToWelcomeMedian": round(median(reset_ms)),
         "accountListOpenToReadyMs": load_ms,
         "accountListOpenToReadyMedian": round(median(load_ms)),
+        "accountListLastDashResponseToReadyMs": tail_ms,
+        "accountListLastDashResponseToReadyMedian": round(median(tail_ms)),
         "totalRunMs": total_ms,
         "totalRunMedian": round(median(total_ms)),
         "topCallbacksByFrequency": [
@@ -878,9 +958,9 @@ def run_harness(
         # Rehearsal: one unmeasured run with the first spec
         print("REHEARSAL=starting", flush=True)
         if mode == "imports":
-            _measure_import_run(page, request_tracker, base_url, specs[0])
+            _measure_import_run(page, request_tracker, base_url, specs[0], server_log)
         else:
-            _measure_account_list_run(page, request_tracker, base_url, specs[0], account_list_fixtures[0])
+            _measure_account_list_run(page, request_tracker, base_url, specs[0], account_list_fixtures[0], server_log)
         print("REHEARSAL=complete", flush=True)
 
         applied_network_profile = _apply_network_profile(page, network_profile)
@@ -893,10 +973,10 @@ def run_harness(
             print(f"RUN={i + 1}/{runs} spec={spec['specIndex']} peer={spec['peer']['portfolio']} index={spec['index']['portfolio']}", flush=True)
 
             if mode == "imports":
-                result = _measure_import_run(page, request_tracker, base_url, spec)
+                result = _measure_import_run(page, request_tracker, base_url, spec, server_log)
             else:
                 fixture = account_list_fixtures[spec["specIndex"]]
-                result = _measure_account_list_run(page, request_tracker, base_url, spec, fixture)
+                result = _measure_account_list_run(page, request_tracker, base_url, spec, fixture, server_log)
 
             run_results.append(result)
             print(f"RUN={i + 1}/{runs} totalMs={result['totalRunMs']}", flush=True)

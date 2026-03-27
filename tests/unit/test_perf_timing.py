@@ -13,56 +13,58 @@ def _reload_perf_timing(monkeypatch, *, enabled: str, min_ms: str = "0", logger_
     return importlib.reload(perf_timing)
 
 
-def test_timed_block_disabled_does_not_log(monkeypatch, caplog):
-    mod = _reload_perf_timing(monkeypatch, enabled="0")
-    caplog.set_level(logging.INFO, logger="dashmat.timing")
+def test_timed_block_disabled_does_not_log(monkeypatch, capsys):
+    logger_name = "dashmat.timing.unit.disabled"
+    mod = _reload_perf_timing(monkeypatch, enabled="0", logger_name=logger_name)
 
     with mod.timed_block("my-block", event="unit-test"):
         pass
 
-    assert not any("timing name=my-block" in rec.getMessage() for rec in caplog.records)
+    assert "timing name=my-block" not in capsys.readouterr().out
 
 
-def test_timed_block_enabled_logs_once(monkeypatch, caplog):
-    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="0")
-    caplog.set_level(logging.INFO, logger="dashmat.timing")
+def test_timed_block_enabled_logs_once(monkeypatch, capsys):
+    logger_name = "dashmat.timing.unit.enabled"
+    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="0", logger_name=logger_name)
 
     with mod.timed_block("my-block", event="unit-test"):
         pass
 
-    assert any("timing name=my-block" in rec.getMessage() for rec in caplog.records)
-    assert any("event=unit-test" in rec.getMessage() for rec in caplog.records)
+    output = capsys.readouterr().out
+    assert "timing name=my-block" in output
+    assert "event=unit-test" in output
 
 
-def test_timed_block_enabled_below_min_threshold_does_not_log(monkeypatch, caplog):
-    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="100000")
-    caplog.set_level(logging.INFO, logger="dashmat.timing")
+def test_timed_block_enabled_below_min_threshold_does_not_log(monkeypatch, capsys):
+    logger_name = "dashmat.timing.unit.threshold"
+    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="100000", logger_name=logger_name)
 
     with mod.timed_block("slow-block", event="unit-test"):
         pass
 
-    assert not any("timing name=slow-block" in rec.getMessage() for rec in caplog.records)
+    assert "timing name=slow-block" not in capsys.readouterr().out
 
 
-def test_timed_block_enabled_logs_without_suffix(monkeypatch, caplog):
-    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="0")
-    caplog.set_level(logging.INFO, logger="dashmat.timing")
+def test_timed_block_enabled_logs_without_suffix(monkeypatch, capsys):
+    logger_name = "dashmat.timing.unit.plain"
+    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="0", logger_name=logger_name)
 
     with mod.timed_block("plain-block"):
         pass
 
-    assert any("timing name=plain-block" in rec.getMessage() for rec in caplog.records)
+    assert "timing name=plain-block" in capsys.readouterr().out
 
 
-def test_timed_block_allows_dynamic_fields(monkeypatch, caplog):
-    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="0")
-    caplog.set_level(logging.INFO, logger="dashmat.timing")
+def test_timed_block_allows_dynamic_fields(monkeypatch, capsys):
+    logger_name = "dashmat.timing.unit.dynamic"
+    mod = _reload_perf_timing(monkeypatch, enabled="1", min_ms="0", logger_name=logger_name)
 
     with mod.timed_block("dynamic-block", event="unit-test") as fields:
         fields["payload_bytes"] = 123
 
-    assert any("timing name=dynamic-block" in rec.getMessage() for rec in caplog.records)
-    assert any("payload_bytes=123" in rec.getMessage() for rec in caplog.records)
+    output = capsys.readouterr().out
+    assert "timing name=dynamic-block" in output
+    assert "payload_bytes=123" in output
 
 
 def test_configure_timing_logger_adds_single_stdout_handler(monkeypatch):

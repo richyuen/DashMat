@@ -132,14 +132,14 @@ def test_raw_data_meta_store_is_memory_backed():
     assert 'dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="memory")' in app_text
 
 
-def test_shared_saved_series_stamp_store_is_session_backed_and_registered():
+def test_shared_saved_series_cache_store_is_session_backed():
     from pathlib import Path
 
     app_text = Path("app.py").read_text(encoding="utf-8")
 
-    assert 'dcc.Store(id="dashmat-saved-series-stamp-store", data=None, storage_type="session")' in app_text
-    assert 'dcc.Store(id="dashmat-saved-series-cache-store"' not in app_text
-    assert "register_shared_benchmark_callbacks" in app_text
+    assert 'dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session")' in app_text
+    assert 'dcc.Store(id="dashmat-saved-series-stamp-store"' not in app_text
+    assert "register_shared_benchmark_callbacks" not in app_text
 
 
 def test_app_shell_hosts_shared_account_list_modal_and_store():
@@ -214,7 +214,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert "configure_timing_logger" in app_text
 
 
-def test_shared_saved_series_stamp_store_replaces_old_contract_across_pages():
+def test_shared_saved_series_cache_store_contract_matches_pages():
     from pathlib import Path
 
     analytics_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
@@ -222,10 +222,10 @@ def test_shared_saved_series_stamp_store_replaces_old_contract_across_pages():
     regression_text = Path("pages/regression.py").read_text(encoding="utf-8")
 
     for page_text in (analytics_text, portopt_text, regression_text):
-        assert 'dashmat-saved-series-stamp-store' in page_text
-        assert 'dashmat-saved-series-cache-store' not in page_text
+        assert 'dashmat-saved-series-cache-store' in page_text
+        assert 'dashmat-saved-series-stamp-store' not in page_text
 
-    assert 'at-shared-benchmark-stamp-store' not in analytics_text
+    assert 'at-shared-benchmark-stamp-store' in analytics_text
 
 
 def test_account_list_modal_does_not_open_when_optional_menu_input_mounts(monkeypatch):

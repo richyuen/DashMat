@@ -62,6 +62,8 @@ def timed_block(name: str, **fields: Any):
         yield fields
         return
 
+    if not _TIMING_LOGGER.handlers:
+        configure_timing_logger()
     start = time.perf_counter()
     try:
         yield fields

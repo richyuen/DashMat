@@ -106,12 +106,12 @@ def _series_snapshot(rows: list[dict]) -> dict:
     return {"rows": rows, "capturedAt": 1}
 
 
-def test_regression_uses_shared_saved_series_stamp_store():
+def test_regression_uses_shared_saved_series_cache_store():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
 
-    assert 'Input("dashmat-saved-series-stamp-store", "data")' in page_text
-    assert 'State("dashmat-saved-series-stamp-store", "data")' in page_text
-    assert 'dashmat-saved-series-cache-store' not in page_text
+    assert 'Input("dashmat-saved-series-cache-store", "data")' in page_text
+    assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
+    assert 'dashmat-saved-series-stamp-store' not in page_text
 
 
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
@@ -1692,6 +1692,42 @@ def test_warm_switch_harness_summarizes_account_list_runs():
     assert summary["totalClickToReadyMedian"] == 1000
     assert summary["dashUpdateRequestCountMedian"] == 4
     assert summary["dashUpdateTotalMsMedian"] == 690
+
+
+def test_warm_switch_harness_parses_timing_log_stats_with_offsets():
+    import tools.playwright.warm_switch_harness as harness
+
+    with TemporaryDirectory() as tmpdir:
+        server_log = Path(tmpdir) / "server.log"
+        prefix = "before\n"
+        measured = (
+            "timing name=analyticstool.import.load_series elapsed_ms=12.50 mode=peer\n"
+            "timing name=analyticstool.import.load_series elapsed_ms=7.50 mode=index\n"
+            "timing name=analyticstool.import.merge_dataset elapsed_ms=5.00 has_existing_dataset=False\n"
+        )
+        suffix = "timing name=analyticstool.import.build_store_payload elapsed_ms=3.50 row_count=10\n"
+        server_log.write_text(prefix + measured + suffix, encoding="utf-8")
+
+        summary = harness.parse_timing_log(
+            server_log,
+            start_offset=len(prefix),
+            end_offset=len(prefix + measured),
+        )
+
+    assert summary["eventCounts"]["analyticstool.import.load_series"] == 2
+    assert summary["eventCounts"]["analyticstool.import.build_store_payload"] == 0
+    assert summary["eventStats"]["analyticstool.import.load_series"] == {
+        "count": 2,
+        "totalElapsedMs": 20.0,
+        "medianElapsedMs": 10.0,
+        "maxElapsedMs": 12.5,
+    }
+    assert summary["eventStats"]["analyticstool.import.merge_dataset"] == {
+        "count": 1,
+        "totalElapsedMs": 5.0,
+        "medianElapsedMs": 5.0,
+        "maxElapsedMs": 5.0,
+    }
 
 
 def test_reg_render_scatter_renders_residual_qq_plot(regression_page):

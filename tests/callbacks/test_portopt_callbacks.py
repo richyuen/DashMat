@@ -109,12 +109,12 @@ def _sample_window_weights() -> list[dict]:
     ]
 
 
-def test_portopt_uses_shared_saved_series_stamp_store():
+def test_portopt_uses_shared_saved_series_cache_store():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
 
-    assert 'Input("dashmat-saved-series-stamp-store", "data")' in page_text
-    assert 'State("dashmat-saved-series-stamp-store", "data")' in page_text
-    assert 'dashmat-saved-series-cache-store' not in page_text
+    assert 'Input("dashmat-saved-series-cache-store", "data")' in page_text
+    assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
+    assert 'dashmat-saved-series-stamp-store' not in page_text
 
 
 def _collect_component_text(node):

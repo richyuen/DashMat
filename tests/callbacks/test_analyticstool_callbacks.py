@@ -1790,12 +1790,12 @@ def test_statistics_render_schedules_from_statistics_trigger_store():
     assert 'State("at-dataset-key-store", "data")' in page_text
     trigger_callback = page_text.split('Output("at-statistics-tab-trigger-store", "data")', 1)[-1]
     trigger_callback = trigger_callback.split('Output("at-returns-tab-trigger-store", "data")', 1)[0]
-    assert 'Input("dashmat-saved-series-stamp-store", "data")' in trigger_callback
-    assert 'Input("dashmat-saved-series-cache-store", "data")' not in trigger_callback
+    assert 'Input("at-shared-benchmark-stamp-store", "data")' in trigger_callback
+    assert 'Input("dashmat-saved-series-stamp-store", "data")' not in trigger_callback
     render_callback = page_text.split('Output("at-statistics-grid", "columnDefs")', 1)[-1]
     render_callback = render_callback.split('Output("at-correlation-loaded-store", "data"', 1)[0]
-    assert 'State("dashmat-saved-series-stamp-store", "data")' in render_callback
-    assert 'State("dashmat-saved-series-cache-store", "data")' not in render_callback
+    assert 'State("at-shared-benchmark-stamp-store", "data")' in render_callback
+    assert 'State("dashmat-saved-series-stamp-store", "data")' not in render_callback
     assert 'State("at-range-candidates-store", "data")' in render_callback
     assert 'State("at-common-daily-candidates-store", "data")' not in render_callback
     assert 'Output("at-range-candidates-store", "data", allow_duplicate=True)' not in render_callback
@@ -1839,12 +1839,12 @@ def test_candidate_refresh_trigger_callback_does_not_depend_on_candidate_stores(
     assert 'Input("at-common-daily-candidates-store", "data")' not in trigger_block
 
 
-def test_download_excel_uses_shared_benchmark_stamp_store():
+def test_download_excel_uses_shared_benchmark_cache_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     download_callback = page_text.split('Output("at-download-excel", "data")', 1)[-1]
     download_callback = download_callback.split('def download_excel(', 1)[0]
-    assert 'State("dashmat-saved-series-stamp-store", "data")' in download_callback
-    assert 'State("dashmat-saved-series-cache-store", "data")' not in download_callback
+    assert 'State("at-shared-benchmark-stamp-store", "data")' in download_callback
+    assert 'State("dashmat-saved-series-stamp-store", "data")' not in download_callback
 
 
 

@@ -30,25 +30,61 @@ $stem = if ($LogStem) {
 
 $stdout = Join-Path $resolvedLogDir "${stem}_stdout.log"
 $stderr = Join-Path $resolvedLogDir "${stem}_stderr.log"
-$launcher = Join-Path $resolvedLogDir "${stem}_launch.cmd"
+$runner = Join-Path $root 'tools\playwright\start_timed_server_runner.py'
+$condaExe = (Get-Command conda.exe).Source
 
-@"
-@echo off
-cd /d "$root"
-set DASHMAT_TIMING_ENABLED=1
-set DASHMAT_TIMING_MIN_MS=$TimingMinMs
-set DASHMAT_ENABLE_COMPRESSION=
-"@ | Set-Content -Path $launcher -Encoding ASCII
+$previousTimingEnabled = $env:DASHMAT_TIMING_ENABLED
+$previousTimingMinMs = $env:DASHMAT_TIMING_MIN_MS
+$previousCompression = $env:DASHMAT_ENABLE_COMPRESSION
 
+$env:DASHMAT_TIMING_ENABLED = '1'
+$env:DASHMAT_TIMING_MIN_MS = $TimingMinMs
 if ($Compression) {
-    Add-Content -Path $launcher -Value 'set DASHMAT_ENABLE_COMPRESSION=1'
+    $env:DASHMAT_ENABLE_COMPRESSION = '1'
+} else {
+    Remove-Item Env:DASHMAT_ENABLE_COMPRESSION -ErrorAction SilentlyContinue
 }
 
-Add-Content -Path $launcher -Value "conda run --no-capture-output -n dashmat python -u -c ""import app; app.app.run(debug=False, port=$Port, use_reloader=False)"" 1> ""$stdout"" 2> ""$stderr"""
+try {
+    $proc = Start-Process -FilePath $condaExe `
+        -ArgumentList @(
+            'run',
+            '--no-capture-output',
+            '-n',
+            'dashmat',
+            'python',
+            '-u',
+            $runner,
+            '--port',
+            $Port.ToString()
+        ) `
+        -WorkingDirectory $root `
+        -RedirectStandardOutput $stdout `
+        -RedirectStandardError $stderr `
+        -WindowStyle Hidden `
+        -PassThru
+}
+finally {
+    if ($null -ne $previousTimingEnabled) {
+        $env:DASHMAT_TIMING_ENABLED = $previousTimingEnabled
+    } else {
+        Remove-Item Env:DASHMAT_TIMING_ENABLED -ErrorAction SilentlyContinue
+    }
 
-$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $launcher) -WorkingDirectory $root -WindowStyle Hidden -PassThru
+    if ($null -ne $previousTimingMinMs) {
+        $env:DASHMAT_TIMING_MIN_MS = $previousTimingMinMs
+    } else {
+        Remove-Item Env:DASHMAT_TIMING_MIN_MS -ErrorAction SilentlyContinue
+    }
+
+    if ($null -ne $previousCompression) {
+        $env:DASHMAT_ENABLE_COMPRESSION = $previousCompression
+    } else {
+        Remove-Item Env:DASHMAT_ENABLE_COMPRESSION -ErrorAction SilentlyContinue
+    }
+}
 
 Write-Output ("PID=" + $proc.Id)
 Write-Output ("STDOUT=" + $stdout)
 Write-Output ("STDERR=" + $stderr)
-Write-Output ("LAUNCHER=" + $launcher)
+Write-Output ("RUNNER=" + $runner)

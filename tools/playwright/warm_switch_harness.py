@@ -44,6 +44,9 @@ DEFAULT_DB_SERIES = [
 PAGE_ORDER = ["analytics", "portopt", "regression"]
 
 TIMING_EVENT_NAMES = (
+    "analyticstool.import.load_series",
+    "analyticstool.import.merge_dataset",
+    "analyticstool.import.build_store_payload",
     "analyticstool.render_statistics_grid",
     "analyticstool.render_returns_grid",
     "analyticstool.download_excel.total",
@@ -111,6 +114,26 @@ def extract_dash_output_ids(post_data: str | None) -> list[str]:
     return sorted(set(outputs))
 
 
+def parse_server_timing_duration(header_value: str | None, metric_name: str = "cb") -> float | None:
+    if not header_value:
+        return None
+
+    metric_prefix = f"{metric_name};"
+    for part in str(header_value).split(","):
+        token = part.strip()
+        if not token.startswith(metric_prefix):
+            continue
+        for field in token.split(";")[1:]:
+            key, _, value = field.partition("=")
+            if key.strip() != "dur":
+                continue
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
 class DashUpdateRequestTracker:
     def __init__(self, page):
         self.page = page
@@ -143,21 +166,33 @@ class DashUpdateRequestTracker:
             return
 
         response_bytes = 0
+        server_ms = None
         response = request.response()
         if response is not None:
             try:
-                content_length = response.headers.get("content-length")
+                content_length = response.header_value("content-length")
                 if content_length:
                     response_bytes = int(content_length)
                 else:
                     response_bytes = len(response.body())
             except Exception:
                 response_bytes = 0
+            try:
+                server_ms = parse_server_timing_duration(response.header_value("server-timing"))
+            except Exception:
+                server_ms = None
 
-        duration_ms = round((time.perf_counter() - record["started_at"]) * 1000)
+        finished_at = time.perf_counter()
+        duration_ms = round((finished_at - record["started_at"]) * 1000)
+        window_start_at = self.window_start_at or started_at
         self.records.append(
             {
+                "_started_at": started_at,
+                "_finished_at": finished_at,
                 "durationMs": duration_ms,
+                "serverMs": round(server_ms, 2) if server_ms is not None else None,
+                "startedOffsetMs": round((started_at - window_start_at) * 1000),
+                "finishedOffsetMs": round((finished_at - window_start_at) * 1000),
                 "requestBytes": record["requestBytes"],
                 "responseBytes": response_bytes,
                 "outputs": record["outputs"],
@@ -183,31 +218,88 @@ class DashUpdateRequestTracker:
         while self.active_requests and time.perf_counter() < deadline:
             self.page.wait_for_timeout(50)
 
-    def summary(self) -> dict[str, object]:
+    def _matching_records(
+        self,
+        start_at: float | None = None,
+        end_at: float | None = None,
+    ) -> list[dict[str, object]]:
+        records: list[dict[str, object]] = []
+        for record in self.records:
+            record_start = float(record.get("_started_at", 0) or 0)
+            if start_at is not None and record_start < start_at:
+                continue
+            if end_at is not None and record_start > end_at:
+                continue
+            records.append(record)
+        return records
+
+    def _public_record(self, record: dict[str, object]) -> dict[str, object]:
+        return {
+            "durationMs": int(record.get("durationMs", 0) or 0),
+            "serverMs": record.get("serverMs"),
+            "startedOffsetMs": int(record.get("startedOffsetMs", 0) or 0),
+            "finishedOffsetMs": int(record.get("finishedOffsetMs", 0) or 0),
+            "requestBytes": int(record.get("requestBytes", 0) or 0),
+            "responseBytes": int(record.get("responseBytes", 0) or 0),
+            "outputs": list(record.get("outputs", [])),
+        }
+
+    def last_finished_at(
+        self,
+        start_at: float | None = None,
+        end_at: float | None = None,
+    ) -> float | None:
+        matching = self._matching_records(start_at=start_at, end_at=end_at)
+        if not matching:
+            return None
+        return max(float(record.get("_finished_at", 0) or 0) for record in matching)
+
+    def summary(
+        self,
+        start_at: float | None = None,
+        end_at: float | None = None,
+    ) -> dict[str, object]:
+        matching_records = self._matching_records(start_at=start_at, end_at=end_at)
         callback_ids: list[str] = []
         total_duration = 0
+        total_server_ms = 0.0
+        missing_server_timing = 0
         total_request_bytes = 0
         total_response_bytes = 0
-        for record in self.records:
+        last_finished_offset_ms = None
+        for record in matching_records:
             total_duration += int(record.get("durationMs", 0) or 0)
+            server_ms = record.get("serverMs")
+            if server_ms is None:
+                missing_server_timing += 1
+            else:
+                total_server_ms += float(server_ms)
             total_request_bytes += int(record.get("requestBytes", 0) or 0)
             total_response_bytes += int(record.get("responseBytes", 0) or 0)
+            finished_offset_ms = int(record.get("finishedOffsetMs", 0) or 0)
+            if last_finished_offset_ms is None or finished_offset_ms > last_finished_offset_ms:
+                last_finished_offset_ms = finished_offset_ms
             for output_id in record.get("outputs", []):
                 if output_id not in callback_ids:
                     callback_ids.append(output_id)
         return {
-            "dashUpdateRequestCount": len(self.records),
+            "dashUpdateRequestCount": len(matching_records),
             "dashUpdateTotalMs": total_duration,
+            "dashUpdateSummedServerMs": round(total_server_ms),
+            "dashUpdateServerTimingMissingCount": missing_server_timing,
             "dashUpdateRequestBytes": total_request_bytes,
             "dashUpdateResponseBytes": total_response_bytes,
+            "dashUpdateLastFinishedOffsetMs": last_finished_offset_ms,
             "dashUpdateCallbacks": callback_ids,
-            "dashUpdateRequests": self.records,
+            "dashUpdateRequests": [self._public_record(record) for record in matching_records],
         }
 
 
 def summarize_dash_update_runs(run_results: list[dict[str, object]]) -> dict[str, object]:
     dash_request_counts = [run["dashUpdateRequestCount"] for run in run_results]
     dash_request_durations = [run["dashUpdateTotalMs"] for run in run_results]
+    dash_server_durations = [run.get("dashUpdateSummedServerMs", 0) for run in run_results]
+    dash_server_missing = [run.get("dashUpdateServerTimingMissingCount", 0) for run in run_results]
     dash_request_bytes = [run["dashUpdateRequestBytes"] for run in run_results]
     dash_response_bytes = [run["dashUpdateResponseBytes"] for run in run_results]
     flow_durations = [run["flowMs"] for run in run_results]
@@ -223,6 +315,8 @@ def summarize_dash_update_runs(run_results: list[dict[str, object]]) -> dict[str
         "flowMedian": round(median(flow_durations)) if flow_durations else 0,
         "dashUpdateRequestCountMedian": round(median(dash_request_counts)) if dash_request_counts else 0,
         "dashUpdateTotalMsMedian": round(median(dash_request_durations)) if dash_request_durations else 0,
+        "dashUpdateSummedServerMsMedian": round(median(dash_server_durations)) if dash_server_durations else 0,
+        "dashUpdateServerTimingMissingCountMedian": round(median(dash_server_missing)) if dash_server_missing else 0,
         "dashUpdateRequestBytesMedian": round(median(dash_request_bytes)) if dash_request_bytes else 0,
         "dashUpdateResponseBytesMedian": round(median(dash_response_bytes)) if dash_response_bytes else 0,
         "topDashUpdateCallbacksByFrequency": [
@@ -239,6 +333,8 @@ def summarize_account_list_runs(run_results: list[dict[str, object]]) -> dict[st
     total_click_to_ready = [int(run["totalClickToReadyMs"]) for run in run_results]
     dash_request_counts = [int(run["dashUpdateRequestCount"]) for run in run_results]
     dash_request_durations = [int(run["dashUpdateTotalMs"]) for run in run_results]
+    dash_server_durations = [int(run.get("dashUpdateSummedServerMs", 0) or 0) for run in run_results]
+    dash_server_missing = [int(run.get("dashUpdateServerTimingMissingCount", 0) or 0) for run in run_results]
     dash_request_bytes = [int(run["dashUpdateRequestBytes"]) for run in run_results]
     dash_response_bytes = [int(run["dashUpdateResponseBytes"]) for run in run_results]
     callback_counter: Counter[str] = Counter()
@@ -257,6 +353,8 @@ def summarize_account_list_runs(run_results: list[dict[str, object]]) -> dict[st
         "totalClickToReadyMedian": round(median(total_click_to_ready)) if total_click_to_ready else 0,
         "dashUpdateRequestCountMedian": round(median(dash_request_counts)) if dash_request_counts else 0,
         "dashUpdateTotalMsMedian": round(median(dash_request_durations)) if dash_request_durations else 0,
+        "dashUpdateSummedServerMsMedian": round(median(dash_server_durations)) if dash_server_durations else 0,
+        "dashUpdateServerTimingMissingCountMedian": round(median(dash_server_missing)) if dash_server_missing else 0,
         "dashUpdateRequestBytesMedian": round(median(dash_request_bytes)) if dash_request_bytes else 0,
         "dashUpdateResponseBytesMedian": round(median(dash_response_bytes)) if dash_response_bytes else 0,
         "topDashUpdateCallbacksByFrequency": [
@@ -397,14 +495,23 @@ def build_artifact_stem(label: str, git_ref: str, base_url: str, timestamp: str)
     return f"warm_switch_{timestamp}_{label_token}_{git_token}_{port_token}"
 
 
-def parse_timing_log(server_log: Path | None, start_offset: int = 0) -> dict[str, object]:
+def parse_timing_log(
+    server_log: Path | None,
+    start_offset: int = 0,
+    end_offset: int | None = None,
+) -> dict[str, object]:
     summary = {
         "sourcePath": str(server_log) if server_log else None,
         "copiedPath": None,
         "startOffset": max(int(start_offset or 0), 0),
+        "endOffset": None if end_offset is None else max(int(end_offset or 0), 0),
         "warning": None,
         "eventsPresent": {name: False for name in TIMING_EVENT_NAMES},
         "eventCounts": {name: 0 for name in TIMING_EVENT_NAMES},
+        "eventStats": {
+            name: {"count": 0, "totalElapsedMs": 0.0, "medianElapsedMs": 0.0, "maxElapsedMs": 0.0}
+            for name in TIMING_EVENT_NAMES
+        },
         "matchedLines": [],
     }
     if not server_log or not server_log.exists():
@@ -417,9 +524,13 @@ def parse_timing_log(server_log: Path | None, start_offset: int = 0) -> dict[str
 
     line_re = re.compile(r"timing name=(?P<name>[^ ]+)")
     matched_lines: list[str] = []
+    elapsed_by_name: dict[str, list[float]] = {name: [] for name in TIMING_EVENT_NAMES}
     raw_text = server_log.read_text(encoding="utf-8", errors="replace")
     if summary["startOffset"]:
         raw_text = raw_text[summary["startOffset"]:]
+    if summary["endOffset"] is not None:
+        end_index = max(summary["endOffset"] - summary["startOffset"], 0)
+        raw_text = raw_text[:end_index]
     for line in raw_text.splitlines():
         match = line_re.search(line)
         if not match:
@@ -429,9 +540,25 @@ def parse_timing_log(server_log: Path | None, start_offset: int = 0) -> dict[str
             continue
         summary["eventsPresent"][name] = True
         summary["eventCounts"][name] += 1
+        fields = parse_timing_fields(line)
+        try:
+            elapsed_ms = float(fields.get("elapsed_ms", ""))
+        except ValueError:
+            elapsed_ms = None
+        if elapsed_ms is not None:
+            elapsed_by_name[name].append(elapsed_ms)
         if len(matched_lines) < 50:
             matched_lines.append(line)
     summary["matchedLines"] = matched_lines
+    for name, elapsed_values in elapsed_by_name.items():
+        if not elapsed_values:
+            continue
+        summary["eventStats"][name] = {
+            "count": len(elapsed_values),
+            "totalElapsedMs": round(sum(elapsed_values), 2),
+            "medianElapsedMs": round(median(elapsed_values), 2),
+            "maxElapsedMs": round(max(elapsed_values), 2),
+        }
     if not matched_lines:
         summary["warning"] = (
             "No timing events were found in the provided server log during the measured window. "
