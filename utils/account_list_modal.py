@@ -960,11 +960,7 @@ def register_account_list_callbacks(
                 const clickStart = Number(timingPayload.clickStartEpochMs || timingPayload.reloadStartEpochMs || now);
                 const reloadStart = Number(timingPayload.reloadStartEpochMs || now);
                 console.info(
-                    "timing name=account_list.click_to_ready click_to_reload_start_ms=%s reload_start_to_ready_ms=%s total_click_to_ready_ms=%s page=%s",
-                    String(reloadStart - clickStart),
-                    String(now - reloadStart),
-                    String(now - clickStart),
-                    currentPath
+                    `timing name=account_list.click_to_ready click_to_reload_start_ms=${String(reloadStart - clickStart)} reload_start_to_ready_ms=${String(now - reloadStart)} total_click_to_ready_ms=${String(now - clickStart)} page=${currentPath}`
                 );
                 sessionStorage.removeItem("dashmat-account-list-load-timing");
                 return [{
@@ -978,11 +974,7 @@ def register_account_list_callbacks(
                 const clickStart = Number(timingPayload.clickStartEpochMs || timingPayload.liveApplyCommitEpochMs || now);
                 const commitStart = Number(timingPayload.liveApplyCommitEpochMs || now);
                 console.info(
-                    "timing name=account_list.click_to_ready click_to_live_apply_commit_ms=%s live_apply_commit_to_ready_ms=%s total_click_to_ready_ms=%s page=%s",
-                    String(commitStart - clickStart),
-                    String(now - commitStart),
-                    String(now - clickStart),
-                    currentPath
+                    `timing name=account_list.click_to_ready click_to_live_apply_commit_ms=${String(commitStart - clickStart)} live_apply_commit_to_ready_ms=${String(now - commitStart)} total_click_to_ready_ms=${String(now - clickStart)} page=${currentPath}`
                 );
                 sessionStorage.removeItem("dashmat-account-list-load-timing");
                 return [{
@@ -1063,7 +1055,7 @@ def register_account_list_callbacks(
 
     app.clientside_callback(
         """
-        function(opened, mode, rows, selectedId, selectedDetail, currentTrigger) {
+        function(opened, mode, rows, selectedId, currentTrigger) {
             if (!opened) {
                 return window.dash_clientside.no_update;
             }
@@ -1074,21 +1066,16 @@ def register_account_list_callbacks(
                     return id + ":" + updateDate;
                 }).join("|")
                 : "";
-            const detailSig = (selectedDetail && typeof selectedDetail === "object")
-                ? String(selectedDetail.AccountListID != null ? selectedDetail.AccountListID : "") + ":" + String(selectedDetail.UPDATE_DATE != null ? selectedDetail.UPDATE_DATE : "")
-                : "";
             const nextTrigger = {
                 mode: mode || "load",
                 selected_id: selectedId != null ? selectedId : null,
-                row_sig: rowSig,
-                detail_sig: detailSig
+                row_sig: rowSig
             };
             if (
                 currentTrigger
                 && currentTrigger.mode === nextTrigger.mode
                 && currentTrigger.selected_id === nextTrigger.selected_id
                 && currentTrigger.row_sig === nextTrigger.row_sig
-                && currentTrigger.detail_sig === nextTrigger.detail_sig
             ) {
                 return window.dash_clientside.no_update;
             }
@@ -1100,19 +1087,65 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-modal-mode-store", "data"),
         Input("dashmat-account-list-rows-store", "data"),
         Input("dashmat-account-list-selected-id-store", "data"),
-        Input("dashmat-account-list-selected-detail-store", "data"),
         State("dashmat-account-list-modal-view-trigger-store", "data"),
         prevent_initial_call=False,
     )
 
-    @app.callback(
+    app.clientside_callback(
+        """
+        function(loadState) {
+            const status = (loadState && loadState.status) ? String(loadState.status).toLowerCase() : "idle";
+            const visible = status === "loading" || status === "live_applying";
+            if (!visible) {
+                return [false, {display: "none"}];
+            }
+            return [true, {position: "fixed", inset: 0, zIndex: 4100}];
+        }
+        """,
         Output("dashmat-account-list-load-overlay", "visible"),
         Output("dashmat-account-list-load-overlay-shell", "style"),
         Input("dashmat-account-list-load-state-store", "data"),
         prevent_initial_call=False,
     )
-    def _sync_account_list_load_overlay(load_state):
-        return account_list_loader_visible(load_state), account_list_loader_wrapper_style(load_state)
+
+    app.clientside_callback(
+        """
+        function(opened, selectedId) {
+            return null;
+        }
+        """,
+        Output("dashmat-account-list-send-user-select", "value"),
+        Input("dashmat-account-list-modal", "opened"),
+        Input("dashmat-account-list-selected-id-store", "data"),
+        prevent_initial_call=False,
+    )
+
+    app.clientside_callback(
+        """
+        function(mode, selectedId, recipientOptions, recipientValue) {
+            const hidden = {display: "none"};
+            const visible = {};
+            if (String(mode || "load") !== "load") {
+                return [hidden, true, true, "Select a user"];
+            }
+            const options = Array.isArray(recipientOptions) ? recipientOptions : [];
+            if (!options.length) {
+                return [visible, true, true, "No other users available"];
+            }
+            const hasRecipient = !!String(recipientValue || "").trim();
+            return [visible, false, selectedId == null || !hasRecipient, "Select a user"];
+        }
+        """,
+        Output("dashmat-account-list-send-controls", "style"),
+        Output("dashmat-account-list-send-user-select", "disabled"),
+        Output("dashmat-account-list-send-button", "disabled"),
+        Output("dashmat-account-list-send-user-select", "placeholder"),
+        Input("dashmat-account-list-modal-mode-store", "data"),
+        Input("dashmat-account-list-selected-id-store", "data"),
+        Input("dashmat-account-list-send-user-select", "data"),
+        Input("dashmat-account-list-send-user-select", "value"),
+        prevent_initial_call=False,
+    )
 
     app.clientside_callback(
         """
@@ -1305,26 +1338,6 @@ def register_account_list_callbacks(
         return list_account_lists(db_engine, _account_list_username(userinfo))
 
     @app.callback(
-        Output("dashmat-account-list-selected-detail-store", "data"),
-        Input("dashmat-account-list-modal", "opened"),
-        Input("dashmat-account-list-modal-mode-store", "data"),
-        Input("dashmat-account-list-selected-id-store", "data"),
-        State("userinfo", "data"),
-        State("dashmat-account-list-load-state-store", "data"),
-        prevent_initial_call=False,
-    )
-    def _refresh_account_list_selected_detail(opened, mode, selected_id, userinfo, load_state):
-        if account_list_load_state_status(load_state) != "idle":
-            raise PreventUpdate
-        if not opened or str(mode or "load") != "load" or selected_id is None:
-            return None
-        return load_selected_account_list_detail(
-            selected_id=selected_id,
-            userinfo=userinfo,
-            db_engine=db_engine,
-        )
-
-    @app.callback(
         Output("dashmat-account-list-prefetch-store", "data"),
         Input("dashmat-account-list-prefetch-trigger-store", "data"),
         State("dashmat-account-list-modal", "opened"),
@@ -1347,25 +1360,6 @@ def register_account_list_callbacks(
         )
 
     @app.callback(
-        Output("dashmat-account-list-send-user-select", "data"),
-        Input("dashmat-account-list-modal", "opened"),
-        Input("dashmat-account-list-modal-mode-store", "data"),
-        Input("dashmat-account-list-selected-id-store", "data"),
-        State("userinfo", "data"),
-        State("dashmat-account-list-load-state-store", "data"),
-        prevent_initial_call=False,
-    )
-    def _refresh_account_list_send_users(opened, mode, selected_id, userinfo, load_state):
-        if account_list_load_state_status(load_state) != "idle":
-            raise PreventUpdate
-        if not opened or str(mode or "load") != "load" or selected_id is None:
-            return []
-        if not users_table_available(db_engine):
-            return []
-        users = list_account_list_users(db_engine, _account_list_username(userinfo))
-        return account_list_send_user_options(users)
-
-    @app.callback(
         Output("dashmat-account-list-selected-id-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-grid", "selectedRows"),
         prevent_initial_call=True,
@@ -1374,31 +1368,8 @@ def register_account_list_callbacks(
         return sync_account_list_selected_id(selected_rows)
 
     @app.callback(
-        Output("dashmat-account-list-send-user-select", "value"),
-        Input("dashmat-account-list-modal", "opened"),
-        Input("dashmat-account-list-selected-id-store", "data"),
-        prevent_initial_call=False,
-    )
-    def _reset_account_list_send_user(opened, selected_id):
-        if not opened:
-            return None
-        return None
-
-    @app.callback(
-        Output("dashmat-account-list-send-controls", "style"),
-        Output("dashmat-account-list-send-user-select", "disabled"),
-        Output("dashmat-account-list-send-button", "disabled"),
-        Output("dashmat-account-list-send-user-select", "placeholder"),
-        Input("dashmat-account-list-modal-mode-store", "data"),
-        Input("dashmat-account-list-selected-id-store", "data"),
-        Input("dashmat-account-list-send-user-select", "data"),
-        Input("dashmat-account-list-send-user-select", "value"),
-        prevent_initial_call=False,
-    )
-    def _sync_account_list_send_controls(mode, selected_id, recipient_options, recipient_value):
-        return account_list_send_controls_state(mode, selected_id, recipient_options, recipient_value)
-
-    @app.callback(
+        Output("dashmat-account-list-selected-detail-store", "data"),
+        Output("dashmat-account-list-send-user-select", "data"),
         Output("dashmat-account-list-modal", "title"),
         Output("dashmat-account-list-modal", "className"),
         Output("dashmat-account-list-save-section", "style"),
@@ -1416,13 +1387,42 @@ def register_account_list_callbacks(
         State("dashmat-account-list-modal-mode-store", "data"),
         State("dashmat-account-list-rows-store", "data"),
         State("dashmat-account-list-selected-id-store", "data"),
-        State("dashmat-account-list-selected-detail-store", "data"),
+        State("userinfo", "data"),
+        State("dashmat-account-list-load-state-store", "data"),
         prevent_initial_call=True,
     )
-    def _render_account_list_modal_view(trigger_payload, opened, mode, rows, selected_id, selected_detail):
+    def _render_account_list_modal_view(
+        trigger_payload,
+        opened,
+        mode,
+        rows,
+        selected_id,
+        userinfo,
+        load_state,
+    ):
         if not isinstance(trigger_payload, dict):
             raise PreventUpdate
-        return render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail)
+        selected_detail = None
+        send_user_options = []
+        if (
+            opened
+            and str(mode or "load") == "load"
+            and account_list_load_state_status(load_state) == "idle"
+            and selected_id is not None
+        ):
+            selected_detail = load_selected_account_list_detail(
+                selected_id=selected_id,
+                userinfo=userinfo,
+                db_engine=db_engine,
+            )
+            if users_table_available(db_engine):
+                users = list_account_list_users(db_engine, _account_list_username(userinfo))
+                send_user_options = account_list_send_user_options(users)
+        return (
+            selected_detail,
+            send_user_options,
+            *render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail),
+        )
 
     @app.callback(
         Output("dashmat-account-list-duplicate-text", "children"),

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import traceback
@@ -109,6 +110,12 @@ NETWORK_TIMEOUT_MULTIPLIERS = {
 }
 
 TIMEOUT_SCALE = 1.0
+ACCOUNT_LIST_CLICK_TIMING_RE = re.compile(
+    r"timing name=account_list\.click_to_ready "
+    r"(?:(?:click_to_reload_start_ms=(?P<click_to_reload>\d+))|(?:click_to_live_apply_commit_ms=(?P<click_to_live_apply>\d+))) "
+    r"(?:(?:reload_start_to_ready_ms=(?P<reload_to_ready>\d+))|(?:live_apply_commit_to_ready_ms=(?P<live_apply_to_ready>\d+))) "
+    r"total_click_to_ready_ms=(?P<total>\d+)"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -389,16 +396,35 @@ def create_account_list_fixtures(engine, username: str, specs: list[dict]) -> li
 # AT UI interaction helpers
 # ---------------------------------------------------------------------------
 
-def _clear_session_and_reload(page, base_url: str) -> None:
+def _clear_session_and_reload(page, base_url: str) -> dict[str, float]:
     """Clear sessionStorage, reload /analyticstool, and wait for welcome screen."""
     page.evaluate("() => { window.sessionStorage.clear(); }")
+    reload_start_ts = time.perf_counter()
     page.goto(base_url + "/analyticstool", wait_until="domcontentloaded", timeout=_scaled_timeout(30000))
-    wait_dash_hydrated(page, timeout=_scaled_timeout(30000))
+    page.wait_for_function(
+        """
+        () => {
+          const title = (document.title || "").trim();
+          if (!title || title === "Updating...") {
+            return false;
+          }
+          return !!document.querySelector("#at-welcome-add-db-btn");
+        }
+        """,
+        timeout=_scaled_timeout(30000),
+    )
+    hydrated_ts = time.perf_counter()
     # The welcome screen should appear after a fresh load with no session data.
     # Wait for the DB-import button as the anchor; portfolio buttons render nearby.
     wait_visible(page, "#at-welcome-add-db-btn", timeout=_scaled_timeout(30000))
     # Give the welcome screen an extra moment for all buttons to mount.
     page.wait_for_timeout(500)
+    welcome_visible_ts = time.perf_counter()
+    return {
+        "reloadStartTs": reload_start_ts,
+        "hydratedTs": hydrated_ts,
+        "welcomeVisibleTs": welcome_visible_ts,
+    }
 
 
 
@@ -556,7 +582,7 @@ def _open_welcome_account_list_load(page) -> None:
         raise RuntimeError("Could not open account-list modal from AT welcome screen.")
 
 
-def _select_and_load_account_list(page, fixture: dict) -> None:
+def _select_and_load_account_list(page, fixture: dict) -> dict[str, float | None]:
     """Select and load an account list through the modal's real callback flow.
 
     Waits for the modal's row-fetch callback to populate the grid, then
@@ -611,8 +637,17 @@ def _select_and_load_account_list(page, fixture: dict) -> None:
     #    selected-id and selected-detail callbacks have completed).
     wait_ready(page, "#dashmat-account-list-load-button", timeout=_scaled_timeout(15000))
 
-    # 4. Click Load through the real callback.
-    fire_component_click(page, "dashmat-account-list-load-button")
+    # 4. Click Load through the real callback. AnalyticsTool uses same-page
+    #    live apply, so waiting for a navigation event here can add a false
+    #    30s timeout to the measured path.
+    load_clicked_ts = time.perf_counter()
+    triggered = fire_component_click(page, "dashmat-account-list-load-button")
+    if not triggered:
+        page.locator("#dashmat-account-list-load-button").click(force=True)
+    return {
+        "loadClickedTs": load_clicked_ts,
+        "reloadStartTs": None,
+    }
 
 
 def _get_username(page) -> str:
@@ -622,6 +657,30 @@ def _get_username(page) -> str:
     if not username:
         raise RuntimeError("Could not resolve username from userinfo store.")
     return username
+
+
+def _parse_account_list_click_timing(message: str) -> dict[str, int | str] | None:
+    match = ACCOUNT_LIST_CLICK_TIMING_RE.search(str(message or "").strip())
+    if not match:
+        return None
+    click_to_reload = match.group("click_to_reload")
+    reload_to_ready = match.group("reload_to_ready")
+    click_to_live_apply = match.group("click_to_live_apply")
+    live_apply_to_ready = match.group("live_apply_to_ready")
+    payload: dict[str, int | str] = {
+        "totalClickToReadyMs": int(match.group("total")),
+    }
+    if click_to_reload is not None and reload_to_ready is not None:
+        payload["mode"] = "reload"
+        payload["clickToReloadStartMs"] = int(click_to_reload)
+        payload["reloadStartToReadyMs"] = int(reload_to_ready)
+        return payload
+    if click_to_live_apply is not None and live_apply_to_ready is not None:
+        payload["mode"] = "live_apply"
+        payload["clickToLiveApplyCommitMs"] = int(click_to_live_apply)
+        payload["liveApplyCommitToReadyMs"] = int(live_apply_to_ready)
+        return payload
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -638,9 +697,28 @@ def _measure_import_run(
     """Measure a single import-mode run for one spec."""
     # Reset to welcome
     t0 = time.perf_counter()
-    _clear_session_and_reload(page, base_url)
+    reset_timing_start = current_log_offset(server_log)
+    request_tracker.start_window()
+    reset_window_start_at = request_tracker.window_start_at
+    reset_ts = _clear_session_and_reload(page, base_url)
     request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    reset_timing_end = current_log_offset(server_log)
     reset_ms = round((time.perf_counter() - t0) * 1000)
+    reset_reload_start_to_hydrated_ms = round((reset_ts["hydratedTs"] - reset_ts["reloadStartTs"]) * 1000)
+    reset_hydrated_to_welcome_visible_ms = round((reset_ts["welcomeVisibleTs"] - reset_ts["hydratedTs"]) * 1000)
+    reset_summary = request_tracker.summary()
+    reset_summary["timingSummary"] = parse_timing_log(
+        server_log,
+        start_offset=reset_timing_start,
+        end_offset=reset_timing_end,
+    )
+    reset_last_response_to_welcome_ms = _last_dash_response_to_ready_ms(
+        reset_summary,
+        reset_window_start_at,
+        reset_ts["welcomeVisibleTs"],
+        reset_ts["reloadStartTs"],
+    )
 
     # Import peer
     peer_timing_start = current_log_offset(server_log)
@@ -711,6 +789,9 @@ def _measure_import_run(
         "peerPortfolio": spec["peer"]["portfolio"],
         "indexPortfolio": spec["index"]["portfolio"],
         "resetToWelcomeMs": reset_ms,
+        "resetReloadStartToHydratedMs": reset_reload_start_to_hydrated_ms,
+        "resetHydratedToWelcomeVisibleMs": reset_hydrated_to_welcome_visible_ms,
+        "resetLastDashResponseToWelcomeVisibleMs": reset_last_response_to_welcome_ms,
         "peerImportToSeriesModalMs": peer_import_to_series_modal_ms,
         "peerSeriesConfirmToStatisticsReadyMs": peer_confirm_to_ready_ms,
         "peerLastDashResponseToReadyMs": peer_last_response_to_ready_ms,
@@ -718,6 +799,7 @@ def _measure_import_run(
         "indexSeriesConfirmToStatisticsReadyMs": index_confirm_to_ready_ms,
         "indexLastDashResponseToReadyMs": index_last_response_to_ready_ms,
         "totalRunMs": total_ms,
+        "resetWindow": reset_summary,
         "peerWindow": peer_summary,
         "peerConfirmPhaseWindow": peer_confirm_phase_summary,
         "indexWindow": index_summary,
@@ -732,31 +814,54 @@ def _measure_account_list_run(
     spec: dict,
     fixture: dict,
     server_log: Path | None,
+    browser_timing_messages: list[str],
 ) -> dict:
     """Measure a single account-list-mode run for one spec."""
     # Reset to welcome
     t0 = time.perf_counter()
-    _clear_session_and_reload(page, base_url)
+    reset_timing_start = current_log_offset(server_log)
+    request_tracker.start_window()
+    reset_window_start_at = request_tracker.window_start_at
+    reset_ts = _clear_session_and_reload(page, base_url)
     request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    reset_timing_end = current_log_offset(server_log)
     reset_ms = round((time.perf_counter() - t0) * 1000)
+    reset_reload_start_to_hydrated_ms = round((reset_ts["hydratedTs"] - reset_ts["reloadStartTs"]) * 1000)
+    reset_hydrated_to_welcome_visible_ms = round((reset_ts["welcomeVisibleTs"] - reset_ts["hydratedTs"]) * 1000)
+    reset_summary = request_tracker.summary()
+    reset_summary["timingSummary"] = parse_timing_log(
+        server_log,
+        start_offset=reset_timing_start,
+        end_offset=reset_timing_end,
+    )
+    reset_last_response_to_welcome_ms = _last_dash_response_to_ready_ms(
+        reset_summary,
+        reset_window_start_at,
+        reset_ts["welcomeVisibleTs"],
+        reset_ts["reloadStartTs"],
+    )
 
     # Open account-list load from welcome, select and trigger load
     load_timing_start = current_log_offset(server_log)
     t_load_start = time.perf_counter()
+    timing_message_start = len(browser_timing_messages)
     request_tracker.start_window()
     load_window_start_at = request_tracker.window_start_at
     _open_welcome_account_list_load(page)
-    _select_and_load_account_list(page, fixture)
+    load_ts = _select_and_load_account_list(page, fixture)
 
     # Wait for statistics ready
     try:
         # Account list load triggers a full page reload
         wait_dash_hydrated(page, timeout=_scaled_timeout(60000))
+        hydrated_ts = time.perf_counter()
         wait_visible(page, "#at-main-app-container", timeout=_scaled_timeout(60000))
         _wait_statistics_ready(page, timeout=60000)
     except Exception:
         # Fallback: the load may navigate; re-wait
         wait_dash_hydrated(page, timeout=_scaled_timeout(60000))
+        hydrated_ts = time.perf_counter()
         _wait_statistics_ready(page, timeout=60000)
 
     ready_ts = time.perf_counter()
@@ -777,6 +882,30 @@ def _measure_account_list_run(
         t_load_start,
     )
     total_ms = round((time.perf_counter() - t0) * 1000)
+    browser_click_timing: dict[str, int | str] | None = None
+    for message in reversed(browser_timing_messages[timing_message_start:]):
+        browser_click_timing = _parse_account_list_click_timing(message)
+        if browser_click_timing:
+            break
+    account_list_hydrated_to_statistics_ready_ms = max(
+        0,
+        round((ready_ts - hydrated_ts) * 1000),
+    )
+    load_click_to_reload_start_ms = int(browser_click_timing.get("clickToReloadStartMs", 0)) if browser_click_timing else 0
+    account_list_reload_start_to_hydrated_ms = max(
+        0,
+        int(browser_click_timing.get("reloadStartToReadyMs", 0)) - account_list_hydrated_to_statistics_ready_ms,
+    ) if browser_click_timing and browser_click_timing.get("mode") == "reload" else 0
+    account_list_load_click_to_live_apply_commit_ms = (
+        int(browser_click_timing.get("clickToLiveApplyCommitMs", 0))
+        if browser_click_timing and browser_click_timing.get("mode") == "live_apply"
+        else 0
+    )
+    account_list_live_apply_commit_to_ready_ms = (
+        int(browser_click_timing.get("liveApplyCommitToReadyMs", 0))
+        if browser_click_timing and browser_click_timing.get("mode") == "live_apply"
+        else 0
+    )
 
     return {
         "specIndex": spec["specIndex"],
@@ -785,9 +914,18 @@ def _measure_account_list_run(
         "accountListName": fixture["listName"],
         "accountListId": fixture["accountListId"],
         "resetToWelcomeMs": reset_ms,
+        "resetReloadStartToHydratedMs": reset_reload_start_to_hydrated_ms,
+        "resetHydratedToWelcomeVisibleMs": reset_hydrated_to_welcome_visible_ms,
+        "resetLastDashResponseToWelcomeVisibleMs": reset_last_response_to_welcome_ms,
         "accountListOpenToReadyMs": load_to_ready_ms,
+        "accountListLoadClickToReloadStartMs": load_click_to_reload_start_ms,
+        "accountListReloadStartToHydratedMs": account_list_reload_start_to_hydrated_ms,
+        "accountListLoadClickToLiveApplyCommitMs": account_list_load_click_to_live_apply_commit_ms,
+        "accountListLiveApplyCommitToStatisticsReadyMs": account_list_live_apply_commit_to_ready_ms,
+        "accountListHydratedToStatisticsReadyMs": account_list_hydrated_to_statistics_ready_ms,
         "accountListLastDashResponseToReadyMs": load_last_response_to_ready_ms,
         "totalRunMs": total_ms,
+        "resetWindow": reset_summary,
         "accountListWindow": load_summary,
     }
 
@@ -802,6 +940,9 @@ def _summarize_import_runs(run_results: list[dict]) -> dict:
         return {"runs": 0}
 
     reset_ms = [r["resetToWelcomeMs"] for r in run_results]
+    reset_reload_ms = [r["resetReloadStartToHydratedMs"] for r in run_results]
+    reset_welcome_ms = [r["resetHydratedToWelcomeVisibleMs"] for r in run_results]
+    reset_tail_ms = [r["resetLastDashResponseToWelcomeVisibleMs"] for r in run_results]
     peer_import_ms = [r["peerImportToSeriesModalMs"] for r in run_results]
     peer_ready_ms = [r["peerSeriesConfirmToStatisticsReadyMs"] for r in run_results]
     peer_tail_ms = [r["peerLastDashResponseToReadyMs"] for r in run_results]
@@ -812,7 +953,7 @@ def _summarize_import_runs(run_results: list[dict]) -> dict:
 
     callback_counter: Counter[str] = Counter()
     for run in run_results:
-        for window_key in ("peerWindow", "indexWindow"):
+        for window_key in ("resetWindow", "peerWindow", "indexWindow"):
             window = run.get(window_key, {})
             for request in window.get("dashUpdateRequests", []):
                 for output_id in request.get("outputs", []):
@@ -822,6 +963,12 @@ def _summarize_import_runs(run_results: list[dict]) -> dict:
         "runs": len(run_results),
         "resetToWelcomeMs": reset_ms,
         "resetToWelcomeMedian": round(median(reset_ms)),
+        "resetReloadStartToHydratedMs": reset_reload_ms,
+        "resetReloadStartToHydratedMedian": round(median(reset_reload_ms)),
+        "resetHydratedToWelcomeVisibleMs": reset_welcome_ms,
+        "resetHydratedToWelcomeVisibleMedian": round(median(reset_welcome_ms)),
+        "resetLastDashResponseToWelcomeVisibleMs": reset_tail_ms,
+        "resetLastDashResponseToWelcomeVisibleMedian": round(median(reset_tail_ms)),
         "peerImportToSeriesModalMs": peer_import_ms,
         "peerImportToSeriesModalMedian": round(median(peer_import_ms)),
         "peerSeriesConfirmToStatisticsReadyMs": peer_ready_ms,
@@ -850,23 +997,48 @@ def _summarize_account_list_runs(run_results: list[dict]) -> dict:
         return {"runs": 0}
 
     reset_ms = [r["resetToWelcomeMs"] for r in run_results]
+    reset_reload_ms = [r["resetReloadStartToHydratedMs"] for r in run_results]
+    reset_welcome_ms = [r["resetHydratedToWelcomeVisibleMs"] for r in run_results]
+    reset_tail_ms = [r["resetLastDashResponseToWelcomeVisibleMs"] for r in run_results]
     load_ms = [r["accountListOpenToReadyMs"] for r in run_results]
+    load_click_ms = [r["accountListLoadClickToReloadStartMs"] for r in run_results]
+    load_reload_ms = [r["accountListReloadStartToHydratedMs"] for r in run_results]
+    load_live_apply_click_ms = [r.get("accountListLoadClickToLiveApplyCommitMs", 0) for r in run_results]
+    load_live_apply_ready_ms = [r.get("accountListLiveApplyCommitToStatisticsReadyMs", 0) for r in run_results]
+    load_ready_ms = [r["accountListHydratedToStatisticsReadyMs"] for r in run_results]
     tail_ms = [r["accountListLastDashResponseToReadyMs"] for r in run_results]
     total_ms = [r["totalRunMs"] for r in run_results]
 
     callback_counter: Counter[str] = Counter()
     for run in run_results:
-        window = run.get("accountListWindow", {})
-        for request in window.get("dashUpdateRequests", []):
-            for output_id in request.get("outputs", []):
-                callback_counter[output_id] += 1
+        for window_key in ("resetWindow", "accountListWindow"):
+            window = run.get(window_key, {})
+            for request in window.get("dashUpdateRequests", []):
+                for output_id in request.get("outputs", []):
+                    callback_counter[output_id] += 1
 
     return {
         "runs": len(run_results),
         "resetToWelcomeMs": reset_ms,
         "resetToWelcomeMedian": round(median(reset_ms)),
+        "resetReloadStartToHydratedMs": reset_reload_ms,
+        "resetReloadStartToHydratedMedian": round(median(reset_reload_ms)),
+        "resetHydratedToWelcomeVisibleMs": reset_welcome_ms,
+        "resetHydratedToWelcomeVisibleMedian": round(median(reset_welcome_ms)),
+        "resetLastDashResponseToWelcomeVisibleMs": reset_tail_ms,
+        "resetLastDashResponseToWelcomeVisibleMedian": round(median(reset_tail_ms)),
         "accountListOpenToReadyMs": load_ms,
         "accountListOpenToReadyMedian": round(median(load_ms)),
+        "accountListLoadClickToReloadStartMs": load_click_ms,
+        "accountListLoadClickToReloadStartMedian": round(median(load_click_ms)),
+        "accountListReloadStartToHydratedMs": load_reload_ms,
+        "accountListReloadStartToHydratedMedian": round(median(load_reload_ms)),
+        "accountListLoadClickToLiveApplyCommitMs": load_live_apply_click_ms,
+        "accountListLoadClickToLiveApplyCommitMedian": round(median(load_live_apply_click_ms)),
+        "accountListLiveApplyCommitToStatisticsReadyMs": load_live_apply_ready_ms,
+        "accountListLiveApplyCommitToStatisticsReadyMedian": round(median(load_live_apply_ready_ms)),
+        "accountListHydratedToStatisticsReadyMs": load_ready_ms,
+        "accountListHydratedToStatisticsReadyMedian": round(median(load_ready_ms)),
         "accountListLastDashResponseToReadyMs": tail_ms,
         "accountListLastDashResponseToReadyMedian": round(median(tail_ms)),
         "totalRunMs": total_ms,
@@ -914,6 +1086,7 @@ def run_harness(
 ) -> dict:
     global TIMEOUT_SCALE
     console_messages: list[dict[str, str]] = []
+    browser_timing_messages: list[str] = []
     TIMEOUT_SCALE = NETWORK_TIMEOUT_MULTIPLIERS.get(network_profile, 1.0)
 
     # Build run specs
@@ -930,6 +1103,9 @@ def run_harness(
         request_tracker = DashUpdateRequestTracker(page)
 
         def on_console(msg) -> None:
+            if "timing name=account_list." in msg.text:
+                if len(browser_timing_messages) < 240:
+                    browser_timing_messages.append(msg.text)
             if len(console_messages) >= 120:
                 return
             if msg.type in {"error", "warning"}:
@@ -960,7 +1136,15 @@ def run_harness(
         if mode == "imports":
             _measure_import_run(page, request_tracker, base_url, specs[0], server_log)
         else:
-            _measure_account_list_run(page, request_tracker, base_url, specs[0], account_list_fixtures[0], server_log)
+            _measure_account_list_run(
+                page,
+                request_tracker,
+                base_url,
+                specs[0],
+                account_list_fixtures[0],
+                server_log,
+                browser_timing_messages,
+            )
         print("REHEARSAL=complete", flush=True)
 
         applied_network_profile = _apply_network_profile(page, network_profile)
@@ -976,7 +1160,15 @@ def run_harness(
                 result = _measure_import_run(page, request_tracker, base_url, spec, server_log)
             else:
                 fixture = account_list_fixtures[spec["specIndex"]]
-                result = _measure_account_list_run(page, request_tracker, base_url, spec, fixture, server_log)
+                result = _measure_account_list_run(
+                    page,
+                    request_tracker,
+                    base_url,
+                    spec,
+                    fixture,
+                    server_log,
+                    browser_timing_messages,
+                )
 
             run_results.append(result)
             print(f"RUN={i + 1}/{runs} totalMs={result['totalRunMs']}", flush=True)
