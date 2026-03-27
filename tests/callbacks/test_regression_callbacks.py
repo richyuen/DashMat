@@ -106,6 +106,14 @@ def _series_snapshot(rows: list[dict]) -> dict:
     return {"rows": rows, "capturedAt": 1}
 
 
+def test_regression_uses_shared_saved_series_stamp_store():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+
+    assert 'Input("dashmat-saved-series-stamp-store", "data")' in page_text
+    assert 'State("dashmat-saved-series-stamp-store", "data")' in page_text
+    assert 'dashmat-saved-series-cache-store' not in page_text
+
+
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
     idx = pd.date_range("2020-01-01", periods=6, freq="B")
     working_df = pd.DataFrame(

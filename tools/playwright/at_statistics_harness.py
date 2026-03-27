@@ -79,6 +79,37 @@ DEFAULT_DB_SERIES = [
     "BCTBill13_TRIndex",
 ]
 
+NETWORK_PROFILES = {
+    "none": None,
+    "office-wan": {
+        "latencyMs": 40,
+        "downloadKbps": 10000,
+        "uploadKbps": 5000,
+        "connectionType": "cellular4g",
+    },
+    "slow4g": {
+        "latencyMs": 150,
+        "downloadKbps": 4000,
+        "uploadKbps": 3000,
+        "connectionType": "cellular4g",
+    },
+    "fast3g": {
+        "latencyMs": 150,
+        "downloadKbps": 1600,
+        "uploadKbps": 750,
+        "connectionType": "cellular3g",
+    },
+}
+
+NETWORK_TIMEOUT_MULTIPLIERS = {
+    "none": 1.0,
+    "office-wan": 3.0,
+    "slow4g": 4.0,
+    "fast3g": 5.0,
+}
+
+TIMEOUT_SCALE = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Run-spec builder
@@ -215,6 +246,33 @@ def _staged_row(portfolio: str, ret_type: str, include_benchmark: bool, benchmar
     }
 
 
+def _kbps_to_bytes_per_second(kbps: int) -> int:
+    return max(int(kbps * 1000 / 8), 1)
+
+
+def _scaled_timeout(timeout_ms: int) -> int:
+    return max(int(round(timeout_ms * TIMEOUT_SCALE)), timeout_ms)
+
+
+def _apply_network_profile(page, profile_name: str) -> dict | None:
+    profile = NETWORK_PROFILES.get(profile_name)
+    if not profile:
+        return None
+    session = page.context.new_cdp_session(page)
+    session.send("Network.enable")
+    session.send(
+        "Network.emulateNetworkConditions",
+        {
+            "offline": False,
+            "latency": int(profile["latencyMs"]),
+            "downloadThroughput": _kbps_to_bytes_per_second(int(profile["downloadKbps"])),
+            "uploadThroughput": _kbps_to_bytes_per_second(int(profile["uploadKbps"])),
+            "connectionType": str(profile["connectionType"]),
+        },
+    )
+    return {"name": profile_name, **profile}
+
+
 # ---------------------------------------------------------------------------
 # Account-list fixture builder
 # ---------------------------------------------------------------------------
@@ -334,11 +392,11 @@ def create_account_list_fixtures(engine, username: str, specs: list[dict]) -> li
 def _clear_session_and_reload(page, base_url: str) -> None:
     """Clear sessionStorage, reload /analyticstool, and wait for welcome screen."""
     page.evaluate("() => { window.sessionStorage.clear(); }")
-    page.goto(base_url + "/analyticstool", wait_until="domcontentloaded", timeout=30000)
-    wait_dash_hydrated(page, timeout=30000)
+    page.goto(base_url + "/analyticstool", wait_until="domcontentloaded", timeout=_scaled_timeout(30000))
+    wait_dash_hydrated(page, timeout=_scaled_timeout(30000))
     # The welcome screen should appear after a fresh load with no session data.
     # Wait for the DB-import button as the anchor; portfolio buttons render nearby.
-    wait_visible(page, "#at-welcome-add-db-btn", timeout=30000)
+    wait_visible(page, "#at-welcome-add-db-btn", timeout=_scaled_timeout(30000))
     # Give the welcome screen an extra moment for all buttons to mount.
     page.wait_for_timeout(500)
 
@@ -362,17 +420,17 @@ def _stage_portfolio_row(page, row: dict) -> None:
         set_component_props(page, "at-portfolio-add-include-benchmark", {"checked": False})
 
     page.wait_for_timeout(200)
-    wait_ready(page, "#at-portfolio-add-row-btn", timeout=10000)
+    wait_ready(page, "#at-portfolio-add-row-btn", timeout=_scaled_timeout(10000))
     fire_component_click(page, "at-portfolio-add-row-btn")
     # Wait for the row to appear in the staged-rows store and OK to become enabled
     page.wait_for_timeout(500)
-    wait_ready(page, "#at-portfolio-add-ok-button", timeout=10000)
+    wait_ready(page, "#at-portfolio-add-ok-button", timeout=_scaled_timeout(10000))
 
 
 
 def _wait_statistics_ready(page, timeout: int = 60000) -> None:
     """Wait for AT state-ready and statistics grid idle."""
-    wait_for_analytics_state_ready(page, timeout=timeout)
+    wait_for_analytics_state_ready(page, timeout=_scaled_timeout(timeout))
 
 
 def _open_portfolio_import_modal(page, mode: str) -> None:
@@ -396,7 +454,7 @@ def _open_portfolio_import_modal(page, mode: str) -> None:
         welcome_btn = page.locator(f"#{welcome_id}")
         triggered = False
         try:
-            if welcome_btn.count() > 0 and welcome_btn.is_visible(timeout=1000):
+            if welcome_btn.count() > 0 and welcome_btn.is_visible(timeout=_scaled_timeout(1000)):
                 triggered = fire_component_click(page, welcome_id)
         except Exception:
             pass
@@ -407,11 +465,11 @@ def _open_portfolio_import_modal(page, mode: str) -> None:
             # Mantine Modals render via a portal; the root #at-portfolio-add-modal
             # may not appear as a queryable element. Wait for the OK button instead.
             # The OK button starts disabled (no rows staged), so only check visibility.
-            wait_visible(page, "#at-portfolio-add-ok-button", timeout=10000)
+            wait_visible(page, "#at-portfolio-add-ok-button", timeout=_scaled_timeout(10000))
             modal_ready = True
             break
         except Exception:
-            wait_dash_hydrated(page, timeout=10000)
+            wait_dash_hydrated(page, timeout=_scaled_timeout(10000))
 
     if not modal_ready:
         raise RuntimeError(
@@ -434,21 +492,21 @@ def _import_portfolio(page, mode: str, row: dict) -> dict:
     modal_open_ts = time.perf_counter()
 
     # Click portfolio OK → wait for series selection modal
-    wait_ready(page, "#at-portfolio-add-ok-button", timeout=10000)
+    wait_ready(page, "#at-portfolio-add-ok-button", timeout=_scaled_timeout(10000))
     page.locator("#at-portfolio-add-ok-button").click(force=True)
     deadline = time.time() + 30
     while time.time() < deadline:
         try:
-            if not page.locator("#at-portfolio-add-ok-button").is_visible(timeout=500):
+            if not page.locator("#at-portfolio-add-ok-button").is_visible(timeout=_scaled_timeout(500)):
                 break
         except Exception:
             break
         time.sleep(0.2)
-    wait_visible(page, "#at-modal-ok-button", timeout=30000)
+    wait_visible(page, "#at-modal-ok-button", timeout=_scaled_timeout(30000))
     series_modal_ts = time.perf_counter()
 
     # Confirm series selection
-    wait_ready(page, "#at-modal-ok-button", timeout=10000)
+    wait_ready(page, "#at-modal-ok-button", timeout=_scaled_timeout(10000))
     page.locator("#at-modal-ok-button").click(force=True)
     series_confirmed_ts = time.perf_counter()
 
@@ -465,18 +523,18 @@ def _import_portfolio(page, mode: str, row: dict) -> dict:
 
 def _open_welcome_account_list_load(page) -> None:
     """Open the account-list modal in load mode from the AT welcome screen."""
-    wait_visible(page, "#at-welcome-load-account-list-btn", timeout=10000)
+    wait_visible(page, "#at-welcome-load-account-list-btn", timeout=_scaled_timeout(10000))
     modal_ready = False
     for _attempt in range(3):
         triggered = fire_component_click(page, "at-welcome-load-account-list-btn")
         if not triggered:
             page.locator("#at-welcome-load-account-list-btn").click(force=True)
         try:
-            wait_visible(page, "#dashmat-account-list-modal-root", timeout=10000)
+            wait_visible(page, "#dashmat-account-list-modal-root", timeout=_scaled_timeout(10000))
             modal_ready = True
             break
         except Exception:
-            wait_dash_hydrated(page, timeout=10000)
+            wait_dash_hydrated(page, timeout=_scaled_timeout(10000))
     if not modal_ready:
         raise RuntimeError("Could not open account-list modal from AT welcome screen.")
 
@@ -502,7 +560,7 @@ def _select_and_load_account_list(page, fixture: dict) -> None:
           return grid.querySelectorAll('.ag-row').length > 0;
         }
         """,
-        timeout=15000,
+        timeout=_scaled_timeout(15000),
     )
 
     # 2. Select the target row by setting the AG Grid selectedRows property.
@@ -534,7 +592,7 @@ def _select_and_load_account_list(page, fixture: dict) -> None:
 
     # 3. Wait for the Load button to become enabled (signals that both the
     #    selected-id and selected-detail callbacks have completed).
-    wait_ready(page, "#dashmat-account-list-load-button", timeout=15000)
+    wait_ready(page, "#dashmat-account-list-load-button", timeout=_scaled_timeout(15000))
 
     # 4. Click Load through the real callback.
     fire_component_click(page, "dashmat-account-list-load-button")
@@ -636,12 +694,12 @@ def _measure_account_list_run(
     # Wait for statistics ready
     try:
         # Account list load triggers a full page reload
-        wait_dash_hydrated(page, timeout=60000)
-        wait_visible(page, "#at-main-app-container", timeout=60000)
+        wait_dash_hydrated(page, timeout=_scaled_timeout(60000))
+        wait_visible(page, "#at-main-app-container", timeout=_scaled_timeout(60000))
         _wait_statistics_ready(page, timeout=60000)
     except Exception:
         # Fallback: the load may navigate; re-wait
-        wait_dash_hydrated(page, timeout=60000)
+        wait_dash_hydrated(page, timeout=_scaled_timeout(60000))
         _wait_statistics_ready(page, timeout=60000)
 
     request_tracker.wait_for_settle()
@@ -757,6 +815,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--server-log", default="")
     parser.add_argument("--mode", choices=["imports", "account-list"], default="imports")
+    parser.add_argument("--network-profile", choices=list(NETWORK_PROFILES.keys()), default="none")
     return parser.parse_args()
 
 
@@ -771,16 +830,23 @@ def run_harness(
     headed: bool,
     server_log: Path | None,
     mode: str,
+    network_profile: str,
 ) -> dict:
+    global TIMEOUT_SCALE
     console_messages: list[dict[str, str]] = []
+    TIMEOUT_SCALE = NETWORK_TIMEOUT_MULTIPLIERS.get(network_profile, 1.0)
 
     # Build run specs
     specs = build_run_specs(DB_ENGINE)
     print(f"RUN_SPECS={json.dumps([{'peer': s['peer']['portfolio'], 'index': s['index']['portfolio']} for s in specs], separators=(',', ':'))}", flush=True)
+    print(f"NETWORK_PROFILE={network_profile}", flush=True)
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=not headed)
         page = browser.new_page(viewport={"width": 1440, "height": 960})
+        page.set_default_timeout(_scaled_timeout(30000))
+        page.set_default_navigation_timeout(_scaled_timeout(30000))
+        applied_network_profile = None
         request_tracker = DashUpdateRequestTracker(page)
 
         def on_console(msg) -> None:
@@ -817,6 +883,8 @@ def run_harness(
             _measure_account_list_run(page, request_tracker, base_url, specs[0], account_list_fixtures[0])
         print("REHEARSAL=complete", flush=True)
 
+        applied_network_profile = _apply_network_profile(page, network_profile)
+
         # Measured runs
         timing_start_offset = current_log_offset(server_log)
         run_results: list[dict] = []
@@ -847,6 +915,7 @@ def run_harness(
         "label": label,
         "baseUrl": base_url,
         "mode": mode,
+        "networkProfile": applied_network_profile or {"name": "none"},
         "warmupFlow": warmup_flow,
         "rendererMode": renderer_mode,
         "runs": runs,
@@ -898,6 +967,7 @@ def main() -> int:
             headed=args.headed,
             server_log=server_log_path,
             mode=args.mode,
+            network_profile=args.network_profile,
         )
     except Exception as exc:
         console_messages: list[dict[str, str]] = []

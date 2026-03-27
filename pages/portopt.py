@@ -72,8 +72,10 @@ from utils.serialization import (
 )
 from utils.shared_metrics import (
     STATS_CONFIG,
-    risk_free_json_from_store as _risk_free_json_from_store,
-    spx_json_from_store as _spx_json_from_store,
+)
+from utils.shared_benchmark import (
+    risk_free_json_from_source as _risk_free_json_from_store,
+    spx_json_from_source as _spx_json_from_store,
 )
 from utils.saved_series import save_series_to_raw_data
 from utils.account_lists import (
@@ -5750,7 +5752,7 @@ clientside_callback(
     Input("po-rolling-return-type-select", "value"),
     Input("po-rolling-metric-select", "value"),
     Input("po-rolling-chart-switch", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("po-use-risk-free-store", "data"),
     Input("po-calendar-view-select", "value"),
     Input("po-calendar-series-select", "value"),
@@ -8234,7 +8236,7 @@ def po_update_date_range_store(start, end):
     State("po-linear-constraints-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-reporting-basis-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -9207,7 +9209,7 @@ def po_toggle_rolling_return_type(metric):
     State("po-rolling-return-type-select", "value"),
     State("po-rolling-metric-select", "value"),
     State("po-rolling-chart-switch", "value"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -10090,7 +10092,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
     Input("po-active-vis-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -10347,7 +10349,7 @@ def po_render_returns(
     State("po-rolling-metric-select", "value"),
     State("po-returns-basis-store", "data"),
     State("po-use-risk-free-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-weight-portfolio-select", "value"),
     State("po-partial-period-store", "data"),
     prevent_initial_call=True,
@@ -11336,7 +11338,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
@@ -11534,7 +11536,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-linear-constraints-store", "data"),
     State("po-results-store", "data"),
@@ -11658,7 +11660,7 @@ def po_render_frontier_table(
     Input("po-frontier-rm-select", "value"),
     Input("po-use-risk-free-store", "data"),
     State("po-periodicity-select", "value"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-cmabench-assignments-store", "data"),
     State("po-results-store", "data"),
     prevent_initial_call=True,

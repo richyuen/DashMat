@@ -54,7 +54,11 @@ from utils.qq import build_normal_qq_series, build_qq_figure
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
-from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
+from utils.shared_metrics import STATS_CONFIG
+from utils.shared_benchmark import (
+    risk_free_json_from_source as risk_free_json_from_store,
+    spx_json_from_source as spx_json_from_store,
+)
 from utils.saved_series import save_series_to_raw_data, saved_series_store_names
 from utils.account_lists import (
     add_db_import_provenance_entry,
@@ -4145,7 +4149,7 @@ def reg_toggle_file_menu_actions(raw_data, results):
     State("reg-calendar-view-select", "value"),
     State("reg-calendar-series-select", "value"),
     State("reg-partial-period-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
 )
@@ -5260,7 +5264,7 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
     Input("reg-rolling-return-type-select", "value"),
     Input("reg-rolling-metric-select", "value"),
     Input("reg-rolling-chart-switch", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("reg-use-risk-free-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     Input("reg-tabs", "value"),
@@ -5961,7 +5965,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
     Output("reg-statistics-content", "children"),
     Input("reg-result-select", "value"),
     Input("dashmat-raw-data-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("reg-use-risk-free-store", "data"),
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
