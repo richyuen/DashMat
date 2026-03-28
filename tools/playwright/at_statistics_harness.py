@@ -404,21 +404,43 @@ def _clear_session_and_reload(page, base_url: str) -> dict[str, float]:
     page.wait_for_function(
         """
         () => {
+          const welcome = document.querySelector("#at-welcome-screen-container");
+          if (!welcome) {
+            return false;
+          }
           const title = (document.title || "").trim();
           if (!title || title === "Updating...") {
             return false;
           }
-          return !!document.querySelector("#at-welcome-add-db-btn");
+          const visible = (selector) => {
+            const element = document.querySelector(selector);
+            if (!element) {
+              return false;
+            }
+            const style = window.getComputedStyle(element);
+            if (style.display === "none" || style.visibility === "hidden") {
+              return false;
+            }
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+          const cards = document.querySelectorAll(
+            "#at-welcome-screen-container .dashmat-welcome-section-card"
+          );
+          return (
+            visible("#at-welcome-screen-container")
+            && cards.length >= 5
+            && visible("#at-welcome-add-db-btn")
+            && visible("#at-welcome-add-portfolios-peer-btn")
+            && visible("#at-welcome-add-series-btn")
+            && visible("#at-welcome-load-account-list-btn")
+          );
         }
         """,
         timeout=_scaled_timeout(30000),
     )
     hydrated_ts = time.perf_counter()
-    # The welcome screen should appear after a fresh load with no session data.
-    # Wait for the DB-import button as the anchor; portfolio buttons render nearby.
-    wait_visible(page, "#at-welcome-add-db-btn", timeout=_scaled_timeout(30000))
-    # Give the welcome screen an extra moment for all buttons to mount.
-    page.wait_for_timeout(500)
+    wait_visible(page, "#at-welcome-screen-container", timeout=_scaled_timeout(30000))
     welcome_visible_ts = time.perf_counter()
     return {
         "reloadStartTs": reload_start_ts,
