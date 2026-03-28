@@ -8801,6 +8801,7 @@ clientside_callback(
     State("at-series-order-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
     State("dashmat-db-import-provenance-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
     prevent_initial_call=True,
 )
 def on_modal_ok(
@@ -8812,14 +8813,16 @@ def on_modal_ok(
     current_order,
     current_vol_scaling,
     current_provenance,
+    raw_meta,
 ):
     rows = []
     if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
         rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
-    if not rows or not dataset_key:
+    resolved_dataset_key = _dataset_key_from_source(raw_meta) or dataset_key
+    if not rows or not resolved_dataset_key:
         raise PreventUpdate
 
-    df = _raw_df_by_key(dataset_key)
+    df = _raw_df_by_key(resolved_dataset_key)
     existing_cols = list(df.columns)
     existing_set = set(existing_cols)
 

@@ -2356,6 +2356,7 @@ def test_update_correlogram_heatmap_title_includes_shrinkage_target(monkeypatch,
 
 def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_json):
     analyticstool, _ = page_modules
+    raw_meta = _raw_meta(raw_json)
 
     result = analyticstool.on_modal_ok(
         _series_snapshot(
@@ -2378,6 +2379,7 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
         ["Asset_A"],
         {},
         {},
+        raw_meta,
     )
 
     assert result[6] is no_update
@@ -2386,6 +2388,7 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
 
 def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modules, raw_json):
     analyticstool, _ = page_modules
+    raw_meta = _raw_meta(raw_json)
 
     result = analyticstool.on_modal_ok(
         _series_snapshot(
@@ -2408,12 +2411,45 @@ def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modu
         ["Asset_A"],
         {"Asset_A": True},
         {},
+        raw_meta,
     )
 
     assert result[0] is no_update
     assert result[1] is no_update
     assert result[2] is no_update
     assert result[3] is no_update
+
+
+def test_on_modal_ok_falls_back_to_raw_meta_dataset_key(page_modules, raw_json):
+    analyticstool, _ = page_modules
+    raw_meta = _raw_meta(raw_json)
+
+    result = analyticstool.on_modal_ok(
+        _series_snapshot(
+            [
+                {
+                    "__row_key": "Asset_A",
+                    "Selected": True,
+                    "Series": "Asset_A",
+                    "Benchmark": "None",
+                    "LongShort": False,
+                    "ScaleVol": True,
+                    "Delete": False,
+                }
+            ]
+        ),
+        None,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        {"Asset_A": True},
+        {},
+        raw_meta,
+    )
+
+    assert result[4] is False
+    assert result[6] is no_update
     assert result[5] is no_update
     assert result[6] is no_update
     assert result[7] is no_update
