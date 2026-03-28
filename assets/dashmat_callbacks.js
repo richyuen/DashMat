@@ -3,6 +3,11 @@
   function noUpdate() {
     return window.dash_clientside.no_update;
   }
+  function sleepMs(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
   const flexStyle = { display: "flex", flexDirection: "column", flex: "1", overflow: "hidden" };
   const flexScrollStyle = { display: "flex", flexDirection: "column", flex: "1", overflow: "auto" };
   const hiddenStyle = { display: "none" };
@@ -1118,28 +1123,36 @@
     if (!window.dash_ag_grid || !window.dash_ag_grid.getApiAsync) {
       return noUpdate();
     }
-    try {
-      const api = await window.dash_ag_grid.getApiAsync(gridId);
-      if (!api) {
-        return noUpdate();
-      }
+    for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
-        api.stopEditing();
-      } catch (_err) {
-      }
-      const rows = [];
-      api.forEachNodeAfterFilterAndSort(function (node) {
-        if (node && node.data) {
-          rows.push(Object.assign({}, node.data));
+        const api = await window.dash_ag_grid.getApiAsync(gridId);
+        if (!api) {
+          if (attempt < 7) {
+            await sleepMs(75);
+          }
+          continue;
         }
-      });
-      return {
-        rows: rows,
-        capturedAt: Date.now()
-      };
-    } catch (_err) {
-      return noUpdate();
+        try {
+          api.stopEditing();
+        } catch (_err) {
+        }
+        const rows = [];
+        api.forEachNodeAfterFilterAndSort(function (node) {
+          if (node && node.data) {
+            rows.push(Object.assign({}, node.data));
+          }
+        });
+        return {
+          rows: rows,
+          capturedAt: Date.now()
+        };
+      } catch (_err) {
+        if (attempt < 7) {
+          await sleepMs(75);
+        }
+      }
     }
+    return noUpdate();
   }
 
   async function captureAnalyticsSeriesSnapshot(nClicks, modalOpened) {

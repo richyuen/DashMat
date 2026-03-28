@@ -1058,6 +1058,15 @@ def test_at_series_modal_open_is_clientside():
     assert 'State("at-series-selection-modal", "opened")' in open_callback
 
 
+def test_series_snapshot_capture_retries_grid_api_startup():
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert "function sleepMs(ms)" in js_text
+    assert "for (let attempt = 0; attempt < 8; attempt += 1)" in js_text
+    assert "await sleepMs(75);" in js_text
+    assert 'return captureGridSnapshot("at-series-selection-grid", modalOpened);' in js_text
+
+
 def test_at_series_modal_ignores_empty_page_load_until_raw_meta_arrives():
     page_load_result = _run_dashmat_callbacks_js(
         """
