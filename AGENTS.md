@@ -69,6 +69,8 @@
 ## Tooling
 
 - On Windows, split very large `apply_patch` payloads.
+- If the goal is to fully revert a file to committed `HEAD`, use `git restore` instead of hand-editing the file back piecemeal.
+- Before rolling back a change, stop and discuss the rollback decision with the user; do not revert code unilaterally.
 - Prefer short Python Playwright scripts over long shell one-liners.
 - For A/B runs, use separate ports instead of editing `app.py`.
 - Validate local SQLite files under `data/` before DB-backed browser runs.

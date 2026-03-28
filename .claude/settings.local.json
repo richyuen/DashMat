@@ -43,7 +43,11 @@
       "Bash(del C:GitDashMattest_edge2.py)",
       "Bash(conda activate:*)",
       "Bash(cd:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(for commit:*)",
+      "Bash(do echo:*)",
+      "Bash(git show:*)",
+      "Bash(done)"
     ]
   }
 }
