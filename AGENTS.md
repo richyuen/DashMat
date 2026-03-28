@@ -56,6 +56,8 @@
 - If moving pure browser-visible logic clientside for perf, keep the Python path as the reference and add parity tests.
 - Do not keep a perf change just because one sub-phase median improves; a fresh clean-`HEAD` A/B must still show an end-to-end median win.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
+- Do not assume removing one closed-modal callback family will improve startup timing by itself; if the targeted family disappears from attribution but reset request count stays flat, retarget instead of widening the same approach.
+- For AnalyticsTool reset perf, do not spend another phase on closed sheet-select upload-reset writes unless the callback mix changes materially; removing that family without reducing total reset fan-out regressed end-to-end medians.
 - Do not assume a reload-era bootstrap callback can be reused for same-page live apply by only clearing results, resetting bootstrap state, and replaying stores; prove that the same-page retrigger path actually re-enters bootstrap and reaches a stable ready state before committing to that design.
 - PortOpt-specific guardrails:
   - preserve the modal snapshot-on-OK contract

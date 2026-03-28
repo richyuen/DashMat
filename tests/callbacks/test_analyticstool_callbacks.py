@@ -690,19 +690,17 @@ def test_hidden_at_trigger_emitters_include_restore_ready_guards():
     assert 'analyticsModalPreviewTrigger(opened)' in page_text
 
 
-def test_validate_db_add_selection_uses_clientside_raw_meta_state():
+def test_validate_db_add_selection_uses_server_callback_with_raw_meta_state():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
-    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
     callback_block = page_text.split(
-        'ClientsideFunction(namespace="dashmat_callbacks", function_name="validateAnalyticsDbAddSelection")',
+        '@callback(\n    Output("at-db-add-error-alert", "children"),',
         1,
-    )[-1].split("prevent_initial_call=True", 1)[0]
+    )[-1].split("def validate_db_add_selection(selected_benches, opened, raw_meta):", 1)[0]
 
-    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="validateAnalyticsDbAddSelection")' in page_text
+    assert 'def validate_db_add_selection(selected_benches, opened, raw_meta):' in page_text
     assert 'State("dashmat-raw-data-meta-store", "data")' in callback_block
+    assert 'Input("dashmat-raw-data-store", "data")' not in callback_block
     assert 'Input("dashmat-raw-data-meta-store", "data")' not in callback_block
-    assert "def validate_db_add_selection" not in page_text
-    assert "function validateAnalyticsDbAddSelection(selectedBenches, opened, rawMeta)" in js_text
 
 
 def test_at_account_list_live_apply_restores_from_raw_meta_without_secondary_restore_ready():
@@ -772,31 +770,26 @@ def test_compute_saved_series_stamp_uses_raw_meta_max_date(monkeypatch, raw_json
     assert result["spx_hash"]
 
 
-def test_validate_analytics_db_add_selection_clientside_noops_when_closed(raw_json):
-    raw_meta = json.dumps(_raw_meta(raw_json))
+def test_validate_db_add_selection_uses_raw_metadata(raw_json, page_modules):
+    analyticstool, _ = page_modules
 
-    assert _run_dashmat_callbacks_js(
-        f'ns.validateAnalyticsDbAddSelection(["Asset_A"], false, {raw_meta})'
-    ) == ["__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__"]
-
-
-def test_validate_analytics_db_add_selection_clientside_handles_empty_and_duplicate_selection(raw_json):
-    raw_meta = json.dumps(_raw_meta(raw_json))
-
-    assert _run_dashmat_callbacks_js(
-        f"ns.validateAnalyticsDbAddSelection([], true, {raw_meta})"
-    ) == ["__NO_UPDATE__", True, True]
-    assert _run_dashmat_callbacks_js(
-        f'ns.validateAnalyticsDbAddSelection(["Asset_A"], true, {raw_meta})'
-    ) == ["Cannot add duplicate series: Asset_A", False, True]
-
-
-def test_validate_analytics_db_add_selection_clientside_enables_valid_series(raw_json):
-    raw_meta = json.dumps(_raw_meta(raw_json))
-
-    assert _run_dashmat_callbacks_js(
-        f'ns.validateAnalyticsDbAddSelection(["New_Series"], true, {raw_meta})'
-    ) == ["__NO_UPDATE__", True, False]
+    with pytest.raises(analyticstool.PreventUpdate):
+        analyticstool.validate_db_add_selection(["Asset_A"], False, _raw_meta(raw_json))
+    assert analyticstool.validate_db_add_selection([], True, _raw_meta(raw_json)) == (
+        analyticstool.no_update,
+        True,
+        True,
+    )
+    assert analyticstool.validate_db_add_selection(["Asset_A"], True, _raw_meta(raw_json)) == (
+        "Cannot add duplicate series: Asset_A",
+        False,
+        True,
+    )
+    assert analyticstool.validate_db_add_selection(["New_Series"], True, _raw_meta(raw_json)) == (
+        analyticstool.no_update,
+        True,
+        False,
+    )
 
 
 def test_compute_validate_db_add_selection_uses_raw_metadata(raw_json):
