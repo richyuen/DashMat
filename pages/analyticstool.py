@@ -5862,6 +5862,7 @@ clientside_callback(
     State("at-vol-scaling-assignments-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
     State("at-page-visited-store", "data"),
+    State("at-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
 

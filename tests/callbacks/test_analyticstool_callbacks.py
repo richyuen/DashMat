@@ -1055,6 +1055,7 @@ def test_at_series_modal_open_is_clientside():
     assert 'Input("at-page-load-trigger", "n_intervals")' in open_callback
     assert 'Input("dashmat-raw-data-meta-store", "data")' in open_callback
     assert 'State("dashmat-raw-data-meta-store", "data")' not in open_callback
+    assert 'State("at-series-selection-modal", "opened")' in open_callback
 
 
 def test_at_series_modal_ignores_empty_page_load_until_raw_meta_arrives():
@@ -1075,6 +1076,7 @@ def test_at_series_modal_ignores_empty_page_load_until_raw_meta_arrives():
     [],
     {},
     {},
+    false,
     false
   );
 })()
@@ -1109,6 +1111,7 @@ def test_at_series_modal_ignores_empty_page_load_until_raw_meta_arrives():
     [],
     {},
     {},
+    false,
     false
   );
 })()
@@ -1145,7 +1148,8 @@ def test_at_series_modal_opens_when_raw_meta_arrives_after_page_load_visit():
     ["Asset_A"],
     {"Asset_A": true},
     {},
-    true
+    true,
+    false
   );
 })()
 """
@@ -1181,7 +1185,8 @@ def test_at_series_modal_manual_open_path_is_unchanged():
     ["Asset_A"],
     {"Asset_A": true},
     {},
-    true
+    true,
+    false
   );
 })()
 """
@@ -1196,6 +1201,43 @@ def test_at_series_modal_manual_open_path_is_unchanged():
         {"Asset_A": True},
         "__NO_UPDATE__",
         True,
+    ]
+
+
+def test_at_series_modal_does_not_reopen_from_raw_meta_while_open():
+    result = _run_dashmat_callbacks_js(
+        """
+(() => {
+  window.dash_clientside.callback_context = {
+    triggered: [{prop_id: "dashmat-raw-data-meta-store.data"}],
+  };
+  return ns.openAnalyticsSeriesModal(
+    null,
+    1,
+    {columns: ["Asset_A", "Asset_B"]},
+    "/analyticstool",
+    ["Asset_A"],
+    {"Asset_A": "None"},
+    {"Asset_A": false},
+    ["Asset_A"],
+    {"Asset_A": true},
+    {},
+    true,
+    true
+  );
+})()
+"""
+    )
+    assert result == [
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
     ]
 
 

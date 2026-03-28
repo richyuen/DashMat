@@ -2000,7 +2000,8 @@
     currentOrder,
     currentVolScaling,
     poOriginSeries,
-    pageVisited
+    pageVisited,
+    modalOpened
   ) {
     const trigger = triggeredId();
     if (
@@ -2084,6 +2085,11 @@
     let shouldOpen = false;
     let tempSelect = noUpdate();
     if (trigger === "dashmat-raw-data-meta-store") {
+      if (modalOpened === true) {
+        return [
+          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
+        ];
+      }
       if (!pageVisited && !selectedValid.length) {
         shouldOpen = true;
         tempSelect = columns.slice();
