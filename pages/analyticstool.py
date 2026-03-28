@@ -5118,7 +5118,6 @@ layout = dmc.Container(
         dcc.Store(id="at-temp-vol-scaling-assignments-store", data={}),
         dcc.Store(id="at-temp-series-order-store", data=[]),
         dcc.Store(id="at-temp-deleted-series-store", data=[]),
-        dcc.Store(id="at-series-grid-snapshot-store", data=None),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
         dcc.Store(id="at-underlying-add-rows-store", data=[]),
@@ -8774,15 +8773,6 @@ def update_series_selectors(
     return [grid], series_order, no_update
 
 
-clientside_callback(
-    ClientsideFunction(namespace="dashmat_callbacks", function_name="captureAnalyticsSeriesSnapshot"),
-    Output("at-series-grid-snapshot-store", "data"),
-    Input("at-modal-ok-button", "n_clicks"),
-    State("at-series-selection-modal", "opened"),
-    prevent_initial_call=True,
-)
-
-
 @callback(
     Output("at-series-select", "data", allow_duplicate=True),
     Output("at-benchmark-assignments-store", "data", allow_duplicate=True),
@@ -8793,8 +8783,9 @@ clientside_callback(
     Output("dashmat-raw-data-store", "data", allow_duplicate=True),
     Output("at-vol-scaling-assignments-store", "data", allow_duplicate=True),
     Output("dashmat-db-import-provenance-store", "data", allow_duplicate=True),
-    Input("at-series-grid-snapshot-store", "data"),
+    Input("at-modal-ok-button", "n_clicks"),
     State("at-dataset-key-store", "data"),
+    State("at-series-selection-grid", "virtualRowData", allow_optional=True),
     State("at-series-select", "data"),
     State("at-benchmark-assignments-store", "data"),
     State("at-long-short-store", "data"),
@@ -8802,11 +8793,13 @@ clientside_callback(
     State("at-vol-scaling-assignments-store", "data"),
     State("dashmat-db-import-provenance-store", "data"),
     State("dashmat-raw-data-meta-store", "data"),
+    State("at-series-selection-modal", "opened"),
     prevent_initial_call=True,
 )
 def on_modal_ok(
-    snapshot_data,
+    n_clicks,
     dataset_key,
+    grid_rows,
     current_select,
     current_bench,
     current_ls,
@@ -8814,12 +8807,14 @@ def on_modal_ok(
     current_vol_scaling,
     current_provenance,
     raw_meta,
+    modal_opened,
 ):
-    rows = []
-    if isinstance(snapshot_data, dict) and isinstance(snapshot_data.get("rows"), list):
-        rows = [dict(row) for row in snapshot_data["rows"] if isinstance(row, dict)]
-    resolved_dataset_key = _dataset_key_from_source(raw_meta) or dataset_key
-    if not rows or not resolved_dataset_key:
+    rows = [dict(row) for row in (grid_rows or []) if isinstance(row, dict)]
+    if not n_clicks or not rows or modal_opened is not True:
+        raise PreventUpdate
+
+    resolved_dataset_key = dataset_key or _dataset_key_from_meta(raw_meta)
+    if not resolved_dataset_key:
         raise PreventUpdate
 
     df = _raw_df_by_key(resolved_dataset_key)

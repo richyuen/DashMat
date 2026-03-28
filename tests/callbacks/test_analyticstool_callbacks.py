@@ -2359,20 +2359,19 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
     raw_meta = _raw_meta(raw_json)
 
     result = analyticstool.on_modal_ok(
-        _series_snapshot(
-            [
-                {
-                    "__row_key": "Asset_A",
-                    "Selected": True,
-                    "Series": "Asset_A",
-                    "Benchmark": "None",
-                    "LongShort": False,
-                    "ScaleVol": True,
-                    "Delete": False,
-                }
-            ]
-        ),
+        1,
         raw_json,
+        [
+            {
+                "__row_key": "Asset_A",
+                "Selected": True,
+                "Series": "Asset_A",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            }
+        ],
         ["Asset_A"],
         {},
         {},
@@ -2380,6 +2379,7 @@ def test_on_modal_ok_does_not_emit_raw_data_when_unchanged(page_modules, raw_jso
         {},
         {},
         raw_meta,
+        True,
     )
 
     assert result[6] is no_update
@@ -2391,20 +2391,19 @@ def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modu
     raw_meta = _raw_meta(raw_json)
 
     result = analyticstool.on_modal_ok(
-        _series_snapshot(
-            [
-                {
-                    "__row_key": "Asset_A",
-                    "Selected": True,
-                    "Series": "Asset_A",
-                    "Benchmark": "None",
-                    "LongShort": False,
-                    "ScaleVol": True,
-                    "Delete": False,
-                }
-            ]
-        ),
+        1,
         raw_json,
+        [
+            {
+                "__row_key": "Asset_A",
+                "Selected": True,
+                "Series": "Asset_A",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            }
+        ],
         ["Asset_A"],
         {"Asset_A": "None"},
         {"Asset_A": False},
@@ -2412,6 +2411,7 @@ def test_on_modal_ok_returns_no_update_for_unchanged_persisted_outputs(page_modu
         {"Asset_A": True},
         {},
         raw_meta,
+        True,
     )
 
     assert result[0] is no_update
@@ -2425,7 +2425,45 @@ def test_on_modal_ok_falls_back_to_raw_meta_dataset_key(page_modules, raw_json):
     raw_meta = _raw_meta(raw_json)
 
     result = analyticstool.on_modal_ok(
-        _series_snapshot(
+        1,
+        None,
+        [
+            {
+                "__row_key": "Asset_A",
+                "Selected": True,
+                "Series": "Asset_A",
+                "Benchmark": "None",
+                "LongShort": False,
+                "ScaleVol": True,
+                "Delete": False,
+            }
+        ],
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        {"Asset_A": True},
+        {},
+        raw_meta,
+        True,
+    )
+
+    assert result[4] is False
+    assert result[6] is no_update
+    assert result[5] is no_update
+    assert result[6] is no_update
+    assert result[7] is no_update
+    assert result[8] is no_update
+
+
+def test_on_modal_ok_ignores_closed_modal_even_with_snapshot(page_modules, raw_json):
+    analyticstool, _ = page_modules
+    raw_meta = _raw_meta(raw_json)
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.on_modal_ok(
+            1,
+            None,
             [
                 {
                     "__row_key": "Asset_A",
@@ -2436,24 +2474,36 @@ def test_on_modal_ok_falls_back_to_raw_meta_dataset_key(page_modules, raw_json):
                     "ScaleVol": True,
                     "Delete": False,
                 }
-            ]
-        ),
-        None,
-        ["Asset_A"],
-        {"Asset_A": "None"},
-        {"Asset_A": False},
-        ["Asset_A"],
-        {"Asset_A": True},
-        {},
-        raw_meta,
-    )
+            ],
+            ["Asset_A"],
+            {"Asset_A": "None"},
+            {"Asset_A": False},
+            ["Asset_A"],
+            {"Asset_A": True},
+            {},
+            raw_meta,
+            False,
+        )
 
-    assert result[4] is False
-    assert result[6] is no_update
-    assert result[5] is no_update
-    assert result[6] is no_update
-    assert result[7] is no_update
-    assert result[8] is no_update
+
+def test_on_modal_ok_ignores_missing_grid_rows(page_modules, raw_json):
+    analyticstool, _ = page_modules
+    raw_meta = _raw_meta(raw_json)
+
+    with pytest.raises(PreventUpdate):
+        analyticstool.on_modal_ok(
+            1,
+            None,
+            None,
+            ["Asset_A"],
+            {"Asset_A": "None"},
+            {"Asset_A": False},
+            ["Asset_A"],
+            {"Asset_A": True},
+            {},
+            raw_meta,
+            True,
+        )
 
 
 def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypatch, page_modules):
