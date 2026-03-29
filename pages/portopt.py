@@ -4362,7 +4362,7 @@ layout = dmc.Container(
         dcc.Store(id="po-risk-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-attribution-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-frontier-controls-trigger-store", data=None, storage_type="memory"),
-        dcc.Store(id="po-frontier-render-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-frontier-render-signature-store", data=None, storage_type="memory"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
@@ -6001,39 +6001,32 @@ clientside_callback(
     Output("po-frontier-controls-trigger-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
-    Input("po-periodicity-select", "value"),
-    Input("po-use-risk-free-store", "data"),
-    Input("dashmat-saved-series-stamp-store", "data"),
-    Input("po-cmabench-assignments-store", "data"),
+    Input("po-frontier-chart-switch", "value"),
     Input("po-results-meta-store", "data"),
     prevent_initial_call=True,
 )
 
 
 clientside_callback(
-    """
-    function(activeTab, initialTabReady) {
-        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("frontier", activeTab, initialTabReady, true);
-    }
-    """,
-    Output("po-frontier-render-trigger-store", "data"),
-    Input("po-vis-tabs", "value"),
-    Input("po-weight-portfolio-select", "value"),
-    Input("po-frontier-chart-switch", "value"),
-    Input("po-frontier-window-select", "value"),
-    Input("po-frontier-rm-select", "value"),
-    Input("po-use-risk-free-store", "data"),
-    Input("po-bootstrap-store", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
-    Input("po-periodicity-select", "value"),
-    Input("po-benchmark-assignments-store", "data"),
-    Input("po-long-short-store", "data"),
-    Input("po-vol-scaler-value-store", "data"),
-    Input("po-vol-scaling-assignments-store", "data"),
-    Input("po-cmabench-assignments-store", "data"),
-    Input("dashmat-saved-series-stamp-store", "data"),
-    Input("po-linear-constraints-store", "data"),
-    Input("po-results-meta-store", "data"),
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncFrontierControls"),
+    Output("po-frontier-rm-select", "data"),
+    Output("po-frontier-rm-select", "value"),
+    Output("po-frontier-window-select", "data"),
+    Output("po-frontier-window-select", "value"),
+    Output("po-frontier-window-select", "disabled"),
+    Output("po-frontier-render-signature-store", "data"),
+    Input("po-frontier-controls-trigger-store", "data"),
+    State("po-vis-tabs", "value"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-frontier-rm-select", "data"),
+    State("po-frontier-rm-select", "value"),
+    State("po-frontier-window-select", "data"),
+    State("po-frontier-window-select", "value"),
+    State("po-frontier-window-select", "disabled"),
+    State("po-frontier-chart-switch", "value"),
+    State("po-results-store", "data"),
+    State("po-results-meta-store", "data"),
+    State("po-frontier-render-signature-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -11563,61 +11556,6 @@ def po_render_turnover_views(selected_portfolio, results, active_tab, switch_val
 # Efficient Frontier: populate window dropdown
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("po-frontier-rm-select", "data"),
-    Output("po-frontier-rm-select", "value"),
-    Output("po-frontier-window-select", "data"),
-    Output("po-frontier-window-select", "value"),
-    Output("po-frontier-window-select", "disabled"),
-    Output("po-frontier-rf-warning", "children"),
-    Output("po-frontier-rf-warning", "style"),
-    Input("po-frontier-controls-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-frontier-rm-select", "data"),
-    State("po-frontier-rm-select", "value"),
-    State("po-frontier-window-select", "data"),
-    State("po-frontier-window-select", "value"),
-    State("po-frontier-window-select", "disabled"),
-    State("po-periodicity-select", "value"),
-    State("po-use-risk-free-store", "data"),
-    State("dashmat-saved-series-stamp-store", "data"),
-    State("po-cmabench-assignments-store", "data"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_sync_frontier_controls_callback(
-    trigger_payload,
-    active_tab,
-    selected_portfolio,
-    current_rm_options,
-    current_rm,
-    current_window_options,
-    current_window,
-    current_window_disabled,
-    periodicity,
-    use_risk_free,
-    shared_benchmark_source,
-    cmabench_assignments,
-    results,
-):
-    _po_require_active_vis_trigger(trigger_payload, "frontier")
-    return po_sync_frontier_controls(
-        selected_portfolio,
-        results,
-        active_tab,
-        current_rm_options,
-        current_rm,
-        current_window_options,
-        current_window,
-        current_window_disabled,
-        periodicity,
-        use_risk_free,
-        shared_benchmark_source,
-        cmabench_assignments,
-    )
-
-
 def po_update_frontier_risk_measure_options(selected_portfolio, results, current_rm):
     all_options = [
         {"value": "MV", "label": "Volatility"},
@@ -11656,50 +11594,6 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     return options, str(len(window_weights) - 1), is_single_period
 
 
-def po_sync_frontier_controls(
-    selected_portfolio,
-    results,
-    active_tab,
-    current_rm_options,
-    current_rm,
-    current_window_options,
-    current_window,
-    current_window_disabled,
-    periodicity,
-    use_risk_free,
-    shared_benchmark_source,
-    cmabench_assignments,
-):
-    with timed_block("portopt.render_frontier.controls", portfolio=selected_portfolio, active_tab=active_tab):
-        next_rm_options, next_rm = po_update_frontier_risk_measure_options(selected_portfolio, results, current_rm)
-        next_window_options, next_window, next_window_disabled = po_populate_frontier_windows(
-            selected_portfolio,
-            results,
-            active_tab,
-        )
-        warning_children, warning_style = po_render_frontier_rf_warning(
-            selected_portfolio,
-            results,
-            active_tab,
-            next_window,
-            next_rm,
-            use_risk_free,
-            periodicity,
-            shared_benchmark_source,
-            cmabench_assignments,
-        )
-
-    return (
-        no_update if current_rm_options == next_rm_options else next_rm_options,
-        no_update if current_rm == next_rm else next_rm,
-        no_update if current_window_options == next_window_options else next_window_options,
-        no_update if current_window == next_window else next_window,
-        no_update if current_window_disabled == next_window_disabled else next_window_disabled,
-        warning_children,
-        warning_style,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Efficient Frontier chart
 # ---------------------------------------------------------------------------
@@ -11710,13 +11604,11 @@ def po_sync_frontier_controls(
     Output("po-frontier-chart-empty", "children"),
     Output("po-frontier-chart-empty", "style"),
     Output("po-frontier-grid-container", "children"),
-    Input("po-frontier-render-trigger-store", "data"),
+    Output("po-frontier-rf-warning", "children"),
+    Output("po-frontier-rf-warning", "style"),
+    Input("po-frontier-render-signature-store", "data"),
     State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-frontier-chart-switch", "value"),
     State("po-bootstrap-store", "data"),
-    State("po-frontier-window-select", "value"),
-    State("po-frontier-rm-select", "value"),
     State("dashmat-raw-data-identity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -11736,11 +11628,7 @@ def po_sync_frontier_controls(
 def _po_render_frontier_views_callback(
     trigger_payload,
     active_tab,
-    selected_portfolio,
-    switch_value,
     bootstrap_state,
-    window_idx,
-    rm,
     raw_data_identity,
     periodicity,
     bench,
@@ -11758,13 +11646,13 @@ def _po_render_frontier_views_callback(
 ):
     _po_require_active_vis_trigger(trigger_payload, "frontier")
     return po_render_frontier_views(
-        selected_portfolio,
+        trigger_payload.get("portfolio"),
         results,
         active_tab,
-        switch_value,
+        trigger_payload.get("view"),
         bootstrap_state,
-        window_idx,
-        rm,
+        trigger_payload.get("window"),
+        trigger_payload.get("rm"),
         raw_data_identity,
         periodicity,
         bench,
@@ -11786,13 +11674,15 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
                              window_idx, rm,
                              dataset_source, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, cmabench_assignments, shared_benchmark_source, use_risk_free, series_select, theme,
-                             linear_constraints, trigger_id=None):
+                             linear_constraints, trigger_id=None, return_snapshot=False):
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
     if not selected_portfolio or not results:
-        return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
+        result = (no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True))
+        return (*result, None) if return_snapshot else result
     if selected_portfolio not in results:
-        return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
+        result = (no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True))
+        return (*result, None) if return_snapshot else result
 
     portfolio_data = results[selected_portfolio]
     result_use_risk_free = _po_result_use_risk_free(portfolio_data)
@@ -11801,15 +11691,17 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not _dataset_key_from_source(dataset_source):
-        return no_update, _po_chart_graph_style(False), dmc.Text("No frontier data available.", c="dimmed"), _po_chart_empty_style(True)
+        result = (no_update, _po_chart_graph_style(False), dmc.Text("No frontier data available.", c="dimmed"), _po_chart_empty_style(True))
+        return (*result, None) if return_snapshot else result
     missing_sources = _po_missing_source_series(results, selected_portfolio, dataset_source)
     if missing_sources:
-        return (
+        result = (
             no_update,
             _po_chart_graph_style(False),
             dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed"),
             _po_chart_empty_style(True),
         )
+        return (*result, None) if return_snapshot else result
 
     timing_ctx = timed_block(
         "portopt.render_frontier_chart",
@@ -11847,12 +11739,13 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
         risk_measure = snapshot.get("risk_measure", _normalize_frontier_risk_measure(model, rm))
 
         if not frontier_pts:
-            return (
+            result = (
                 no_update,
                 _po_chart_graph_style(False),
                 dmc.Text("No frontier points available for the selected window.", c="dimmed"),
                 _po_chart_empty_style(True),
             )
+            return (*result, None) if return_snapshot else result
 
         fig = go.Figure()
 
@@ -11909,15 +11802,17 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
         )
         apply_chart_theme(fig, theme)
 
-        return fig, _po_chart_graph_style(True), "", _po_chart_empty_style(False)
+        result = (fig, _po_chart_graph_style(True), "", _po_chart_empty_style(False))
+        return (*result, snapshot) if return_snapshot else result
 
     except Exception as e:
-        return (
+        result = (
             no_update,
             _po_chart_graph_style(False),
             dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed"),
             _po_chart_empty_style(True),
         )
+        return (*result, None) if return_snapshot else result
     finally:
         timing_ctx.__exit__(None, None, None)
 
@@ -11940,13 +11835,16 @@ def po_render_frontier_table(
     shared_benchmark_source,
     use_risk_free,
     linear_constraints,
+    return_snapshot=False,
 ):
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "table":
         raise PreventUpdate
     if not selected_portfolio or not results:
-        return html.Div()
+        result = html.Div()
+        return (result, None) if return_snapshot else result
     if selected_portfolio not in results:
-        return html.Div()
+        result = html.Div()
+        return (result, None) if return_snapshot else result
 
     portfolio_data = results[selected_portfolio]
     result_use_risk_free = _po_result_use_risk_free(portfolio_data)
@@ -11954,9 +11852,11 @@ def po_render_frontier_table(
     config = portfolio_data.get("config", {}) or {}
     opt_series = config.get("selected_series", []) or []
     if not window_weights or not opt_series or not _dataset_key_from_source(dataset_source):
-        return html.Div()
+        result = html.Div()
+        return (result, None) if return_snapshot else result
     if _po_missing_source_series(results, selected_portfolio, dataset_source):
-        return html.Div()
+        result = html.Div()
+        return (result, None) if return_snapshot else result
 
     with timed_block(
         "portopt.render_frontier_table",
@@ -11982,13 +11882,15 @@ def po_render_frontier_table(
                 use_risk_free=result_use_risk_free,
             )
         except Exception:
-            return html.Div()
+            result = html.Div()
+            return (result, None) if return_snapshot else result
 
-        return _po_build_result_grid(
+        result = _po_build_result_grid(
             "po-frontier-grid",
             _build_frontier_column_defs(snapshot),
             _build_frontier_table_rows(snapshot),
         )
+        return (result, snapshot) if return_snapshot else result
 
 
 def po_render_frontier_views(
@@ -12016,7 +11918,7 @@ def po_render_frontier_views(
 ):
     active_view = switch_value or "chart"
     if active_view == "table":
-        return no_update, no_update, no_update, no_update, po_render_frontier_table(
+        table_children, snapshot = po_render_frontier_table(
             selected_portfolio,
             results,
             active_tab,
@@ -12034,8 +11936,26 @@ def po_render_frontier_views(
             shared_benchmark_source,
             use_risk_free,
             linear_constraints,
+            return_snapshot=True,
         )
-    chart_figure, chart_style, empty_children, empty_style = po_render_frontier_chart(
+        warning_children, warning_style = (
+            po_render_frontier_rf_warning(
+                selected_portfolio,
+                results,
+                active_tab,
+                window_idx,
+                rm,
+                use_risk_free,
+                periodicity,
+                shared_benchmark_source,
+                cmabench_assignments,
+                snapshot=snapshot,
+            )
+            if snapshot is not None
+            else ("", {"display": "none"})
+        )
+        return no_update, no_update, no_update, no_update, table_children, warning_children, warning_style
+    chart_figure, chart_style, empty_children, empty_style, snapshot = po_render_frontier_chart(
         selected_portfolio,
         results,
         active_tab,
@@ -12057,8 +11977,25 @@ def po_render_frontier_views(
         theme,
         linear_constraints,
         trigger_id=trigger_id,
+        return_snapshot=True,
     )
-    return chart_figure, chart_style, empty_children, empty_style, no_update
+    warning_children, warning_style = (
+        po_render_frontier_rf_warning(
+            selected_portfolio,
+            results,
+            active_tab,
+            window_idx,
+            rm,
+            use_risk_free,
+            periodicity,
+            shared_benchmark_source,
+            cmabench_assignments,
+            snapshot=snapshot,
+        )
+        if snapshot is not None
+        else ("", {"display": "none"})
+    )
+    return chart_figure, chart_style, empty_children, empty_style, no_update, warning_children, warning_style
 
 
 def po_render_frontier_rf_warning(
@@ -12071,6 +12008,7 @@ def po_render_frontier_rf_warning(
     periodicity,
     shared_benchmark_source,
     cmabench_assignments,
+    snapshot=None,
 ):
     hidden = {"display": "none"}
     shown = {"display": "block", "marginBottom": "8px"}
@@ -12096,16 +12034,17 @@ def po_render_frontier_rf_warning(
         risk_measure = rm or "MV"
         if risk_measure == "CVaR":
             risk_measure = "MV"
-        try:
-            resolved_idx, _ = _resolve_frontier_window(portfolio_data.get("window_weights", []) or [], window_idx)
-            snapshot = _get_cached_frontier_snapshot(
-                portfolio_data,
-                resolved_idx,
-                risk_measure,
-                use_risk_free=result_use_risk_free,
-            )
-        except Exception:
-            snapshot = None
+        if snapshot is None:
+            try:
+                resolved_idx, _ = _resolve_frontier_window(portfolio_data.get("window_weights", []) or [], window_idx)
+                snapshot = _get_cached_frontier_snapshot(
+                    portfolio_data,
+                    resolved_idx,
+                    risk_measure,
+                    use_risk_free=result_use_risk_free,
+                )
+            except Exception:
+                snapshot = None
         warning = (
             (snapshot or {}).get("rf_warning")
             or (portfolio_data.get("risk_free_meta", {}) or {}).get("warning")

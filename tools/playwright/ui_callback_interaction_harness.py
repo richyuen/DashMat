@@ -228,6 +228,35 @@ def wait_for_style_display(page, selector: str, expected: str, timeout: int = 10
     )
 
 
+def wait_for_component_prop(page, component_id: str, prop_name: str, expected, timeout: int = 10000) -> None:
+    page.wait_for_function(
+        """
+        ([componentId, propName, wantValue]) => {
+          const root = (((window.store || {}).getState || (() => ({})))().layout || {}).components;
+          if (!root) return false;
+          const stack = [root];
+          while (stack.length) {
+            const node = stack.pop();
+            if (!node || typeof node !== "object") continue;
+            const props = node.props || {};
+            if (props.id === componentId) {
+              return JSON.stringify(props[propName]) === JSON.stringify(wantValue);
+            }
+            const children = props.children;
+            if (Array.isArray(children)) {
+              for (const child of children) stack.push(child);
+            } else if (children && typeof children === "object") {
+              stack.push(children);
+            }
+          }
+          return false;
+        }
+        """,
+        arg=[component_id, prop_name, expected],
+        timeout=_scaled_timeout(timeout),
+    )
+
+
 def wait_for_plotly_graph_ready(
     page,
     graph_selector: str,
@@ -290,6 +319,20 @@ def wait_for_quiet_window(
                 return
         page.wait_for_timeout(25)
     raise TimeoutError(f"Timed out waiting for a {quiet_ms}ms quiet window")
+
+
+def wait_for_dash_update_requests(
+    page,
+    tracker: warm.DashUpdateRequestTracker,
+    minimum_count: int = 1,
+    timeout: int = 10000,
+) -> None:
+    deadline = time.perf_counter() + (_scaled_timeout(timeout) / 1000.0)
+    while time.perf_counter() < deadline:
+        if len(tracker.records) >= minimum_count:
+            return
+        page.wait_for_timeout(25)
+    raise TimeoutError(f"Expected at least {minimum_count} Dash update request(s) before timeout")
 
 
 def wait_content_ready(page, selector: str, timeout: int = 10000) -> None:
@@ -537,12 +580,15 @@ def _seed_portopt_result_state(page, db_series: list[str], tab_value: str = "wei
     results = build_seeded_portopt_results(db_series)
     options = [{"value": name, "label": name} for name in results]
     warm.set_component_props(page, "po-results-store", {"data": results})
-    warm.set_component_props(page, "po-weight-portfolio-select", {"data": options, "value": selected_portfolio})
     warm.set_component_props(page, "po-growth-portfolio-multiselect", {"data": options, "value": [selected_portfolio]})
     warm.set_component_props(page, "po-active-tab-store", {"data": tab_value})
     warm.set_component_props(page, "po-vis-tabs", {"value": tab_value})
     if tab_value == "rolling":
         warm.set_component_props(page, "po-rolling-chart-switch", {"value": "chart"})
+    # Let result-store driven selector syncs settle, then force the intended starting portfolio.
+    page.wait_for_timeout(600)
+    warm.set_component_props(page, "po-weight-portfolio-select", {"data": options, "value": selected_portfolio})
+    warm.set_component_props(page, "po-growth-portfolio-multiselect", {"data": options, "value": [selected_portfolio]})
     page.wait_for_timeout(200)
 
 
@@ -823,12 +869,15 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: wait_for_plotly_graph_ready(
-                page,
-                "#po-frontier-chart-graph",
-                "#po-frontier-chart-empty",
-                "#po-frontier-chart-container",
-                timeout=10000,
+            wait_for_ready=lambda: (
+                wait_for_dash_update_requests(page, tracker, minimum_count=1, timeout=10000),
+                wait_for_plotly_graph_ready(
+                    page,
+                    "#po-frontier-chart-graph",
+                    "#po-frontier-chart-empty",
+                    "#po-frontier-chart-container",
+                    timeout=10000,
+                ),
             ),
             scenario_class="visible_result_tab",
         )
@@ -845,7 +894,10 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-frontier-chart-switch", "table"),
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: wait_content_ready(page, "#po-frontier-grid-container", timeout=10000),
+            wait_for_ready=lambda: (
+                wait_for_dash_update_requests(page, tracker, minimum_count=1, timeout=10000),
+                wait_content_ready(page, "#po-frontier-grid-container", timeout=10000),
+            ),
             scenario_class="visible_result_tab",
         )
     )

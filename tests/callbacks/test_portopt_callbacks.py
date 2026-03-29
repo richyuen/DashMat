@@ -137,6 +137,7 @@ def test_portopt_clientside_callback_registrations_present_for_migrated_helpers(
         "portoptUpdateDateRangeStore",
         "portoptToggleRollingReturnType",
         "portoptClearRawDbRows",
+        "portoptSyncFrontierControls",
     ):
         assert f'ClientsideFunction(namespace="dashmat_callbacks", function_name="{function_name}")' in page_text
         assert f"function {function_name}(" in js_text
@@ -518,6 +519,8 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-frontier-chart-empty", "children")' in page_text
     assert 'Output("po-frontier-chart-empty", "style")' in page_text
     assert 'Output("po-frontier-grid-container", "children")' in page_text
+    assert 'Output("po-frontier-rf-warning", "children")' in page_text
+    assert 'Output("po-frontier-rf-warning", "style")' in page_text
     assert 'id="po-frontier-chart-graph"' in page_text
     assert 'id="po-frontier-chart-empty"' in page_text
     assert 'po-frontier-grid-content' not in page_text
@@ -529,7 +532,7 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-turnover-grid-container", "children")' in page_text
     assert 'po-turnover-chart-content' not in page_text
     assert 'po-turnover-grid-content' not in page_text
-    assert page_text.count('Input("po-bootstrap-store", "data")') >= 5
+    assert page_text.count('Input("po-bootstrap-store", "data")') >= 4
     assert page_text.count('State("po-bootstrap-store", "data")') >= 5
 
 
@@ -666,7 +669,7 @@ def test_po_result_family_trigger_stores_exist(page_modules):
         "po-risk-tab-trigger-store",
         "po-attribution-tab-trigger-store",
         "po-frontier-controls-trigger-store",
-        "po-frontier-render-trigger-store",
+        "po-frontier-render-signature-store",
     ):
         assert _find_component_by_id(portopt.layout, store_id) is not None
 
@@ -799,9 +802,15 @@ def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
         "po-risk-tab-trigger-store",
         "po-attribution-tab-trigger-store",
         "po-frontier-controls-trigger-store",
-        "po-frontier-render-trigger-store",
+        "po-frontier-render-signature-store",
     ):
         assert f'Output("{store_id}", "data")' in page_text
+    for store_id in (
+        "po-calendar-controls-trigger-store",
+        "po-calendar-tab-trigger-store",
+        "po-frontier-controls-trigger-store",
+        "po-frontier-render-signature-store",
+    ):
         assert f'Input("{store_id}", "data")' in page_text
     for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown", "weight", "growth", "turnover", "risk", "attribution", "frontier"):
         assert f'analyticsTabTrigger("{tab_name}", activeTab, initialTabReady, true)' in page_text
@@ -809,7 +818,8 @@ def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
     assert 'Output("po-frontier-window-select", "data")' in page_text
     assert 'Input("po-calendar-controls-trigger-store", "data")' in page_text
     assert 'Input("po-frontier-controls-trigger-store", "data")' in page_text
-    assert 'Input("po-frontier-render-trigger-store", "data")' in page_text
+    assert 'Input("po-frontier-render-signature-store", "data")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncFrontierControls")' in page_text
 
 
 def test_portopt_same_family_render_callbacks_are_merged():
@@ -820,7 +830,7 @@ def test_portopt_same_family_render_callbacks_are_merged():
     assert page_text.count('Input("po-risk-tab-trigger-store", "data")') == 1
     assert page_text.count('Input("po-attribution-tab-trigger-store", "data")') == 1
     assert page_text.count('Input("po-frontier-controls-trigger-store", "data")') == 1
-    assert page_text.count('Input("po-frontier-render-trigger-store", "data")') == 1
+    assert page_text.count('Input("po-frontier-render-signature-store", "data")') == 1
 
 
 def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
@@ -840,6 +850,8 @@ def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
     assert 'def _po_compute_frontier_snapshot_cached(\n    selected_portfolio: str,\n    dataset_key: str,' in page_text
     assert 'with timed_block("portopt.performance_frames.load_raw_dataset"' in page_text
     assert 'with timed_block("portopt.render_frontier.load_raw_dataset"' in page_text
+    assert 'Input("po-frontier-render-signature-store", "data")' in page_text
+    assert 'Input("po-frontier-render-trigger-store", "data")' not in page_text
 
 
 def test_portopt_weight_views_only_updates_active_container(monkeypatch, page_modules):
@@ -879,10 +891,22 @@ def test_portopt_stable_chart_shell_ids_exist(page_modules):
 def test_portopt_frontier_views_only_updates_active_container(monkeypatch, page_modules):
     _, portopt = page_modules
 
-    monkeypatch.setattr(portopt, "po_render_frontier_chart", lambda *args, **kwargs: ("fig", {"display": "block"}, "", {"display": "none"}))
-    monkeypatch.setattr(portopt, "po_render_frontier_table", lambda *args, **kwargs: "table")
+    monkeypatch.setattr(
+        portopt,
+        "po_render_frontier_chart",
+        lambda *args, **kwargs: ("fig", {"display": "block"}, "", {"display": "none"}, {"rf_warning": "Chart warning"}),
+    )
+    monkeypatch.setattr(portopt, "po_render_frontier_table", lambda *args, **kwargs: ("table", {"rf_warning": "Table warning"}))
+    monkeypatch.setattr(
+        portopt,
+        "po_render_frontier_rf_warning",
+        lambda *args, **kwargs: (
+            (kwargs.get("snapshot") or {}).get("rf_warning"),
+            {"display": "block", "marginBottom": "8px"},
+        ),
+    )
 
-    assert portopt.po_render_frontier_views(
+    chart_result = portopt.po_render_frontier_views(
         "Portfolio",
         {},
         "frontier",
@@ -904,14 +928,18 @@ def test_portopt_frontier_views_only_updates_active_container(monkeypatch, page_
         "light",
         [],
         "trigger",
-    ) == (
+    )
+    assert chart_result[:5] == (
         "fig",
         {"display": "block"},
         "",
         {"display": "none"},
         no_update,
     )
-    assert portopt.po_render_frontier_views(
+    assert "Chart warning" in " ".join(_collect_component_text(chart_result[5]))
+    assert chart_result[6]["display"] == "block"
+
+    table_result = portopt.po_render_frontier_views(
         "Portfolio",
         {},
         "frontier",
@@ -933,41 +961,16 @@ def test_portopt_frontier_views_only_updates_active_container(monkeypatch, page_
         "light",
         [],
         "trigger",
-    ) == (
+    )
+    assert table_result[:5] == (
         no_update,
         no_update,
         no_update,
         no_update,
         "table",
     )
-
-
-def test_portopt_sync_frontier_controls_uses_no_update_for_unchanged_selectors(monkeypatch, page_modules):
-    _, portopt = page_modules
-
-    rm_options = [{"value": "MV", "label": "Volatility"}]
-    window_options = [{"value": "0", "label": "2024-01-01 - 2024-01-31"}]
-    monkeypatch.setattr(portopt, "po_update_frontier_risk_measure_options", lambda *args, **kwargs: (rm_options, "MV"))
-    monkeypatch.setattr(portopt, "po_populate_frontier_windows", lambda *args, **kwargs: (window_options, "0", False))
-    monkeypatch.setattr(portopt, "po_render_frontier_rf_warning", lambda *args, **kwargs: ("", {"display": "none"}))
-
-    result = portopt.po_sync_frontier_controls(
-        "Portfolio",
-        {"Portfolio": {"config": {"model": "risk_parity"}}},
-        "frontier",
-        rm_options,
-        "MV",
-        window_options,
-        "0",
-        False,
-        "daily_trading",
-        True,
-        {},
-        {},
-    )
-
-    assert result[:5] == (no_update, no_update, no_update, no_update, no_update)
-    assert result[5:] == ("", {"display": "none"})
+    assert "Table warning" in " ".join(_collect_component_text(table_result[5]))
+    assert table_result[6]["display"] == "block"
 
 
 def test_portopt_save_series_ui_uses_clientside_parity_helper():
@@ -993,6 +996,86 @@ def test_portopt_sync_save_series_ui_clears_status_when_result_missing():
     )
 
     assert result == [True, ""]
+
+
+def test_portopt_frontier_controls_use_clientside_callback():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncFrontierControls")' in page_text
+    assert "function portoptSyncFrontierControls(" in js_text
+    assert "def _po_sync_frontier_controls_callback" not in page_text
+    assert 'Output("po-frontier-render-signature-store", "data")' in page_text
+
+
+def test_portopt_sync_frontier_controls_restricts_ex_ante_and_disables_window():
+    result = _run_dashmat_callbacks_js(
+        """
+        ns.portoptSyncFrontierControls(
+          {tab: "frontier"},
+          "frontier",
+          "Portfolio A",
+          [{value: "MV", label: "Volatility"}, {value: "CVaR", label: "CVaR"}],
+          "CVaR",
+          [{value: "0", label: "old"}],
+          "0",
+          false,
+          "chart",
+          { "Portfolio A": {
+              config: { model: "ex_ante_mv" },
+              window_weights: [{ est_start: "2024-01-01", est_end: "2024-01-31" }]
+            }
+          },
+          { stamp: 1 },
+          null
+        )
+        """
+    )
+
+    assert result[0] == [{"value": "MV", "label": "Volatility"}]
+    assert result[1] == "MV"
+    assert result[2] == [{"value": "0", "label": "2024-01-01 - 2024-01-31"}]
+    assert result[3] == "__NO_UPDATE__"
+    assert result[4] is True
+    assert result[5]["tab"] == "frontier"
+    assert result[5]["portfolio"] == "Portfolio A"
+    assert result[5]["rm"] == "MV"
+    assert result[5]["window"] == "0"
+    assert result[5]["view"] == "chart"
+
+
+def test_portopt_sync_frontier_controls_preserves_unchanged_state_with_no_update():
+    result = _run_dashmat_callbacks_js(
+        """
+        ns.portoptSyncFrontierControls(
+          {tab: "frontier"},
+          "frontier",
+          "Portfolio A",
+          [{value: "MV", label: "Volatility"}, {value: "CVaR", label: "CVaR"}],
+          "MV",
+          [{value: "0", label: "2024-01-01 - 2024-01-31"}],
+          "0",
+          false,
+          "chart",
+          { "Portfolio A": {
+              config: { model: "risk_parity" },
+              window_weights: [{ est_start: "2024-01-01", est_end: "2024-01-31" }]
+            }
+          },
+          { stamp: 1 },
+          {
+            tab: "frontier",
+            portfolio: "Portfolio A",
+            rm: "MV",
+            window: "0",
+            view: "chart",
+            resultsMeta: { stamp: 1 }
+          }
+        )
+        """
+    )
+
+    assert result == ["__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__"]
 
 
 def test_portopt_statistics_and_rolling_have_substep_timing_breakdown():

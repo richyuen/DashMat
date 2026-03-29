@@ -3262,6 +3262,100 @@
     return regressionSyncSaveSeriesUi(selected, results, currentDisabled, currentStatus);
   }
 
+  function portoptFrontierRiskMeasureOptions(selectedPortfolio, results, currentRm) {
+    const allOptions = [
+      { value: "MV", label: "Volatility" },
+      { value: "CVaR", label: "CVaR" }
+    ];
+    const current = currentRm === "CVaR" ? "CVaR" : "MV";
+    const entry = (selectedPortfolio && results && results[selectedPortfolio]) ? results[selectedPortfolio] : null;
+    const model = String((((entry || {}).config) || {}).model || "");
+    if (model === "ex_ante_mv" || model === "black_litterman") {
+      return [[{ value: "MV", label: "Volatility" }], "MV"];
+    }
+    return [allOptions, current];
+  }
+
+  function portoptFrontierWindowOptions(selectedPortfolio, results, activeTab) {
+    if (String(activeTab || "") !== "frontier" || !selectedPortfolio || !results) {
+      return [[], null, false];
+    }
+    const entry = results[selectedPortfolio];
+    if (!entry || typeof entry !== "object") {
+      return [[], null, false];
+    }
+    const windowWeights = Array.isArray(entry.window_weights) ? entry.window_weights : [];
+    const model = String((((entry || {}).config) || {}).model || "");
+    if (!windowWeights.length) {
+      return [[], null, false];
+    }
+    const options = windowWeights.map(function (ww, idx) {
+      const estStart = String((((ww || {}).est_start) || ((ww || {}).apply_start) || "")).slice(0, 10);
+      const estEnd = String((((ww || {}).est_end) || ((ww || {}).apply_end) || "")).slice(0, 10);
+      return {
+        value: String(idx),
+        label: estStart + " - " + estEnd
+      };
+    });
+    const disabled = model === "ex_ante_mv" || model === "black_litterman";
+    return [options, String(windowWeights.length - 1), disabled];
+  }
+
+  function portoptSyncFrontierControls(
+    triggerPayload,
+    activeTab,
+    selectedPortfolio,
+    currentRmOptions,
+    currentRm,
+    currentWindowOptions,
+    currentWindow,
+    currentWindowDisabled,
+    chartSwitch,
+    results,
+    resultsMeta,
+    currentSignature
+  ) {
+    const nu = noUpdate();
+    if (!triggerPayload || typeof triggerPayload !== "object" || String(triggerPayload.tab || "") !== "frontier") {
+      return [nu, nu, nu, nu, nu, nu];
+    }
+
+    const frontierView = chartSwitch === "table" ? "table" : "chart";
+    const pair = portoptFrontierRiskMeasureOptions(selectedPortfolio, results, currentRm);
+    const nextRmOptions = pair[0];
+    const nextRm = pair[1];
+    const windowState = portoptFrontierWindowOptions(selectedPortfolio, results, activeTab);
+    const nextWindowOptions = windowState[0];
+    const nextWindow = windowState[1];
+    const nextWindowDisabled = windowState[2];
+
+    let signatureMeta = null;
+    if (resultsMeta && typeof resultsMeta === "object") {
+      if (selectedPortfolio && Object.prototype.hasOwnProperty.call(resultsMeta, selectedPortfolio)) {
+        signatureMeta = resultsMeta[selectedPortfolio];
+      } else {
+        signatureMeta = resultsMeta;
+      }
+    }
+    const nextSignature = {
+      tab: "frontier",
+      portfolio: selectedPortfolio || null,
+      rm: nextRm || null,
+      window: nextWindow || null,
+      view: frontierView,
+      resultsMeta: signatureMeta
+    };
+
+    return [
+      sameValue(currentRmOptions, nextRmOptions) ? nu : nextRmOptions,
+      currentRm === nextRm ? nu : nextRm,
+      sameValue(currentWindowOptions, nextWindowOptions) ? nu : nextWindowOptions,
+      currentWindow === nextWindow ? nu : nextWindow,
+      currentWindowDisabled === nextWindowDisabled ? nu : nextWindowDisabled,
+      sameValue(currentSignature, nextSignature) ? nu : nextSignature
+    ];
+  }
+
   function regressionSyncAnovaWindowOptions(selected, results, currentOptions, currentWindow, currentDisabled) {
     let nextOptions = [];
     let nextValue = null;
@@ -3393,6 +3487,7 @@
       portoptReportingBasisControl: portoptReportingBasisControl,
       portoptSyncNameWithModel: portoptSyncNameWithModel,
       portoptSyncSaveSeriesUi: portoptSyncSaveSeriesUi,
+      portoptSyncFrontierControls: portoptSyncFrontierControls,
       portoptSyncReturnsBasisFromMirrors: portoptSyncReturnsBasisFromMirrors,
       portoptSyncReturnsBasisMirrors: portoptSyncReturnsBasisMirrors,
       portoptSyncTau: portoptSyncTau,
