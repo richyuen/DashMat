@@ -336,48 +336,53 @@ def build_seeded_portopt_results(series_names: list[str]) -> dict[str, object]:
     raw_df = build_synthetic_raw_frame(opt_series)
     result_index = raw_df.index[40:260]
     component_df = raw_df.loc[result_index, opt_series]
-    base_weights = [0.55, 0.45]
-    if len(opt_series) > 2:
-        remainder = max(0.0, 1.0 - sum(base_weights))
-        extra_weight = remainder / (len(opt_series) - 2)
-        weight_values = base_weights + [extra_weight] * (len(opt_series) - 2)
-    else:
-        weight_values = base_weights[: len(opt_series)]
-    portfolio_weights = {
-        series_name: round(weight_values[idx], 4)
-        for idx, series_name in enumerate(opt_series)
-    }
-    portfolio_series = (component_df * pd.Series(portfolio_weights)).sum(axis=1).rename("Harness Portfolio 1")
-    benchmark_series = component_df[opt_series[0]].rename("__bm__Harness Portfolio 1")
     window_midpoint = len(result_index) // 2
-    window_weights = [
-        {
-            "apply_start": str(result_index[0])[:10],
-            "apply_end": str(result_index[window_midpoint - 1])[:10],
-            "est_start": str(result_index[0])[:10],
-            "est_end": str(result_index[window_midpoint - 1])[:10],
-            "weights": dict(portfolio_weights),
-        },
-        {
-            "apply_start": str(result_index[window_midpoint])[:10],
-            "apply_end": str(result_index[-1])[:10],
-            "est_start": str(result_index[window_midpoint])[:10],
-            "est_end": str(result_index[-1])[:10],
-            "weights": dict(portfolio_weights),
-        },
-    ]
-    run_inputs = {
-        "selected_series": list(opt_series),
-        "benchmark_assignments": {},
-        "cmabench_assignments": {},
-        "long_short_assignments": {},
-        "date_range": {"start": str(result_index[0])[:10], "end": str(result_index[-1])[:10]},
-        "vol_scaler": 0,
-        "vol_scaling_assignments": {},
-        "periodicity": "daily",
-    }
-    return {
-        "Harness Portfolio 1": {
+
+    def _normalized_weights(weight_prefix: list[float]) -> dict[str, float]:
+        padded = list(weight_prefix[: len(opt_series)])
+        if len(padded) < len(opt_series):
+            padded.extend([0.0] * (len(opt_series) - len(padded)))
+        total = sum(padded)
+        if total <= 0:
+            padded = [1.0 / max(len(opt_series), 1)] * len(opt_series)
+        else:
+            padded = [value / total for value in padded]
+        return {
+            series_name: round(padded[idx], 4)
+            for idx, series_name in enumerate(opt_series)
+        }
+
+    def _result_entry(name: str, weight_prefix: list[float], benchmark_name: str, risk_free_enabled: bool) -> dict[str, object]:
+        portfolio_weights = _normalized_weights(weight_prefix)
+        portfolio_series = (component_df * pd.Series(portfolio_weights)).sum(axis=1).rename(name)
+        benchmark_series = component_df[benchmark_name].rename(f"__bm__{name}")
+        window_weights = [
+            {
+                "apply_start": str(result_index[0])[:10],
+                "apply_end": str(result_index[window_midpoint - 1])[:10],
+                "est_start": str(result_index[0])[:10],
+                "est_end": str(result_index[window_midpoint - 1])[:10],
+                "weights": dict(portfolio_weights),
+            },
+            {
+                "apply_start": str(result_index[window_midpoint])[:10],
+                "apply_end": str(result_index[-1])[:10],
+                "est_start": str(result_index[window_midpoint])[:10],
+                "est_end": str(result_index[-1])[:10],
+                "weights": dict(portfolio_weights),
+            },
+        ]
+        run_inputs = {
+            "selected_series": list(opt_series),
+            "benchmark_assignments": {},
+            "cmabench_assignments": {},
+            "long_short_assignments": {},
+            "date_range": {"start": str(result_index[0])[:10], "end": str(result_index[-1])[:10]},
+            "vol_scaler": 0,
+            "vol_scaling_assignments": {},
+            "periodicity": "daily",
+        }
+        return {
             "config": {
                 "model": "risk_parity",
                 "selected_series": list(opt_series),
@@ -390,8 +395,13 @@ def build_seeded_portopt_results(series_names: list[str]) -> dict[str, object]:
             "optimization_returns_json": portfolio_series.to_json(date_format="iso"),
             "returns_json": portfolio_series.to_json(date_format="iso"),
             "benchmark_returns_json": benchmark_series.to_json(date_format="iso"),
-            "risk_free_meta": {"enabled": True},
+            "risk_free_meta": {"enabled": risk_free_enabled},
         }
+
+    benchmark_two = opt_series[1] if len(opt_series) > 1 else opt_series[0]
+    return {
+        "Harness Portfolio 1": _result_entry("Harness Portfolio 1", [0.55, 0.45, 0.0], opt_series[0], True),
+        "Harness Portfolio 2": _result_entry("Harness Portfolio 2", [0.2, 0.8, 0.0], benchmark_two, False),
     }
 
 
@@ -403,10 +413,9 @@ def _seed_regression_result_state(page, db_series: list[str], tab_value: str, se
     warm.seed_regression_restore_tab(page, tab_value)
 
 
-def _seed_portopt_result_state(page, db_series: list[str], tab_value: str = "weight") -> None:
+def _seed_portopt_result_state(page, db_series: list[str], tab_value: str = "weight", selected_portfolio: str = "Harness Portfolio 1") -> None:
     results = build_seeded_portopt_results(db_series)
     options = [{"value": name, "label": name} for name in results]
-    selected_portfolio = options[0]["value"]
     warm.set_component_props(page, "po-results-store", {"data": results})
     warm.set_component_props(page, "po-weight-portfolio-select", {"data": options, "value": selected_portfolio})
     warm.set_component_props(page, "po-growth-portfolio-multiselect", {"data": options, "value": [selected_portfolio]})
@@ -574,6 +583,24 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="portopt_statistics_portfolio_switch_visible",
+            targeted_outputs=["po-statistics-grid-content.children"],
+            prepare=lambda: _seed_portopt_result_state(
+                page,
+                resolved_db_series,
+                "statistics",
+                "Harness Portfolio 1",
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-statistics-grid-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="portopt_statistics_visible",
             targeted_outputs=["po-statistics-grid-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
@@ -631,6 +658,45 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             ),
             action=lambda: warm.set_component_value(page, "po-rolling-return-type-select", "cumulative"),
             wait_for_ready=lambda: warm.wait_content_ready(page, "#po-rolling-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_returns_visible",
+            targeted_outputs=["po-returns-grid-content.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
+            action=lambda: warm.set_component_value(page, "po-vis-tabs", "returns"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-returns-grid-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_calendar_visible",
+            targeted_outputs=["po-calendar-content.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
+            action=lambda: warm.set_component_value(page, "po-vis-tabs", "calendar"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-calendar-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_drawdown_visible",
+            targeted_outputs=["po-drawdown-content.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
+            action=lambda: warm.set_component_value(page, "po-vis-tabs", "drawdown"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-drawdown-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )

@@ -4310,7 +4310,11 @@ layout = dmc.Container(
         dcc.Store(id="po-date-range-store", data=None, storage_type="session"),
         dcc.Store(id="po-range-candidates-store", data=None, storage_type="memory"),
         dcc.Store(id="po-common-daily-candidates-store", data=None, storage_type="memory"),
-        dcc.Store(id="po-active-vis-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-returns-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-rolling-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-statistics-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-calendar-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-drawdown-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-series-select-value-store", data=[], storage_type="session"),
         # Optimization stores
         dcc.Store(id="po-opt-window-store", data="rolling", storage_type="session"),
@@ -5706,22 +5710,121 @@ clientside_callback(
 
 
 clientside_callback(
-    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptActiveVisTrigger"),
-    Output("po-active-vis-trigger-store", "data"),
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("returns", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("po-returns-tab-trigger-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-returns-basis-store", "data"),
+    Input("po-periodicity-select", "value"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-results-meta-store", "data"),
+    Input("po-benchmark-assignments-store", "data"),
+    Input("po-long-short-store", "data"),
+    Input("po-date-range-store", "data"),
+    Input("po-vol-scaler-value-store", "data"),
+    Input("po-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("rolling", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("po-rolling-tab-trigger-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
-    Input("po-returns-basis-store", "data"),
     Input("po-rolling-window-select", "value"),
     Input("po-rolling-return-type-select", "value"),
     Input("po-rolling-metric-select", "value"),
     Input("po-rolling-chart-switch", "value"),
     Input("dashmat-saved-series-cache-store", "data"),
     Input("po-use-risk-free-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-results-meta-store", "data"),
+    Input("po-benchmark-assignments-store", "data"),
+    Input("po-long-short-store", "data"),
+    Input("po-date-range-store", "data"),
+    Input("po-vol-scaler-value-store", "data"),
+    Input("po-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("statistics", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("po-statistics-tab-trigger-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-periodicity-select", "value"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("po-use-risk-free-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-results-meta-store", "data"),
+    Input("po-benchmark-assignments-store", "data"),
+    Input("po-long-short-store", "data"),
+    Input("po-date-range-store", "data"),
+    Input("po-vol-scaler-value-store", "data"),
+    Input("po-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("calendar", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("po-calendar-tab-trigger-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-periodicity-select", "value"),
     Input("po-calendar-view-select", "value"),
     Input("po-calendar-series-select", "value"),
+    Input("po-returns-basis-store", "data"),
     Input("po-partial-period-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-results-meta-store", "data"),
+    Input("po-benchmark-assignments-store", "data"),
+    Input("po-long-short-store", "data"),
+    Input("po-date-range-store", "data"),
+    Input("po-vol-scaler-value-store", "data"),
+    Input("po-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("drawdown", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("po-drawdown-tab-trigger-store", "data"),
+    Input("po-vis-tabs", "value"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-periodicity-select", "value"),
     Input("po-drawdown-chart-switch", "value"),
+    Input("po-returns-basis-store", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("po-results-meta-store", "data"),
+    Input("po-benchmark-assignments-store", "data"),
+    Input("po-long-short-store", "data"),
+    Input("po-date-range-store", "data"),
+    Input("po-vol-scaler-value-store", "data"),
+    Input("po-vol-scaling-assignments-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -9143,7 +9246,7 @@ clientside_callback(
 
 @callback(
     Output("po-rolling-content", "children"),
-    Input("po-active-vis-trigger-store", "data"),
+    Input("po-rolling-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("po-periodicity-select", "value"),
@@ -9227,17 +9330,18 @@ def po_render_rolling(
     if active_tab != "rolling" or not results:
         return html.Div()
     result_use_risk_free = _po_result_use_risk_free((results or {}).get(selected_portfolio))
-    perf = _po_get_performance_frames(
-        results,
-        selected_portfolio,
-        raw_data,
-        periodicity=periodicity,
-        benchmark_assignments=bench,
-        long_short_assignments=ls,
-        date_range=date_range,
-        vol_scaler=vol_scaler,
-        vol_scaling_assignments=vol_scaling,
-    )
+    with timed_block("portopt.render_rolling.performance_frames", portfolio=selected_portfolio):
+        perf = _po_get_performance_frames(
+            results,
+            selected_portfolio,
+            raw_data,
+            periodicity=periodicity,
+            benchmark_assignments=bench,
+            long_short_assignments=ls,
+            date_range=date_range,
+            vol_scaler=vol_scaler,
+            vol_scaling_assignments=vol_scaling,
+        )
     calc_periodicity = perf["periodicity"]
     source_df = perf["source_df"]
     ordered_cols = perf["display_cols"]
@@ -9245,22 +9349,26 @@ def po_render_rolling(
         return dmc.Text("No rolling data available.", c="dimmed")
 
     metric = metric or "total_return"
-    rolling_df = calculate_rolling_returns(
-        _frame_dataset_key(source_df),
-        calc_periodicity,
-        tuple(ordered_cols),
-        "total",
-        _mapping_payload(perf["benchmark_map"]),
-        "{}",
-        "null",
-        rolling_window or "1y",
-        return_type or "annualized",
-        metric,
-        0,
-        "{}",
-        _risk_free_json_from_store(saved_series_store),
-        result_use_risk_free,
-    )
+    with timed_block("portopt.render_rolling.resolve_benchmark", portfolio=selected_portfolio) as timing_fields:
+        risk_free_json = _risk_free_json_from_store(saved_series_store)
+        timing_fields["risk_free_bytes"] = len(risk_free_json)
+    with timed_block("portopt.render_rolling.compute", portfolio=selected_portfolio, series_count=len(ordered_cols)):
+        rolling_df = calculate_rolling_returns(
+            _frame_dataset_key(source_df),
+            calc_periodicity,
+            tuple(ordered_cols),
+            "total",
+            _mapping_payload(perf["benchmark_map"]),
+            "{}",
+            "null",
+            rolling_window or "1y",
+            return_type or "annualized",
+            metric,
+            0,
+            "{}",
+            risk_free_json,
+            result_use_risk_free,
+        )
     if rolling_df.empty:
         return dmc.Text("No rolling values available for selected settings.", c="dimmed")
 
@@ -9323,13 +9431,15 @@ def po_render_rolling(
     Output("po-calendar-series-select", "disabled"),
     Output("po-calendar-series-select", "data"),
     Output("po-calendar-series-select", "value"),
-    Input("po-weight-portfolio-select", "value"),
-    Input("po-calendar-view-select", "value"),
+    Input("po-calendar-tab-trigger-store", "data"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-calendar-view-select", "value"),
     State("po-calendar-series-select", "value"),
     State("po-results-store", "data"),
     prevent_initial_call=False,
 )
-def _po_sync_calendar_series_select_callback(selected_portfolio, view_mode, current_value, results):
+def _po_sync_calendar_series_select_callback(trigger_payload, selected_portfolio, view_mode, current_value, results):
+    _po_require_active_vis_trigger(trigger_payload, "calendar")
     return po_sync_calendar_series_select(selected_portfolio, results, view_mode, current_value)
 
 
@@ -9354,7 +9464,7 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
 
 @callback(
     Output("po-calendar-content", "children"),
-    Input("po-active-vis-trigger-store", "data"),
+    Input("po-calendar-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("po-periodicity-select", "value"),
@@ -9531,7 +9641,7 @@ def po_render_calendar(
 
 @callback(
     Output("po-drawdown-content", "children"),
-    Input("po-active-vis-trigger-store", "data"),
+    Input("po-drawdown-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("po-periodicity-select", "value"),
@@ -10031,7 +10141,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
 
 @callback(
     Output("po-statistics-grid-content", "children"),
-    Input("po-active-vis-trigger-store", "data"),
+    Input("po-statistics-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("dashmat-saved-series-cache-store", "data"),
@@ -10096,7 +10206,7 @@ def po_render_statistics(
         return html.Div()
 
     try:
-        with timed_block("portopt.render_statistics", portfolio_count=1):
+        with timed_block("portopt.render_statistics.performance_frames", portfolio=selected_portfolio):
             perf = _po_get_performance_frames(
                 results,
                 selected_portfolio,
@@ -10113,19 +10223,25 @@ def po_render_statistics(
                 return html.Div()
 
             series_names = list(ordered_cols)
-            stats = calculate_statistics_cached(
-                _frame_dataset_key(perf["source_df"]),
-                perf["periodicity"],
-                tuple(series_names),
-                _mapping_payload(perf["benchmark_map"]),
-                "{}",
-                "null",
-                0,
-                "{}",
-                _risk_free_json_from_store(saved_series_store),
-                _spx_json_from_store(saved_series_store),
-                _po_result_use_risk_free(results.get(selected_portfolio)),
-            )
+            with timed_block("portopt.render_statistics.resolve_benchmark", portfolio=selected_portfolio) as timing_fields:
+                risk_free_json = _risk_free_json_from_store(saved_series_store)
+                spx_json = _spx_json_from_store(saved_series_store)
+                timing_fields["risk_free_bytes"] = len(risk_free_json)
+                timing_fields["spx_bytes"] = len(spx_json)
+            with timed_block("portopt.render_statistics.compute", portfolio=selected_portfolio, series_count=len(series_names)):
+                stats = calculate_statistics_cached(
+                    _frame_dataset_key(perf["source_df"]),
+                    perf["periodicity"],
+                    tuple(series_names),
+                    _mapping_payload(perf["benchmark_map"]),
+                    "{}",
+                    "null",
+                    0,
+                    "{}",
+                    risk_free_json,
+                    spx_json,
+                    _po_result_use_risk_free(results.get(selected_portfolio)),
+                )
 
             if not stats:
                 return html.Div()
@@ -10168,7 +10284,7 @@ def po_render_statistics(
 
 @callback(
     Output("po-returns-grid-content", "children"),
-    Input("po-active-vis-trigger-store", "data"),
+    Input("po-returns-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("po-returns-basis-store", "data"),

@@ -193,6 +193,11 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
 
     assert len(scenarios) == len(captured)
     assert (
+        "portopt_statistics_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-statistics-grid-content.children"],
+    ) in captured
+    assert (
         "portopt_statistics_visible",
         "visible_result_tab",
         ["po-statistics-grid-content.children"],
@@ -211,4 +216,19 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
         "portopt_rolling_return_type_visible",
         "visible_result_tab",
         ["po-rolling-content.children"],
+    ) in captured
+    assert (
+        "portopt_returns_visible",
+        "visible_result_tab",
+        ["po-returns-grid-content.children"],
+    ) in captured
+    assert (
+        "portopt_calendar_visible",
+        "visible_result_tab",
+        ["po-calendar-content.children"],
+    ) in captured
+    assert (
+        "portopt_drawdown_visible",
+        "visible_result_tab",
+        ["po-drawdown-content.children"],
     ) in captured

@@ -629,9 +629,16 @@ def test_po_common_daily_button_uses_shared_clientside_helper():
     assert "function commonDailyButtonDisabled(candidates, commonDailyCandidates, periodicityOptions)" in js_text
 
 
-def test_po_active_vis_trigger_store_exists(page_modules):
+def test_po_result_family_trigger_stores_exist(page_modules):
     _, portopt = page_modules
-    assert _find_component_by_id(portopt.layout, "po-active-vis-trigger-store") is not None
+    for store_id in (
+        "po-returns-tab-trigger-store",
+        "po-rolling-tab-trigger-store",
+        "po-statistics-tab-trigger-store",
+        "po-calendar-tab-trigger-store",
+        "po-drawdown-tab-trigger-store",
+    ):
+        assert _find_component_by_id(portopt.layout, store_id) is not None
 
 
 def test_po_require_active_vis_trigger_rejects_mismatched_tab(page_modules):
@@ -741,17 +748,40 @@ def test_po_matrix_grid_uses_clientside_builder():
     assert "d3.format(',.4f')" in js_text
 
 
-def test_po_hidden_vis_tabs_use_shared_trigger_store():
+def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
 
-    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptActiveVisTrigger")' in page_text
-    assert 'Output("po-active-vis-trigger-store", "data")' in page_text
-    assert "function portoptActiveVisTrigger(activeTab" in js_text
-    for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown"):
-        assert f'"{tab_name}"' in js_text
+    assert 'Output("po-active-vis-trigger-store", "data")' not in page_text
+    assert "function analyticsTabTrigger(" in js_text
     for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown"):
         assert f'_po_require_active_vis_trigger(trigger_payload, "{tab_name}")' in page_text
+    assert 'Output("po-returns-tab-trigger-store", "data")' in page_text
+    assert 'Output("po-rolling-tab-trigger-store", "data")' in page_text
+    assert 'Output("po-statistics-tab-trigger-store", "data")' in page_text
+    assert 'Output("po-calendar-tab-trigger-store", "data")' in page_text
+    assert 'Output("po-drawdown-tab-trigger-store", "data")' in page_text
+    assert 'analyticsTabTrigger("returns", activeTab, initialTabReady, true)' in page_text
+    assert 'analyticsTabTrigger("rolling", activeTab, initialTabReady, true)' in page_text
+    assert 'analyticsTabTrigger("statistics", activeTab, initialTabReady, true)' in page_text
+    assert 'analyticsTabTrigger("calendar", activeTab, initialTabReady, true)' in page_text
+    assert 'analyticsTabTrigger("drawdown", activeTab, initialTabReady, true)' in page_text
+    assert 'Input("po-returns-tab-trigger-store", "data")' in page_text
+    assert 'Input("po-rolling-tab-trigger-store", "data")' in page_text
+    assert 'Input("po-statistics-tab-trigger-store", "data")' in page_text
+    assert 'Input("po-calendar-tab-trigger-store", "data")' in page_text
+    assert 'Input("po-drawdown-tab-trigger-store", "data")' in page_text
+
+
+def test_portopt_statistics_and_rolling_have_substep_timing_breakdown():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+
+    assert '"portopt.render_statistics.performance_frames"' in page_text
+    assert '"portopt.render_statistics.resolve_benchmark"' in page_text
+    assert '"portopt.render_statistics.compute"' in page_text
+    assert '"portopt.render_rolling.performance_frames"' in page_text
+    assert '"portopt.render_rolling.resolve_benchmark"' in page_text
+    assert '"portopt.render_rolling.compute"' in page_text
 
 
 def test_portopt_modal_harness_tracks_dash_update_attribution():
