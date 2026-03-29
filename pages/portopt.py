@@ -648,6 +648,22 @@ def _po_collect_portfolio_excess_returns(results, selected_portfolios=None) -> p
     return combined
 
 
+def _po_single_result_context(selected_portfolio, active_entry) -> dict:
+    if not selected_portfolio or not isinstance(active_entry, dict):
+        return {}
+    return {selected_portfolio: active_entry}
+
+
+def _po_resolve_active_performance_entry(selected_portfolio, active_entry_or_results):
+    if not isinstance(active_entry_or_results, dict):
+        return None
+    if "reporting_returns_json" in active_entry_or_results or "run_inputs" in active_entry_or_results or "config" in active_entry_or_results:
+        return active_entry_or_results
+    if selected_portfolio and selected_portfolio in active_entry_or_results and isinstance(active_entry_or_results.get(selected_portfolio), dict):
+        return active_entry_or_results.get(selected_portfolio)
+    return None
+
+
 @cache_config.cache.memoize(timeout=0)
 def _po_build_performance_source_cached(
     selected_portfolio,
@@ -4391,6 +4407,7 @@ layout = dmc.Container(
         # Results stores
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-results-meta-store", data={"has_results": False, "count": 0}, storage_type="memory"),
+        dcc.Store(id="po-active-performance-entry-store", data=None, storage_type="memory"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
         dcc.Store(
@@ -5875,7 +5892,7 @@ clientside_callback(
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
     State("po-calendar-render-signature-store", "data"),
     prevent_initial_call=True,
 )
@@ -6750,6 +6767,15 @@ clientside_callback(
 def po_sync_results_meta(results):
     return _po_results_meta(results)
 
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptProjectActivePerformanceEntry"),
+    Output("po-active-performance-entry-store", "data"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
+    prevent_initial_call=False,
+)
 
 clientside_callback(
     ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptToggleUiElements"),
@@ -9500,7 +9526,7 @@ clientside_callback(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    State("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_rolling_callback(
@@ -9521,11 +9547,11 @@ def _po_render_rolling_callback(
     vol_scaler,
     vol_scaling,
     theme,
-    results,
+    active_entry,
 ):
     _po_require_active_vis_trigger(trigger_payload, "rolling")
     return po_render_rolling(
-        results,
+        active_entry,
         active_tab,
         selected_portfolio,
         periodicity,
@@ -9546,7 +9572,7 @@ def _po_render_rolling_callback(
 
 
 def po_render_rolling(
-    results,
+    active_entry,
     active_tab,
     selected_portfolio,
     periodicity,
@@ -9564,12 +9590,14 @@ def po_render_rolling(
     vol_scaling,
     theme,
 ):
-    if active_tab != "rolling" or not results:
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry)
+    if active_tab != "rolling" or active_entry is None:
         return html.Div()
-    result_use_risk_free = _po_result_use_risk_free((results or {}).get(selected_portfolio))
+    active_results = _po_single_result_context(selected_portfolio, active_entry)
+    result_use_risk_free = _po_result_use_risk_free(active_entry)
     with timed_block("portopt.render_rolling.performance_frames", portfolio=selected_portfolio):
         perf = _po_get_performance_frames(
-            results,
+            active_results,
             selected_portfolio,
             dataset_source,
             periodicity=periodicity,
@@ -9664,13 +9692,15 @@ def po_render_rolling(
     return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
 
-def po_sync_calendar_series_select(selected_portfolio, results, view_mode, current_value):
-    if not selected_portfolio or not results or selected_portfolio not in results:
+def po_sync_calendar_series_select(selected_portfolio, active_entry, view_mode, current_value):
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry)
+    if not selected_portfolio or not isinstance(active_entry, dict):
         return True, [], None
 
-    config = ((results or {}).get(selected_portfolio) or {}).get("config", {}) or {}
+    run_inputs = active_entry.get("run_inputs") if isinstance(active_entry.get("run_inputs"), dict) else {}
+    config = active_entry.get("config") if isinstance(active_entry.get("config"), dict) else {}
     ordered_cols = [selected_portfolio]
-    for name in config.get("selected_series") or []:
+    for name in (run_inputs.get("selected_series") or config.get("selected_series") or []):
         if name and name not in ordered_cols:
             ordered_cols.append(name)
 
@@ -9687,17 +9717,17 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
     Output("po-calendar-content", "children"),
     Input("po-calendar-render-signature-store", "data"),
     State("po-vis-tabs", "value"),
-    State("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_calendar_callback(
     render_signature,
     active_tab,
-    results,
+    active_entry,
 ):
     _po_require_active_vis_trigger(render_signature, "calendar")
     return po_render_calendar(
-        results,
+        active_entry,
         active_tab,
         render_signature.get("portfolio"),
         render_signature.get("periodicity"),
@@ -9715,7 +9745,7 @@ def _po_render_calendar_callback(
 
 
 def po_render_calendar(
-    results,
+    active_entry,
     active_tab,
     selected_portfolio,
     periodicity,
@@ -9730,10 +9760,12 @@ def po_render_calendar(
     vol_scaling,
     partial_mode="partial",
 ):
-    if active_tab != "calendar" or not results:
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry)
+    if active_tab != "calendar" or active_entry is None:
         return html.Div()
+    active_results = _po_single_result_context(selected_portfolio, active_entry)
     perf = _po_get_performance_frames(
-        results,
+        active_results,
         selected_portfolio,
         raw_data,
         periodicity,
@@ -9851,7 +9883,7 @@ def po_render_calendar(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    State("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_drawdown_callback(
@@ -9868,11 +9900,11 @@ def _po_render_drawdown_callback(
     vol_scaler,
     vol_scaling,
     theme,
-    results,
+    active_entry,
 ):
     _po_require_active_vis_trigger(trigger_payload, "drawdown")
     return po_render_drawdown(
-        results,
+        active_entry,
         active_tab,
         selected_portfolio,
         periodicity,
@@ -9889,7 +9921,7 @@ def _po_render_drawdown_callback(
 
 
 def po_render_drawdown(
-    results,
+    active_entry,
     active_tab,
     selected_portfolio,
     periodicity,
@@ -9903,10 +9935,12 @@ def po_render_drawdown(
     vol_scaling,
     theme,
 ):
-    if active_tab != "drawdown" or not results:
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry)
+    if active_tab != "drawdown" or active_entry is None:
         return html.Div()
+    active_results = _po_single_result_context(selected_portfolio, active_entry)
     perf = _po_get_performance_frames(
-        results,
+        active_results,
         selected_portfolio,
         raw_data,
         periodicity,
@@ -10363,7 +10397,7 @@ def po_render_attribution_views(
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_statistics_callback(
@@ -10379,11 +10413,11 @@ def _po_render_statistics_callback(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
-    results=None,
+    active_entry=None,
 ):
     _po_require_active_vis_trigger(trigger_payload, "statistics")
     return po_render_statistics(
-        results,
+        active_entry,
         active_tab,
         selected_portfolio,
         shared_benchmark_source,
@@ -10399,7 +10433,7 @@ def _po_render_statistics_callback(
 
 
 def po_render_statistics(
-    results,
+    active_entry,
     active_tab,
     selected_portfolio,
     shared_benchmark_source,
@@ -10412,13 +10446,15 @@ def po_render_statistics(
     vol_scaler=0,
     vol_scaling=None,
 ):
-    if active_tab != "statistics" or not results:
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry)
+    if active_tab != "statistics" or active_entry is None:
         return html.Div()
+    active_results = _po_single_result_context(selected_portfolio, active_entry)
 
     try:
         with timed_block("portopt.render_statistics.performance_frames", portfolio=selected_portfolio):
             perf = _po_get_performance_frames(
-                results,
+                active_results,
                 selected_portfolio,
                 dataset_source,
                 periodicity,
@@ -10450,7 +10486,7 @@ def po_render_statistics(
                     "{}",
                     risk_free_json,
                     spx_json,
-                    _po_result_use_risk_free(results.get(selected_portfolio)),
+                    _po_result_use_risk_free(active_entry),
                 )
 
             if not stats:
@@ -10505,7 +10541,7 @@ def po_render_statistics(
     State("po-date-range-store", "data"),
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
-    State("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_returns_callback(
@@ -10520,11 +10556,11 @@ def _po_render_returns_callback(
     date_range=None,
     vol_scaler=0,
     vol_scaling=None,
-    results=None,
+    active_entry=None,
 ):
     _po_require_active_vis_trigger(trigger_payload, "returns")
     return po_render_returns(
-        results,
+        active_entry,
         active_tab,
         selected_portfolio,
         returns_basis,
@@ -10539,7 +10575,7 @@ def _po_render_returns_callback(
 
 
 def po_render_returns(
-    results,
+    active_entry,
     active_tab,
     selected_portfolio,
     returns_basis="total",
@@ -10551,12 +10587,14 @@ def po_render_returns(
     vol_scaler=0,
     vol_scaling=None,
 ):
-    if active_tab != "returns" or not results:
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry)
+    if active_tab != "returns" or active_entry is None:
         return html.Div()
+    active_results = _po_single_result_context(selected_portfolio, active_entry)
 
     try:
         perf = _po_get_performance_frames(
-            results,
+            active_results,
             selected_portfolio,
             raw_data,
             periodicity,

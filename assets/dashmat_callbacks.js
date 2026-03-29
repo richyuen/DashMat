@@ -3419,7 +3419,7 @@
     dateRange,
     volScaler,
     volScalingAssignments,
-    results,
+    activeEntry,
     currentSignature
   ) {
     const nu = noUpdate();
@@ -3430,10 +3430,13 @@
     let nextDisabled = true;
     let nextOptions = [];
     let nextValue = null;
-    if (selectedPortfolio && results && Object.prototype.hasOwnProperty.call(results, selectedPortfolio)) {
-      const config = ((((results || {})[selectedPortfolio]) || {}).config) || {};
+    if (selectedPortfolio && activeEntry && typeof activeEntry === "object") {
+      const runInputs = activeEntry.run_inputs && typeof activeEntry.run_inputs === "object" ? activeEntry.run_inputs : {};
+      const config = activeEntry.config && typeof activeEntry.config === "object" ? activeEntry.config : {};
       const orderedCols = [selectedPortfolio];
-      const selectedSeries = Array.isArray(config.selected_series) ? config.selected_series : [];
+      const selectedSeries = Array.isArray(runInputs.selected_series)
+        ? runInputs.selected_series
+        : (Array.isArray(config.selected_series) ? config.selected_series : []);
       selectedSeries.forEach(function(name) {
         if (name && orderedCols.indexOf(name) === -1) {
           orderedCols.push(name);
@@ -3777,6 +3780,24 @@
     return nextEntry;
   }
 
+  function portoptProjectActivePerformanceEntry(selectedPortfolio, results, currentEntry) {
+    const sourceEntry = (selectedPortfolio && results && results[selectedPortfolio]) ? results[selectedPortfolio] : null;
+    if (!sourceEntry || typeof sourceEntry !== "object") {
+      return currentEntry === null ? noUpdate() : null;
+    }
+    const nextEntry = {
+      reporting_returns_json: typeof sourceEntry.reporting_returns_json === "string" ? sourceEntry.reporting_returns_json : "",
+      benchmark_returns_json: typeof sourceEntry.benchmark_returns_json === "string" ? sourceEntry.benchmark_returns_json : "",
+      run_inputs: sourceEntry.run_inputs && typeof sourceEntry.run_inputs === "object" ? sourceEntry.run_inputs : {},
+      config: sourceEntry.config && typeof sourceEntry.config === "object" ? sourceEntry.config : {},
+      risk_free_meta: sourceEntry.risk_free_meta && typeof sourceEntry.risk_free_meta === "object" ? sourceEntry.risk_free_meta : {}
+    };
+    if (sameValue(currentEntry, nextEntry)) {
+      return noUpdate();
+    }
+    return nextEntry;
+  }
+
   function patchPlotlyTheme(colorScheme) {
     var isDark = colorScheme === "dark";
     var template = isDark ? "plotly_dark" : "plotly_white";
@@ -3867,6 +3888,7 @@
       portoptControlSync: portoptControlSync,
       portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
       portoptMarkVisitedTabLoaded: portoptMarkVisitedTabLoaded,
+      portoptProjectActivePerformanceEntry: portoptProjectActivePerformanceEntry,
       regressionClearRawDbRows: regressionClearRawDbRows,
       syncPortoptSeriesModalGrid: syncPortoptSeriesModalGrid,
       portoptViewSync: portoptViewSync,

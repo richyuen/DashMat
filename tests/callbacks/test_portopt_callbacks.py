@@ -127,6 +127,7 @@ def test_portopt_clientside_callback_registrations_present_for_migrated_helpers(
         "portoptToggleRawDivideBy",
         "portoptSyncReturnsBasisFromMirrors",
         "portoptSyncReturnsBasisMirrors",
+        "portoptProjectActivePerformanceEntry",
         "portoptSyncNameWithModel",
         "portoptClearReturns",
         "portoptUpdateMatrixUi",
@@ -657,6 +658,7 @@ def test_po_common_daily_button_uses_shared_clientside_helper():
 def test_po_result_family_trigger_stores_exist(page_modules):
     _, portopt = page_modules
     for store_id in (
+        "po-active-performance-entry-store",
         "po-returns-tab-trigger-store",
         "po-rolling-tab-trigger-store",
         "po-statistics-tab-trigger-store",
@@ -852,12 +854,17 @@ def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
         callback_block = callback_block.rsplit("@callback(", 1)[-1]
         assert 'State("dashmat-raw-data-identity-store", "data")' in callback_block
         assert 'State("dashmat-raw-data-store", "data")' not in callback_block
+        if callback_name != "def _po_render_frontier_views_callback":
+            assert 'State("po-active-performance-entry-store", "data")' in callback_block
+            assert 'State("po-results-store", "data")' not in callback_block
 
     calendar_callback_block = page_text.split("def _po_render_calendar_callback", 1)[0]
     calendar_callback_block = calendar_callback_block.rsplit("@callback(", 1)[-1]
     assert 'Input("po-calendar-render-signature-store", "data")' in calendar_callback_block
     assert 'State("dashmat-raw-data-store", "data")' not in calendar_callback_block
     assert 'State("dashmat-raw-data-identity-store", "data")' not in calendar_callback_block
+    assert 'State("po-active-performance-entry-store", "data")' in calendar_callback_block
+    assert 'State("po-results-store", "data")' not in calendar_callback_block
 
     assert 'def _dataset_key_from_source(raw_data_source)' in page_text
     assert 'def _po_compute_frontier_snapshot_cached(\n    selected_portfolio: str,\n    dataset_key: str,' in page_text
@@ -1031,6 +1038,34 @@ def test_portopt_calendar_controls_use_clientside_callback():
     assert "function portoptSyncCalendarControls(" in js_text
     assert "def _po_sync_calendar_series_select_callback" not in page_text
     assert 'Output("po-calendar-render-signature-store", "data")' in page_text
+    assert 'State("po-active-performance-entry-store", "data")' in page_text
+
+
+def test_portopt_project_active_performance_entry_clientside():
+    entry = {
+        "reporting_returns_json": "reporting-json",
+        "benchmark_returns_json": "benchmark-json",
+        "optimization_returns_json": "ignore-me",
+        "window_weights": [{"weights": {"Asset_A": 1.0}}],
+        "run_inputs": {"selected_series": ["Asset_A"]},
+        "config": {"selected_series": ["Asset_A"], "periodicity": "daily"},
+        "risk_free_meta": {"enabled": False},
+    }
+
+    result = _run_dashmat_callbacks_js(
+        f'ns.portoptProjectActivePerformanceEntry("Portfolio A", {json.dumps({"Portfolio A": entry})}, null)'
+    )
+
+    assert result == {
+        "reporting_returns_json": "reporting-json",
+        "benchmark_returns_json": "benchmark-json",
+        "run_inputs": {"selected_series": ["Asset_A"]},
+        "config": {"selected_series": ["Asset_A"], "periodicity": "daily"},
+        "risk_free_meta": {"enabled": False},
+    }
+    assert _run_dashmat_callbacks_js(
+        f'ns.portoptProjectActivePerformanceEntry("Portfolio A", {json.dumps({"Portfolio A": entry})}, {json.dumps(result)})'
+    ) == "__NO_UPDATE__"
 
 
 def test_portopt_sync_calendar_controls_disables_annual_view_and_clears_value():
@@ -1053,7 +1088,7 @@ def test_portopt_sync_calendar_controls_disables_annual_view_and_clears_value():
           {start: "2020-01-01", end: "2020-12-31"},
           0,
           {"Portfolio A": false},
-          {"Portfolio A": {config: {selected_series: ["Asset_A", "Asset_B"]}}},
+          {config: {selected_series: ["Asset_A", "Asset_B"]}},
           null
         )
         """
@@ -1095,7 +1130,7 @@ def test_portopt_sync_calendar_controls_preserves_valid_monthly_series_and_no_up
           {start: "2020-01-01", end: "2020-12-31"},
           5,
           {"Portfolio A": false},
-          {"Portfolio A": {config: {selected_series: ["Asset_A"]}}},
+          {config: {selected_series: ["Asset_A"]}},
           {
             tab: "calendar",
             portfolio: "Portfolio A",
