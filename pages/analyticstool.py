@@ -5100,6 +5100,8 @@ layout = dmc.Container(
         dcc.Store(id="at-regime-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-conditional-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-correlogram-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-factor-def-load-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-regime-def-load-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-factor-preview-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-regime-preview-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-state-ready-store", data=False, storage_type="session"),
@@ -5492,7 +5494,8 @@ def sync_at_returns_type_mirrors(
     )
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsRestoreSecondaryControls"),
     Output("at-rolling-window-select", "value", allow_duplicate=True),
     Output("at-rolling-metric-select", "value", allow_duplicate=True),
     Output("at-rolling-return-type-select", "value", allow_duplicate=True),
@@ -5516,12 +5519,6 @@ def sync_at_returns_type_mirrors(
     Output("at-monthly-view-checkbox", "value", allow_duplicate=True),
     Input("at-main-tabs", "value"),
     Input("at-state-ready-store", "data"),
-    State("dashmat-raw-data-meta-store", "data"),
-    State("at-periodicity-value-store", "data"),
-    State("at-series-select-value-store", "data"),
-    State("at-returns-type-value-store", "data"),
-    State("at-vol-scaler-value-store", "data"),
-    State("at-active-tab-store", "data"),
     State("at-rolling-window-store", "data"),
     State("at-rolling-metric-store", "data"),
     State("at-rolling-return-type-store", "data"),
@@ -5541,9 +5538,6 @@ def sync_at_returns_type_mirrors(
     State("at-conditional-display-mode-store", "data"),
     State("at-regime-detail-display-mode-store", "data"),
     State("at-monthly-view-store", "data"),
-    State("at-series-order-store", "data"),
-    State("dashmat-pending-new-series-store", "data"),
-    State("at-page-visited-store", "data"),
     State("at-rolling-window-select", "value"),
     State("at-rolling-metric-select", "value"),
     State("at-rolling-return-type-select", "value"),
@@ -5570,12 +5564,6 @@ def sync_at_returns_type_mirrors(
 def at_restore_secondary_controls(
     active_tab,
     state_ready,
-    raw_meta,
-    stored_periodicity,
-    stored_series,
-    stored_returns,
-    stored_vol,
-    stored_tab,
     stored_roll_win,
     stored_roll_metric,
     stored_roll_type,
@@ -5595,9 +5583,6 @@ def at_restore_secondary_controls(
     stored_conditional_display_mode,
     stored_regime_display_mode,
     stored_monthly_view,
-    stored_order,
-    po_origin_series,
-    page_visited,
     current_roll_win,
     current_roll_metric,
     current_roll_type,
@@ -5623,38 +5608,21 @@ def at_restore_secondary_controls(
     if not state_ready:
         raise PreventUpdate
 
-    resolved = _at_resolve_restore_state(
-        raw_meta,
-        stored_periodicity,
-        stored_series,
-        stored_returns,
-        stored_vol,
-        stored_tab,
-        stored_roll_win,
-        stored_roll_metric,
-        stored_roll_type,
-        stored_roll_chart,
-        stored_dd_chart,
-        stored_gr_chart,
-        stored_monthly_view,
-        stored_order,
-        po_origin_series,
-        page_visited,
-    )
+    roll_metric = stored_roll_metric if stored_roll_metric else "total_return"
     outputs = [no_update] * 21
     if active_tab == "rolling":
         outputs[:6] = [
-            _no_update_if_equal(resolved["roll_win"], current_roll_win),
-            _no_update_if_equal(resolved["roll_metric"], current_roll_metric),
-            _no_update_if_equal(resolved["roll_type"], current_roll_type),
-            _no_update_if_equal(resolved["roll_type_disabled"], current_roll_type_disabled),
-            _no_update_if_equal(resolved["roll_type_style"], current_roll_type_style),
-            _no_update_if_equal(resolved["roll_chart"], current_roll_chart),
+            _no_update_if_equal(stored_roll_win if stored_roll_win else "1y", current_roll_win),
+            _no_update_if_equal(roll_metric, current_roll_metric),
+            _no_update_if_equal(stored_roll_type if stored_roll_type else "annualized", current_roll_type),
+            _no_update_if_equal(roll_metric not in ["total_return", "excess_return"], current_roll_type_disabled),
+            _no_update_if_equal({} if roll_metric in ["total_return", "excess_return"] else {"opacity": 0.5, "pointerEvents": "none"}, current_roll_type_style),
+            _no_update_if_equal(stored_roll_chart if stored_roll_chart is not None else "chart", current_roll_chart),
         ]
     elif active_tab == "drawdown":
-        outputs[6] = _no_update_if_equal(resolved["dd_chart"], current_dd_chart)
+        outputs[6] = _no_update_if_equal(stored_dd_chart if stored_dd_chart is not None else "chart", current_dd_chart)
     elif active_tab == "growth":
-        outputs[7] = _no_update_if_equal(resolved["gr_chart"], current_gr_chart)
+        outputs[7] = _no_update_if_equal(stored_gr_chart if stored_gr_chart is not None else "chart", current_gr_chart)
     elif active_tab == "factor_analysis":
         target_mode = stored_factor_mode if stored_factor_mode in {"box", "scatter", "detail", "qq"} else "box"
         target_quantiles = _coerce_factor_quantiles(stored_factor_quantiles, default=5)
@@ -5680,7 +5648,7 @@ def at_restore_secondary_controls(
         target_regime = stored_regime_display_mode if stored_regime_display_mode in {"summary", "detail"} else "summary"
         outputs[19] = _no_update_if_equal(target_regime, current_regime_display_mode)
     elif active_tab == "calendar":
-        outputs[20] = _no_update_if_equal(resolved["monthly_view"], current_monthly_view)
+        outputs[20] = _no_update_if_equal(stored_monthly_view if stored_monthly_view is not None else "annual", current_monthly_view)
 
     if all(output is no_update for output in outputs):
         raise PreventUpdate
@@ -5691,12 +5659,14 @@ def at_restore_secondary_controls(
     Output("at-factor-def-db-available-store", "data", allow_duplicate=True),
     Output("at-factor-definitions-db-store", "data", allow_duplicate=True),
     Output("at-factor-def-loaded-store", "data", allow_duplicate=True),
-    Input("at-main-tabs", "value"),
+    Input("at-factor-def-load-trigger-store", "data"),
     State("at-factor-def-loaded-store", "data"),
     prevent_initial_call=True,
 )
-def at_lazy_load_factor_definitions(active_tab, loaded):
-    if active_tab not in {"factor_analysis", "conditional_returns"} or loaded:
+def at_lazy_load_factor_definitions(trigger_payload, loaded):
+    if loaded:
+        raise PreventUpdate
+    if not isinstance(trigger_payload, dict) or str(trigger_payload.get("tab") or "") not in {"factor_analysis", "conditional_returns"}:
         raise PreventUpdate
 
     factor_available = False
@@ -5716,12 +5686,14 @@ def at_lazy_load_factor_definitions(active_tab, loaded):
     Output("at-regime-def-db-available-store", "data", allow_duplicate=True),
     Output("at-regime-definitions-db-store", "data", allow_duplicate=True),
     Output("at-regime-def-loaded-store", "data", allow_duplicate=True),
-    Input("at-main-tabs", "value"),
+    Input("at-regime-def-load-trigger-store", "data"),
     State("at-regime-def-loaded-store", "data"),
     prevent_initial_call=True,
 )
-def at_lazy_load_regime_definitions(active_tab, loaded):
-    if active_tab != "regime_analysis" or loaded:
+def at_lazy_load_regime_definitions(trigger_payload, loaded):
+    if loaded:
+        raise PreventUpdate
+    if not isinstance(trigger_payload, dict) or str(trigger_payload.get("tab") or "") != "regime_analysis":
         raise PreventUpdate
 
     regime_available = False
@@ -6158,6 +6130,26 @@ clientside_callback(
     Input("at-conditional-step-unit-select", "value"),
     Input("at-factor-series-select-conditional", "value"),
     Input("at-factor-transform-select-conditional", "value"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsFactorDefinitionLoadTrigger"),
+    Output("at-factor-def-load-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-factor-def-loaded-store", "data"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsRegimeDefinitionLoadTrigger"),
+    Output("at-regime-def-load-trigger-store", "data"),
+    Input("at-main-tabs", "value"),
+    Input("at-initial-tab-render-ready-store", "data"),
+    Input("at-state-ready-store", "data"),
+    Input("at-regime-def-loaded-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -9927,7 +9919,8 @@ def update_correlogram_target_key(
     return next_key
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsCorrelogramLoadingDisplay"),
     Output("at-loading-correlogram", "display"),
     Input("at-main-tabs", "value"),
     Input("at-correlogram-target-key-store", "data"),
@@ -11694,7 +11687,8 @@ def update_conditional_returns_target_key(
     return next_key
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsConditionalReturnsLoadingDisplay"),
     Output("at-loading-conditional-returns", "display"),
     Input("at-main-tabs", "value"),
     Input("at-state-ready-store", "data"),

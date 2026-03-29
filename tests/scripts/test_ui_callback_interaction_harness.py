@@ -214,6 +214,16 @@ def test_run_regression_scenarios_includes_visible_result_select_guards(monkeypa
         "visible_result_tab",
         ["reg-scatter-content.children"],
     ) in captured
+    assert (
+        "regression_calendar_visible",
+        "visible_result_tab",
+        ["reg-calendar-content.children"],
+    ) in captured
+    assert (
+        "regression_calendar_monthly_visible",
+        "visible_result_tab",
+        ["reg-calendar-content.children"],
+    ) in captured
 
 
 def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch):

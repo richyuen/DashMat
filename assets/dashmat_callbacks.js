@@ -3505,6 +3505,165 @@
     ];
   }
 
+  function analyticsRestoreSecondaryControls(
+    activeTab,
+    stateReady,
+    storedRollWin,
+    storedRollMetric,
+    storedRollType,
+    storedRollChart,
+    storedDdChart,
+    storedGrChart,
+    storedFactorMode,
+    storedFactorQuantiles,
+    storedFactorTransform,
+    storedFactorQqReference,
+    storedConditionalView,
+    storedConditionalComparator,
+    storedConditionalThreshold,
+    storedConditionalWindowConversion,
+    storedConditionalStep,
+    storedConditionalStepUnit,
+    storedConditionalDisplayMode,
+    storedRegimeDisplayMode,
+    storedMonthlyView,
+    currentRollWin,
+    currentRollMetric,
+    currentRollType,
+    currentRollTypeDisabled,
+    currentRollTypeStyle,
+    currentRollChart,
+    currentDdChart,
+    currentGrChart,
+    currentFactorMode,
+    currentFactorQuantiles,
+    currentFactorTransform,
+    currentFactorQqReference,
+    currentConditionalView,
+    currentConditionalComparator,
+    currentConditionalThreshold,
+    currentConditionalWindowConversion,
+    currentConditionalStep,
+    currentConditionalStepUnit,
+    currentConditionalDisplayMode,
+    currentRegimeDisplayMode,
+    currentMonthlyView
+  ) {
+    const nu = noUpdate();
+    const outputs = new Array(21).fill(nu);
+    if (!stateReady) {
+      return outputs;
+    }
+
+    function sync(currentValue, nextValue) {
+      return sameValue(currentValue, nextValue) ? nu : nextValue;
+    }
+
+    function coercePositiveInt(value, defaultValue) {
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed)) {
+        return defaultValue;
+      }
+      return Math.max(defaultValue, parsed);
+    }
+
+    const tab = String(activeTab || "");
+    const rollMetric = storedRollMetric || "total_return";
+    const rollTypeDisabled = !(rollMetric === "total_return" || rollMetric === "excess_return");
+    const rollTypeStyle = rollTypeDisabled ? { opacity: 0.5, pointerEvents: "none" } : {};
+
+    if (tab === "rolling") {
+      outputs[0] = sync(currentRollWin, storedRollWin || "1y");
+      outputs[1] = sync(currentRollMetric, rollMetric);
+      outputs[2] = sync(currentRollType, storedRollType || "annualized");
+      outputs[3] = sync(currentRollTypeDisabled, rollTypeDisabled);
+      outputs[4] = sync(currentRollTypeStyle, rollTypeStyle);
+      outputs[5] = sync(currentRollChart, storedRollChart == null ? "chart" : storedRollChart);
+    } else if (tab === "drawdown") {
+      outputs[6] = sync(currentDdChart, storedDdChart == null ? "chart" : storedDdChart);
+    } else if (tab === "growth") {
+      outputs[7] = sync(currentGrChart, storedGrChart == null ? "chart" : storedGrChart);
+    } else if (tab === "factor_analysis") {
+      outputs[8] = sync(currentFactorMode, ["box", "scatter", "detail", "qq"].indexOf(storedFactorMode) !== -1 ? storedFactorMode : "box");
+      outputs[9] = sync(currentFactorQuantiles, coercePositiveInt(storedFactorQuantiles, 5));
+      outputs[10] = sync(currentFactorTransform, storedFactorTransform === "zscore" ? "zscore" : "raw");
+      outputs[11] = sync(currentFactorQqReference, storedFactorQqReference === "reference" ? "reference" : "normal");
+    } else if (tab === "conditional_returns") {
+      outputs[12] = sync(currentConditionalView, ["coincident", "forward"].indexOf(storedConditionalView) !== -1 ? storedConditionalView : "forward");
+      outputs[13] = sync(currentConditionalComparator, ["le", "ge"].indexOf(storedConditionalComparator) !== -1 ? storedConditionalComparator : "le");
+      outputs[14] = sync(currentConditionalThreshold, storedConditionalThreshold == null ? 0 : storedConditionalThreshold);
+      outputs[15] = sync(currentConditionalWindowConversion, ["compound", "end", "average", "sum"].indexOf(storedConditionalWindowConversion) !== -1 ? storedConditionalWindowConversion : "compound");
+      outputs[16] = sync(currentConditionalStep, coercePositiveInt(storedConditionalStep, 1));
+      outputs[17] = sync(currentConditionalStepUnit, ["periods", "months"].indexOf(storedConditionalStepUnit) !== -1 ? storedConditionalStepUnit : "months");
+      outputs[18] = sync(currentConditionalDisplayMode, ["summary", "detail"].indexOf(storedConditionalDisplayMode) !== -1 ? storedConditionalDisplayMode : "summary");
+    } else if (tab === "regime_analysis") {
+      outputs[19] = sync(currentRegimeDisplayMode, ["summary", "detail"].indexOf(storedRegimeDisplayMode) !== -1 ? storedRegimeDisplayMode : "summary");
+    } else if (tab === "calendar") {
+      outputs[20] = sync(currentMonthlyView, storedMonthlyView == null ? "annual" : storedMonthlyView);
+    }
+
+    return outputs;
+  }
+
+  function analyticsFactorDefinitionLoadTrigger(activeTab, initialTabReady, stateReady, loaded) {
+    if (loaded) {
+      return noUpdate();
+    }
+    if (initialTabReady === false || !stateReady) {
+      return noUpdate();
+    }
+    const tab = String(activeTab || "statistics");
+    if (tab !== "factor_analysis" && tab !== "conditional_returns") {
+      return noUpdate();
+    }
+    return {
+      tab: tab,
+      stamp: Date.now(),
+      reason: triggeredId() || "unknown"
+    };
+  }
+
+  function analyticsRegimeDefinitionLoadTrigger(activeTab, initialTabReady, stateReady, loaded) {
+    if (loaded) {
+      return noUpdate();
+    }
+    if (initialTabReady === false || !stateReady) {
+      return noUpdate();
+    }
+    const tab = String(activeTab || "statistics");
+    if (tab !== "regime_analysis") {
+      return noUpdate();
+    }
+    return {
+      tab: tab,
+      stamp: Date.now(),
+      reason: triggeredId() || "unknown"
+    };
+  }
+
+  function analyticsCorrelogramLoadingDisplay(activeTab, targetKey, renderedKey) {
+    if (activeTab !== "correlogram") {
+      return "auto";
+    }
+    if (targetKey && targetKey !== renderedKey) {
+      return "show";
+    }
+    return "auto";
+  }
+
+  function analyticsConditionalReturnsLoadingDisplay(activeTab, stateReady, initialTabReady, targetKey, renderedKey) {
+    if (activeTab !== "conditional_returns") {
+      return "hide";
+    }
+    if (!initialTabReady || !stateReady) {
+      return "show";
+    }
+    if (targetKey && targetKey !== renderedKey) {
+      return "show";
+    }
+    return "hide";
+  }
+
   function regressionSyncAnovaWindowOptions(selected, results, currentOptions, currentWindow, currentDisabled) {
     let nextOptions = [];
     let nextValue = null;
@@ -3618,8 +3777,13 @@
       analyticsDateRangeButtons: analyticsDateRangeButtons,
       analyticsDateRangeStoreUpdate: analyticsDateRangeStoreUpdate,
       analyticsResolveInitialRange: analyticsResolveInitialRange,
+      analyticsRestoreSecondaryControls: analyticsRestoreSecondaryControls,
       analyticsRollingReturnTypeState: analyticsRollingReturnTypeState,
       analyticsSyncCalendarControls: analyticsSyncCalendarControls,
+      analyticsFactorDefinitionLoadTrigger: analyticsFactorDefinitionLoadTrigger,
+      analyticsRegimeDefinitionLoadTrigger: analyticsRegimeDefinitionLoadTrigger,
+      analyticsCorrelogramLoadingDisplay: analyticsCorrelogramLoadingDisplay,
+      analyticsConditionalReturnsLoadingDisplay: analyticsConditionalReturnsLoadingDisplay,
       validateAnalyticsDbAddSelection: validateAnalyticsDbAddSelection,
       clearWorkspaceSession: clearWorkspaceSession,
       commonDailyButtonDisabled: commonDailyButtonDisabled,

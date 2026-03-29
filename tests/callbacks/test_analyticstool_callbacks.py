@@ -694,6 +694,8 @@ def test_hidden_at_trigger_emitters_include_restore_ready_guards():
 def test_analytics_calendar_clientside_selector_sync_uses_render_signature_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     assert 'dcc.Store(id="at-calendar-render-signature-store", data=None, storage_type="memory")' in page_text
+    assert 'dcc.Store(id="at-factor-def-load-trigger-store", data=None, storage_type="memory")' in page_text
+    assert 'dcc.Store(id="at-regime-def-load-trigger-store", data=None, storage_type="memory")' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSyncCalendarControls")' in page_text
 
     trigger_block = page_text.split('Output("at-calendar-tab-trigger-store", "data")', 1)[-1]
@@ -723,6 +725,23 @@ def test_analytics_rolling_uses_shared_benchmark_stamp_and_merged_render_callbac
     assert 'State("dashmat-saved-series-cache-store", "data")' not in render_block
 
 
+def test_analytics_secondary_restore_and_loading_helpers_are_clientside():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsRestoreSecondaryControls")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsFactorDefinitionLoadTrigger")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsRegimeDefinitionLoadTrigger")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsCorrelogramLoadingDisplay")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsConditionalReturnsLoadingDisplay")' in page_text
+
+    factor_block = _callback_block(page_text, "at_lazy_load_factor_definitions")
+    regime_block = _callback_block(page_text, "at_lazy_load_regime_definitions")
+    assert 'Input("at-main-tabs", "value")' not in factor_block
+    assert 'Input("at-factor-def-load-trigger-store", "data")' in factor_block
+    assert 'Input("at-main-tabs", "value")' not in regime_block
+    assert 'Input("at-regime-def-load-trigger-store", "data")' in regime_block
+
+
 def test_analytics_rolling_return_type_state_clientside_matches_python(page_modules):
     analyticstool, _ = page_modules
 
@@ -737,6 +756,105 @@ def test_analytics_rolling_return_type_state_clientside_matches_python(page_modu
         True,
         {"opacity": 0.5, "pointerEvents": "none"},
     )
+
+
+def test_analytics_restore_secondary_controls_clientside_matches_reference(page_modules):
+    analyticstool, _ = page_modules
+
+    expected = analyticstool.at_restore_secondary_controls(
+        "calendar",
+        True,
+        "1y",
+        "total_return",
+        "annualized",
+        "chart",
+        "chart",
+        "chart",
+        "box",
+        5,
+        "raw",
+        "normal",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
+        "summary",
+        "summary",
+        "monthly",
+        "1y",
+        "total_return",
+        "annualized",
+        False,
+        {},
+        "chart",
+        "chart",
+        "chart",
+        "box",
+        5,
+        "raw",
+        "normal",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
+        "summary",
+        "summary",
+        "annual",
+    )
+
+    result = _run_dashmat_callbacks_js(
+        'ns.analyticsRestoreSecondaryControls('
+        '"calendar", true, '
+        '"1y", "total_return", "annualized", "chart", "chart", "chart", '
+        '"box", 5, "raw", "normal", '
+        '"forward", "le", 0, "compound", 1, "months", "summary", "summary", "monthly", '
+        '"1y", "total_return", "annualized", false, {}, "chart", "chart", "chart", '
+        '"box", 5, "raw", "normal", "forward", "le", 0, "compound", 1, "months", "summary", "summary", "annual"'
+        ')'
+    )
+
+    assert list(expected)[:20] == [no_update] * 20
+    assert expected[20] == "monthly"
+    assert result[:20] == ["__NO_UPDATE__"] * 20
+    assert result[20] == "monthly"
+
+
+def test_analytics_lazy_load_trigger_helpers_and_loading_display_clientside():
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsFactorDefinitionLoadTrigger("calendar", true, true, false)'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsFactorDefinitionLoadTrigger("factor_analysis", true, true, true)'
+    ) == "__NO_UPDATE__"
+    factor_trigger = _run_dashmat_callbacks_js(
+        'ns.analyticsFactorDefinitionLoadTrigger("conditional_returns", true, true, false)'
+    )
+    assert factor_trigger["tab"] == "conditional_returns"
+
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsRegimeDefinitionLoadTrigger("calendar", true, true, false)'
+    ) == "__NO_UPDATE__"
+    regime_trigger = _run_dashmat_callbacks_js(
+        'ns.analyticsRegimeDefinitionLoadTrigger("regime_analysis", true, true, false)'
+    )
+    assert regime_trigger["tab"] == "regime_analysis"
+
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsCorrelogramLoadingDisplay("calendar", "t1", "r1")'
+    ) == "auto"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsCorrelogramLoadingDisplay("correlogram", "t1", "r2")'
+    ) == "show"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsConditionalReturnsLoadingDisplay("calendar", true, true, "t1", "r1")'
+    ) == "hide"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsConditionalReturnsLoadingDisplay("conditional_returns", false, true, null, null)'
+    ) == "show"
 
 
 def test_sync_analytics_monthly_series_select_reference_behavior(page_modules):
@@ -1015,55 +1133,46 @@ def test_at_restore_secondary_controls_restores_only_active_tab_family(page_modu
     restored = analyticstool.at_restore_secondary_controls(
         "rolling",
         True,
-        _raw_meta(raw_json),
-        stored_periodicity="daily_trading",
-        stored_series=["Asset_A"],
-        stored_returns="excess",
-        stored_vol=7,
-        stored_tab="rolling",
-        stored_roll_win="3y",
-        stored_roll_metric="volatility",
-        stored_roll_type="cumulative",
-        stored_roll_chart="table",
-        stored_dd_chart="table",
-        stored_gr_chart="table",
-        stored_factor_mode="scatter",
-        stored_factor_quantiles=7,
-        stored_factor_transform="zscore",
-        stored_factor_qq_reference="reference",
-        stored_conditional_view=None,
-        stored_conditional_comparator=None,
-        stored_conditional_threshold=None,
-        stored_conditional_window_conversion=None,
-        stored_conditional_step=None,
-        stored_conditional_step_unit=None,
-        stored_conditional_display_mode=None,
-        stored_regime_display_mode="detail",
-        stored_monthly_view="monthly",
-        stored_order=["Asset_A"],
-        po_origin_series=[],
-        page_visited=True,
-        current_roll_win=None,
-        current_roll_metric=None,
-        current_roll_type=None,
-        current_roll_type_disabled=None,
-        current_roll_type_style=None,
-        current_roll_chart=None,
-        current_dd_chart=None,
-        current_gr_chart=None,
-        current_factor_mode=None,
-        current_factor_quantiles=None,
-        current_factor_transform=None,
-        current_factor_qq_reference=None,
-        current_conditional_view=None,
-        current_conditional_comparator=None,
-        current_conditional_threshold=None,
-        current_conditional_window_conversion=None,
-        current_conditional_step=None,
-        current_conditional_step_unit=None,
-        current_conditional_display_mode=None,
-        current_regime_display_mode=None,
-        current_monthly_view=None,
+        "3y",
+        "volatility",
+        "cumulative",
+        "table",
+        "table",
+        "table",
+        "scatter",
+        7,
+        "zscore",
+        "reference",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        "detail",
+        "monthly",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
 
     assert restored[0] == "3y"
@@ -1094,55 +1203,46 @@ def test_at_restore_secondary_controls_skips_when_active_family_is_already_hydra
         analyticstool.at_restore_secondary_controls(
             "rolling",
             True,
-            _raw_meta(raw_json),
-            stored_periodicity="daily_trading",
-            stored_series=["Asset_A"],
-            stored_returns="excess",
-            stored_vol=7,
-            stored_tab="rolling",
-            stored_roll_win="3y",
-            stored_roll_metric="volatility",
-            stored_roll_type="cumulative",
-            stored_roll_chart="table",
-            stored_dd_chart="table",
-            stored_gr_chart="table",
-            stored_factor_mode="scatter",
-            stored_factor_quantiles=7,
-            stored_factor_transform="zscore",
-            stored_factor_qq_reference="reference",
-            stored_conditional_view=None,
-            stored_conditional_comparator=None,
-            stored_conditional_threshold=None,
-            stored_conditional_window_conversion=None,
-            stored_conditional_step=None,
-            stored_conditional_step_unit=None,
-            stored_conditional_display_mode=None,
-            stored_regime_display_mode="detail",
-            stored_monthly_view="monthly",
-            stored_order=["Asset_A"],
-            po_origin_series=[],
-            page_visited=True,
-            current_roll_win="3y",
-            current_roll_metric="volatility",
-            current_roll_type="cumulative",
-            current_roll_type_disabled=True,
-            current_roll_type_style={"opacity": 0.5, "pointerEvents": "none"},
-            current_roll_chart="table",
-            current_dd_chart=None,
-            current_gr_chart=None,
-            current_factor_mode=None,
-            current_factor_quantiles=None,
-            current_factor_transform=None,
-            current_factor_qq_reference=None,
-            current_conditional_view=None,
-            current_conditional_comparator=None,
-            current_conditional_threshold=None,
-            current_conditional_window_conversion=None,
-            current_conditional_step=None,
-            current_conditional_step_unit=None,
-            current_conditional_display_mode=None,
-            current_regime_display_mode=None,
-            current_monthly_view=None,
+            "3y",
+            "volatility",
+            "cumulative",
+            "table",
+            "table",
+            "table",
+            "scatter",
+            7,
+            "zscore",
+            "reference",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "detail",
+            "monthly",
+            "3y",
+            "volatility",
+            "cumulative",
+            True,
+            {"opacity": 0.5, "pointerEvents": "none"},
+            "table",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
 
 
@@ -3738,11 +3838,11 @@ def test_lazy_load_factor_and_regime_definitions_on_first_tab_open(monkeypatch, 
     )
 
     factor_available, factor_rows, factor_loaded = analyticstool.at_lazy_load_factor_definitions(
-        "factor_analysis",
+        {"tab": "factor_analysis"},
         False,
     )
     regime_available, regime_rows, regime_loaded = analyticstool.at_lazy_load_regime_definitions(
-        "regime_analysis",
+        {"tab": "regime_analysis"},
         False,
     )
 

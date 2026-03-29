@@ -1495,6 +1495,35 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="regression_calendar_visible",
+            targeted_outputs=["reg-calendar-content.children"],
+            prepare=lambda: _seed_regression_result_state(page, db_series, "statistics", "Harness Result 1"),
+            action=lambda: warm.set_component_value(page, "reg-tabs", "calendar"),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-calendar-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="regression_calendar_monthly_visible",
+            targeted_outputs=["reg-calendar-content.children"],
+            prepare=lambda: (
+                _seed_regression_result_state(page, db_series, "calendar", "Harness Result 1"),
+                warm.set_component_value(page, "reg-calendar-view-select", "annual"),
+            ),
+            action=lambda: warm.set_component_value(page, "reg-calendar-view-select", "monthly"),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-calendar-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="regression_result_select_visible_anova",
             targeted_outputs=["reg-anova-content.children"],
             prepare=lambda: _seed_regression_result_state(page, db_series, "anova", "Harness Result 1"),
