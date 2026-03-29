@@ -3200,6 +3200,52 @@
     return [disabled, disabled ? { opacity: 0.5, pointerEvents: "none" } : {}];
   }
 
+  function regressionSyncCalendarControls(
+    triggerPayload,
+    selected,
+    calendarView,
+    partialMode,
+    activeEntry,
+    currentDisabled,
+    currentOptions,
+    currentValue,
+    currentSignature
+  ) {
+    const nu = noUpdate();
+    if (!triggerPayload || typeof triggerPayload !== "object" || String(triggerPayload.tab || "") !== "calendar") {
+      return [nu, nu, nu, nu];
+    }
+
+    const orderedCols = activeEntry && typeof activeEntry === "object" && Array.isArray(activeEntry.display_columns)
+      ? activeEntry.display_columns.slice()
+      : [];
+    const nextOptions = orderedCols.map(function (name) {
+      return { value: name, label: name };
+    });
+
+    let nextDisabled = true;
+    let nextValue = null;
+    if (String(calendarView || "annual") === "monthly" && orderedCols.length) {
+      nextDisabled = false;
+      nextValue = orderedCols.indexOf(currentValue) !== -1 ? currentValue : orderedCols[0];
+    }
+
+    const nextSignature = {
+      tab: "calendar",
+      selected: selected || null,
+      view: calendarView || "annual",
+      series: nextValue || null,
+      partialMode: partialMode || "partial"
+    };
+
+    return [
+      currentDisabled === nextDisabled ? nu : nextDisabled,
+      sameValue(currentOptions, nextOptions) ? nu : nextOptions,
+      currentValue === nextValue ? nu : nextValue,
+      sameValue(currentSignature, nextSignature) ? nu : nextSignature
+    ];
+  }
+
   function regressionClearRawDbRows(nClear) {
     const nu = noUpdate();
     if (!nClear) {
@@ -3829,6 +3875,7 @@
       regressionControlSync: regressionControlSync,
       regressionModelSelectSync: regressionModelSelectSync,
       regressionProjectActiveResultEntry: regressionProjectActiveResultEntry,
+      regressionSyncCalendarControls: regressionSyncCalendarControls,
       regressionSyncAnovaWindowOptions: regressionSyncAnovaWindowOptions,
       regressionSyncSaveSeriesUi: regressionSyncSaveSeriesUi,
       regressionSyncScatterXOptions: regressionSyncScatterXOptions,

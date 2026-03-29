@@ -193,6 +193,7 @@ def test_regression_clientside_callback_registrations_present_for_migrated_helpe
         "regressionModelSelectSync",
         "regressionToggleWindowControls",
         "regressionToggleRollingReturnType",
+        "regressionSyncCalendarControls",
         "regressionDeleteRawDbRow",
         "regressionClearRawDbRows",
         "regressionSyncAnovaWindowOptions",
@@ -236,15 +237,25 @@ def test_regression_tab_trigger_stores_gate_result_families():
     assert 'Input("dashmat-raw-data-store", "data")' not in page_text.split('def _reg_render_scatter_callback', 1)[0].rsplit("@callback(", 1)[-1]
 
 
-def test_regression_calendar_series_sync_is_gated_by_calendar_trigger():
+def test_regression_calendar_uses_settled_render_signature_store():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
-    callback_block = page_text.split("def reg_sync_calendar_series_select", 1)[0].rsplit("@callback(", 1)[-1]
+    assert 'dcc.Store(id="reg-calendar-render-signature-store", data=None, storage_type="memory")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionSyncCalendarControls")' in page_text
 
-    assert 'Input("reg-calendar-tab-trigger-store", "data")' in callback_block
-    assert 'State("reg-result-select", "value")' in callback_block
-    assert 'State("reg-active-result-entry-store", "data")' in callback_block
-    assert 'State("dashmat-raw-data-store", "data")' not in callback_block
-    assert 'Input("reg-result-select", "value")' not in callback_block
+    clientside_block = page_text.split('function_name="regressionSyncCalendarControls")', 1)[1].split("clientside_callback(", 1)[0]
+    assert 'Input("reg-calendar-tab-trigger-store", "data")' in clientside_block
+    assert 'State("reg-result-select", "value")' in clientside_block
+    assert 'State("reg-calendar-view-select", "value")' in clientside_block
+    assert 'State("reg-partial-period-store", "data")' in clientside_block
+    assert 'State("reg-active-result-entry-store", "data")' in clientside_block
+    assert 'State("dashmat-raw-data-store", "data")' not in clientside_block
+
+    trigger_block = page_text.split('Output("reg-calendar-tab-trigger-store", "data")', 1)[1].split("clientside_callback(", 1)[0]
+    assert 'Input("reg-calendar-series-select", "value")' not in trigger_block
+
+    render_block = page_text.split("def _reg_render_calendar_callback", 1)[0].rsplit("@callback(", 1)[-1]
+    assert 'Input("reg-calendar-render-signature-store", "data")' in render_block
+    assert 'Input("reg-calendar-tab-trigger-store", "data")' not in render_block
 
 
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
@@ -1757,6 +1768,112 @@ def test_regression_project_active_result_entry_requires_projection():
     ) == "__NO_UPDATE__"
 
 
+def test_regression_sync_calendar_controls_disables_and_clears_annual_view():
+    entry = {"display_columns": ["Predicted", "Actual (Y)", "Residual"]}
+    result = _run_dashmat_callbacks_js(
+        "ns.regressionSyncCalendarControls("
+        + json.dumps({"tab": "calendar"})
+        + ', "R1", "annual", "partial", '
+        + json.dumps(entry)
+        + ', false, '
+        + json.dumps([{"value": "Predicted", "label": "Predicted"}])
+        + ', "Predicted", null)'
+    )
+
+    assert result == [
+        True,
+        [
+            {"value": "Predicted", "label": "Predicted"},
+            {"value": "Actual (Y)", "label": "Actual (Y)"},
+            {"value": "Residual", "label": "Residual"},
+        ],
+        None,
+        {
+            "tab": "calendar",
+            "selected": "R1",
+            "view": "annual",
+            "series": None,
+            "partialMode": "partial",
+        },
+    ]
+
+
+def test_regression_sync_calendar_controls_preserves_valid_monthly_series_and_no_update():
+    entry = {"display_columns": ["Predicted", "Actual (Y)", "Residual"]}
+    current_options = [
+        {"value": "Predicted", "label": "Predicted"},
+        {"value": "Actual (Y)", "label": "Actual (Y)"},
+        {"value": "Residual", "label": "Residual"},
+    ]
+    current_signature = {
+        "tab": "calendar",
+        "selected": "R1",
+        "view": "monthly",
+        "series": "Actual (Y)",
+        "partialMode": "partial",
+    }
+    result = _run_dashmat_callbacks_js(
+        "ns.regressionSyncCalendarControls("
+        + json.dumps({"tab": "calendar"})
+        + ', "R1", "monthly", "partial", '
+        + json.dumps(entry)
+        + ", false, "
+        + json.dumps(current_options)
+        + ', "Actual (Y)", '
+        + json.dumps(current_signature)
+        + ")"
+    )
+
+    assert result == ["__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__"]
+
+
+def test_regression_sync_calendar_controls_defaults_to_first_monthly_series():
+    entry = {"display_columns": ["Predicted", "Actual (Y)", "Residual"]}
+    result = _run_dashmat_callbacks_js(
+        "ns.regressionSyncCalendarControls("
+        + json.dumps({"tab": "calendar"})
+        + ', "R1", "monthly", "complete", '
+        + json.dumps(entry)
+        + ', true, [], "Missing", null)'
+    )
+
+    assert result == [
+        False,
+        [
+            {"value": "Predicted", "label": "Predicted"},
+            {"value": "Actual (Y)", "label": "Actual (Y)"},
+            {"value": "Residual", "label": "Residual"},
+        ],
+        "Predicted",
+        {
+            "tab": "calendar",
+            "selected": "R1",
+            "view": "monthly",
+            "series": "Predicted",
+            "partialMode": "complete",
+        },
+    ]
+
+
+def test_regression_sync_calendar_controls_handles_empty_entry():
+    result = _run_dashmat_callbacks_js(
+        'ns.regressionSyncCalendarControls({"tab":"calendar"}, "R1", "monthly", "partial", null, true, [], null, null)'
+    )
+
+    assert result == [
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        {
+            "tab": "calendar",
+            "selected": "R1",
+            "view": "monthly",
+            "series": None,
+            "partialMode": "partial",
+        },
+    ]
+
+
 def test_reg_attach_display_projection_round_trips_display_bundle(regression_page):
     idx = pd.date_range("2024-01-01", periods=3, freq="D")
     entry = {
@@ -1819,7 +1936,7 @@ def test_reg_render_callbacks_use_family_trigger_inputs():
         "_reg_render_weights_callback": 'Input("reg-weights-tab-trigger-store", "data")',
         "_reg_render_returns_callback": 'Input("reg-returns-tab-trigger-store", "data")',
         "_reg_render_growth_callback": 'Input("reg-growth-tab-trigger-store", "data")',
-        "_reg_render_calendar_callback": 'Input("reg-calendar-tab-trigger-store", "data")',
+        "_reg_render_calendar_callback": 'Input("reg-calendar-render-signature-store", "data")',
         "_reg_render_drawdown_callback": 'Input("reg-drawdown-tab-trigger-store", "data")',
         "_reg_render_statistics_callback": 'Input("reg-statistics-tab-trigger-store", "data")',
         "_reg_render_scatter_callback": 'Input("reg-scatter-tab-trigger-store", "data")',

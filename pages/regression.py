@@ -1855,6 +1855,7 @@ layout = dmc.Container(
         dcc.Store(id="reg-returns-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-growth-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-calendar-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-calendar-render-signature-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-drawdown-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-scatter-tab-trigger-store", data=None, storage_type="memory"),
         # Save/Load session + cache
@@ -2328,6 +2329,24 @@ clientside_callback(
     Input("reg-calendar-view-select", "value"),
     Input("reg-partial-period-store", "data"),
     prevent_initial_call=True,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionSyncCalendarControls"),
+    Output("reg-calendar-series-select", "disabled"),
+    Output("reg-calendar-series-select", "data"),
+    Output("reg-calendar-series-select", "value"),
+    Output("reg-calendar-render-signature-store", "data"),
+    Input("reg-calendar-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-calendar-view-select", "value"),
+    State("reg-partial-period-store", "data"),
+    State("reg-active-result-entry-store", "data"),
+    State("reg-calendar-series-select", "disabled"),
+    State("reg-calendar-series-select", "data"),
+    State("reg-calendar-series-select", "value"),
+    State("reg-calendar-render-signature-store", "data"),
+    prevent_initial_call=False,
 )
 
 
@@ -5874,47 +5893,46 @@ def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab=
 # Calendar + Drawdown Tabs
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("reg-calendar-series-select", "disabled"),
-    Output("reg-calendar-series-select", "data"),
-    Output("reg-calendar-series-select", "value"),
-    Input("reg-calendar-tab-trigger-store", "data"),
-    State("reg-result-select", "value"),
-    State("reg-active-result-entry-store", "data"),
-    State("reg-calendar-view-select", "value"),
-    State("reg-calendar-series-select", "value"),
-    prevent_initial_call=False,
-)
-def reg_sync_calendar_series_select(trigger_payload, selected, active_entry, calendar_view, current_series):
+def reg_sync_calendar_series_select(trigger_payload, selected, calendar_view, partial_mode, active_entry, current_disabled, current_options, current_series, current_signature):
     _reg_require_tab_trigger(trigger_payload, "calendar")
-    _name, entry = _reg_get_selected_result_entry(selected, _reg_selected_results_dict(selected, active_entry))
-    if not entry:
-        return True, [], None
-
-    display_df, ordered_cols = _reg_build_display_series(entry, None)
+    entry = active_entry if isinstance(active_entry, dict) else None
+    ordered_cols = list(entry.get("display_columns") or []) if entry else []
     options = [{"value": c, "label": c} for c in ordered_cols]
-    if (calendar_view or "annual") != "monthly":
-        return True, options, None
-    if display_df.empty or not ordered_cols:
-        return True, [], None
-    value = current_series if current_series in ordered_cols else ordered_cols[0]
-    return False, options, value
+    next_disabled = True
+    next_value = None
+    if (calendar_view or "annual") == "monthly" and ordered_cols:
+        next_disabled = False
+        next_value = current_series if current_series in ordered_cols else ordered_cols[0]
+    next_signature = {
+        "tab": "calendar",
+        "selected": selected,
+        "view": calendar_view or "annual",
+        "series": next_value,
+        "partialMode": partial_mode or "partial",
+    }
+    return (
+        no_update if current_disabled == next_disabled else next_disabled,
+        no_update if current_options == options else options,
+        no_update if current_series == next_value else next_value,
+        no_update if current_signature == next_signature else next_signature,
+    )
 
 
 @callback(
     Output("reg-calendar-content", "children"),
-    Input("reg-calendar-tab-trigger-store", "data"),
-    State("reg-result-select", "value"),
+    Input("reg-calendar-render-signature-store", "data"),
     State("reg-active-result-entry-store", "data"),
-    State("reg-calendar-view-select", "value"),
-    State("reg-calendar-series-select", "value"),
-    State("reg-partial-period-store", "data"),
     State("reg-tabs", "value"),
     State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_calendar_callback(trigger_payload, selected, active_entry, calendar_view, calendar_series, partial_mode, active_tab="calendar", initial_tab_ready=True):
-    _reg_require_tab_trigger(trigger_payload, "calendar")
+def _reg_render_calendar_callback(render_signature, active_entry, active_tab="calendar", initial_tab_ready=True):
+    if not isinstance(render_signature, dict) or str(render_signature.get("tab") or "") != "calendar":
+        raise PreventUpdate
+    selected = render_signature.get("selected")
+    calendar_view = render_signature.get("view")
+    calendar_series = render_signature.get("series")
+    partial_mode = render_signature.get("partialMode")
     return reg_render_calendar(
         selected,
         _reg_selected_results_dict(selected, active_entry),
