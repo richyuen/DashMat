@@ -56,6 +56,7 @@
 - If moving pure browser-visible logic clientside for perf, keep the Python path as the reference and add parity tests.
 - Do not keep a perf change just because one sub-phase median improves; a fresh clean-`HEAD` A/B must still show an end-to-end median win.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
+- When a payload-reduction phase is ambiguous on localhost but the target users are WAN-like, rerun the same browser A/B under a realistic throttled network profile before deciding; lower request bytes can become a real end-to-end win once RTT and throughput matter.
 - Do not assume removing one closed-modal callback family will improve startup timing by itself; if the targeted family disappears from attribution but reset request count stays flat, retarget instead of widening the same approach.
 - For AnalyticsTool reset perf, do not spend another phase on closed sheet-select upload-reset writes unless the callback mix changes materially; removing that family without reducing total reset fan-out regressed end-to-end medians.
 - Do not assume a reload-era bootstrap callback can be reused for same-page live apply by only clearing results, resetting bootstrap state, and replaying stores; prove that the same-page retrigger path actually re-enters bootstrap and reaches a stable ready state before committing to that design.
@@ -76,6 +77,7 @@
 - Validate local SQLite files under `data/` before DB-backed browser runs.
 - New worktrees do not inherit local SQLite files; copy `data/dashmat_local.db`, `data/MRD.db`, and `data/Performance.db` before DB-backed browser runs.
 - For timed browser runs, use `tools/playwright/start_timed_server.ps1` instead of launching the app directly.
+- `tools/playwright/ui_callback_interaction_harness.py` supports `--network-profile none|office-wan|slow4g|fast3g`; use it for WAN-like perf checks on payload-sensitive flows, and apply throttling only after the page is seeded/ready so startup/bootstrap does not dominate the measurement.
 - For harness timing correlation, pass the timed server `STDOUT` log path to the harness; do not use stderr.
 - If a timed run reports callback outputs that no longer exist in source, verify the serving port is not backed by a stale timed-server process before attributing the result to the current code.
 - Prefer extending the existing harnesses before creating new ones.
