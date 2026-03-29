@@ -790,6 +790,55 @@ def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
     assert 'Input("po-frontier-render-trigger-store", "data")' in page_text
 
 
+def test_portopt_same_family_render_callbacks_are_merged():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+
+    assert page_text.count('Input("po-weight-tab-trigger-store", "data")') == 1
+    assert page_text.count('Input("po-turnover-tab-trigger-store", "data")') == 1
+    assert page_text.count('Input("po-risk-tab-trigger-store", "data")') == 1
+    assert page_text.count('Input("po-attribution-tab-trigger-store", "data")') == 1
+    assert page_text.count('Input("po-frontier-controls-trigger-store", "data")') == 1
+    assert page_text.count('Input("po-frontier-render-trigger-store", "data")') == 1
+
+
+def test_portopt_weight_views_only_updates_active_container(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    monkeypatch.setattr(portopt, "po_render_weight_chart", lambda *args, **kwargs: "chart")
+    monkeypatch.setattr(portopt, "po_render_weight_table", lambda *args, **kwargs: "table")
+
+    assert portopt.po_render_weight_views("Portfolio", {}, "weight", "chart", "light", {"phase": "ready"}, "trigger") == ("chart", no_update)
+    assert portopt.po_render_weight_views("Portfolio", {}, "weight", "table", "light", {"phase": "ready"}, "trigger") == (no_update, "table")
+
+
+def test_portopt_sync_frontier_controls_uses_no_update_for_unchanged_selectors(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    rm_options = [{"value": "MV", "label": "Volatility"}]
+    window_options = [{"value": "0", "label": "2024-01-01 - 2024-01-31"}]
+    monkeypatch.setattr(portopt, "po_update_frontier_risk_measure_options", lambda *args, **kwargs: (rm_options, "MV"))
+    monkeypatch.setattr(portopt, "po_populate_frontier_windows", lambda *args, **kwargs: (window_options, "0", False))
+    monkeypatch.setattr(portopt, "po_render_frontier_rf_warning", lambda *args, **kwargs: ("", {"display": "none"}))
+
+    result = portopt.po_sync_frontier_controls(
+        "Portfolio",
+        {"Portfolio": {"config": {"model": "risk_parity"}}},
+        "frontier",
+        rm_options,
+        "MV",
+        window_options,
+        "0",
+        False,
+        "daily_trading",
+        True,
+        {},
+        {},
+    )
+
+    assert result[:5] == (no_update, no_update, no_update, no_update, no_update)
+    assert result[5:] == ("", {"display": "none"})
+
+
 def test_portopt_save_series_ui_uses_clientside_parity_helper():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")

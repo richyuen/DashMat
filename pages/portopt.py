@@ -9128,6 +9128,7 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
 
 @callback(
     Output("po-weight-chart-content", "children"),
+    Output("po-weight-grid-content", "children"),
     Input("po-weight-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
@@ -9137,9 +9138,9 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_weight_chart_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, bootstrap_state, results):
+def _po_render_weight_views_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, bootstrap_state, results):
     _po_require_active_vis_trigger(trigger_payload, "weight")
-    return po_render_weight_chart(
+    return po_render_weight_views(
         selected_portfolio,
         results,
         active_tab,
@@ -9961,6 +9962,7 @@ def po_render_drawdown(
 
 @callback(
     Output("po-attribution-chart-container", "children"),
+    Output("po-attribution-grid-container", "children"),
     Input("po-attribution-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
@@ -9978,7 +9980,7 @@ def po_render_drawdown(
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_attribution_chart_callback(
+def _po_render_attribution_views_callback(
     trigger_payload,
     active_tab,
     selected_portfolio,
@@ -9996,7 +9998,7 @@ def _po_render_attribution_chart_callback(
     results,
 ):
     _po_require_active_vis_trigger(trigger_payload, "attribution")
-    return po_render_attribution_chart(
+    return po_render_attribution_views(
         selected_portfolio,
         results,
         active_tab,
@@ -10102,28 +10104,6 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
 # Weight table
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("po-weight-grid-content", "children"),
-    Input("po-weight-tab-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-weight-chart-switch", "value"),
-    State("po-bootstrap-store", "data"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_render_weight_table_callback(trigger_payload, active_tab, selected_portfolio, switch_value, bootstrap_state, results):
-    _po_require_active_vis_trigger(trigger_payload, "weight")
-    return po_render_weight_table(
-        selected_portfolio,
-        results,
-        active_tab,
-        switch_value,
-        bootstrap_state,
-        trigger_id=callback_context.triggered_id,
-    )
-
-
 def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "table":
         raise PreventUpdate
@@ -10173,58 +10153,31 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
         return _po_build_result_grid("po-weight-grid", column_defs, row_data)
 
 
-# ---------------------------------------------------------------------------
-# Attribution table
-# ---------------------------------------------------------------------------
-
-@callback(
-    Output("po-attribution-grid-container", "children"),
-    Input("po-attribution-tab-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-attribution-chart-switch", "value"),
-    State("po-bootstrap-store", "data"),
-    State("dashmat-raw-data-store", "data"),
-    State("po-periodicity-select", "value"),
-    State("po-benchmark-assignments-store", "data"),
-    State("po-long-short-store", "data"),
-    State("po-date-range-store", "data"),
-    State("po-vol-scaler-value-store", "data"),
-    State("po-vol-scaling-assignments-store", "data"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_render_attribution_table_callback(
-    trigger_payload,
-    active_tab,
-    selected_portfolio,
-    switch_value,
-    bootstrap_state,
-    raw_data,
-    periodicity,
-    bench,
-    ls,
-    date_range,
-    vol_scaler,
-    vol_scaling,
-    results,
-):
-    _po_require_active_vis_trigger(trigger_payload, "attribution")
-    return po_render_attribution_table(
+def po_render_weight_views(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
+    active_view = switch_value or "chart"
+    if active_view == "table":
+        return no_update, po_render_weight_table(
+            selected_portfolio,
+            results,
+            active_tab,
+            "table",
+            bootstrap_state,
+            trigger_id=trigger_id,
+        )
+    return po_render_weight_chart(
         selected_portfolio,
         results,
         active_tab,
-        switch_value,
+        "chart",
+        theme,
         bootstrap_state,
-        raw_data,
-        periodicity,
-        bench,
-        ls,
-        date_range,
-        vol_scaler,
-        vol_scaling,
-    )
+        trigger_id=trigger_id,
+    ), no_update
 
+
+# ---------------------------------------------------------------------------
+# Attribution table
+# ---------------------------------------------------------------------------
 
 def po_render_attribution_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                                 raw_data, periodicity, bench, ls, date_range,
@@ -10306,6 +10259,58 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
 
     except Exception:
         return html.Div()
+
+
+def po_render_attribution_views(
+    selected_portfolio,
+    results,
+    active_tab,
+    switch_value,
+    bootstrap_state,
+    raw_data,
+    orig_periodicity,
+    periodicity,
+    bench,
+    ls,
+    date_range,
+    vol_scaler,
+    vol_scaling,
+    theme,
+    trigger_id=None,
+):
+    active_view = switch_value or "chart"
+    if active_view == "table":
+        return no_update, po_render_attribution_table(
+            selected_portfolio,
+            results,
+            active_tab,
+            "table",
+            bootstrap_state,
+            raw_data,
+            periodicity,
+            bench,
+            ls,
+            date_range,
+            vol_scaler,
+            vol_scaling,
+        )
+    return po_render_attribution_chart(
+        selected_portfolio,
+        results,
+        active_tab,
+        "chart",
+        bootstrap_state,
+        raw_data,
+        orig_periodicity,
+        periodicity,
+        bench,
+        ls,
+        date_range,
+        vol_scaler,
+        vol_scaling,
+        theme,
+        trigger_id=trigger_id,
+    ), no_update
 
 
 # ---------------------------------------------------------------------------
@@ -11088,6 +11093,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
 
 @callback(
     Output("po-risk-chart-container", "children"),
+    Output("po-risk-grid-container", "children"),
     Input("po-risk-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
@@ -11105,7 +11111,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_risk_chart_callback(
+def _po_render_risk_views_callback(
     trigger_payload,
     active_tab,
     selected_portfolio,
@@ -11123,7 +11129,7 @@ def _po_render_risk_chart_callback(
     results,
 ):
     _po_require_active_vis_trigger(trigger_payload, "risk")
-    return po_render_risk_chart(
+    return po_render_risk_views(
         selected_portfolio,
         results,
         active_tab,
@@ -11234,58 +11240,6 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value, 
 # Risk Contribution table
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("po-risk-grid-container", "children"),
-    Input("po-risk-tab-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-risk-chart-switch", "value"),
-    State("po-bootstrap-store", "data"),
-    State("dashmat-raw-data-store", "data"),
-    State("po-periodicity-select", "value"),
-    State("po-benchmark-assignments-store", "data"),
-    State("po-long-short-store", "data"),
-    State("po-date-range-store", "data"),
-    State("po-vol-scaler-value-store", "data"),
-    State("po-vol-scaling-assignments-store", "data"),
-    State("po-series-select", "data"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_render_risk_table_callback(
-    trigger_payload,
-    active_tab,
-    selected_portfolio,
-    switch_value,
-    bootstrap_state,
-    raw_data,
-    periodicity,
-    bench,
-    ls,
-    date_range,
-    vol_scaler,
-    vol_scaling,
-    series_select,
-    results,
-):
-    _po_require_active_vis_trigger(trigger_payload, "risk")
-    return po_render_risk_table(
-        selected_portfolio,
-        results,
-        active_tab,
-        switch_value,
-        bootstrap_state,
-        raw_data,
-        periodicity,
-        bench,
-        ls,
-        date_range,
-        vol_scaler,
-        vol_scaling,
-        series_select,
-    )
-
-
 def po_render_risk_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                          raw_data, periodicity, bench, ls, date_range,
                          vol_scaler, vol_scaling, series_select):
@@ -11365,12 +11319,66 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value, 
         timing_ctx.__exit__(None, None, None)
 
 
+def po_render_risk_views(
+    selected_portfolio,
+    results,
+    active_tab,
+    switch_value,
+    bootstrap_state,
+    raw_data,
+    periodicity,
+    bench,
+    ls,
+    date_range,
+    vol_scaler,
+    vol_scaling,
+    series_select,
+    theme,
+    trigger_id=None,
+):
+    active_view = switch_value or "chart"
+    if active_view == "table":
+        return no_update, po_render_risk_table(
+            selected_portfolio,
+            results,
+            active_tab,
+            "table",
+            bootstrap_state,
+            raw_data,
+            periodicity,
+            bench,
+            ls,
+            date_range,
+            vol_scaler,
+            vol_scaling,
+            series_select,
+        )
+    return po_render_risk_chart(
+        selected_portfolio,
+        results,
+        active_tab,
+        "chart",
+        bootstrap_state,
+        raw_data,
+        periodicity,
+        bench,
+        ls,
+        date_range,
+        vol_scaler,
+        vol_scaling,
+        series_select,
+        theme,
+        trigger_id=trigger_id,
+    ), no_update
+
+
 # ---------------------------------------------------------------------------
 # Turnover chart
 # ---------------------------------------------------------------------------
 
 @callback(
     Output("po-turnover-chart-container", "children"),
+    Output("po-turnover-grid-container", "children"),
     Input("po-turnover-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
@@ -11379,9 +11387,9 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value, 
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_turnover_chart_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, results):
+def _po_render_turnover_views_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, results):
     _po_require_active_vis_trigger(trigger_payload, "turnover")
-    return po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme)
+    return po_render_turnover_views(selected_portfolio, results, active_tab, switch_value, theme)
 
 
 def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
@@ -11432,20 +11440,6 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
 # Turnover table
 # ---------------------------------------------------------------------------
 
-@callback(
-    Output("po-turnover-grid-container", "children"),
-    Input("po-turnover-tab-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-turnover-chart-switch", "value"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_render_turnover_table_callback(trigger_payload, active_tab, selected_portfolio, switch_value, results):
-    _po_require_active_vis_trigger(trigger_payload, "turnover")
-    return po_render_turnover_table(selected_portfolio, results, active_tab, switch_value)
-
-
 def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value):
     if active_tab != "turnover" or switch_value != "table" or not selected_portfolio or not results:
         return html.Div()
@@ -11492,6 +11486,13 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
     return _po_build_result_grid("po-turnover-grid", column_defs, row_data)
 
 
+def po_render_turnover_views(selected_portfolio, results, active_tab, switch_value, theme):
+    active_view = switch_value or "chart"
+    if active_view == "table":
+        return no_update, po_render_turnover_table(selected_portfolio, results, active_tab, "table")
+    return po_render_turnover_chart(selected_portfolio, results, active_tab, "chart", theme), no_update
+
+
 # ---------------------------------------------------------------------------
 # Efficient Frontier: populate window dropdown
 # ---------------------------------------------------------------------------
@@ -11499,16 +11500,56 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
 @callback(
     Output("po-frontier-rm-select", "data"),
     Output("po-frontier-rm-select", "value"),
+    Output("po-frontier-window-select", "data"),
+    Output("po-frontier-window-select", "value"),
+    Output("po-frontier-window-select", "disabled"),
+    Output("po-frontier-rf-warning", "children"),
+    Output("po-frontier-rf-warning", "style"),
     Input("po-frontier-controls-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
+    State("po-frontier-rm-select", "data"),
     State("po-frontier-rm-select", "value"),
+    State("po-frontier-window-select", "data"),
+    State("po-frontier-window-select", "value"),
+    State("po-frontier-window-select", "disabled"),
+    State("po-periodicity-select", "value"),
+    State("po-use-risk-free-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("po-cmabench-assignments-store", "data"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def _po_update_frontier_risk_measure_options_callback(trigger_payload, active_tab, selected_portfolio, current_rm, results):
+def _po_sync_frontier_controls_callback(
+    trigger_payload,
+    active_tab,
+    selected_portfolio,
+    current_rm_options,
+    current_rm,
+    current_window_options,
+    current_window,
+    current_window_disabled,
+    periodicity,
+    use_risk_free,
+    saved_series_store,
+    cmabench_assignments,
+    results,
+):
     _po_require_active_vis_trigger(trigger_payload, "frontier")
-    return po_update_frontier_risk_measure_options(selected_portfolio, results, current_rm)
+    return po_sync_frontier_controls(
+        selected_portfolio,
+        results,
+        active_tab,
+        current_rm_options,
+        current_rm,
+        current_window_options,
+        current_window,
+        current_window_disabled,
+        periodicity,
+        use_risk_free,
+        saved_series_store,
+        cmabench_assignments,
+    )
 
 
 def po_update_frontier_risk_measure_options(selected_portfolio, results, current_rm):
@@ -11524,21 +11565,6 @@ def po_update_frontier_risk_measure_options(selected_portfolio, results, current
         return [{"value": "MV", "label": "Volatility"}], "MV"
 
     return all_options, (current_rm if current_rm in {"MV", "CVaR"} else "MV")
-
-
-@callback(
-    Output("po-frontier-window-select", "data"),
-    Output("po-frontier-window-select", "value"),
-    Output("po-frontier-window-select", "disabled"),
-    Input("po-frontier-controls-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_populate_frontier_windows_callback(trigger_payload, active_tab, selected_portfolio, results):
-    _po_require_active_vis_trigger(trigger_payload, "frontier")
-    return po_populate_frontier_windows(selected_portfolio, results, active_tab)
 
 
 def po_populate_frontier_windows(selected_portfolio, results, active_tab):
@@ -11564,12 +11590,57 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     return options, str(len(window_weights) - 1), is_single_period
 
 
+def po_sync_frontier_controls(
+    selected_portfolio,
+    results,
+    active_tab,
+    current_rm_options,
+    current_rm,
+    current_window_options,
+    current_window,
+    current_window_disabled,
+    periodicity,
+    use_risk_free,
+    saved_series_store,
+    cmabench_assignments,
+):
+    with timed_block("portopt.render_frontier.controls", portfolio=selected_portfolio, active_tab=active_tab):
+        next_rm_options, next_rm = po_update_frontier_risk_measure_options(selected_portfolio, results, current_rm)
+        next_window_options, next_window, next_window_disabled = po_populate_frontier_windows(
+            selected_portfolio,
+            results,
+            active_tab,
+        )
+        warning_children, warning_style = po_render_frontier_rf_warning(
+            selected_portfolio,
+            results,
+            active_tab,
+            next_window,
+            next_rm,
+            use_risk_free,
+            periodicity,
+            saved_series_store,
+            cmabench_assignments,
+        )
+
+    return (
+        no_update if current_rm_options == next_rm_options else next_rm_options,
+        no_update if current_rm == next_rm else next_rm,
+        no_update if current_window_options == next_window_options else next_window_options,
+        no_update if current_window == next_window else next_window,
+        no_update if current_window_disabled == next_window_disabled else next_window_disabled,
+        warning_children,
+        warning_style,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Efficient Frontier chart
 # ---------------------------------------------------------------------------
 
 @callback(
     Output("po-frontier-chart-container", "children"),
+    Output("po-frontier-grid-container", "children"),
     Input("po-frontier-render-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
@@ -11593,7 +11664,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_frontier_chart_callback(
+def _po_render_frontier_views_callback(
     trigger_payload,
     active_tab,
     selected_portfolio,
@@ -11617,7 +11688,7 @@ def _po_render_frontier_chart_callback(
     results,
 ):
     _po_require_active_vis_trigger(trigger_payload, "frontier")
-    return po_render_frontier_chart(
+    return po_render_frontier_views(
         selected_portfolio,
         results,
         active_tab,
@@ -11770,70 +11841,6 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
         timing_ctx.__exit__(None, None, None)
 
 
-@callback(
-    Output("po-frontier-grid-container", "children"),
-    Input("po-frontier-render-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-frontier-chart-switch", "value"),
-    State("po-bootstrap-store", "data"),
-    State("po-frontier-window-select", "value"),
-    State("po-frontier-rm-select", "value"),
-    State("dashmat-raw-data-store", "data"),
-    State("po-periodicity-select", "value"),
-    State("po-benchmark-assignments-store", "data"),
-    State("po-long-short-store", "data"),
-    State("po-vol-scaler-value-store", "data"),
-    State("po-vol-scaling-assignments-store", "data"),
-    State("po-cmabench-assignments-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
-    State("po-use-risk-free-store", "data"),
-    State("po-linear-constraints-store", "data"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_render_frontier_table_callback(
-    trigger_payload,
-    active_tab,
-    selected_portfolio,
-    switch_value,
-    bootstrap_state,
-    window_idx,
-    rm,
-    raw_data,
-    periodicity,
-    bench,
-    ls,
-    vol_scaler,
-    vol_scaling,
-    cmabench_assignments,
-    saved_series_store,
-    use_risk_free,
-    linear_constraints,
-    results,
-):
-    _po_require_active_vis_trigger(trigger_payload, "frontier")
-    return po_render_frontier_table(
-        selected_portfolio,
-        results,
-        active_tab,
-        switch_value,
-        bootstrap_state,
-        window_idx,
-        rm,
-        raw_data,
-        periodicity,
-        bench,
-        ls,
-        vol_scaler,
-        vol_scaling,
-        cmabench_assignments,
-        saved_series_store,
-        use_risk_free,
-        linear_constraints,
-    )
-
-
 def po_render_frontier_table(
     selected_portfolio,
     results,
@@ -11903,45 +11910,73 @@ def po_render_frontier_table(
         )
 
 
-@callback(
-    Output("po-frontier-rf-warning", "children"),
-    Output("po-frontier-rf-warning", "style"),
-    Input("po-frontier-render-trigger-store", "data"),
-    State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-frontier-window-select", "value"),
-    State("po-frontier-rm-select", "value"),
-    State("po-use-risk-free-store", "data"),
-    State("po-periodicity-select", "value"),
-    State("dashmat-saved-series-cache-store", "data"),
-    State("po-cmabench-assignments-store", "data"),
-    State("po-results-store", "data"),
-    prevent_initial_call=True,
-)
-def _po_render_frontier_rf_warning_callback(
-    trigger_payload,
-    active_tab,
+def po_render_frontier_views(
     selected_portfolio,
+    results,
+    active_tab,
+    switch_value,
+    bootstrap_state,
     window_idx,
     rm,
-    use_risk_free,
+    raw_data,
     periodicity,
-    saved_series_store,
+    bench,
+    ls,
+    date_range,
+    vol_scaler,
+    vol_scaling,
     cmabench_assignments,
-    results,
+    saved_series_store,
+    use_risk_free,
+    series_select,
+    theme,
+    linear_constraints,
+    trigger_id=None,
 ):
-    _po_require_active_vis_trigger(trigger_payload, "frontier")
-    return po_render_frontier_rf_warning(
+    active_view = switch_value or "chart"
+    if active_view == "table":
+        return no_update, po_render_frontier_table(
+            selected_portfolio,
+            results,
+            active_tab,
+            "table",
+            bootstrap_state,
+            window_idx,
+            rm,
+            raw_data,
+            periodicity,
+            bench,
+            ls,
+            vol_scaler,
+            vol_scaling,
+            cmabench_assignments,
+            saved_series_store,
+            use_risk_free,
+            linear_constraints,
+        )
+    return po_render_frontier_chart(
         selected_portfolio,
         results,
         active_tab,
+        "chart",
+        bootstrap_state,
         window_idx,
         rm,
-        use_risk_free,
+        raw_data,
         periodicity,
-        saved_series_store,
+        bench,
+        ls,
+        date_range,
+        vol_scaler,
+        vol_scaling,
         cmabench_assignments,
-    )
+        saved_series_store,
+        use_risk_free,
+        series_select,
+        theme,
+        linear_constraints,
+        trigger_id=trigger_id,
+    ), no_update
 
 
 def po_render_frontier_rf_warning(
