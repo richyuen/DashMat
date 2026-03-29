@@ -3798,6 +3798,24 @@
     return nextEntry;
   }
 
+  function portoptProjectActiveAnalysisEntry(selectedPortfolio, results, currentEntry) {
+    const sourceEntry = (selectedPortfolio && results && results[selectedPortfolio]) ? results[selectedPortfolio] : null;
+    if (!sourceEntry || typeof sourceEntry !== "object") {
+      return currentEntry === null ? noUpdate() : null;
+    }
+    const nextEntry = {
+      window_weights: Array.isArray(sourceEntry.window_weights) ? sourceEntry.window_weights : [],
+      config: sourceEntry.config && typeof sourceEntry.config === "object" ? sourceEntry.config : {},
+      run_inputs: sourceEntry.run_inputs && typeof sourceEntry.run_inputs === "object" ? sourceEntry.run_inputs : {},
+      risk_free_meta: sourceEntry.risk_free_meta && typeof sourceEntry.risk_free_meta === "object" ? sourceEntry.risk_free_meta : {},
+      frontier_cache: sourceEntry.frontier_cache && typeof sourceEntry.frontier_cache === "object" ? sourceEntry.frontier_cache : {}
+    };
+    if (sameValue(currentEntry, nextEntry)) {
+      return noUpdate();
+    }
+    return nextEntry;
+  }
+
   function patchPlotlyTheme(colorScheme) {
     var isDark = colorScheme === "dark";
     var template = isDark ? "plotly_dark" : "plotly_white";
@@ -3888,6 +3906,7 @@
       portoptControlSync: portoptControlSync,
       portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
       portoptMarkVisitedTabLoaded: portoptMarkVisitedTabLoaded,
+      portoptProjectActiveAnalysisEntry: portoptProjectActiveAnalysisEntry,
       portoptProjectActivePerformanceEntry: portoptProjectActivePerformanceEntry,
       regressionClearRawDbRows: regressionClearRawDbRows,
       syncPortoptSeriesModalGrid: syncPortoptSeriesModalGrid,

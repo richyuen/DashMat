@@ -923,7 +923,11 @@ def _po_missing_source_series(results, selected_portfolio, raw_data) -> list[str
     if not selected_portfolio or not results or selected_portfolio not in results:
         return []
 
-    config = ((results or {}).get(selected_portfolio) or {}).get("config", {}) or {}
+    return _po_missing_source_series_for_entry(((results or {}).get(selected_portfolio) or {}), raw_data)
+
+
+def _po_missing_source_series_for_entry(portfolio_data, raw_data) -> list[str]:
+    config = (portfolio_data or {}).get("config", {}) or {}
     source_series = [str(name) for name in (config.get("selected_series") or []) if str(name)]
     if not source_series:
         return []
@@ -1979,7 +1983,7 @@ def _build_frontier_snapshot(
     dataset_key = _dataset_key_from_source(dataset_source)
     if not window_weights or not opt_series or not dataset_key:
         raise ValueError("No frontier data available.")
-    missing_sources = _po_missing_source_series({selected_portfolio: portfolio_data}, selected_portfolio, dataset_key)
+    missing_sources = _po_missing_source_series_for_entry(portfolio_data, dataset_key)
     if missing_sources:
         missing_text = ", ".join(missing_sources)
         raise ValueError(f"Missing source series for frontier: {missing_text}")
@@ -4408,6 +4412,7 @@ layout = dmc.Container(
         dcc.Store(id="po-results-store", data={}, storage_type="session"),
         dcc.Store(id="po-results-meta-store", data={"has_results": False, "count": 0}, storage_type="memory"),
         dcc.Store(id="po-active-performance-entry-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-active-analysis-entry-store", data=None, storage_type="memory"),
         dcc.Store(id="po-opt-status-store", data=None, storage_type="memory"),
         dcc.Store(id="po-active-tab-store", data="weight", storage_type="session"),
         dcc.Store(
@@ -6774,6 +6779,15 @@ clientside_callback(
     Input("po-weight-portfolio-select", "value"),
     Input("po-results-store", "data"),
     State("po-active-performance-entry-store", "data"),
+    prevent_initial_call=False,
+)
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptProjectActiveAnalysisEntry"),
+    Output("po-active-analysis-entry-store", "data"),
+    Input("po-weight-portfolio-select", "value"),
+    Input("po-results-store", "data"),
+    State("po-active-analysis-entry-store", "data"),
     prevent_initial_call=False,
 )
 
@@ -9214,14 +9228,14 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
     State("po-weight-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("po-bootstrap-store", "data"),
-    State("po-results-store", "data"),
+    State("po-active-analysis-entry-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_weight_views_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, bootstrap_state, results):
+def _po_render_weight_views_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, bootstrap_state, active_entry):
     _po_require_active_vis_trigger(trigger_payload, "weight")
     return po_render_weight_views(
         selected_portfolio,
-        results,
+        active_entry,
         active_tab,
         switch_value,
         theme,
@@ -9248,12 +9262,10 @@ def _po_chart_empty_style(visible: bool) -> dict:
     }
 
 
-def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
+def po_render_weight_chart(selected_portfolio, portfolio_data, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
 
     bootstrap_phase = _po_bootstrap_state(bootstrap_state)["phase"]
@@ -9266,7 +9278,6 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
         bootstrap_phase=bootstrap_phase,
         source="weight_chart",
     ):
-        portfolio_data = results[selected_portfolio]
         window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights:
@@ -10042,7 +10053,7 @@ def po_render_drawdown(
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("po-bootstrap-store", "data"),
-    State("po-results-store", "data"),
+    State("po-active-analysis-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_attribution_views_callback(
@@ -10060,12 +10071,12 @@ def _po_render_attribution_views_callback(
     vol_scaling,
     theme,
     bootstrap_state,
-    results,
+    active_entry,
 ):
     _po_require_active_vis_trigger(trigger_payload, "attribution")
     return po_render_attribution_views(
         selected_portfolio,
-        results,
+        active_entry,
         active_tab,
         switch_value,
         bootstrap_state,
@@ -10082,24 +10093,21 @@ def _po_render_attribution_views_callback(
     )
 
 
-def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
+def po_render_attribution_chart(selected_portfolio, portfolio_data, active_tab, switch_value, bootstrap_state,
                                  raw_data, orig_periodicity, periodicity, bench, ls,
                                  date_range, vol_scaler, vol_scaling, theme, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "attribution", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        return html.Div()
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
     config = portfolio_data.get("config", {})
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No attribution data available.", c="dimmed")
-    missing_sources = _po_missing_source_series(results, selected_portfolio, raw_data)
+    missing_sources = _po_missing_source_series_for_entry(portfolio_data, raw_data)
     if missing_sources:
         return dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed")
 
@@ -10169,15 +10177,12 @@ def po_render_attribution_chart(selected_portfolio, results, active_tab, switch_
 # Weight table
 # ---------------------------------------------------------------------------
 
-def po_render_weight_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state, trigger_id=None):
+def po_render_weight_table(selected_portfolio, portfolio_data, active_tab, switch_value, bootstrap_state, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "table":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        return html.Div()
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights:
@@ -10218,12 +10223,12 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
         return _po_build_result_grid("po-weight-grid", column_defs, row_data)
 
 
-def po_render_weight_views(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
+def po_render_weight_views(selected_portfolio, portfolio_data, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
     active_view = switch_value or "chart"
     if active_view == "table":
         return no_update, no_update, no_update, no_update, po_render_weight_table(
             selected_portfolio,
-            results,
+            portfolio_data,
             active_tab,
             "table",
             bootstrap_state,
@@ -10231,7 +10236,7 @@ def po_render_weight_views(selected_portfolio, results, active_tab, switch_value
         )
     chart_figure, chart_style, empty_children, empty_style = po_render_weight_chart(
         selected_portfolio,
-        results,
+        portfolio_data,
         active_tab,
         "chart",
         theme,
@@ -10245,24 +10250,21 @@ def po_render_weight_views(selected_portfolio, results, active_tab, switch_value
 # Attribution table
 # ---------------------------------------------------------------------------
 
-def po_render_attribution_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
+def po_render_attribution_table(selected_portfolio, portfolio_data, active_tab, switch_value, bootstrap_state,
                                 raw_data, periodicity, bench, ls, date_range,
                                 vol_scaler, vol_scaling):
     if not _po_bootstrap_tab_render_ready(active_tab, "attribution", bootstrap_state) or switch_value != "table":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        return html.Div()
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
     config = portfolio_data.get("config", {})
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not raw_data:
         return html.Div()
-    if _po_missing_source_series(results, selected_portfolio, raw_data):
+    if _po_missing_source_series_for_entry(portfolio_data, raw_data):
         return html.Div()
 
     try:
@@ -10329,7 +10331,7 @@ def po_render_attribution_table(selected_portfolio, results, active_tab, switch_
 
 def po_render_attribution_views(
     selected_portfolio,
-    results,
+    portfolio_data,
     active_tab,
     switch_value,
     bootstrap_state,
@@ -10348,7 +10350,7 @@ def po_render_attribution_views(
     if active_view == "table":
         return no_update, po_render_attribution_table(
             selected_portfolio,
-            results,
+            portfolio_data,
             active_tab,
             "table",
             bootstrap_state,
@@ -10362,7 +10364,7 @@ def po_render_attribution_views(
         )
     return po_render_attribution_chart(
         selected_portfolio,
-        results,
+        portfolio_data,
         active_tab,
         "chart",
         bootstrap_state,
@@ -11178,7 +11180,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-vol-scaling-assignments-store", "data"),
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    State("po-results-store", "data"),
+    State("po-active-analysis-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_risk_views_callback(
@@ -11196,12 +11198,12 @@ def _po_render_risk_views_callback(
     vol_scaling,
     series_select,
     theme,
-    results,
+    active_entry,
 ):
     _po_require_active_vis_trigger(trigger_payload, "risk")
     return po_render_risk_views(
         selected_portfolio,
-        results,
+        active_entry,
         active_tab,
         switch_value,
         bootstrap_state,
@@ -11218,24 +11220,21 @@ def _po_render_risk_views_callback(
     )
 
 
-def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
+def po_render_risk_chart(selected_portfolio, portfolio_data, active_tab, switch_value, bootstrap_state,
                          raw_data, periodicity, bench, ls, date_range,
                          vol_scaler, vol_scaling, series_select, theme, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "risk", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        return html.Div()
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
     config = portfolio_data.get("config", {})
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not raw_data:
         return dmc.Text("No risk data available.", c="dimmed")
-    missing_sources = _po_missing_source_series(results, selected_portfolio, raw_data)
+    missing_sources = _po_missing_source_series_for_entry(portfolio_data, raw_data)
     if missing_sources:
         return dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed")
 
@@ -11310,17 +11309,14 @@ def po_render_risk_chart(selected_portfolio, results, active_tab, switch_value, 
 # Risk Contribution table
 # ---------------------------------------------------------------------------
 
-def po_render_risk_table(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
+def po_render_risk_table(selected_portfolio, portfolio_data, active_tab, switch_value, bootstrap_state,
                          raw_data, periodicity, bench, ls, date_range,
                          vol_scaler, vol_scaling, series_select):
     if not _po_bootstrap_tab_render_ready(active_tab, "risk", bootstrap_state) or switch_value != "table":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        return html.Div()
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
     config = portfolio_data.get("config", {})
     opt_series = config.get("selected_series", [])
@@ -11391,7 +11387,7 @@ def po_render_risk_table(selected_portfolio, results, active_tab, switch_value, 
 
 def po_render_risk_views(
     selected_portfolio,
-    results,
+    portfolio_data,
     active_tab,
     switch_value,
     bootstrap_state,
@@ -11410,7 +11406,7 @@ def po_render_risk_views(
     if active_view == "table":
         return no_update, po_render_risk_table(
             selected_portfolio,
-            results,
+            portfolio_data,
             active_tab,
             "table",
             bootstrap_state,
@@ -11425,7 +11421,7 @@ def po_render_risk_views(
         )
     return po_render_risk_chart(
         selected_portfolio,
-        results,
+        portfolio_data,
         active_tab,
         "chart",
         bootstrap_state,
@@ -11454,21 +11450,18 @@ def po_render_risk_views(
     State("po-weight-portfolio-select", "value"),
     State("po-turnover-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    State("po-results-store", "data"),
+    State("po-active-analysis-entry-store", "data"),
     prevent_initial_call=True,
 )
-def _po_render_turnover_views_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, results):
+def _po_render_turnover_views_callback(trigger_payload, active_tab, selected_portfolio, switch_value, theme, active_entry):
     _po_require_active_vis_trigger(trigger_payload, "turnover")
-    return po_render_turnover_views(selected_portfolio, results, active_tab, switch_value, theme)
+    return po_render_turnover_views(selected_portfolio, active_entry, active_tab, switch_value, theme)
 
 
-def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_value, theme):
-    if active_tab != "turnover" or switch_value != "chart" or not selected_portfolio or not results:
-        return html.Div()
-    if selected_portfolio not in results:
+def po_render_turnover_chart(selected_portfolio, portfolio_data, active_tab, switch_value, theme):
+    if active_tab != "turnover" or switch_value != "chart" or not selected_portfolio or not portfolio_data:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights:
@@ -11510,13 +11503,10 @@ def po_render_turnover_chart(selected_portfolio, results, active_tab, switch_val
 # Turnover table
 # ---------------------------------------------------------------------------
 
-def po_render_turnover_table(selected_portfolio, results, active_tab, switch_value):
-    if active_tab != "turnover" or switch_value != "table" or not selected_portfolio or not results:
-        return html.Div()
-    if selected_portfolio not in results:
+def po_render_turnover_table(selected_portfolio, portfolio_data, active_tab, switch_value):
+    if active_tab != "turnover" or switch_value != "table" or not selected_portfolio or not portfolio_data:
         return html.Div()
 
-    portfolio_data = results[selected_portfolio]
     window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights or len(window_weights) < 2:
@@ -11556,11 +11546,11 @@ def po_render_turnover_table(selected_portfolio, results, active_tab, switch_val
     return _po_build_result_grid("po-turnover-grid", column_defs, row_data)
 
 
-def po_render_turnover_views(selected_portfolio, results, active_tab, switch_value, theme):
+def po_render_turnover_views(selected_portfolio, portfolio_data, active_tab, switch_value, theme):
     active_view = switch_value or "chart"
     if active_view == "table":
-        return no_update, po_render_turnover_table(selected_portfolio, results, active_tab, "table")
-    return po_render_turnover_chart(selected_portfolio, results, active_tab, "chart", theme), no_update
+        return no_update, po_render_turnover_table(selected_portfolio, portfolio_data, active_tab, "table")
+    return po_render_turnover_chart(selected_portfolio, portfolio_data, active_tab, "chart", theme), no_update
 
 
 # ---------------------------------------------------------------------------
@@ -11633,7 +11623,7 @@ def po_populate_frontier_windows(selected_portfolio, results, active_tab):
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("po-linear-constraints-store", "data"),
-    State("po-results-store", "data"),
+    State("po-active-analysis-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_frontier_views_callback(
@@ -11653,12 +11643,12 @@ def _po_render_frontier_views_callback(
     series_select,
     theme,
     linear_constraints,
-    results,
+    active_entry,
 ):
     _po_require_active_vis_trigger(trigger_payload, "frontier")
     return po_render_frontier_views(
         trigger_payload.get("portfolio"),
-        results,
+        active_entry,
         active_tab,
         trigger_payload.get("view"),
         bootstrap_state,
@@ -11681,21 +11671,17 @@ def _po_render_frontier_views_callback(
     )
 
 
-def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
+def po_render_frontier_chart(selected_portfolio, portfolio_data, active_tab, switch_value, bootstrap_state,
                              window_idx, rm,
                              dataset_source, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, cmabench_assignments, shared_benchmark_source, use_risk_free, series_select, theme,
                              linear_constraints, trigger_id=None, return_snapshot=False):
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        result = (no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True))
-        return (*result, None) if return_snapshot else result
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         result = (no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True))
         return (*result, None) if return_snapshot else result
 
-    portfolio_data = results[selected_portfolio]
     result_use_risk_free = _po_result_use_risk_free(portfolio_data)
     window_weights = portfolio_data.get("window_weights", [])
     config = portfolio_data.get("config", {})
@@ -11704,7 +11690,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     if not window_weights or not opt_series or not _dataset_key_from_source(dataset_source):
         result = (no_update, _po_chart_graph_style(False), dmc.Text("No frontier data available.", c="dimmed"), _po_chart_empty_style(True))
         return (*result, None) if return_snapshot else result
-    missing_sources = _po_missing_source_series(results, selected_portfolio, dataset_source)
+    missing_sources = _po_missing_source_series_for_entry(portfolio_data, dataset_source)
     if missing_sources:
         result = (
             no_update,
@@ -11830,7 +11816,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
 
 def po_render_frontier_table(
     selected_portfolio,
-    results,
+    portfolio_data,
     active_tab,
     switch_value,
     bootstrap_state,
@@ -11850,14 +11836,10 @@ def po_render_frontier_table(
 ):
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "table":
         raise PreventUpdate
-    if not selected_portfolio or not results:
-        result = html.Div()
-        return (result, None) if return_snapshot else result
-    if selected_portfolio not in results:
+    if not selected_portfolio or not portfolio_data:
         result = html.Div()
         return (result, None) if return_snapshot else result
 
-    portfolio_data = results[selected_portfolio]
     result_use_risk_free = _po_result_use_risk_free(portfolio_data)
     window_weights = portfolio_data.get("window_weights", []) or []
     config = portfolio_data.get("config", {}) or {}
@@ -11865,7 +11847,7 @@ def po_render_frontier_table(
     if not window_weights or not opt_series or not _dataset_key_from_source(dataset_source):
         result = html.Div()
         return (result, None) if return_snapshot else result
-    if _po_missing_source_series(results, selected_portfolio, dataset_source):
+    if _po_missing_source_series_for_entry(portfolio_data, dataset_source):
         result = html.Div()
         return (result, None) if return_snapshot else result
 
@@ -11906,7 +11888,7 @@ def po_render_frontier_table(
 
 def po_render_frontier_views(
     selected_portfolio,
-    results,
+    portfolio_data,
     active_tab,
     switch_value,
     bootstrap_state,
@@ -11931,7 +11913,7 @@ def po_render_frontier_views(
     if active_view == "table":
         table_children, snapshot = po_render_frontier_table(
             selected_portfolio,
-            results,
+            portfolio_data,
             active_tab,
             "table",
             bootstrap_state,
@@ -11952,7 +11934,7 @@ def po_render_frontier_views(
         warning_children, warning_style = (
             po_render_frontier_rf_warning(
                 selected_portfolio,
-                results,
+                portfolio_data,
                 active_tab,
                 window_idx,
                 rm,
@@ -11968,7 +11950,7 @@ def po_render_frontier_views(
         return no_update, no_update, no_update, no_update, table_children, warning_children, warning_style
     chart_figure, chart_style, empty_children, empty_style, snapshot = po_render_frontier_chart(
         selected_portfolio,
-        results,
+        portfolio_data,
         active_tab,
         "chart",
         bootstrap_state,
@@ -11993,7 +11975,7 @@ def po_render_frontier_views(
     warning_children, warning_style = (
         po_render_frontier_rf_warning(
             selected_portfolio,
-            results,
+            portfolio_data,
             active_tab,
             window_idx,
             rm,
@@ -12011,7 +11993,7 @@ def po_render_frontier_views(
 
 def po_render_frontier_rf_warning(
     selected_portfolio,
-    results,
+    portfolio_data,
     active_tab,
     window_idx,
     rm,
@@ -12023,12 +12005,9 @@ def po_render_frontier_rf_warning(
 ):
     hidden = {"display": "none"}
     shown = {"display": "block", "marginBottom": "8px"}
-    if active_tab != "frontier" or not selected_portfolio or not results:
-        return "", hidden
-    if selected_portfolio not in results:
+    if active_tab != "frontier" or not selected_portfolio or not portfolio_data:
         return "", hidden
 
-    portfolio_data = results[selected_portfolio]
     result_use_risk_free = _po_result_use_risk_free(portfolio_data)
     if not result_use_risk_free:
         return "", hidden

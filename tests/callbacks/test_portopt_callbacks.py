@@ -127,6 +127,7 @@ def test_portopt_clientside_callback_registrations_present_for_migrated_helpers(
         "portoptToggleRawDivideBy",
         "portoptSyncReturnsBasisFromMirrors",
         "portoptSyncReturnsBasisMirrors",
+        "portoptProjectActiveAnalysisEntry",
         "portoptProjectActivePerformanceEntry",
         "portoptSyncNameWithModel",
         "portoptClearReturns",
@@ -659,6 +660,7 @@ def test_po_result_family_trigger_stores_exist(page_modules):
     _, portopt = page_modules
     for store_id in (
         "po-active-performance-entry-store",
+        "po-active-analysis-entry-store",
         "po-returns-tab-trigger-store",
         "po-rolling-tab-trigger-store",
         "po-statistics-tab-trigger-store",
@@ -876,6 +878,22 @@ def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
     assert 'Input("po-calendar-tab-trigger-store", "data")' not in page_text
 
 
+def test_portopt_non_performance_callbacks_use_active_analysis_entry_store():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+
+    for callback_name in (
+        "def _po_render_weight_views_callback",
+        "def _po_render_attribution_views_callback",
+        "def _po_render_risk_views_callback",
+        "def _po_render_turnover_views_callback",
+        "def _po_render_frontier_views_callback",
+    ):
+        callback_block = page_text.split(callback_name, 1)[0]
+        callback_block = callback_block.rsplit("@callback(", 1)[-1]
+        assert 'State("po-active-analysis-entry-store", "data")' in callback_block
+        assert 'State("po-results-store", "data")' not in callback_block
+
+
 def test_portopt_weight_views_only_updates_active_container(monkeypatch, page_modules):
     _, portopt = page_modules
 
@@ -1028,6 +1046,63 @@ def test_portopt_frontier_controls_use_clientside_callback():
     assert "function portoptSyncFrontierControls(" in js_text
     assert "def _po_sync_frontier_controls_callback" not in page_text
     assert 'Output("po-frontier-render-signature-store", "data")' in page_text
+
+
+def test_portopt_project_active_analysis_entry_projects_only_needed_fields():
+    result = _run_dashmat_callbacks_js(
+        """
+        ns.portoptProjectActiveAnalysisEntry(
+          "Portfolio A",
+          {
+            "Portfolio A": {
+              window_weights: [{ weights: { Asset_A: 1.0 } }],
+              config: { model: "risk_parity", selected_series: ["Asset_A"] },
+              run_inputs: { selected_series: ["Asset_A"], periodicity: "daily" },
+              risk_free_meta: { enabled: false },
+              frontier_cache: { "0": { MV: { frontier_points: [] } } },
+              reporting_returns_json: "drop-me"
+            }
+          },
+          null
+        )
+        """
+    )
+
+    assert result == {
+        "window_weights": [{"weights": {"Asset_A": 1.0}}],
+        "config": {"model": "risk_parity", "selected_series": ["Asset_A"]},
+        "run_inputs": {"selected_series": ["Asset_A"], "periodicity": "daily"},
+        "risk_free_meta": {"enabled": False},
+        "frontier_cache": {"0": {"MV": {"frontier_points": []}}},
+    }
+
+
+def test_portopt_project_active_analysis_entry_returns_no_update_when_unchanged():
+    result = _run_dashmat_callbacks_js(
+        """
+        ns.portoptProjectActiveAnalysisEntry(
+          "Portfolio A",
+          {
+            "Portfolio A": {
+              window_weights: [{ weights: { Asset_A: 1.0 } }],
+              config: { model: "risk_parity" },
+              run_inputs: {},
+              risk_free_meta: {},
+              frontier_cache: {}
+            }
+          },
+          {
+            window_weights: [{ weights: { Asset_A: 1.0 } }],
+            config: { model: "risk_parity" },
+            run_inputs: {},
+            risk_free_meta: {},
+            frontier_cache: {}
+          }
+        )
+        """
+    )
+
+    assert result == "__NO_UPDATE__"
 
 
 def test_portopt_calendar_controls_use_clientside_callback():
@@ -1476,7 +1551,7 @@ def test_po_render_attribution_table_returns_grid_data(monkeypatch, page_modules
 
     grid = portopt.po_render_attribution_table(
         "P1",
-        results,
+        results["P1"],
         "attribution",
         "table",
         {"phase": "ready", "loadedTabs": {"attribution": True}},
@@ -2046,7 +2121,7 @@ def test_po_render_turnover_table_computes_turnover(page_modules):
         }
     }
 
-    grid = portopt.po_render_turnover_table("P1", results, "turnover", "table")
+    grid = portopt.po_render_turnover_table("P1", results["P1"], "turnover", "table")
     assert getattr(grid, "columnDefs", [])[0]["field"] == "Rebalance Date"
     assert getattr(grid, "rowData", [])[0]["Turnover"] == pytest.approx(0.1)
 
@@ -3062,7 +3137,7 @@ def test_po_render_frontier_table_includes_frontier_points_and_weights(monkeypat
 
     grid = portopt.po_render_frontier_table(
         "P1",
-        results,
+        results["P1"],
         "frontier",
         "table",
         {"phase": "ready", "loadedTabs": {"frontier": True}},
@@ -3108,7 +3183,7 @@ def test_po_render_frontier_chart_uses_shared_snapshot_resolver(monkeypatch, pag
 
     figure, graph_style, empty_children, empty_style = portopt.po_render_frontier_chart(
         "P1",
-        {"P1": {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()}},
+        {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()},
         "frontier",
         "chart",
         {"phase": "ready", "loadedTabs": {"frontier": True}},
@@ -3149,7 +3224,7 @@ def test_po_render_frontier_chart_reports_missing_source_series(page_modules, ra
 
     figure, graph_style, empty_children, empty_style = portopt.po_render_frontier_chart(
         "P1",
-        results,
+        results["P1"],
         "frontier",
         "chart",
         {"phase": "ready", "loadedTabs": {"frontier": True}},
@@ -3280,7 +3355,7 @@ def test_po_render_frontier_rf_warning_non_ex_ante_skips_snapshot_lookup(monkeyp
 
     warning, style = portopt.po_render_frontier_rf_warning(
         "P1",
-        {"P1": {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()}},
+        {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()},
         "frontier",
         "1",
         "MV",
@@ -3354,11 +3429,9 @@ def test_po_render_frontier_rf_warning_uses_result_rf_setting_not_live_toggle(mo
     warning, style = portopt.po_render_frontier_rf_warning(
         "P1",
         {
-            "P1": {
-                "config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]},
-                "window_weights": _sample_window_weights(),
-                "risk_free_meta": {"enabled": False},
-            }
+            "config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]},
+            "window_weights": _sample_window_weights(),
+            "risk_free_meta": {"enabled": False},
         },
         "frontier",
         "1",
