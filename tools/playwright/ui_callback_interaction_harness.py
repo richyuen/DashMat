@@ -601,6 +601,120 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="portopt_weight_portfolio_switch_visible",
+            targeted_outputs=["po-weight-chart-content.children"],
+            prepare=lambda: _seed_portopt_result_state(
+                page,
+                resolved_db_series,
+                "weight",
+                "Harness Portfolio 1",
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-weight-chart-content", timeout=10000),
+            perf_target=False,
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_growth_portfolio_switch_visible",
+            targeted_outputs=["po-growth-chart-container.children"],
+            prepare=lambda: _seed_portopt_result_state(
+                page,
+                resolved_db_series,
+                "growth",
+                "Harness Portfolio 1",
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-growth-chart-container", timeout=10000),
+            perf_target=False,
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_turnover_portfolio_switch_visible",
+            targeted_outputs=["po-turnover-chart-container.children"],
+            prepare=lambda: _seed_portopt_result_state(
+                page,
+                resolved_db_series,
+                "turnover",
+                "Harness Portfolio 1",
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-turnover-chart-container", timeout=10000),
+            perf_target=False,
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_frontier_portfolio_switch_visible",
+            targeted_outputs=["po-frontier-chart-container.children"],
+            prepare=lambda: _seed_portopt_result_state(
+                page,
+                resolved_db_series,
+                "frontier",
+                "Harness Portfolio 1",
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-frontier-chart-container", timeout=10000),
+            perf_target=False,
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_risk_portfolio_switch_visible",
+            targeted_outputs=["po-risk-chart-container.children"],
+            prepare=lambda: _seed_portopt_result_state(
+                page,
+                resolved_db_series,
+                "risk",
+                "Harness Portfolio 1",
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-risk-chart-container", timeout=10000),
+            perf_target=False,
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_attribution_portfolio_switch_visible",
+            targeted_outputs=["po-attribution-chart-container.children"],
+            prepare=lambda: _seed_portopt_result_state(
+                page,
+                resolved_db_series,
+                "attribution",
+                "Harness Portfolio 1",
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-attribution-chart-container", timeout=10000),
+            perf_target=False,
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="portopt_statistics_visible",
             targeted_outputs=["po-statistics-grid-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),

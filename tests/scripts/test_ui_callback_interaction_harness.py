@@ -198,6 +198,36 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
         ["po-statistics-grid-content.children"],
     ) in captured
     assert (
+        "portopt_weight_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-weight-chart-content.children"],
+    ) in captured
+    assert (
+        "portopt_growth_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-growth-chart-container.children"],
+    ) in captured
+    assert (
+        "portopt_turnover_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-turnover-chart-container.children"],
+    ) in captured
+    assert (
+        "portopt_frontier_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-frontier-chart-container.children"],
+    ) in captured
+    assert (
+        "portopt_risk_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-risk-chart-container.children"],
+    ) in captured
+    assert (
+        "portopt_attribution_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-attribution-chart-container.children"],
+    ) in captured
+    assert (
         "portopt_statistics_visible",
         "visible_result_tab",
         ["po-statistics-grid-content.children"],

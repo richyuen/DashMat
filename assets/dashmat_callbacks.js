@@ -3258,6 +3258,10 @@
     ];
   }
 
+  function portoptSyncSaveSeriesUi(selected, results, currentDisabled, currentStatus) {
+    return regressionSyncSaveSeriesUi(selected, results, currentDisabled, currentStatus);
+  }
+
   function regressionSyncAnovaWindowOptions(selected, results, currentOptions, currentWindow, currentDisabled) {
     let nextOptions = [];
     let nextValue = null;
@@ -3388,6 +3392,7 @@
       portoptInitTau: portoptInitTau,
       portoptReportingBasisControl: portoptReportingBasisControl,
       portoptSyncNameWithModel: portoptSyncNameWithModel,
+      portoptSyncSaveSeriesUi: portoptSyncSaveSeriesUi,
       portoptSyncReturnsBasisFromMirrors: portoptSyncReturnsBasisFromMirrors,
       portoptSyncReturnsBasisMirrors: portoptSyncReturnsBasisMirrors,
       portoptSyncTau: portoptSyncTau,

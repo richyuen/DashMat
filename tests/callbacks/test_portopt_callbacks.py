@@ -507,8 +507,8 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-turnover-grid-container", "children")' in page_text
     assert 'po-turnover-chart-content' not in page_text
     assert 'po-turnover-grid-content' not in page_text
-    assert page_text.count('Input("po-bootstrap-store", "data")') >= 9
-    assert page_text.count('State("po-bootstrap-store", "data")') >= 1
+    assert page_text.count('Input("po-bootstrap-store", "data")') >= 5
+    assert page_text.count('State("po-bootstrap-store", "data")') >= 5
 
 
 def test_po_shell_visibility_uses_raw_data_presence_and_page_load_tick():
@@ -635,8 +635,16 @@ def test_po_result_family_trigger_stores_exist(page_modules):
         "po-returns-tab-trigger-store",
         "po-rolling-tab-trigger-store",
         "po-statistics-tab-trigger-store",
+        "po-calendar-controls-trigger-store",
         "po-calendar-tab-trigger-store",
         "po-drawdown-tab-trigger-store",
+        "po-weight-tab-trigger-store",
+        "po-growth-tab-trigger-store",
+        "po-turnover-tab-trigger-store",
+        "po-risk-tab-trigger-store",
+        "po-attribution-tab-trigger-store",
+        "po-frontier-controls-trigger-store",
+        "po-frontier-render-trigger-store",
     ):
         assert _find_component_by_id(portopt.layout, store_id) is not None
 
@@ -754,23 +762,57 @@ def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
 
     assert 'Output("po-active-vis-trigger-store", "data")' not in page_text
     assert "function analyticsTabTrigger(" in js_text
-    for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown"):
+    for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown", "weight", "growth", "turnover", "risk", "attribution", "frontier"):
         assert f'_po_require_active_vis_trigger(trigger_payload, "{tab_name}")' in page_text
-    assert 'Output("po-returns-tab-trigger-store", "data")' in page_text
-    assert 'Output("po-rolling-tab-trigger-store", "data")' in page_text
-    assert 'Output("po-statistics-tab-trigger-store", "data")' in page_text
-    assert 'Output("po-calendar-tab-trigger-store", "data")' in page_text
-    assert 'Output("po-drawdown-tab-trigger-store", "data")' in page_text
-    assert 'analyticsTabTrigger("returns", activeTab, initialTabReady, true)' in page_text
-    assert 'analyticsTabTrigger("rolling", activeTab, initialTabReady, true)' in page_text
-    assert 'analyticsTabTrigger("statistics", activeTab, initialTabReady, true)' in page_text
-    assert 'analyticsTabTrigger("calendar", activeTab, initialTabReady, true)' in page_text
-    assert 'analyticsTabTrigger("drawdown", activeTab, initialTabReady, true)' in page_text
-    assert 'Input("po-returns-tab-trigger-store", "data")' in page_text
-    assert 'Input("po-rolling-tab-trigger-store", "data")' in page_text
-    assert 'Input("po-statistics-tab-trigger-store", "data")' in page_text
-    assert 'Input("po-calendar-tab-trigger-store", "data")' in page_text
-    assert 'Input("po-drawdown-tab-trigger-store", "data")' in page_text
+    for store_id in (
+        "po-returns-tab-trigger-store",
+        "po-rolling-tab-trigger-store",
+        "po-statistics-tab-trigger-store",
+        "po-calendar-controls-trigger-store",
+        "po-calendar-tab-trigger-store",
+        "po-drawdown-tab-trigger-store",
+        "po-weight-tab-trigger-store",
+        "po-growth-tab-trigger-store",
+        "po-turnover-tab-trigger-store",
+        "po-risk-tab-trigger-store",
+        "po-attribution-tab-trigger-store",
+        "po-frontier-controls-trigger-store",
+        "po-frontier-render-trigger-store",
+    ):
+        assert f'Output("{store_id}", "data")' in page_text
+        assert f'Input("{store_id}", "data")' in page_text
+    for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown", "weight", "growth", "turnover", "risk", "attribution", "frontier"):
+        assert f'analyticsTabTrigger("{tab_name}", activeTab, initialTabReady, true)' in page_text
+    assert 'Output("po-frontier-rm-select", "data")' in page_text
+    assert 'Output("po-frontier-window-select", "data")' in page_text
+    assert 'Input("po-calendar-controls-trigger-store", "data")' in page_text
+    assert 'Input("po-frontier-controls-trigger-store", "data")' in page_text
+    assert 'Input("po-frontier-render-trigger-store", "data")' in page_text
+
+
+def test_portopt_save_series_ui_uses_clientside_parity_helper():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncSaveSeriesUi")' in page_text
+    assert "def po_sync_save_series_ui" not in page_text
+    assert "function portoptSyncSaveSeriesUi(" in js_text
+
+
+def test_portopt_sync_save_series_ui_preserves_existing_status_when_unchanged():
+    result = _run_dashmat_callbacks_js(
+        'ns.portoptSyncSaveSeriesUi("Portfolio A", {"Portfolio A": {"saved_series_name": "Portfolio A"}}, false, "Saved as Portfolio A.")'
+    )
+
+    assert result == ["__NO_UPDATE__", "__NO_UPDATE__"]
+
+
+def test_portopt_sync_save_series_ui_clears_status_when_result_missing():
+    result = _run_dashmat_callbacks_js(
+        'ns.portoptSyncSaveSeriesUi("Missing", {"Portfolio A": {"saved_series_name": "Portfolio A"}}, false, "Saved as Portfolio A.")'
+    )
+
+    assert result == [True, ""]
 
 
 def test_portopt_statistics_and_rolling_have_substep_timing_breakdown():
