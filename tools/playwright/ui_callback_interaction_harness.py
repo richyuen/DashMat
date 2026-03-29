@@ -839,6 +839,19 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="portopt_growth_visible",
+            targeted_outputs=["po-growth-chart-container.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
+            action=lambda: warm.set_component_value(page, "po-vis-tabs", "growth"),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-growth-chart-container", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="portopt_growth_portfolio_switch_visible",
             targeted_outputs=["po-growth-chart-container.children"],
             prepare=lambda: _seed_portopt_result_state(
@@ -849,7 +862,6 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
             wait_for_ready=lambda: wait_content_ready(page, "#po-growth-chart-container", timeout=10000),
-            perf_target=False,
             scenario_class="visible_result_tab",
         )
     )

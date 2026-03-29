@@ -259,6 +259,11 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
         ["po-weight-grid-content.children"],
     ) in captured
     assert (
+        "portopt_growth_visible",
+        "visible_result_tab",
+        ["po-growth-chart-container.children"],
+    ) in captured
+    assert (
         "portopt_growth_portfolio_switch_visible",
         "visible_result_tab",
         ["po-growth-chart-container.children"],

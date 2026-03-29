@@ -850,13 +850,14 @@ def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
         "def _po_render_returns_callback",
         "def _po_render_rolling_callback",
         "def _po_render_statistics_callback",
+        "def _po_render_growth_chart_callback",
         "def _po_render_frontier_views_callback",
     ):
         callback_block = page_text.split(callback_name, 1)[0]
         callback_block = callback_block.rsplit("@callback(", 1)[-1]
         assert 'State("dashmat-raw-data-identity-store", "data")' in callback_block
         assert 'State("dashmat-raw-data-store", "data")' not in callback_block
-        if callback_name != "def _po_render_frontier_views_callback":
+        if callback_name not in {"def _po_render_frontier_views_callback"}:
             assert 'State("po-active-performance-entry-store", "data")' in callback_block
             assert 'State("po-results-store", "data")' not in callback_block
 
@@ -1847,7 +1848,7 @@ def test_po_render_growth_chart_table_mode_returns_grid_with_wide_date_column(mo
 
     grid = portopt.po_render_growth_chart(
         "P1",
-        {"P1": {"window_weights": _sample_window_weights()}},
+        {"reporting_returns_json": "reporting", "run_inputs": {"selected_series": ["Asset_A"]}, "config": {"selected_series": ["Asset_A"]}},
         "growth",
         "table",
         "raw-json",

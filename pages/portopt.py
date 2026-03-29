@@ -895,7 +895,7 @@ def _po_build_display_series_cached(
 
 
 def _po_build_display_series(
-    results,
+    active_entry_or_results,
     selected_portfolio,
     raw_data,
     periodicity,
@@ -905,8 +905,10 @@ def _po_build_display_series(
     vol_scaler,
     vol_scaling_assignments,
 ) -> tuple[pd.DataFrame, list[str]]:
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry_or_results)
+    active_results = _po_single_result_context(selected_portfolio, active_entry)
     perf = _po_get_performance_frames(
-        results,
+        active_results,
         selected_portfolio,
         raw_data,
         periodicity,
@@ -9356,7 +9358,7 @@ def po_render_weight_chart(selected_portfolio, portfolio_data, active_tab, switc
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    State("po-results-store", "data"),
+    State("po-active-performance-entry-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_growth_chart_callback(
@@ -9372,12 +9374,12 @@ def _po_render_growth_chart_callback(
     vol_scaler,
     vol_scaling,
     theme,
-    results,
+    active_entry,
 ):
     _po_require_active_vis_trigger(trigger_payload, "growth")
     return po_render_growth_chart(
         selected_portfolio,
-        results,
+        active_entry,
         active_tab,
         view_mode,
         raw_data_identity,
@@ -9393,7 +9395,7 @@ def _po_render_growth_chart_callback(
 
 def po_render_growth_chart(
     selected_portfolio,
-    results,
+    active_entry,
     active_tab,
     view_mode,
     raw_data,
@@ -9405,11 +9407,12 @@ def po_render_growth_chart(
     vol_scaling,
     theme,
 ):
-    if active_tab != "growth" or not selected_portfolio or not results:
+    active_entry = _po_resolve_active_performance_entry(selected_portfolio, active_entry)
+    if active_tab != "growth" or not selected_portfolio or active_entry is None:
         return html.Div()
 
     display_df, ordered_cols = _po_build_display_series(
-        results,
+        active_entry,
         selected_portfolio,
         raw_data,
         periodicity,
