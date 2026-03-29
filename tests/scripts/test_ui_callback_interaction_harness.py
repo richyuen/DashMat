@@ -236,7 +236,7 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
     assert (
         "portopt_weight_portfolio_switch_visible",
         "visible_result_tab",
-        ["po-weight-chart-content.children"],
+        ["po-weight-chart-graph.figure", "po-weight-chart-content.children"],
     ) in captured
     assert (
         "portopt_weight_table_portfolio_switch_visible",
@@ -261,7 +261,7 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
     assert (
         "portopt_frontier_portfolio_switch_visible",
         "visible_result_tab",
-        ["po-frontier-chart-container.children"],
+        ["po-frontier-chart-graph.figure", "po-frontier-chart-container.children"],
     ) in captured
     assert (
         "portopt_frontier_table_portfolio_switch_visible",

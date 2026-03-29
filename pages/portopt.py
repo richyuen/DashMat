@@ -3585,7 +3585,17 @@ def build_po_main_layout():
                             html.Div(
                                 id="po-weight-chart-container",
                                 style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[html.Div(id="po-weight-chart-content")],
+                                children=[
+                                    dcc.Graph(
+                                        id="po-weight-chart-graph",
+                                        figure=go.Figure(),
+                                        style={"display": "none", "height": "100%", "width": "100%", "flex": "1"},
+                                    ),
+                                    html.Div(
+                                        id="po-weight-chart-empty",
+                                        style={"display": "none", "flex": "1", "alignItems": "center", "justifyContent": "center"},
+                                    ),
+                                ],
                             ),
                             html.Div(
                                 id="po-weight-grid-container",
@@ -3725,7 +3735,17 @@ def build_po_main_layout():
                             html.Div(
                                 id="po-frontier-chart-container",
                                 style={"display": "flex", "flexDirection": "column", "flex": "1", "overflow": "hidden"},
-                                children=[],
+                                children=[
+                                    dcc.Graph(
+                                        id="po-frontier-chart-graph",
+                                        figure=go.Figure(),
+                                        style={"display": "none", "height": "100%", "width": "100%", "flex": "1"},
+                                    ),
+                                    html.Div(
+                                        id="po-frontier-chart-empty",
+                                        style={"display": "none", "flex": "1", "alignItems": "center", "justifyContent": "center"},
+                                    ),
+                                ],
                             ),
                             html.Div(
                                 id="po-frontier-grid-container",
@@ -9135,7 +9155,10 @@ def po_delete_portfolio(n_clicks, selected_portfolio, results, raw_data):
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-weight-chart-content", "children"),
+    Output("po-weight-chart-graph", "figure"),
+    Output("po-weight-chart-graph", "style"),
+    Output("po-weight-chart-empty", "children"),
+    Output("po-weight-chart-empty", "style"),
     Output("po-weight-grid-content", "children"),
     Input("po-weight-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
@@ -9159,13 +9182,31 @@ def _po_render_weight_views_callback(trigger_payload, active_tab, selected_portf
     )
 
 
+def _po_chart_graph_style(visible: bool) -> dict:
+    return {
+        "display": "block" if visible else "none",
+        "height": "100%",
+        "width": "100%",
+        "flex": "1",
+    }
+
+
+def _po_chart_empty_style(visible: bool) -> dict:
+    return {
+        "display": "flex" if visible else "none",
+        "flex": "1",
+        "alignItems": "center",
+        "justifyContent": "center",
+    }
+
+
 def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "weight", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
     if not selected_portfolio or not results:
-        return html.Div()
+        return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
     if selected_portfolio not in results:
-        return html.Div()
+        return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
 
     bootstrap_phase = _po_bootstrap_state(bootstrap_state)["phase"]
     with timed_block(
@@ -9181,7 +9222,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
         window_weights = portfolio_data.get("window_weights", [])
 
     if not window_weights:
-        return dmc.Text("No weight data available.", c="dimmed")
+        return no_update, _po_chart_graph_style(False), dmc.Text("No weight data available.", c="dimmed"), _po_chart_empty_style(True)
 
     timing_ctx = timed_block(
         "portopt.render_weight_chart",
@@ -9233,7 +9274,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
         )
         apply_chart_theme(fig, theme)
 
-        return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+        return fig, _po_chart_graph_style(True), "", _po_chart_empty_style(False)
     finally:
         timing_ctx.__exit__(None, None, None)
 
@@ -10164,7 +10205,7 @@ def po_render_weight_table(selected_portfolio, results, active_tab, switch_value
 def po_render_weight_views(selected_portfolio, results, active_tab, switch_value, theme, bootstrap_state, trigger_id=None):
     active_view = switch_value or "chart"
     if active_view == "table":
-        return no_update, po_render_weight_table(
+        return no_update, no_update, no_update, no_update, po_render_weight_table(
             selected_portfolio,
             results,
             active_tab,
@@ -10172,7 +10213,7 @@ def po_render_weight_views(selected_portfolio, results, active_tab, switch_value
             bootstrap_state,
             trigger_id=trigger_id,
         )
-    return po_render_weight_chart(
+    chart_figure, chart_style, empty_children, empty_style = po_render_weight_chart(
         selected_portfolio,
         results,
         active_tab,
@@ -10180,7 +10221,8 @@ def po_render_weight_views(selected_portfolio, results, active_tab, switch_value
         theme,
         bootstrap_state,
         trigger_id=trigger_id,
-    ), no_update
+    )
+    return chart_figure, chart_style, empty_children, empty_style, no_update
 
 
 # ---------------------------------------------------------------------------
@@ -11647,7 +11689,10 @@ def po_sync_frontier_controls(
 # ---------------------------------------------------------------------------
 
 @callback(
-    Output("po-frontier-chart-container", "children"),
+    Output("po-frontier-chart-graph", "figure"),
+    Output("po-frontier-chart-graph", "style"),
+    Output("po-frontier-chart-empty", "children"),
+    Output("po-frontier-chart-empty", "style"),
     Output("po-frontier-grid-container", "children"),
     Input("po-frontier-render-trigger-store", "data"),
     State("po-vis-tabs", "value"),
@@ -11729,9 +11774,9 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
     if not selected_portfolio or not results:
-        return html.Div()
+        return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
     if selected_portfolio not in results:
-        return html.Div()
+        return no_update, _po_chart_graph_style(False), html.Div(), _po_chart_empty_style(True)
 
     portfolio_data = results[selected_portfolio]
     result_use_risk_free = _po_result_use_risk_free(portfolio_data)
@@ -11740,10 +11785,15 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     opt_series = config.get("selected_series", [])
 
     if not window_weights or not opt_series or not raw_data:
-        return dmc.Text("No frontier data available.", c="dimmed")
+        return no_update, _po_chart_graph_style(False), dmc.Text("No frontier data available.", c="dimmed"), _po_chart_empty_style(True)
     missing_sources = _po_missing_source_series(results, selected_portfolio, raw_data)
     if missing_sources:
-        return dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed")
+        return (
+            no_update,
+            _po_chart_graph_style(False),
+            dmc.Text(f"Missing source series: {', '.join(missing_sources)}", c="dimmed"),
+            _po_chart_empty_style(True),
+        )
 
     timing_ctx = timed_block(
         "portopt.render_frontier_chart",
@@ -11781,7 +11831,12 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
         risk_measure = snapshot.get("risk_measure", _normalize_frontier_risk_measure(model, rm))
 
         if not frontier_pts:
-            return dmc.Text("No frontier points available for the selected window.", c="dimmed")
+            return (
+                no_update,
+                _po_chart_graph_style(False),
+                dmc.Text("No frontier points available for the selected window.", c="dimmed"),
+                _po_chart_empty_style(True),
+            )
 
         fig = go.Figure()
 
@@ -11838,13 +11893,15 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
         )
         apply_chart_theme(fig, theme)
 
-        return dcc.Loading(
-            type="default",
-            children=[dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})],
-        )
+        return fig, _po_chart_graph_style(True), "", _po_chart_empty_style(False)
 
     except Exception as e:
-        return dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed")
+        return (
+            no_update,
+            _po_chart_graph_style(False),
+            dmc.Text(f"Error computing efficient frontier: {str(e)}", c="dimmed"),
+            _po_chart_empty_style(True),
+        )
     finally:
         timing_ctx.__exit__(None, None, None)
 
@@ -11943,7 +12000,7 @@ def po_render_frontier_views(
 ):
     active_view = switch_value or "chart"
     if active_view == "table":
-        return no_update, po_render_frontier_table(
+        return no_update, no_update, no_update, no_update, po_render_frontier_table(
             selected_portfolio,
             results,
             active_tab,
@@ -11962,7 +12019,7 @@ def po_render_frontier_views(
             use_risk_free,
             linear_constraints,
         )
-    return po_render_frontier_chart(
+    chart_figure, chart_style, empty_children, empty_style = po_render_frontier_chart(
         selected_portfolio,
         results,
         active_tab,
@@ -11984,7 +12041,8 @@ def po_render_frontier_views(
         theme,
         linear_constraints,
         trigger_id=trigger_id,
-    ), no_update
+    )
+    return chart_figure, chart_style, empty_children, empty_style, no_update
 
 
 def po_render_frontier_rf_warning(

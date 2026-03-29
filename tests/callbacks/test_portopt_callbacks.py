@@ -497,9 +497,20 @@ def test_po_bootstrap_keeps_single_page_load_interval_and_no_dead_results_sync()
     assert 'Output("po-attribution-grid-container", "children")' in page_text
     assert 'po-attribution-chart-content' not in page_text
     assert 'po-attribution-grid-content' not in page_text
-    assert 'Output("po-frontier-chart-container", "children")' in page_text
+    assert 'Output("po-weight-chart-graph", "figure")' in page_text
+    assert 'Output("po-weight-chart-graph", "style")' in page_text
+    assert 'Output("po-weight-chart-empty", "children")' in page_text
+    assert 'Output("po-weight-chart-empty", "style")' in page_text
+    assert 'id="po-weight-chart-graph"' in page_text
+    assert 'id="po-weight-chart-empty"' in page_text
+    assert 'po-weight-chart-content' not in page_text
+    assert 'Output("po-frontier-chart-graph", "figure")' in page_text
+    assert 'Output("po-frontier-chart-graph", "style")' in page_text
+    assert 'Output("po-frontier-chart-empty", "children")' in page_text
+    assert 'Output("po-frontier-chart-empty", "style")' in page_text
     assert 'Output("po-frontier-grid-container", "children")' in page_text
-    assert 'po-frontier-chart-content' not in page_text
+    assert 'id="po-frontier-chart-graph"' in page_text
+    assert 'id="po-frontier-chart-empty"' in page_text
     assert 'po-frontier-grid-content' not in page_text
     assert 'Output("po-risk-chart-container", "children")' in page_text
     assert 'Output("po-risk-grid-container", "children")' in page_text
@@ -806,11 +817,101 @@ def test_portopt_same_family_render_callbacks_are_merged():
 def test_portopt_weight_views_only_updates_active_container(monkeypatch, page_modules):
     _, portopt = page_modules
 
-    monkeypatch.setattr(portopt, "po_render_weight_chart", lambda *args, **kwargs: "chart")
+    monkeypatch.setattr(portopt, "po_render_weight_chart", lambda *args, **kwargs: ("fig", {"display": "block"}, "", {"display": "none"}))
     monkeypatch.setattr(portopt, "po_render_weight_table", lambda *args, **kwargs: "table")
 
-    assert portopt.po_render_weight_views("Portfolio", {}, "weight", "chart", "light", {"phase": "ready"}, "trigger") == ("chart", no_update)
-    assert portopt.po_render_weight_views("Portfolio", {}, "weight", "table", "light", {"phase": "ready"}, "trigger") == (no_update, "table")
+    assert portopt.po_render_weight_views("Portfolio", {}, "weight", "chart", "light", {"phase": "ready"}, "trigger") == (
+        "fig",
+        {"display": "block"},
+        "",
+        {"display": "none"},
+        no_update,
+    )
+    assert portopt.po_render_weight_views("Portfolio", {}, "weight", "table", "light", {"phase": "ready"}, "trigger") == (
+        no_update,
+        no_update,
+        no_update,
+        no_update,
+        "table",
+    )
+
+
+def test_portopt_stable_chart_shell_ids_exist(page_modules):
+    _, portopt = page_modules
+
+    for component_id in (
+        "po-weight-chart-graph",
+        "po-weight-chart-empty",
+        "po-frontier-chart-graph",
+        "po-frontier-chart-empty",
+    ):
+        assert _find_component_by_id(portopt.layout, component_id) is not None
+
+
+def test_portopt_frontier_views_only_updates_active_container(monkeypatch, page_modules):
+    _, portopt = page_modules
+
+    monkeypatch.setattr(portopt, "po_render_frontier_chart", lambda *args, **kwargs: ("fig", {"display": "block"}, "", {"display": "none"}))
+    monkeypatch.setattr(portopt, "po_render_frontier_table", lambda *args, **kwargs: "table")
+
+    assert portopt.po_render_frontier_views(
+        "Portfolio",
+        {},
+        "frontier",
+        "chart",
+        {"phase": "ready"},
+        "0",
+        "MV",
+        {},
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        {},
+        True,
+        [],
+        "light",
+        [],
+        "trigger",
+    ) == (
+        "fig",
+        {"display": "block"},
+        "",
+        {"display": "none"},
+        no_update,
+    )
+    assert portopt.po_render_frontier_views(
+        "Portfolio",
+        {},
+        "frontier",
+        "table",
+        {"phase": "ready"},
+        "0",
+        "MV",
+        {},
+        "daily",
+        {},
+        {},
+        None,
+        0,
+        {},
+        {},
+        {},
+        True,
+        [],
+        "light",
+        [],
+        "trigger",
+    ) == (
+        no_update,
+        no_update,
+        no_update,
+        no_update,
+        "table",
+    )
 
 
 def test_portopt_sync_frontier_controls_uses_no_update_for_unchanged_selectors(monkeypatch, page_modules):
@@ -2748,7 +2849,7 @@ def test_po_render_frontier_chart_uses_shared_snapshot_resolver(monkeypatch, pag
 
     monkeypatch.setattr(portopt, "_po_resolve_frontier_snapshot", _fake_resolve)
 
-    comp = portopt.po_render_frontier_chart(
+    figure, graph_style, empty_children, empty_style = portopt.po_render_frontier_chart(
         "P1",
         {"P1": {"config": {"model": "risk_parity", "selected_series": ["Asset_A", "Asset_B"]}, "window_weights": _sample_window_weights()}},
         "frontier",
@@ -2772,7 +2873,10 @@ def test_po_render_frontier_chart_uses_shared_snapshot_resolver(monkeypatch, pag
     )
 
     assert calls["count"] == 1
-    assert type(comp).__name__ == "Loading"
+    assert figure.data
+    assert graph_style["display"] == "block"
+    assert empty_children == ""
+    assert empty_style["display"] == "none"
 
 
 def test_po_render_frontier_chart_reports_missing_source_series(page_modules, raw_json):
@@ -2786,7 +2890,7 @@ def test_po_render_frontier_chart_reports_missing_source_series(page_modules, ra
         }
     }
 
-    comp = portopt.po_render_frontier_chart(
+    figure, graph_style, empty_children, empty_style = portopt.po_render_frontier_chart(
         "P1",
         results,
         "frontier",
@@ -2809,7 +2913,10 @@ def test_po_render_frontier_chart_reports_missing_source_series(page_modules, ra
         [],
     )
 
-    assert "Missing source series: Asset_B" in " ".join(_collect_component_text(comp))
+    assert figure is no_update
+    assert graph_style["display"] == "none"
+    assert empty_style["display"] == "flex"
+    assert "Missing source series: Asset_B" in " ".join(_collect_component_text(empty_children))
 
 
 def test_po_run_optimization_stores_default_frontier_cache_for_standard_model(monkeypatch, page_modules, raw_json):

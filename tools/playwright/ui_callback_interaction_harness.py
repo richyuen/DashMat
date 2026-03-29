@@ -228,6 +228,45 @@ def wait_for_style_display(page, selector: str, expected: str, timeout: int = 10
     )
 
 
+def wait_for_plotly_graph_ready(
+    page,
+    graph_selector: str,
+    empty_selector: str,
+    legacy_container_selector: str | None = None,
+    timeout: int = 10000,
+) -> None:
+    page.wait_for_function(
+        """
+        ([graphSel, emptySel, legacySel]) => {
+          const extractPlot = (root) => {
+            if (!root) return null;
+            if (root.matches && root.matches(".js-plotly-plot")) return root;
+            return root.querySelector ? root.querySelector(".js-plotly-plot") : null;
+          };
+          const hasPlotData = (plot) => {
+            const plotData = plot ? (plot.data || plot._fullData || []) : [];
+            return Array.isArray(plotData) && plotData.length > 0;
+          };
+          const graphRoot = document.querySelector(graphSel);
+          const emptyRoot = document.querySelector(emptySel);
+          if (graphRoot && emptyRoot) {
+            const graphVisible = window.getComputedStyle(graphRoot).display !== "none";
+            const emptyHidden = window.getComputedStyle(emptyRoot).display === "none";
+            if (graphVisible && emptyHidden && hasPlotData(extractPlot(graphRoot))) {
+              return true;
+            }
+          }
+          if (!legacySel) return false;
+          const legacyRoot = document.querySelector(legacySel);
+          if (!legacyRoot) return false;
+          return hasPlotData(extractPlot(legacyRoot));
+        }
+        """,
+        arg=[graph_selector, empty_selector, legacy_container_selector],
+        timeout=_scaled_timeout(timeout),
+    )
+
+
 def wait_for_quiet_window(
     page,
     tracker: warm.DashUpdateRequestTracker,
@@ -683,7 +722,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             page=page,
             tracker=tracker,
             scenario_name="portopt_weight_portfolio_switch_visible",
-            targeted_outputs=["po-weight-chart-content.children"],
+            targeted_outputs=["po-weight-chart-graph.figure", "po-weight-chart-content.children"],
             prepare=lambda: _seed_portopt_result_state(
                 page,
                 resolved_db_series,
@@ -691,7 +730,13 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: wait_content_ready(page, "#po-weight-chart-content", timeout=10000),
+            wait_for_ready=lambda: wait_for_plotly_graph_ready(
+                page,
+                "#po-weight-chart-graph",
+                "#po-weight-chart-empty",
+                "#po-weight-chart-content",
+                timeout=10000,
+            ),
             scenario_class="visible_result_tab",
         )
     )
@@ -770,7 +815,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             page=page,
             tracker=tracker,
             scenario_name="portopt_frontier_portfolio_switch_visible",
-            targeted_outputs=["po-frontier-chart-container.children"],
+            targeted_outputs=["po-frontier-chart-graph.figure", "po-frontier-chart-container.children"],
             prepare=lambda: _seed_portopt_result_state(
                 page,
                 resolved_db_series,
@@ -778,7 +823,13 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: wait_content_ready(page, "#po-frontier-chart-container", timeout=10000),
+            wait_for_ready=lambda: wait_for_plotly_graph_ready(
+                page,
+                "#po-frontier-chart-graph",
+                "#po-frontier-chart-empty",
+                "#po-frontier-chart-container",
+                timeout=10000,
+            ),
             scenario_class="visible_result_tab",
         )
     )
