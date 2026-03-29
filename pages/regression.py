@@ -53,6 +53,7 @@ from utils.qq import build_normal_qq_series, build_qq_figure
 from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
+from utils.shared_benchmark import risk_free_json_from_source, spx_json_from_source
 from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
 from utils.saved_series import save_series_to_raw_data, saved_series_store_names
 from utils.account_lists import (
@@ -2243,7 +2244,7 @@ clientside_callback(
     Input("reg-tabs", "value"),
     Input("reg-initial-tab-render-ready-store", "data"),
     Input("reg-active-result-entry-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
 )
@@ -2263,7 +2264,7 @@ clientside_callback(
     Input("reg-rolling-return-type-select", "value"),
     Input("reg-rolling-metric-select", "value"),
     Input("reg-rolling-chart-switch", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
 )
@@ -5415,7 +5416,7 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
     State("reg-rolling-return-type-select", "value"),
     State("reg-rolling-metric-select", "value"),
     State("reg-rolling-chart-switch", "value"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("reg-use-risk-free-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     State("reg-tabs", "value"),
@@ -5520,7 +5521,7 @@ def reg_render_rolling_returns(
         result=selected_name,
         trigger=trigger_id,
     ) as timing_fields:
-        risk_free_json = risk_free_json_from_store(saved_series_store)
+        risk_free_json = risk_free_json_from_source(saved_series_store)
         timing_fields["risk_free_bytes"] = len(risk_free_json)
     with timed_block("regression.render_rolling_returns.compute", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
         rolling_df = calculate_rolling_returns(
@@ -6131,7 +6132,7 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
     Input("reg-statistics-tab-trigger-store", "data"),
     State("reg-result-select", "value"),
     State("reg-active-result-entry-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("reg-use-risk-free-store", "data"),
     State("reg-tabs", "value"),
     State("reg-initial-tab-render-ready-store", "data"),
@@ -6294,8 +6295,8 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
             result=selected_name,
             trigger=trigger_id,
         ) as timing_fields:
-            risk_free_json = risk_free_json_from_store(saved_series_store)
-            spx_json = spx_json_from_store(saved_series_store)
+            risk_free_json = risk_free_json_from_source(saved_series_store)
+            spx_json = spx_json_from_source(saved_series_store)
             timing_fields["risk_free_bytes"] = len(risk_free_json)
             timing_fields["spx_bytes"] = len(spx_json)
         with timed_block("regression.render_statistics.compute", result=selected_name, series_count=len(display_order), trigger=trigger_id):

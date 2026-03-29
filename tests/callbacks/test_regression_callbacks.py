@@ -144,7 +144,7 @@ process.stdout.write(JSON.stringify(normalize(result)));
     return json.loads(completed.stdout)
 
 
-def test_regression_uses_shared_saved_series_cache_store():
+def test_regression_visible_stats_and_rolling_use_shared_saved_series_stamp_store():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
 
     statistics_trigger_block = page_text.split('Output("reg-statistics-tab-trigger-store", "data")', 1)[1].split(
@@ -164,12 +164,16 @@ def test_regression_uses_shared_saved_series_cache_store():
         1,
     )[0]
 
-    assert 'Input("dashmat-saved-series-cache-store", "data")' in statistics_trigger_block
-    assert 'Input("dashmat-saved-series-cache-store", "data")' in rolling_trigger_block
-    assert 'State("dashmat-saved-series-cache-store", "data")' in rolling_render_block
-    assert 'State("dashmat-saved-series-cache-store", "data")' in statistics_render_block
+    assert 'Input("dashmat-saved-series-stamp-store", "data")' in statistics_trigger_block
+    assert 'Input("dashmat-saved-series-stamp-store", "data")' in rolling_trigger_block
+    assert 'State("dashmat-saved-series-stamp-store", "data")' in rolling_render_block
+    assert 'State("dashmat-saved-series-stamp-store", "data")' in statistics_render_block
+    assert 'Input("dashmat-saved-series-cache-store", "data")' not in statistics_trigger_block
+    assert 'Input("dashmat-saved-series-cache-store", "data")' not in rolling_trigger_block
+    assert 'State("dashmat-saved-series-cache-store", "data")' not in rolling_render_block
+    assert 'State("dashmat-saved-series-cache-store", "data")' not in statistics_render_block
     assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
-    assert 'dashmat-saved-series-stamp-store' not in page_text
+    assert 'dashmat-saved-series-stamp-store' in page_text
 
 
 def test_regression_visible_result_paths_have_substep_timing_breakdown():
