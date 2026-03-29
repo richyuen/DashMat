@@ -314,12 +314,32 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
         ["po-returns-grid-content.children"],
     ) in captured
     assert (
+        "portopt_returns_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-returns-grid-content.children"],
+    ) in captured
+    assert (
         "portopt_calendar_visible",
         "visible_result_tab",
         ["po-calendar-content.children"],
     ) in captured
     assert (
+        "portopt_calendar_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-calendar-content.children"],
+    ) in captured
+    assert (
+        "portopt_calendar_monthly_portfolio_switch_visible",
+        "visible_result_tab",
+        ["po-calendar-content.children"],
+    ) in captured
+    assert (
         "portopt_drawdown_visible",
+        "visible_result_tab",
+        ["po-drawdown-content.children"],
+    ) in captured
+    assert (
+        "portopt_drawdown_portfolio_switch_visible",
         "visible_result_tab",
         ["po-drawdown-content.children"],
     ) in captured

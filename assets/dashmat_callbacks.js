@@ -3356,6 +3356,79 @@
     ];
   }
 
+  function portoptSyncCalendarControls(
+    triggerPayload,
+    selectedPortfolio,
+    periodicity,
+    viewMode,
+    currentDisabled,
+    currentOptions,
+    currentValue,
+    returnsBasis,
+    partialMode,
+    rawDataIdentity,
+    resultsMeta,
+    benchmarkAssignments,
+    longShortAssignments,
+    dateRange,
+    volScaler,
+    volScalingAssignments,
+    results,
+    currentSignature
+  ) {
+    const nu = noUpdate();
+    if (!triggerPayload || typeof triggerPayload !== "object" || String(triggerPayload.tab || "") !== "calendar") {
+      return [nu, nu, nu, nu];
+    }
+
+    let nextDisabled = true;
+    let nextOptions = [];
+    let nextValue = null;
+    if (selectedPortfolio && results && Object.prototype.hasOwnProperty.call(results, selectedPortfolio)) {
+      const config = ((((results || {})[selectedPortfolio]) || {}).config) || {};
+      const orderedCols = [selectedPortfolio];
+      const selectedSeries = Array.isArray(config.selected_series) ? config.selected_series : [];
+      selectedSeries.forEach(function(name) {
+        if (name && orderedCols.indexOf(name) === -1) {
+          orderedCols.push(name);
+        }
+      });
+      nextOptions = orderedCols.map(function(name) {
+        return { value: name, label: name };
+      });
+      if (String(viewMode || "annual") === "monthly" && orderedCols.length) {
+        nextDisabled = false;
+        nextValue = orderedCols.indexOf(currentValue) !== -1 ? currentValue : orderedCols[0];
+      }
+    }
+    const datasetKey = rawDataIdentity && typeof rawDataIdentity === "object"
+      ? (rawDataIdentity.dataset_key || null)
+      : null;
+    const nextSignature = {
+      tab: "calendar",
+      portfolio: selectedPortfolio || null,
+      view: viewMode || "annual",
+      monthlySeries: nextValue || null,
+      periodicity: periodicity || null,
+      returnsBasis: returnsBasis || "total",
+      partialMode: partialMode || "partial",
+      datasetKey: datasetKey,
+      benchmarkAssignments: benchmarkAssignments || {},
+      longShortAssignments: longShortAssignments || {},
+      dateRange: dateRange || null,
+      volScaler: volScaler == null ? 0 : volScaler,
+      volScalingAssignments: volScalingAssignments || {},
+      resultsMeta: resultsMeta || null
+    };
+
+    return [
+      currentDisabled === nextDisabled ? nu : nextDisabled,
+      sameValue(currentOptions, nextOptions) ? nu : nextOptions,
+      currentValue === nextValue ? nu : nextValue,
+      sameValue(currentSignature, nextSignature) ? nu : nextSignature
+    ];
+  }
+
   function regressionSyncAnovaWindowOptions(selected, results, currentOptions, currentWindow, currentDisabled) {
     let nextOptions = [];
     let nextValue = null;
@@ -3487,6 +3560,7 @@
       portoptReportingBasisControl: portoptReportingBasisControl,
       portoptSyncNameWithModel: portoptSyncNameWithModel,
       portoptSyncSaveSeriesUi: portoptSyncSaveSeriesUi,
+      portoptSyncCalendarControls: portoptSyncCalendarControls,
       portoptSyncFrontierControls: portoptSyncFrontierControls,
       portoptSyncReturnsBasisFromMirrors: portoptSyncReturnsBasisFromMirrors,
       portoptSyncReturnsBasisMirrors: portoptSyncReturnsBasisMirrors,

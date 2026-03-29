@@ -4354,7 +4354,7 @@ layout = dmc.Container(
         dcc.Store(id="po-rolling-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-statistics-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-calendar-controls-trigger-store", data=None, storage_type="memory"),
-        dcc.Store(id="po-calendar-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="po-calendar-render-signature-store", data=None, storage_type="memory"),
         dcc.Store(id="po-drawdown-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-weight-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="po-growth-tab-trigger-store", data=None, storage_type="memory"),
@@ -5838,32 +5838,45 @@ clientside_callback(
     Output("po-calendar-controls-trigger-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
-    Input("po-calendar-view-select", "value"),
-    Input("po-results-meta-store", "data"),
-    prevent_initial_call=True,
-)
-
-
-clientside_callback(
-    """
-    function(activeTab, initialTabReady) {
-        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("calendar", activeTab, initialTabReady, true);
-    }
-    """,
-    Output("po-calendar-tab-trigger-store", "data"),
-    Input("po-vis-tabs", "value"),
-    Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
     Input("po-calendar-view-select", "value"),
     Input("po-returns-basis-store", "data"),
     Input("po-partial-period-store", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
+    Input("dashmat-raw-data-identity-store", "data"),
     Input("po-results-meta-store", "data"),
     Input("po-benchmark-assignments-store", "data"),
     Input("po-long-short-store", "data"),
     Input("po-date-range-store", "data"),
     Input("po-vol-scaler-value-store", "data"),
     Input("po-vol-scaling-assignments-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncCalendarControls"),
+    Output("po-calendar-series-select", "disabled"),
+    Output("po-calendar-series-select", "data"),
+    Output("po-calendar-series-select", "value"),
+    Output("po-calendar-render-signature-store", "data"),
+    Input("po-calendar-controls-trigger-store", "data"),
+    State("po-weight-portfolio-select", "value"),
+    State("po-periodicity-select", "value"),
+    State("po-calendar-view-select", "value"),
+    State("po-calendar-series-select", "disabled"),
+    State("po-calendar-series-select", "data"),
+    State("po-calendar-series-select", "value"),
+    State("po-returns-basis-store", "data"),
+    State("po-partial-period-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
+    State("po-results-meta-store", "data"),
+    State("po-benchmark-assignments-store", "data"),
+    State("po-long-short-store", "data"),
+    State("po-date-range-store", "data"),
+    State("po-vol-scaler-value-store", "data"),
+    State("po-vol-scaling-assignments-store", "data"),
+    State("po-results-store", "data"),
+    State("po-calendar-render-signature-store", "data"),
     prevent_initial_call=True,
 )
 
@@ -9651,22 +9664,6 @@ def po_render_rolling(
     return dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
 
 
-@callback(
-    Output("po-calendar-series-select", "disabled"),
-    Output("po-calendar-series-select", "data"),
-    Output("po-calendar-series-select", "value"),
-    Input("po-calendar-controls-trigger-store", "data"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-calendar-view-select", "value"),
-    State("po-calendar-series-select", "value"),
-    State("po-results-store", "data"),
-    prevent_initial_call=False,
-)
-def _po_sync_calendar_series_select_callback(trigger_payload, selected_portfolio, view_mode, current_value, results):
-    _po_require_active_vis_trigger(trigger_payload, "calendar")
-    return po_sync_calendar_series_select(selected_portfolio, results, view_mode, current_value)
-
-
 def po_sync_calendar_series_select(selected_portfolio, results, view_mode, current_value):
     if not selected_portfolio or not results or selected_portfolio not in results:
         return True, [], None
@@ -9688,56 +9685,32 @@ def po_sync_calendar_series_select(selected_portfolio, results, view_mode, curre
 
 @callback(
     Output("po-calendar-content", "children"),
-    Input("po-calendar-tab-trigger-store", "data"),
+    Input("po-calendar-render-signature-store", "data"),
     State("po-vis-tabs", "value"),
-    State("po-weight-portfolio-select", "value"),
-    State("po-periodicity-select", "value"),
-    State("po-calendar-view-select", "value"),
-    State("po-calendar-series-select", "value"),
-    State("po-returns-basis-store", "data"),
-    State("po-partial-period-store", "data"),
-    State("dashmat-raw-data-store", "data"),
-    State("po-benchmark-assignments-store", "data"),
-    State("po-long-short-store", "data"),
-    State("po-date-range-store", "data"),
-    State("po-vol-scaler-value-store", "data"),
-    State("po-vol-scaling-assignments-store", "data"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
 )
 def _po_render_calendar_callback(
-    trigger_payload,
+    render_signature,
     active_tab,
-    selected_portfolio,
-    periodicity,
-    view_mode,
-    monthly_series,
-    returns_basis,
-    partial_mode,
-    raw_data,
-    bench,
-    ls,
-    date_range,
-    vol_scaler,
-    vol_scaling,
     results,
 ):
-    _po_require_active_vis_trigger(trigger_payload, "calendar")
+    _po_require_active_vis_trigger(render_signature, "calendar")
     return po_render_calendar(
         results,
         active_tab,
-        selected_portfolio,
-        periodicity,
-        view_mode,
-        monthly_series,
-        returns_basis,
-        raw_data,
-        bench,
-        ls,
-        date_range,
-        vol_scaler,
-        vol_scaling,
-        partial_mode,
+        render_signature.get("portfolio"),
+        render_signature.get("periodicity"),
+        render_signature.get("view"),
+        render_signature.get("monthlySeries"),
+        render_signature.get("returnsBasis"),
+        {"dataset_key": render_signature.get("datasetKey")},
+        render_signature.get("benchmarkAssignments"),
+        render_signature.get("longShortAssignments"),
+        render_signature.get("dateRange"),
+        render_signature.get("volScaler"),
+        render_signature.get("volScalingAssignments"),
+        render_signature.get("partialMode"),
     )
 
 
@@ -9871,7 +9844,7 @@ def po_render_calendar(
     State("po-periodicity-select", "value"),
     State("po-drawdown-chart-switch", "value"),
     State("po-returns-basis-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-date-range-store", "data"),
@@ -9888,7 +9861,7 @@ def _po_render_drawdown_callback(
     periodicity,
     view_mode,
     returns_basis,
-    raw_data,
+    raw_data_identity,
     bench,
     ls,
     date_range,
@@ -9905,7 +9878,7 @@ def _po_render_drawdown_callback(
         periodicity,
         view_mode,
         returns_basis,
-        raw_data,
+        raw_data_identity,
         bench,
         ls,
         date_range,
@@ -10525,7 +10498,7 @@ def po_render_statistics(
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("po-returns-basis-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -10540,7 +10513,7 @@ def _po_render_returns_callback(
     active_tab,
     selected_portfolio,
     returns_basis="total",
-    raw_data=None,
+    raw_data_identity=None,
     periodicity=None,
     bench=None,
     ls=None,
@@ -10555,7 +10528,7 @@ def _po_render_returns_callback(
         active_tab,
         selected_portfolio,
         returns_basis,
-        raw_data,
+        raw_data_identity,
         periodicity,
         bench,
         ls,

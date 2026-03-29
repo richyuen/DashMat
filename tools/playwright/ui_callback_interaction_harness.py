@@ -1052,6 +1052,19 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="portopt_returns_portfolio_switch_visible",
+            targeted_outputs=["po-returns-grid-content.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "returns", "Harness Portfolio 1"),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-returns-grid-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="portopt_calendar_visible",
             targeted_outputs=["po-calendar-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
@@ -1065,10 +1078,52 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="portopt_calendar_portfolio_switch_visible",
+            targeted_outputs=["po-calendar-content.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "calendar", "Harness Portfolio 1"),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-calendar-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_calendar_monthly_portfolio_switch_visible",
+            targeted_outputs=["po-calendar-content.children"],
+            prepare=lambda: (
+                _seed_portopt_result_state(page, resolved_db_series, "calendar", "Harness Portfolio 1"),
+                warm.set_component_value(page, "po-calendar-view-select", "monthly"),
+            ),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-calendar-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="portopt_drawdown_visible",
             targeted_outputs=["po-drawdown-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
             action=lambda: warm.set_component_value(page, "po-vis-tabs", "drawdown"),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-drawdown-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_drawdown_portfolio_switch_visible",
+            targeted_outputs=["po-drawdown-content.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "drawdown", "Harness Portfolio 1"),
+            action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
             wait_for_ready=lambda: wait_content_ready(page, "#po-drawdown-content", timeout=10000),
             scenario_class="visible_result_tab",
         )

@@ -661,7 +661,7 @@ def test_po_result_family_trigger_stores_exist(page_modules):
         "po-rolling-tab-trigger-store",
         "po-statistics-tab-trigger-store",
         "po-calendar-controls-trigger-store",
-        "po-calendar-tab-trigger-store",
+        "po-calendar-render-signature-store",
         "po-drawdown-tab-trigger-store",
         "po-weight-tab-trigger-store",
         "po-growth-tab-trigger-store",
@@ -787,14 +787,15 @@ def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
 
     assert 'Output("po-active-vis-trigger-store", "data")' not in page_text
     assert "function analyticsTabTrigger(" in js_text
-    for tab_name in ("returns", "rolling", "statistics", "calendar", "drawdown", "weight", "growth", "turnover", "risk", "attribution", "frontier"):
+    for tab_name in ("returns", "rolling", "statistics", "drawdown", "weight", "growth", "turnover", "risk", "attribution", "frontier"):
         assert f'_po_require_active_vis_trigger(trigger_payload, "{tab_name}")' in page_text
+    assert '_po_require_active_vis_trigger(render_signature, "calendar")' in page_text
     for store_id in (
         "po-returns-tab-trigger-store",
         "po-rolling-tab-trigger-store",
         "po-statistics-tab-trigger-store",
         "po-calendar-controls-trigger-store",
-        "po-calendar-tab-trigger-store",
+        "po-calendar-render-signature-store",
         "po-drawdown-tab-trigger-store",
         "po-weight-tab-trigger-store",
         "po-growth-tab-trigger-store",
@@ -807,7 +808,7 @@ def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
         assert f'Output("{store_id}", "data")' in page_text
     for store_id in (
         "po-calendar-controls-trigger-store",
-        "po-calendar-tab-trigger-store",
+        "po-calendar-render-signature-store",
         "po-frontier-controls-trigger-store",
         "po-frontier-render-signature-store",
     ):
@@ -817,8 +818,10 @@ def test_po_hidden_vis_tabs_use_per_family_trigger_stores():
     assert 'Output("po-frontier-rm-select", "data")' in page_text
     assert 'Output("po-frontier-window-select", "data")' in page_text
     assert 'Input("po-calendar-controls-trigger-store", "data")' in page_text
+    assert 'Input("po-calendar-render-signature-store", "data")' in page_text
     assert 'Input("po-frontier-controls-trigger-store", "data")' in page_text
     assert 'Input("po-frontier-render-signature-store", "data")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncCalendarControls")' in page_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncFrontierControls")' in page_text
 
 
@@ -831,12 +834,16 @@ def test_portopt_same_family_render_callbacks_are_merged():
     assert page_text.count('Input("po-attribution-tab-trigger-store", "data")') == 1
     assert page_text.count('Input("po-frontier-controls-trigger-store", "data")') == 1
     assert page_text.count('Input("po-frontier-render-signature-store", "data")') == 1
+    assert page_text.count('Input("po-calendar-controls-trigger-store", "data")') == 1
+    assert page_text.count('Input("po-calendar-render-signature-store", "data")') == 1
 
 
 def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
 
     for callback_name in (
+        "def _po_render_drawdown_callback",
+        "def _po_render_returns_callback",
         "def _po_render_rolling_callback",
         "def _po_render_statistics_callback",
         "def _po_render_frontier_views_callback",
@@ -846,12 +853,20 @@ def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
         assert 'State("dashmat-raw-data-identity-store", "data")' in callback_block
         assert 'State("dashmat-raw-data-store", "data")' not in callback_block
 
+    calendar_callback_block = page_text.split("def _po_render_calendar_callback", 1)[0]
+    calendar_callback_block = calendar_callback_block.rsplit("@callback(", 1)[-1]
+    assert 'Input("po-calendar-render-signature-store", "data")' in calendar_callback_block
+    assert 'State("dashmat-raw-data-store", "data")' not in calendar_callback_block
+    assert 'State("dashmat-raw-data-identity-store", "data")' not in calendar_callback_block
+
     assert 'def _dataset_key_from_source(raw_data_source)' in page_text
     assert 'def _po_compute_frontier_snapshot_cached(\n    selected_portfolio: str,\n    dataset_key: str,' in page_text
     assert 'with timed_block("portopt.performance_frames.load_raw_dataset"' in page_text
     assert 'with timed_block("portopt.render_frontier.load_raw_dataset"' in page_text
     assert 'Input("po-frontier-render-signature-store", "data")' in page_text
     assert 'Input("po-frontier-render-trigger-store", "data")' not in page_text
+    assert 'Input("po-calendar-render-signature-store", "data")' in page_text
+    assert 'Input("po-calendar-tab-trigger-store", "data")' not in page_text
 
 
 def test_portopt_weight_views_only_updates_active_container(monkeypatch, page_modules):
@@ -1006,6 +1021,102 @@ def test_portopt_frontier_controls_use_clientside_callback():
     assert "function portoptSyncFrontierControls(" in js_text
     assert "def _po_sync_frontier_controls_callback" not in page_text
     assert 'Output("po-frontier-render-signature-store", "data")' in page_text
+
+
+def test_portopt_calendar_controls_use_clientside_callback():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncCalendarControls")' in page_text
+    assert "function portoptSyncCalendarControls(" in js_text
+    assert "def _po_sync_calendar_series_select_callback" not in page_text
+    assert 'Output("po-calendar-render-signature-store", "data")' in page_text
+
+
+def test_portopt_sync_calendar_controls_disables_annual_view_and_clears_value():
+    result = _run_dashmat_callbacks_js(
+        """
+        ns.portoptSyncCalendarControls(
+          {tab: "calendar"},
+          "Portfolio A",
+          "daily",
+          "annual",
+          false,
+          [{value: "Portfolio A", label: "Portfolio A"}],
+          "Portfolio A",
+          "total",
+          "partial",
+          {dataset_key: "ds_1"},
+          {has_results: true, count: 2},
+          {"Portfolio A": "__bm__Portfolio A"},
+          {"Portfolio A": true},
+          {start: "2020-01-01", end: "2020-12-31"},
+          0,
+          {"Portfolio A": false},
+          {"Portfolio A": {config: {selected_series: ["Asset_A", "Asset_B"]}}},
+          null
+        )
+        """
+    )
+
+    assert result[0] is True
+    assert result[1] == [
+        {"value": "Portfolio A", "label": "Portfolio A"},
+        {"value": "Asset_A", "label": "Asset_A"},
+        {"value": "Asset_B", "label": "Asset_B"},
+    ]
+    assert result[2] is None
+    assert result[3]["tab"] == "calendar"
+    assert result[3]["view"] == "annual"
+    assert result[3]["monthlySeries"] is None
+    assert result[3]["datasetKey"] == "ds_1"
+
+
+def test_portopt_sync_calendar_controls_preserves_valid_monthly_series_and_no_update():
+    result = _run_dashmat_callbacks_js(
+        """
+        ns.portoptSyncCalendarControls(
+          {tab: "calendar"},
+          "Portfolio A",
+          "daily",
+          "monthly",
+          false,
+          [
+            {value: "Portfolio A", label: "Portfolio A"},
+            {value: "Asset_A", label: "Asset_A"}
+          ],
+          "Asset_A",
+          "excess",
+          "full",
+          {dataset_key: "ds_1"},
+          {has_results: true, count: 2},
+          {"Portfolio A": "__bm__Portfolio A"},
+          {"Portfolio A": true},
+          {start: "2020-01-01", end: "2020-12-31"},
+          5,
+          {"Portfolio A": false},
+          {"Portfolio A": {config: {selected_series: ["Asset_A"]}}},
+          {
+            tab: "calendar",
+            portfolio: "Portfolio A",
+            view: "monthly",
+            monthlySeries: "Asset_A",
+            periodicity: "daily",
+            returnsBasis: "excess",
+            partialMode: "full",
+            datasetKey: "ds_1",
+            benchmarkAssignments: {"Portfolio A": "__bm__Portfolio A"},
+            longShortAssignments: {"Portfolio A": true},
+            dateRange: {start: "2020-01-01", end: "2020-12-31"},
+            volScaler: 5,
+            volScalingAssignments: {"Portfolio A": false},
+            resultsMeta: {has_results: true, count: 2}
+          }
+        )
+        """
+    )
+
+    assert result == ["__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__"]
 
 
 def test_portopt_sync_frontier_controls_restricts_ex_ante_and_disables_window():
