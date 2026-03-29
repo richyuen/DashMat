@@ -147,9 +147,38 @@ process.stdout.write(JSON.stringify(normalize(result)));
 def test_regression_uses_shared_saved_series_cache_store():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
 
-    assert 'Input("dashmat-saved-series-cache-store", "data")' in page_text
+    statistics_trigger_block = page_text.split('Output("reg-statistics-tab-trigger-store", "data")', 1)[1].split(
+        'Output("reg-rolling-returns-tab-trigger-store", "data")',
+        1,
+    )[0]
+    rolling_trigger_block = page_text.split('Output("reg-rolling-returns-tab-trigger-store", "data")', 1)[1].split(
+        'Output("reg-weights-tab-trigger-store", "data")',
+        1,
+    )[0]
+    rolling_render_block = page_text.split('Output("reg-rolling-returns-content", "children")', 1)[1].split(
+        "# ---------------------------------------------------------------------------\n# Weights Tab",
+        1,
+    )[0]
+    statistics_render_block = page_text.split('Output("reg-statistics-content", "children")', 1)[1].split(
+        "# ---------------------------------------------------------------------------\n# Scatter Tab",
+        1,
+    )[0]
+
+    assert 'Input("dashmat-saved-series-cache-store", "data")' in statistics_trigger_block
+    assert 'Input("dashmat-saved-series-cache-store", "data")' in rolling_trigger_block
+    assert 'State("dashmat-saved-series-cache-store", "data")' in rolling_render_block
+    assert 'State("dashmat-saved-series-cache-store", "data")' in statistics_render_block
     assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
     assert 'dashmat-saved-series-stamp-store' not in page_text
+
+
+def test_regression_visible_result_paths_have_substep_timing_breakdown():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+
+    assert '"regression.render_statistics.resolve_benchmark"' in page_text
+    assert '"regression.render_statistics.compute"' in page_text
+    assert '"regression.render_rolling_returns.resolve_benchmark"' in page_text
+    assert '"regression.render_rolling_returns.compute"' in page_text
 
 
 def test_regression_clientside_callback_registrations_present_for_migrated_helpers():

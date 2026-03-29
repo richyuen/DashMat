@@ -178,3 +178,37 @@ def test_run_regression_scenarios_includes_visible_result_select_guards(monkeypa
         "visible_result_tab",
         ["reg-scatter-content.children"],
     ) in captured
+
+
+def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch):
+    captured = []
+
+    def _fake_measure_scenario(**kwargs):
+        captured.append((kwargs["scenario_name"], kwargs.get("scenario_class", "ui_only"), kwargs["targeted_outputs"]))
+        return {"scenario": kwargs["scenario_name"]}
+
+    monkeypatch.setattr(harness, "measure_scenario", _fake_measure_scenario)
+
+    scenarios = harness.run_portopt_scenarios(page=object(), tracker=object())
+
+    assert len(scenarios) == len(captured)
+    assert (
+        "portopt_statistics_visible",
+        "visible_result_tab",
+        ["po-statistics-grid-content.children"],
+    ) in captured
+    assert (
+        "portopt_rolling_metric_visible",
+        "visible_result_tab",
+        ["po-rolling-content.children"],
+    ) in captured
+    assert (
+        "portopt_rolling_window_visible",
+        "visible_result_tab",
+        ["po-rolling-content.children"],
+    ) in captured
+    assert (
+        "portopt_rolling_return_type_visible",
+        "visible_result_tab",
+        ["po-rolling-content.children"],
+    ) in captured

@@ -5515,7 +5515,14 @@ def reg_render_rolling_returns(
     else:
         title = f"Rolling {window_label} {metric_label}"
     series_df = display_df[ordered_cols]
-    with timed_block("regression.render_rolling_returns", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
+    with timed_block(
+        "regression.render_rolling_returns.resolve_benchmark",
+        result=selected_name,
+        trigger=trigger_id,
+    ) as timing_fields:
+        risk_free_json = risk_free_json_from_store(saved_series_store)
+        timing_fields["risk_free_bytes"] = len(risk_free_json)
+    with timed_block("regression.render_rolling_returns.compute", result=selected_name, series_count=len(ordered_cols), trigger=trigger_id):
         rolling_df = calculate_rolling_returns(
             _frame_dataset_key(series_df),
             periodicity,
@@ -5529,7 +5536,7 @@ def reg_render_rolling_returns(
             metric,
             0,
             "{}",
-            risk_free_json_from_store(saved_series_store),
+            risk_free_json,
             bool(use_risk_free),
         )
     if rolling_df is None or rolling_df.empty:
@@ -6282,7 +6289,16 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
         return dmc.Text("No statistics available.", size="sm", c="dimmed")
 
     try:
-        with timed_block("regression.render_statistics", result=selected_name, series_count=len(display_order), trigger=trigger_id):
+        with timed_block(
+            "regression.render_statistics.resolve_benchmark",
+            result=selected_name,
+            trigger=trigger_id,
+        ) as timing_fields:
+            risk_free_json = risk_free_json_from_store(saved_series_store)
+            spx_json = spx_json_from_store(saved_series_store)
+            timing_fields["risk_free_bytes"] = len(risk_free_json)
+            timing_fields["spx_bytes"] = len(spx_json)
+        with timed_block("regression.render_statistics.compute", result=selected_name, series_count=len(display_order), trigger=trigger_id):
             stats_payload = calculate_statistics_cached(
                 _frame_dataset_key(stats_input),
                 periodicity,
@@ -6292,8 +6308,8 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
                 "null",
                 0,
                 "{}",
-                risk_free_json_from_store(saved_series_store),
-                spx_json_from_store(saved_series_store),
+                risk_free_json,
+                spx_json,
                 bool(use_risk_free),
             )
     except Exception as exc:

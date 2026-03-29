@@ -331,12 +331,90 @@ def build_seeded_regression_results(series_names: list[str]) -> dict[str, object
     }
 
 
+def build_seeded_portopt_results(series_names: list[str]) -> dict[str, object]:
+    opt_series = warm.resolve_portopt_series(series_names)
+    raw_df = build_synthetic_raw_frame(opt_series)
+    result_index = raw_df.index[40:260]
+    component_df = raw_df.loc[result_index, opt_series]
+    base_weights = [0.55, 0.45]
+    if len(opt_series) > 2:
+        remainder = max(0.0, 1.0 - sum(base_weights))
+        extra_weight = remainder / (len(opt_series) - 2)
+        weight_values = base_weights + [extra_weight] * (len(opt_series) - 2)
+    else:
+        weight_values = base_weights[: len(opt_series)]
+    portfolio_weights = {
+        series_name: round(weight_values[idx], 4)
+        for idx, series_name in enumerate(opt_series)
+    }
+    portfolio_series = (component_df * pd.Series(portfolio_weights)).sum(axis=1).rename("Harness Portfolio 1")
+    benchmark_series = component_df[opt_series[0]].rename("__bm__Harness Portfolio 1")
+    window_midpoint = len(result_index) // 2
+    window_weights = [
+        {
+            "apply_start": str(result_index[0])[:10],
+            "apply_end": str(result_index[window_midpoint - 1])[:10],
+            "est_start": str(result_index[0])[:10],
+            "est_end": str(result_index[window_midpoint - 1])[:10],
+            "weights": dict(portfolio_weights),
+        },
+        {
+            "apply_start": str(result_index[window_midpoint])[:10],
+            "apply_end": str(result_index[-1])[:10],
+            "est_start": str(result_index[window_midpoint])[:10],
+            "est_end": str(result_index[-1])[:10],
+            "weights": dict(portfolio_weights),
+        },
+    ]
+    run_inputs = {
+        "selected_series": list(opt_series),
+        "benchmark_assignments": {},
+        "cmabench_assignments": {},
+        "long_short_assignments": {},
+        "date_range": {"start": str(result_index[0])[:10], "end": str(result_index[-1])[:10]},
+        "vol_scaler": 0,
+        "vol_scaling_assignments": {},
+        "periodicity": "daily",
+    }
+    return {
+        "Harness Portfolio 1": {
+            "config": {
+                "model": "risk_parity",
+                "selected_series": list(opt_series),
+                "periodicity": "daily",
+            },
+            "run_inputs": run_inputs,
+            "reporting_basis": "match_optimization",
+            "window_weights": window_weights,
+            "reporting_returns_json": portfolio_series.to_json(date_format="iso"),
+            "optimization_returns_json": portfolio_series.to_json(date_format="iso"),
+            "returns_json": portfolio_series.to_json(date_format="iso"),
+            "benchmark_returns_json": benchmark_series.to_json(date_format="iso"),
+            "risk_free_meta": {"enabled": True},
+        }
+    }
+
+
 def _seed_regression_result_state(page, db_series: list[str], tab_value: str, selected_result: str = "Harness Result 1") -> None:
     results = build_seeded_regression_results(db_series)
     options = [{"value": name, "label": name} for name in results]
     warm.set_component_props(page, "reg-results-store", {"data": results})
     warm.set_component_props(page, "reg-result-select", {"data": options, "value": selected_result})
     warm.seed_regression_restore_tab(page, tab_value)
+
+
+def _seed_portopt_result_state(page, db_series: list[str], tab_value: str = "weight") -> None:
+    results = build_seeded_portopt_results(db_series)
+    options = [{"value": name, "label": name} for name in results]
+    selected_portfolio = options[0]["value"]
+    warm.set_component_props(page, "po-results-store", {"data": results})
+    warm.set_component_props(page, "po-weight-portfolio-select", {"data": options, "value": selected_portfolio})
+    warm.set_component_props(page, "po-growth-portfolio-multiselect", {"data": options, "value": [selected_portfolio]})
+    warm.set_component_props(page, "po-active-tab-store", {"data": tab_value})
+    warm.set_component_props(page, "po-vis-tabs", {"value": tab_value})
+    if tab_value == "rolling":
+        warm.set_component_props(page, "po-rolling-chart-switch", {"value": "chart"})
+    page.wait_for_timeout(200)
 
 
 def _seed_portopt_raw_db_modal(page, rows: list[dict[str, object]] | None = None) -> None:
@@ -354,9 +432,10 @@ def _seed_regression_raw_db_modal(page, rows: list[dict[str, object]] | None = N
     page.wait_for_timeout(200)
 
 
-def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker) -> list[dict[str, object]]:
+def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_series: list[str] | None = None) -> list[dict[str, object]]:
     sample_rows = [{"Series": "SPX_TRIndex", "Table": "G", "Fee": "N", "Include Benchmark": False}]
     sample_returns = [{"Asset": "SPX_TRIndex", "Return": 1.5, "Volatility": 3.0}]
+    resolved_db_series = list(db_series or DEFAULT_DB_SERIES)
     results: list[dict[str, object]] = []
 
     results.append(
@@ -488,6 +567,71 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker) -> list[
             prepare=lambda: warm.set_component_value(page, "po-rolling-metric-select", "total_return"),
             action=lambda: warm.set_component_value(page, "po-rolling-metric-select", "volatility"),
             wait_for_ready=lambda: wait_for_input_disabled(page, "#po-rolling-return-type-select", True),
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_statistics_visible",
+            targeted_outputs=["po-statistics-grid-content.children"],
+            prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
+            action=lambda: warm.set_component_value(page, "po-vis-tabs", "statistics"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-statistics-grid-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_rolling_metric_visible",
+            targeted_outputs=["po-rolling-content.children"],
+            prepare=lambda: (
+                _seed_portopt_result_state(page, resolved_db_series, "rolling"),
+                warm.set_component_value(page, "po-rolling-window-select", "3m"),
+                warm.set_component_value(page, "po-rolling-return-type-select", "annualized"),
+                warm.set_component_value(page, "po-rolling-metric-select", "total_return"),
+            ),
+            action=lambda: warm.set_component_value(page, "po-rolling-metric-select", "volatility"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-rolling-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_rolling_window_visible",
+            targeted_outputs=["po-rolling-content.children"],
+            prepare=lambda: (
+                _seed_portopt_result_state(page, resolved_db_series, "rolling"),
+                warm.set_component_value(page, "po-rolling-window-select", "3m"),
+                warm.set_component_value(page, "po-rolling-metric-select", "total_return"),
+            ),
+            action=lambda: warm.set_component_value(page, "po-rolling-window-select", "6m"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-rolling-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="portopt_rolling_return_type_visible",
+            targeted_outputs=["po-rolling-content.children"],
+            prepare=lambda: (
+                _seed_portopt_result_state(page, resolved_db_series, "rolling"),
+                warm.set_component_value(page, "po-rolling-metric-select", "total_return"),
+                warm.set_component_value(page, "po-rolling-return-type-select", "annualized"),
+            ),
+            action=lambda: warm.set_component_value(page, "po-rolling-return-type-select", "cumulative"),
+            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-rolling-content", timeout=10000),
+            scenario_class="visible_result_tab",
         )
     )
 
@@ -843,7 +987,7 @@ def run_page_suite(page_name: str, base_url: str, db_series: list[str], headless
             tracker = warm.DashUpdateRequestTracker(page)
             if page_name == "portopt":
                 seed_portopt_page(page, base_url, db_series)
-                run_results.extend(run_portopt_scenarios(page, tracker))
+                run_results.extend(run_portopt_scenarios(page, tracker, db_series))
             else:
                 seed_regression_page(page, base_url, db_series)
                 run_results.extend(run_regression_scenarios(page, tracker, db_series))
