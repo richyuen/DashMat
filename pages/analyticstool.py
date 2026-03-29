@@ -5093,6 +5093,7 @@ layout = dmc.Container(
         dcc.Store(id="at-returns-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-rolling-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-calendar-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="at-calendar-render-signature-store", data=None, storage_type="memory"),
         dcc.Store(id="at-growth-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-drawdown-tab-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-factor-tab-trigger-store", data=None, storage_type="memory"),
@@ -6034,6 +6035,7 @@ clientside_callback(
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     Input("at-use-risk-free-store", "data"),
+    Input("at-shared-benchmark-stamp-store", "data"),
     Input("at-rolling-chart-switch", "value"),
     prevent_initial_call=True,
 )
@@ -6055,7 +6057,8 @@ clientside_callback(
     Input("at-long-short-store", "data"),
     Input("at-date-range-store", "data"),
     Input("at-monthly-view-checkbox", "value"),
-    Input("at-monthly-series-select", "value"),
+    Input("at-monthly-series-store", "data"),
+    Input("dashmat-original-periodicity-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
     Input("at-partial-period-store", "data"),
@@ -6288,16 +6291,26 @@ clientside_callback(
 )
 
 
-@callback(
+def update_rolling_controls_state(metric, current_disabled=None, current_style=None):
+    """Reference implementation for rolling return-type control dedupe."""
+    if metric in ["total_return", "excess_return"]:
+        next_disabled, next_style = False, {}
+    else:
+        next_disabled, next_style = True, {"opacity": 0.5, "pointerEvents": "none"}
+    disabled_out = no_update if current_disabled is next_disabled else next_disabled
+    style_out = no_update if current_style == next_style else next_style
+    return disabled_out, style_out
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsRollingReturnTypeState"),
     Output("at-rolling-return-type-select", "disabled"),
     Output("at-rolling-return-type-select", "style"),
     Input("at-rolling-metric-select", "value"),
+    State("at-rolling-return-type-select", "disabled"),
+    State("at-rolling-return-type-select", "style"),
+    prevent_initial_call=True,
 )
-def update_rolling_controls_state(metric):
-    """Enable/disable return type select based on metric."""
-    if metric in ["total_return", "excess_return"]:
-        return False, {}
-    return True, {"opacity": 0.5, "pointerEvents": "none"}
 
 
 
@@ -9274,7 +9287,132 @@ def reset_statistics_loaded_on_hydration(state_ready):
     return False, None
 
 
+def _empty_analytics_rolling_graph(theme):
+    empty_fig = go.Figure()
+    empty_fig.update_layout(
+        title="",
+        xaxis_title="",
+        yaxis_title="",
+        template="plotly_white",
+    )
+    apply_chart_theme(empty_fig, theme)
+    return dcc.Graph(figure=empty_fig, style={"height": "550px"})
+
+
+def _compute_analytics_rolling_df(
+    dataset_key,
+    periodicity,
+    selected_series,
+    rolling_window,
+    rolling_return_type,
+    rolling_metric,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    use_risk_free,
+    shared_benchmark_source,
+):
+    shared_benchmark_payload = _resolve_shared_benchmark_payload(shared_benchmark_source)
+    return calculate_rolling_returns(
+        dataset_key,
+        periodicity,
+        tuple(selected_series),
+        "total",
+        _mapping_payload(benchmark_assignments),
+        _mapping_payload(long_short_assignments),
+        _date_range_payload(date_range),
+        rolling_window,
+        rolling_return_type,
+        rolling_metric or "total_return",
+        vol_scaler or 0,
+        _mapping_payload(vol_scaling_assignments),
+        shared_benchmark_payload["risk_free_json"],
+        bool(use_risk_free),
+    )
+
+
+def _build_analytics_rolling_grid(rolling_df, rolling_metric):
+    metric = rolling_metric or "total_return"
+    formatter = ".2%" if metric in ["total_return", "excess_return", "volatility", "tracking_error"] else ".2f"
+    column_defs = [
+        {
+            "field": "Date",
+            "pinned": "left",
+            "valueFormatter": {"function": "d3.timeFormat('%Y-%m-%d')(new Date(params.value))"},
+            "width": 120,
+        }
+    ]
+    for col in rolling_df.columns:
+        column_defs.append(
+            {
+                "field": col,
+                "valueFormatter": {"function": f"params.value != null ? d3.format('{formatter}')(params.value) : ''"},
+                "width": 120,
+            }
+        )
+    df_reset = rolling_df.reset_index()
+    df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
+    return column_defs, df_reset.to_dict("records")
+
+
+def _build_analytics_rolling_chart(rolling_df, rolling_window, rolling_return_type, rolling_metric, theme):
+    metric = rolling_metric or "total_return"
+    y_format = ".2%" if metric in ["total_return", "excess_return", "volatility", "tracking_error"] else ".2f"
+    fig = go.Figure()
+    for col in rolling_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=rolling_df.index,
+                y=rolling_df[col],
+                mode="lines",
+                name=col,
+                hovertemplate=f"%{{y:{y_format}}}<extra></extra>",
+            )
+        )
+    window_label_map = {
+        "3m": "3-Month",
+        "6m": "6-Month",
+        "1y": "1-Year",
+        "3y": "3-Year",
+        "5y": "5-Year",
+        "10y": "10-Year",
+    }
+    metric_label_map = {
+        "total_return": "Total Return",
+        "volatility": "Volatility",
+        "sharpe_ratio": "Sharpe Ratio",
+        "sortino_ratio": "Sortino Ratio",
+        "excess_return": "Excess Return",
+        "tracking_error": "Tracking Error",
+        "information_ratio": "Information Ratio",
+        "correlation": "Correlation",
+    }
+    window_label = window_label_map.get(rolling_window, "1-Year")
+    metric_label = metric_label_map.get(metric, "Total Return")
+    return_type_label = "Annualized" if rolling_return_type == "annualized" else "Cumulative"
+    if metric in ["total_return", "excess_return"]:
+        title = f"Rolling {window_label} {return_type_label} {metric_label}"
+    elif metric in ["volatility", "tracking_error"]:
+        title = f"Rolling {window_label} Annualized {metric_label}"
+    else:
+        title = f"Rolling {window_label} {metric_label}"
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title=metric_label,
+        yaxis_tickformat=y_format,
+        template="plotly_white",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    apply_chart_theme(fig, theme)
+    return dcc.Graph(figure=fig, style={"height": "100%"})
+
+
 @callback(
+    Output("at-rolling-chart-wrapper", "children"),
     Output("at-rolling-grid", "columnDefs"),
     Output("at-rolling-grid", "rowData"),
     Input("at-rolling-tab-trigger-store", "data"),
@@ -9293,300 +9431,135 @@ def reset_statistics_loaded_on_hydration(state_ready):
     State("at-vol-scaler-value-store", "data"),
     State("at-vol-scaling-assignments-store", "data"),
     State("at-use-risk-free-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
-    prevent_initial_call=True,
-)
-def update_rolling_grid(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store):
-    """Update the Rolling Returns grid with rolling window calculations."""
-    _at_require_tab_trigger(trigger_payload, "rolling")
-    # Lazy loading: only calculate when rolling tab/table view is active and ready.
-    if active_tab != "rolling" or chart_checked != "table" or not state_ready or not _has_complete_date_range(date_range):
-        raise PreventUpdate
-
-    if dataset_key is None or not selected_series:
-        return [], []
-
-    try:
-        # Use shared calculate_rolling_returns function
-        # We pass "total" for returns_type as it's ignored by the new logic in favor of rolling_metric
-        rolling_df = calculate_rolling_returns(
-            dataset_key,
-            periodicity,
-            tuple(selected_series),
-            "total",
-            _mapping_payload(benchmark_assignments),
-            _mapping_payload(long_short_assignments),
-            _date_range_payload(date_range),
-            rolling_window,
-            rolling_return_type,
-            rolling_metric or "total_return",
-            vol_scaler or 0,
-            _mapping_payload(vol_scaling_assignments),
-            _risk_free_json_from_store(saved_series_store),
-            bool(use_risk_free),
-        )
-
-        if rolling_df.empty:
-            return [], []
-
-        # Determine formatter based on metric
-        metric = rolling_metric or "total_return"
-        if metric in ["total_return", "excess_return", "volatility", "tracking_error"]:
-            formatter = ".2%"
-        else:
-            formatter = ".2f"
-
-        # Create column definitions
-        column_defs = [
-            {
-                "field": "Date",
-                "pinned": "left",
-                "valueFormatter": {"function": "d3.timeFormat('%Y-%m-%d')(new Date(params.value))"},
-                "width": 120,
-            }
-        ]
-
-        for col in rolling_df.columns:
-            column_defs.append({
-                "field": col,
-                "valueFormatter": {"function": f"params.value != null ? d3.format('{formatter}')(params.value) : ''"},
-                "width": 120,
-            })
-
-        # Convert to row data
-        df_reset = rolling_df.reset_index()
-        df_reset["Date"] = df_reset["Date"].dt.strftime("%Y-%m-%d")
-        row_data = df_reset.to_dict("records")
-
-        return column_defs, row_data
-
-    except Exception:
-        return [], []
-
-
-@callback(
-    Output("at-rolling-chart-wrapper", "children"),
-    Input("at-rolling-tab-trigger-store", "data"),
-    State("at-main-tabs", "value"),
-    State("at-rolling-chart-switch", "value"),
-    State("at-dataset-key-store", "data"),
-    State("at-periodicity-select", "value"),
-    State("at-series-select", "data"),
-    State("at-rolling-window-select", "value"),
-    State("at-rolling-return-type-select", "value"),
-    State("at-rolling-metric-select", "value"),
-    State("at-benchmark-assignments-store", "data"),
-    State("at-long-short-store", "data"),
-    State("at-date-range-store", "data"),
-    State("at-state-ready-store", "data"),
-    State("at-vol-scaler-value-store", "data"),
-    State("at-vol-scaling-assignments-store", "data"),
-    State("at-use-risk-free-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("at-shared-benchmark-stamp-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_rolling_chart(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, saved_series_store, theme):
-    """Update the Rolling Returns chart with rolling window calculations."""
+def update_rolling_content(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, rolling_window, rolling_return_type, rolling_metric, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, use_risk_free, shared_benchmark_stamp, theme):
+    """Update the Rolling Returns view with active-view rendering only."""
     _at_require_tab_trigger(trigger_payload, "rolling")
-    # Create empty figure
-    empty_fig = go.Figure()
-    empty_fig.update_layout(
-        title="",
-        xaxis_title="",
-        yaxis_title="",
-        template="plotly_white",
-    )
-    apply_chart_theme(empty_fig, theme)
-    empty_graph = dcc.Graph(figure=empty_fig, style={"height": "550px"})
-
-    # Lazy loading: only calculate when rolling tab/chart view is active and ready.
-    if active_tab != "rolling" or chart_checked != "chart" or not state_ready or not _has_complete_date_range(date_range):
+    if active_tab != "rolling" or not state_ready or not _has_complete_date_range(date_range):
         raise PreventUpdate
 
+    view_mode = chart_checked or "chart"
+    empty_graph = _empty_analytics_rolling_graph(theme)
+
     if dataset_key is None or not selected_series:
-        return empty_graph
+        if view_mode == "table":
+            return no_update, [], []
+        return empty_graph, no_update, no_update
 
     try:
-        # Use shared calculate_rolling_returns function
-        rolling_df = calculate_rolling_returns(
+        rolling_df = _compute_analytics_rolling_df(
             dataset_key,
             periodicity,
-            tuple(selected_series),
-            "total",
-            _mapping_payload(benchmark_assignments),
-            _mapping_payload(long_short_assignments),
-            _date_range_payload(date_range),
+            selected_series,
             rolling_window,
             rolling_return_type,
-            rolling_metric or "total_return",
-            vol_scaler or 0,
-            _mapping_payload(vol_scaling_assignments),
-            _risk_free_json_from_store(saved_series_store),
-            bool(use_risk_free),
+            rolling_metric,
+            benchmark_assignments,
+            long_short_assignments,
+            date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+            use_risk_free,
+            shared_benchmark_stamp,
         )
-
         if rolling_df.empty:
-            return empty_graph
-
-        # Determine formatting
-        metric = rolling_metric or "total_return"
-        if metric in ["total_return", "excess_return", "volatility", "tracking_error"]:
-            y_format = ".2%"
-        else:
-            y_format = ".2f"
-
-        # Create the line chart
-        fig = go.Figure()
-
-        for col in rolling_df.columns:
-            fig.add_trace(go.Scatter(
-                x=rolling_df.index,
-                y=rolling_df[col],
-                mode='lines',
-                name=col,
-                hovertemplate=f'%{{y:{y_format}}}<extra></extra>',
-            ))
-
-        # Update layout
-        window_label_map = {
-            "3m": "3-Month",
-            "6m": "6-Month",
-            "1y": "1-Year",
-            "3y": "3-Year",
-            "5y": "5-Year",
-            "10y": "10-Year",
-        }
-        window_label = window_label_map.get(rolling_window, "1-Year")
-        
-        metric_label_map = {
-            "total_return": "Total Return",
-            "volatility": "Volatility",
-            "sharpe_ratio": "Sharpe Ratio",
-            "sortino_ratio": "Sortino Ratio",
-            "excess_return": "Excess Return",
-            "tracking_error": "Tracking Error",
-            "information_ratio": "Information Ratio",
-            "correlation": "Correlation",
-        }
-        metric_label = metric_label_map.get(metric, "Total Return")
-        
-        return_type_label = "Annualized" if rolling_return_type == "annualized" else "Cumulative"
-        
-        if metric in ["total_return", "excess_return"]:
-            title = f"Rolling {window_label} {return_type_label} {metric_label}"
-        elif metric in ["volatility", "tracking_error"]:
-            title = f"Rolling {window_label} Annualized {metric_label}"
-        else:
-            title = f"Rolling {window_label} {metric_label}"
-
-        fig.update_layout(
-            title=title,
-            xaxis_title="Date",
-            yaxis_title=metric_label,
-            yaxis_tickformat=y_format,
-            template="plotly_white",
-            hovermode="x unified",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
-        )
-        apply_chart_theme(fig, theme)
-
-        return dcc.Graph(figure=fig, style={"height": "100%"})
-
+            if view_mode == "table":
+                return no_update, [], []
+            return empty_graph, no_update, no_update
+        if view_mode == "table":
+            column_defs, row_data = _build_analytics_rolling_grid(rolling_df, rolling_metric)
+            return no_update, column_defs, row_data
+        return _build_analytics_rolling_chart(
+            rolling_df,
+            rolling_window,
+            rolling_return_type,
+            rolling_metric,
+            theme,
+        ), no_update, no_update
     except Exception:
-        return empty_graph
+        if view_mode == "table":
+            return no_update, [], []
+        return empty_graph, no_update, no_update
 
 
 
 
 
-@callback(
+def sync_analytics_monthly_series_select(monthly_view, selected_series, stored_monthly_series, current_value):
+    """Reference implementation for calendar monthly-series selector sync."""
+    series = list(selected_series or [])
+    if not series:
+        return True, [], None
+    options = [{"value": s, "label": s} for s in series]
+    if monthly_view != "monthly":
+        return True, options, None
+    if current_value and current_value in series:
+        return False, options, current_value
+    if stored_monthly_series and stored_monthly_series in series:
+        return False, options, stored_monthly_series
+    return False, options, series[0]
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSyncCalendarControls"),
     Output("at-monthly-series-select", "disabled"),
     Output("at-monthly-series-select", "data"),
     Output("at-monthly-series-select", "value", allow_duplicate=True),
+    Output("at-calendar-render-signature-store", "data"),
     Input("at-calendar-tab-trigger-store", "data"),
     State("at-monthly-view-checkbox", "value"),
     State("at-series-select", "data"),
     State("at-monthly-series-store", "data"),
+    State("at-monthly-series-select", "disabled"),
+    State("at-monthly-series-select", "data"),
     State("at-monthly-series-select", "value"),
+    State("at-dataset-key-store", "data"),
+    State("dashmat-original-periodicity-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-returns-type-select", "value"),
+    State("at-benchmark-assignments-store", "data"),
+    State("at-long-short-store", "data"),
+    State("at-date-range-store", "data"),
+    State("at-vol-scaler-value-store", "data"),
+    State("at-vol-scaling-assignments-store", "data"),
+    State("at-partial-period-store", "data"),
+    State("at-calendar-render-signature-store", "data"),
     prevent_initial_call=True,
 )
-def update_monthly_series_select(trigger_payload, monthly_view, selected_series, stored_monthly_series, current_value):
-    """Enable/disable monthly series select and populate with available series."""
-    _at_require_tab_trigger(trigger_payload, "calendar")
-    triggered_id = str(trigger_payload.get("reason") or "")
-
-    if not selected_series:
-        return True, [], None
-
-    # Create dropdown options from selected series
-    options = [{"value": s, "label": s} for s in selected_series]
-
-    # Disable when in annual view
-    if monthly_view != "monthly":
-        return True, options, no_update
-
-    # Enable when in monthly view
-    # Only update value when switching TO monthly view
-    if triggered_id == "at-monthly-view-checkbox":
-        # Use stored value when switching to monthly view
-        if stored_monthly_series and stored_monthly_series in selected_series:
-            default_value = stored_monthly_series
-        else:
-            default_value = selected_series[0] if selected_series else None
-        return False, options, default_value
-
-    # For series list changes while already in monthly view, preserve current value
-    else:
-        # Check if current value is still valid, otherwise use stored or first
-        if current_value and current_value in selected_series:
-            return False, options, no_update
-        elif stored_monthly_series and stored_monthly_series in selected_series:
-            return False, options, stored_monthly_series
-        else:
-            return False, options, selected_series[0] if selected_series else None
 
 
 @callback(
     Output("at-calendar-grid", "columnDefs"),
     Output("at-calendar-grid", "rowData"),
-    Input("at-calendar-tab-trigger-store", "data"),
-    State("at-main-tabs", "value"),
-    State("at-dataset-key-store", "data"),
-    State("dashmat-original-periodicity-store", "data"),
-    State("at-periodicity-select", "value"),
-    State("at-series-select", "data"),
-    State("at-returns-type-select", "value"),
-    State("at-benchmark-assignments-store", "data"),
-    State("at-long-short-store", "data"),
-    State("at-date-range-store", "data"),
-    State("at-state-ready-store", "data"),
-    State("at-monthly-view-checkbox", "value"),
-    State("at-monthly-series-select", "value"),
-    State("at-vol-scaler-value-store", "data"),
-    State("at-vol-scaling-assignments-store", "data"),
-    State("at-partial-period-store", "data"),
+    Input("at-calendar-render-signature-store", "data"),
     prevent_initial_call=True,
 )
-def update_calendar_grid(trigger_payload, active_tab, dataset_key, original_periodicity, selected_periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, monthly_view, monthly_series, vol_scaler, vol_scaling_assignments, partial_mode):
+def update_calendar_grid(render_signature):
     """Update the Calendar Year Returns grid (lazy loaded)."""
-    _at_require_tab_trigger(trigger_payload, "calendar")
-    # Lazy loading: only calculate when calendar tab is active
-    if active_tab != "calendar" or not state_ready or not _has_complete_date_range(date_range):
-        raise PreventUpdate
+    _at_require_tab_trigger(render_signature, "calendar")
+    signature = render_signature if isinstance(render_signature, dict) else {}
+    dataset_key = signature.get("datasetKey")
+    original_periodicity = signature.get("originalPeriodicity")
+    selected_periodicity = signature.get("periodicity")
+    selected_series = list(signature.get("selectedSeries") or [])
+    returns_type = signature.get("returnsType")
+    benchmark_assignments = signature.get("benchmarkAssignments")
+    long_short_assignments = signature.get("longShortAssignments")
+    date_range = signature.get("dateRange")
+    monthly_view = signature.get("monthlyView")
+    monthly_series = signature.get("monthlySeries")
+    vol_scaler = signature.get("volScaler")
+    vol_scaling_assignments = signature.get("volScalingAssignments")
+    partial_mode = signature.get("partialMode")
 
+    if not _has_complete_date_range(date_range):
+        raise PreventUpdate
     if dataset_key is None or not selected_series:
         return [], []
-
-    # Only calculate for daily or monthly original data
     if original_periodicity not in ["daily", "monthly"]:
-        # Weekly data - don't calculate calendar year returns
         return [], []
 
     keep_partial = partial_mode == "partial"

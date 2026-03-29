@@ -339,6 +339,38 @@ def wait_content_ready(page, selector: str, timeout: int = 10000) -> None:
     warm.wait_content_ready(page, selector, timeout=_scaled_timeout(timeout))
 
 
+def wait_analytics_tab_ready(page, active_tab: str = "statistics", timeout: int = 10000) -> None:
+    warm.wait_analytics_tab_ready(page, active_tab=active_tab, timeout=_scaled_timeout(timeout))
+
+
+def wait_analytics_rolling_ready(page, timeout: int = 10000) -> None:
+    page.wait_for_function(
+        """
+        () => {
+          const title = (document.title || "").trim();
+          if (!title || title === "Updating...") return false;
+          const switchRoot = document.querySelector("#at-rolling-chart-switch");
+          const chartWrapper = document.querySelector("#at-rolling-chart-wrapper");
+          const grid = document.querySelector("#at-rolling-grid");
+          const isVisible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+          };
+          const switchValue = switchRoot && switchRoot.value ? String(switchRoot.value) : "chart";
+          if (switchValue === "table") {
+            return isVisible(grid);
+          }
+          const plot = chartWrapper && chartWrapper.querySelector ? chartWrapper.querySelector(".js-plotly-plot") : null;
+          const plotData = plot ? (plot.data || plot._fullData || []) : [];
+          return isVisible(chartWrapper) && Array.isArray(plotData) && plotData.length > 0;
+        }
+        """,
+        timeout=_scaled_timeout(timeout),
+    )
+
+
 def wait_persisted_store_value(page, store_id: str, expected, timeout: int = 10000) -> None:
     warm.wait_for_persisted_store_value(page, store_id, expected, timeout=_scaled_timeout(timeout))
 
@@ -1149,6 +1181,113 @@ def seed_portopt_page(page, base_url: str, db_series: list[str]) -> None:
     wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
 
 
+def seed_analytics_page(page, base_url: str, db_series: list[str]) -> None:
+    warm.warm_analytics_db(page, base_url, db_series)
+    warm.wait_for_analytics_state_ready(page, timeout=30000)
+    warm.ensure_analytics_selection(page, db_series, active_tab="statistics", timeout=30000)
+    wait_visible(page, "#at-main-app-container", timeout=30000)
+    wait_ready(page, "#at-periodicity-select", timeout=30000)
+
+
+def run_analytics_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_series: list[str]) -> list[dict[str, object]]:
+    resolved_db_series = list(db_series or DEFAULT_DB_SERIES)
+    if not resolved_db_series:
+        resolved_db_series = list(DEFAULT_DB_SERIES)
+    alternate_series = resolved_db_series[1] if len(resolved_db_series) > 1 else resolved_db_series[0]
+    results: list[dict[str, object]] = []
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="analytics_calendar_visible",
+            targeted_outputs=["at-calendar-grid.columnDefs", "at-calendar-grid.rowData"],
+            prepare=lambda: warm.ensure_analytics_selection(page, resolved_db_series, active_tab="statistics", timeout=30000),
+            action=lambda: warm.set_component_value(page, "at-main-tabs", "calendar"),
+            wait_for_ready=lambda: wait_analytics_tab_ready(page, "calendar", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="analytics_calendar_monthly_visible",
+            targeted_outputs=["at-calendar-grid.columnDefs", "at-calendar-grid.rowData"],
+            prepare=lambda: (
+                warm.ensure_analytics_selection(page, resolved_db_series, active_tab="calendar", timeout=30000),
+                warm.set_component_value(page, "at-monthly-view-checkbox", "annual"),
+            ),
+            action=lambda: warm.set_component_value(page, "at-monthly-view-checkbox", "monthly"),
+            wait_for_ready=lambda: wait_analytics_tab_ready(page, "calendar", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="analytics_calendar_series_switch_visible",
+            targeted_outputs=["at-calendar-grid.columnDefs", "at-calendar-grid.rowData"],
+            prepare=lambda: (
+                warm.ensure_analytics_selection(page, resolved_db_series, active_tab="calendar", timeout=30000),
+                warm.set_component_value(page, "at-monthly-view-checkbox", "monthly"),
+                warm.set_component_value(page, "at-monthly-series-select", resolved_db_series[0]),
+            ),
+            action=lambda: warm.set_component_value(page, "at-monthly-series-select", alternate_series),
+            wait_for_ready=lambda: (
+                wait_for_input_value(page, "#at-monthly-series-select", alternate_series),
+                wait_analytics_tab_ready(page, "calendar", timeout=10000),
+            ),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="analytics_rolling_metric_visible",
+            targeted_outputs=["at-rolling-chart-wrapper.children", "at-rolling-grid.columnDefs", "at-rolling-grid.rowData"],
+            prepare=lambda: (
+                warm.ensure_analytics_selection(page, resolved_db_series, active_tab="statistics", timeout=30000),
+                warm.set_component_value(page, "at-main-tabs", "rolling"),
+                warm.set_component_value(page, "at-rolling-chart-switch", "chart"),
+                warm.set_component_value(page, "at-rolling-metric-select", "total_return"),
+                warm.set_component_value(page, "at-rolling-return-type-select", "annualized"),
+                wait_analytics_rolling_ready(page, timeout=10000),
+            ),
+            action=lambda: warm.set_component_value(page, "at-rolling-metric-select", "volatility"),
+            wait_for_ready=lambda: wait_analytics_rolling_ready(page, timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="analytics_rolling_window_visible",
+            targeted_outputs=["at-rolling-chart-wrapper.children", "at-rolling-grid.columnDefs", "at-rolling-grid.rowData"],
+            prepare=lambda: (
+                warm.ensure_analytics_selection(page, resolved_db_series, active_tab="statistics", timeout=30000),
+                warm.set_component_value(page, "at-main-tabs", "rolling"),
+                warm.set_component_value(page, "at-rolling-chart-switch", "chart"),
+                warm.set_component_value(page, "at-rolling-window-select", "3m"),
+                warm.set_component_value(page, "at-rolling-metric-select", "total_return"),
+                wait_analytics_rolling_ready(page, timeout=10000),
+            ),
+            action=lambda: warm.set_component_value(page, "at-rolling-window-select", "6m"),
+            wait_for_ready=lambda: wait_analytics_rolling_ready(page, timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    return results
+
+
 def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_series: list[str]) -> list[dict[str, object]]:
     sample_rows = [{"row_id": "alpha", "Series": "SPX_TRIndex"}]
     populated_results = {"OLS": {"status": "ok"}}
@@ -1463,7 +1602,7 @@ def seed_regression_page(page, base_url: str, db_series: list[str]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DashMat UI callback interaction harness")
     parser.add_argument("--base-url", default="http://127.0.0.1:8050")
-    parser.add_argument("--pages", choices=["portopt", "regression", "both"], default="both")
+    parser.add_argument("--pages", choices=["analytics", "portopt", "regression", "both", "all"], default="both")
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--label", default="ui-callback-harness")
@@ -1488,7 +1627,11 @@ def run_page_suite(
             context = browser.new_context()
             page = context.new_page()
             tracker = warm.DashUpdateRequestTracker(page)
-            if page_name == "portopt":
+            if page_name == "analytics":
+                seed_analytics_page(page, base_url, db_series)
+                applied_network_profile = _apply_network_profile(page, network_profile)
+                run_results.extend(run_analytics_scenarios(page, tracker, db_series))
+            elif page_name == "portopt":
                 seed_portopt_page(page, base_url, db_series)
                 applied_network_profile = _apply_network_profile(page, network_profile)
                 run_results.extend(run_portopt_scenarios(page, tracker, db_series))
@@ -1514,7 +1657,12 @@ def main(argv: list[str] | None = None) -> int:
     global TIMEOUT_SCALE
     parser = build_parser()
     args = parser.parse_args(argv)
-    pages = ["portopt", "regression"] if args.pages == "both" else [args.pages]
+    if args.pages == "both":
+        pages = ["portopt", "regression"]
+    elif args.pages == "all":
+        pages = ["analytics", "portopt", "regression"]
+    else:
+        pages = [args.pages]
     TIMEOUT_SCALE = NETWORK_TIMEOUT_MULTIPLIERS.get(args.network_profile, 1.0)
 
     out_dir = REPO_ROOT / "output" / "playwright"

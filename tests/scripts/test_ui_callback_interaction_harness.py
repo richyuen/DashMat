@@ -343,3 +343,42 @@ def test_run_portopt_scenarios_includes_visible_benchmark_baselines(monkeypatch)
         "visible_result_tab",
         ["po-drawdown-content.children"],
     ) in captured
+
+
+def test_run_analytics_scenarios_includes_visible_calendar_and_rolling_guards(monkeypatch):
+    captured = []
+
+    def _fake_measure_scenario(**kwargs):
+        captured.append((kwargs["scenario_name"], kwargs.get("scenario_class", "ui_only"), kwargs["targeted_outputs"]))
+        return {"scenario": kwargs["scenario_name"]}
+
+    monkeypatch.setattr(harness, "measure_scenario", _fake_measure_scenario)
+
+    scenarios = harness.run_analytics_scenarios(page=object(), tracker=object(), db_series=["SPX_TRIndex", "R2000_TRIndex", "EAFE_TRIndex"])
+
+    assert len(scenarios) == len(captured)
+    assert (
+        "analytics_calendar_visible",
+        "visible_result_tab",
+        ["at-calendar-grid.columnDefs", "at-calendar-grid.rowData"],
+    ) in captured
+    assert (
+        "analytics_calendar_monthly_visible",
+        "visible_result_tab",
+        ["at-calendar-grid.columnDefs", "at-calendar-grid.rowData"],
+    ) in captured
+    assert (
+        "analytics_calendar_series_switch_visible",
+        "visible_result_tab",
+        ["at-calendar-grid.columnDefs", "at-calendar-grid.rowData"],
+    ) in captured
+    assert (
+        "analytics_rolling_metric_visible",
+        "visible_result_tab",
+        ["at-rolling-chart-wrapper.children", "at-rolling-grid.columnDefs", "at-rolling-grid.rowData"],
+    ) in captured
+    assert (
+        "analytics_rolling_window_visible",
+        "visible_result_tab",
+        ["at-rolling-chart-wrapper.children", "at-rolling-grid.columnDefs", "at-rolling-grid.rowData"],
+    ) in captured

@@ -580,6 +580,7 @@ def test_at_hidden_tab_trigger_stores_exist(page_modules):
         "at-candidate-refresh-trigger-store",
         "at-rolling-tab-trigger-store",
         "at-calendar-tab-trigger-store",
+        "at-calendar-render-signature-store",
         "at-growth-tab-trigger-store",
         "at-drawdown-tab-trigger-store",
         "at-factor-tab-trigger-store",
@@ -688,6 +689,114 @@ def test_hidden_at_trigger_emitters_include_restore_ready_guards():
     assert 'analyticsBootstrapCandidateTrigger' in page_text
     assert 'analyticsCandidateRefreshTrigger' in page_text
     assert 'analyticsModalPreviewTrigger(opened)' in page_text
+
+
+def test_analytics_calendar_clientside_selector_sync_uses_render_signature_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'dcc.Store(id="at-calendar-render-signature-store", data=None, storage_type="memory")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSyncCalendarControls")' in page_text
+
+    trigger_block = page_text.split('Output("at-calendar-tab-trigger-store", "data")', 1)[-1]
+    trigger_block = trigger_block.split('Output("at-growth-tab-trigger-store", "data")', 1)[0]
+    assert 'Input("at-monthly-series-store", "data")' in trigger_block
+    assert 'Input("at-monthly-series-select", "value")' not in trigger_block
+
+    render_block = page_text.split('Output("at-calendar-grid", "columnDefs")', 1)[-1]
+    render_block = render_block.split('Output("at-statistics-grid", "columnDefs")', 1)[0]
+    assert 'Input("at-calendar-render-signature-store", "data")' in render_block
+    assert 'Input("at-calendar-tab-trigger-store", "data")' not in render_block
+    assert 'State("at-dataset-key-store", "data")' not in render_block
+
+
+def test_analytics_rolling_uses_shared_benchmark_stamp_and_merged_render_callback():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+
+    trigger_block = page_text.split('Output("at-rolling-tab-trigger-store", "data")', 1)[-1]
+    trigger_block = trigger_block.split('Output("at-calendar-tab-trigger-store", "data")', 1)[0]
+    assert 'Input("at-shared-benchmark-stamp-store", "data")' in trigger_block
+
+    render_block = page_text.split('Output("at-rolling-chart-wrapper", "children")', 1)[-1]
+    render_block = render_block.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSyncCalendarControls")', 1)[0]
+    assert 'Output("at-rolling-grid", "columnDefs")' in render_block
+    assert 'Output("at-rolling-grid", "rowData")' in render_block
+    assert 'State("at-shared-benchmark-stamp-store", "data")' in render_block
+    assert 'State("dashmat-saved-series-cache-store", "data")' not in render_block
+
+
+def test_analytics_rolling_return_type_state_clientside_matches_python(page_modules):
+    analyticstool, _ = page_modules
+
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsRollingReturnTypeState("total_return", false, {})'
+    ) == ["__NO_UPDATE__", "__NO_UPDATE__"]
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsRollingReturnTypeState("volatility", false, {})'
+    ) == [True, {"opacity": 0.5, "pointerEvents": "none"}]
+    assert analyticstool.update_rolling_controls_state("total_return", False, {}) == (no_update, no_update)
+    assert analyticstool.update_rolling_controls_state("volatility", False, {}) == (
+        True,
+        {"opacity": 0.5, "pointerEvents": "none"},
+    )
+
+
+def test_sync_analytics_monthly_series_select_reference_behavior(page_modules):
+    analyticstool, _ = page_modules
+
+    assert analyticstool.sync_analytics_monthly_series_select("annual", ["Asset_A"], "Asset_A", "Asset_A") == (
+        True,
+        [{"value": "Asset_A", "label": "Asset_A"}],
+        None,
+    )
+    assert analyticstool.sync_analytics_monthly_series_select("monthly", ["Asset_A", "Asset_B"], "Asset_B", None) == (
+        False,
+        [{"value": "Asset_A", "label": "Asset_A"}, {"value": "Asset_B", "label": "Asset_B"}],
+        "Asset_B",
+    )
+
+
+def test_analytics_sync_calendar_controls_clientside_matches_reference(page_modules):
+    analyticstool, _ = page_modules
+    expected = analyticstool.sync_analytics_monthly_series_select(
+        "monthly",
+        ["Asset_A", "Asset_B"],
+        "Asset_B",
+        "Asset_A",
+    )
+
+    result = _run_dashmat_callbacks_js(
+        'ns.analyticsSyncCalendarControls('
+        + json.dumps({"tab": "calendar"})
+        + ', "monthly", '
+        + json.dumps(["Asset_A", "Asset_B"])
+        + ', "Asset_B", false, '
+        + json.dumps([{"value": "Asset_A", "label": "Asset_A"}, {"value": "Asset_B", "label": "Asset_B"}])
+        + ', "Asset_A", "dataset-key", "daily", "daily", "total", {}, {}, {"start":"2024-01-01","end":"2024-12-31"}, 0, {}, "partial", '
+        + json.dumps({
+            "tab": "calendar",
+            "datasetKey": "dataset-key",
+            "periodicity": "daily",
+            "originalPeriodicity": "daily",
+            "selectedSeries": ["Asset_A", "Asset_B"],
+            "returnsType": "total",
+            "benchmarkAssignments": {},
+            "longShortAssignments": {},
+            "dateRange": {"start": "2024-01-01", "end": "2024-12-31"},
+            "monthlyView": "monthly",
+            "monthlySeries": "Asset_A",
+            "volScaler": 0,
+            "volScalingAssignments": {},
+            "partialMode": "partial",
+        })
+        + ')'
+    )
+
+    assert result[:3] == ["__NO_UPDATE__", "__NO_UPDATE__", "__NO_UPDATE__"]
+    assert result[3] == "__NO_UPDATE__"
+    assert expected == (
+        False,
+        [{"value": "Asset_A", "label": "Asset_A"}, {"value": "Asset_B", "label": "Asset_B"}],
+        "Asset_A",
+    )
 
 
 def test_validate_db_add_selection_uses_server_callback_with_raw_meta_state():

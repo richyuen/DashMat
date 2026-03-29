@@ -3429,6 +3429,82 @@
     ];
   }
 
+  function analyticsRollingReturnTypeState(metric, currentDisabled, currentStyle) {
+    const nextDisabled = !(metric === "total_return" || metric === "excess_return");
+    const nextStyle = nextDisabled ? { opacity: 0.5, pointerEvents: "none" } : {};
+    return [
+      currentDisabled === nextDisabled ? noUpdate() : nextDisabled,
+      sameValue(currentStyle, nextStyle) ? noUpdate() : nextStyle
+    ];
+  }
+
+  function analyticsSyncCalendarControls(
+    triggerPayload,
+    monthlyView,
+    selectedSeries,
+    storedMonthlySeries,
+    currentDisabled,
+    currentOptions,
+    currentValue,
+    datasetKey,
+    originalPeriodicity,
+    periodicity,
+    returnsType,
+    benchmarkAssignments,
+    longShortAssignments,
+    dateRange,
+    volScaler,
+    volScalingAssignments,
+    partialMode,
+    currentSignature
+  ) {
+    const nu = noUpdate();
+    if (!triggerPayload || typeof triggerPayload !== "object" || String(triggerPayload.tab || "") !== "calendar") {
+      return [nu, nu, nu, nu];
+    }
+
+    const series = Array.isArray(selectedSeries) ? selectedSeries.slice() : [];
+    const nextOptions = series.map(function (name) {
+      return { value: name, label: name };
+    });
+    let nextDisabled = true;
+    let nextValue = null;
+    if (String(monthlyView || "annual") === "monthly" && series.length) {
+      nextDisabled = false;
+      if (currentValue && series.indexOf(currentValue) !== -1) {
+        nextValue = currentValue;
+      } else if (storedMonthlySeries && series.indexOf(storedMonthlySeries) !== -1) {
+        nextValue = storedMonthlySeries;
+      } else {
+        nextValue = series[0];
+      }
+    }
+
+    const nextSignature = {
+      tab: "calendar",
+      datasetKey: datasetKey || null,
+      periodicity: periodicity || null,
+      originalPeriodicity: originalPeriodicity || null,
+      selectedSeries: series,
+      returnsType: returnsType || "total",
+      benchmarkAssignments: benchmarkAssignments || {},
+      longShortAssignments: longShortAssignments || {},
+      dateRange: dateRange || null,
+      monthlyView: monthlyView || "annual",
+      monthlySeries: nextValue || null,
+      volScaler: volScaler == null ? 0 : volScaler,
+      volScalingAssignments: volScalingAssignments || {},
+      partialMode: partialMode || "partial"
+    };
+
+    return [
+      currentDisabled === nextDisabled ? nu : nextDisabled,
+      sameValue(currentOptions, nextOptions) ? nu : nextOptions,
+      currentValue === nextValue ? nu : nextValue,
+      sameValue(currentSignature, nextSignature) ? nu : nextSignature
+    ];
+  }
+
   function regressionSyncAnovaWindowOptions(selected, results, currentOptions, currentWindow, currentDisabled) {
     let nextOptions = [];
     let nextValue = null;
@@ -3542,6 +3618,8 @@
       analyticsDateRangeButtons: analyticsDateRangeButtons,
       analyticsDateRangeStoreUpdate: analyticsDateRangeStoreUpdate,
       analyticsResolveInitialRange: analyticsResolveInitialRange,
+      analyticsRollingReturnTypeState: analyticsRollingReturnTypeState,
+      analyticsSyncCalendarControls: analyticsSyncCalendarControls,
       validateAnalyticsDbAddSelection: validateAnalyticsDbAddSelection,
       clearWorkspaceSession: clearWorkspaceSession,
       commonDailyButtonDisabled: commonDailyButtonDisabled,
