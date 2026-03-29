@@ -262,6 +262,7 @@ def test_po_get_result_basis_bundle_uses_dataset_key(monkeypatch, page_modules, 
 def test_po_get_performance_frames_uses_dataset_key(monkeypatch, page_modules, raw_json):
     _, portopt = page_modules
     captured = {}
+    dataset_key = resolve_dataset_key(raw_json)
 
     def _fake_cached(selected_portfolio, reporting_returns_json, benchmark_returns_json, run_inputs_payload, dataset_key):
         captured["selected_portfolio"] = selected_portfolio
@@ -280,7 +281,7 @@ def test_po_get_performance_frames_uses_dataset_key(monkeypatch, page_modules, r
             }
         },
         "Port1",
-        raw_json,
+        {"dataset_key": dataset_key, "has_data": True},
         "daily",
         {},
         {},
@@ -290,8 +291,16 @@ def test_po_get_performance_frames_uses_dataset_key(monkeypatch, page_modules, r
     )
 
     assert captured["selected_portfolio"] == "Port1"
-    assert captured["dataset_key"] == resolve_dataset_key(raw_json)
+    assert captured["dataset_key"] == dataset_key
     assert frames["display_cols"] == []
+
+
+def test_po_dataset_key_from_source_accepts_identity_store(page_modules, raw_json):
+    _, portopt = page_modules
+    dataset_key = resolve_dataset_key(raw_json)
+
+    assert portopt._dataset_key_from_source({"dataset_key": dataset_key, "has_data": True}) == dataset_key
+    assert portopt._dataset_key_from_source(raw_json) == dataset_key
 
 
 def test_po_build_display_series_cached_uses_dataset_key(monkeypatch, page_modules, raw_json):
@@ -812,6 +821,25 @@ def test_portopt_same_family_render_callbacks_are_merged():
     assert page_text.count('Input("po-attribution-tab-trigger-store", "data")') == 1
     assert page_text.count('Input("po-frontier-controls-trigger-store", "data")') == 1
     assert page_text.count('Input("po-frontier-render-trigger-store", "data")') == 1
+
+
+def test_portopt_hot_visible_callbacks_use_raw_data_identity_store():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+
+    for callback_name in (
+        "def _po_render_rolling_callback",
+        "def _po_render_statistics_callback",
+        "def _po_render_frontier_views_callback",
+    ):
+        callback_block = page_text.split(callback_name, 1)[0]
+        callback_block = callback_block.rsplit("@callback(", 1)[-1]
+        assert 'State("dashmat-raw-data-identity-store", "data")' in callback_block
+        assert 'State("dashmat-raw-data-store", "data")' not in callback_block
+
+    assert 'def _dataset_key_from_source(raw_data_source)' in page_text
+    assert 'def _po_compute_frontier_snapshot_cached(\n    selected_portfolio: str,\n    dataset_key: str,' in page_text
+    assert 'with timed_block("portopt.performance_frames.load_raw_dataset"' in page_text
+    assert 'with timed_block("portopt.render_frontier.load_raw_dataset"' in page_text
 
 
 def test_portopt_weight_views_only_updates_active_container(monkeypatch, page_modules):
@@ -2762,7 +2790,7 @@ def test_po_resolve_frontier_snapshot_uses_existing_cache_for_standard_model(mon
     resolved = portopt._po_resolve_frontier_snapshot(
         selected_portfolio="P1",
         portfolio_data=portfolio_data,
-        raw_data="{}",
+        dataset_source="dataset:test",
         periodicity="daily",
         bench={},
         ls={},
@@ -3124,7 +3152,7 @@ def test_po_resolve_frontier_snapshot_prefers_stored_run_inputs(monkeypatch, pag
 
     def _fake_compute_frontier_snapshot_cached(
         selected_portfolio,
-        raw_data,
+        dataset_key,
         periodicity,
         bench_payload,
         ls_payload,
@@ -3169,7 +3197,7 @@ def test_po_resolve_frontier_snapshot_prefers_stored_run_inputs(monkeypatch, pag
                 "periodicity": "weekly_friday",
             },
         },
-        raw_data="raw",
+        dataset_source="dataset:test",
         periodicity="daily",
         bench={"live": "bench"},
         ls={"live": True},

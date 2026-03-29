@@ -280,8 +280,19 @@ def _dataset_key(raw_data_store) -> str | None:
     return resolve_dataset_key(raw_data_store) if raw_data_store else None
 
 
-def _raw_df(raw_data_store) -> pd.DataFrame:
-    dataset_key = _dataset_key(raw_data_store)
+def _dataset_key_from_source(raw_data_source) -> str | None:
+    if raw_data_source is None:
+        return None
+    if isinstance(raw_data_source, dict):
+        dataset_key = str(raw_data_source.get("dataset_key") or "").strip() or None
+        raw_data_json = str(raw_data_source.get("raw_data_json") or "")
+        if dataset_key and not raw_data_json:
+            return dataset_key
+    return _dataset_key(raw_data_source)
+
+
+def _raw_df(raw_data_source) -> pd.DataFrame:
+    dataset_key = _dataset_key_from_source(raw_data_source)
     return get_raw_dataset_df(dataset_key) if dataset_key else pd.DataFrame()
 
 
@@ -301,7 +312,7 @@ class _PoWorkingReturnsBundle:
 
 
 def _build_po_working_bundle(
-    raw_data,
+    raw_data_source,
     periodicity,
     benchmark_assignments,
     long_short_assignments,
@@ -311,7 +322,7 @@ def _build_po_working_bundle(
 ) -> _PoWorkingReturnsBundle:
     """Build canonicalized working-return inputs once per callback."""
     return _PoWorkingReturnsBundle(
-        dataset_key=_dataset_key(raw_data) or "",
+        dataset_key=_dataset_key_from_source(raw_data_source) or "",
         periodicity=periodicity or "daily",
         benchmark_payload=_mapping_payload(benchmark_assignments),
         long_short_payload=_mapping_payload(long_short_assignments),
@@ -754,7 +765,7 @@ def _po_build_performance_source_cached(
 def _po_get_performance_frames(
     results,
     selected_portfolio,
-    raw_data,
+    dataset_source,
     periodicity,
     benchmark_assignments,
     long_short_assignments,
@@ -783,13 +794,15 @@ def _po_get_performance_frames(
             vol_scaler=vol_scaler,
             vol_scaling=vol_scaling_assignments,
         )
-        payload = _po_build_performance_source_cached(
-            selected_portfolio,
-            _po_result_returns_json(entry, basis="reporting"),
-            _po_result_returns_json(entry, basis="benchmark"),
-            canonical_json_dumps(run_inputs),
-            _dataset_key(raw_data) or "",
-        )
+        dataset_key = _dataset_key_from_source(dataset_source) or ""
+        with timed_block("portopt.performance_frames.load_raw_dataset", portfolio=selected_portfolio, dataset_key=dataset_key):
+            payload = _po_build_performance_source_cached(
+                selected_portfolio,
+                _po_result_returns_json(entry, basis="reporting"),
+                _po_result_returns_json(entry, basis="benchmark"),
+                canonical_json_dumps(run_inputs),
+                dataset_key,
+            )
         try:
             parsed = json.loads(payload) if payload else {}
         except Exception:
@@ -1930,7 +1943,7 @@ def _normalize_weight_vector(weight_map, asset_cols):
 def _build_frontier_snapshot(
     selected_portfolio,
     portfolio_data,
-    raw_data,
+    dataset_source,
     periodicity,
     bench,
     ls,
@@ -1947,23 +1960,25 @@ def _build_frontier_snapshot(
     window_weights = portfolio_data.get("window_weights", []) or []
     config = portfolio_data.get("config", {}) or {}
     opt_series = config.get("selected_series", []) or []
-    if not window_weights or not opt_series or not raw_data:
+    dataset_key = _dataset_key_from_source(dataset_source)
+    if not window_weights or not opt_series or not dataset_key:
         raise ValueError("No frontier data available.")
-    missing_sources = _po_missing_source_series({selected_portfolio: portfolio_data}, selected_portfolio, raw_data)
+    missing_sources = _po_missing_source_series({selected_portfolio: portfolio_data}, selected_portfolio, dataset_key)
     if missing_sources:
         missing_text = ", ".join(missing_sources)
         raise ValueError(f"Missing source series for frontier: {missing_text}")
 
-    frontier_bundle = _build_po_working_bundle(
-        raw_data,
-        periodicity,
-        bench,
-        ls,
-        None,  # Frontier uses estimation windows directly, not date-range filter.
-        vol_scaler,
-        vol_scaling,
-    )
-    working_df = _po_get_working_returns(frontier_bundle, opt_series)
+    with timed_block("portopt.render_frontier.load_raw_dataset", portfolio=selected_portfolio, dataset_key=dataset_key):
+        frontier_bundle = _build_po_working_bundle(
+            dataset_key,
+            periodicity,
+            bench,
+            ls,
+            None,  # Frontier uses estimation windows directly, not date-range filter.
+            vol_scaler,
+            vol_scaling,
+        )
+        working_df = _po_get_working_returns(frontier_bundle, opt_series)
     if working_df.empty:
         raise ValueError("No working returns available for frontier.")
 
@@ -2117,7 +2132,7 @@ def _normalize_frontier_risk_measure(model: str | None, rm: str | None) -> str:
 @cache_config.cache.memoize(timeout=0)
 def _po_compute_frontier_snapshot_cached(
     selected_portfolio: str,
-    raw_data: str,
+    dataset_key: str,
     periodicity: str,
     benchmark_payload: str,
     long_short_payload: str,
@@ -2132,7 +2147,7 @@ def _po_compute_frontier_snapshot_cached(
     cmabench_payload: str,
     use_risk_free: bool = True,
 ) -> str:
-    if not raw_data or not window_weights_payload or not config_payload:
+    if not dataset_key or not window_weights_payload or not config_payload:
         raise ValueError("No frontier data available.")
 
     portfolio_data = {
@@ -2142,7 +2157,7 @@ def _po_compute_frontier_snapshot_cached(
     snapshot = _build_frontier_snapshot(
         selected_portfolio=selected_portfolio,
         portfolio_data=portfolio_data,
-        raw_data=raw_data,
+        dataset_source=dataset_key,
         periodicity=periodicity or "daily",
         bench=json.loads(benchmark_payload) if benchmark_payload else {},
         ls=json.loads(long_short_payload) if long_short_payload else {},
@@ -2162,7 +2177,7 @@ def _po_resolve_frontier_snapshot(
     *,
     selected_portfolio,
     portfolio_data,
-    raw_data,
+    dataset_source,
     periodicity,
     bench,
     ls,
@@ -2197,9 +2212,10 @@ def _po_resolve_frontier_snapshot(
     if cached is not None:
         return cached
 
+    dataset_key = _dataset_key_from_source(dataset_source) or ""
     payload = _po_compute_frontier_snapshot_cached(
         str(selected_portfolio),
-        raw_data,
+        dataset_key,
         run_inputs.get("periodicity") or "daily",
         _mapping_payload(run_inputs.get("benchmark_assignments") or {}),
         _mapping_payload(run_inputs.get("long_short_assignments") or {}),
@@ -8872,7 +8888,7 @@ def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
             frontier_snapshot = _po_resolve_frontier_snapshot(
                 selected_portfolio=final_name,
                 portfolio_data=result_entry,
-                raw_data=raw_data,
+                dataset_source=raw_data,
                 periodicity=periodicity,
                 bench=benchmark_assignments,
                 ls=long_short_assignments,
@@ -9289,7 +9305,7 @@ def po_render_weight_chart(selected_portfolio, results, active_tab, switch_value
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("po-growth-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -9305,7 +9321,7 @@ def _po_render_growth_chart_callback(
     active_tab,
     selected_portfolio,
     view_mode,
-    raw_data,
+    raw_data_identity,
     periodicity,
     bench,
     ls,
@@ -9321,7 +9337,7 @@ def _po_render_growth_chart_callback(
         results,
         active_tab,
         view_mode,
-        raw_data,
+        raw_data_identity,
         periodicity,
         bench,
         ls,
@@ -9471,7 +9487,7 @@ clientside_callback(
     State("po-rolling-chart-switch", "value"),
     State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-date-range-store", "data"),
@@ -9492,7 +9508,7 @@ def _po_render_rolling_callback(
     view_mode,
     shared_benchmark_source,
     use_risk_free,
-    raw_data,
+    raw_data_identity,
     bench,
     ls,
     date_range,
@@ -9513,7 +9529,7 @@ def _po_render_rolling_callback(
         view_mode,
         shared_benchmark_source,
         use_risk_free,
-        raw_data,
+        raw_data_identity,
         bench,
         ls,
         date_range,
@@ -9534,7 +9550,7 @@ def po_render_rolling(
     view_mode,
     shared_benchmark_source,
     use_risk_free,
-    raw_data,
+    dataset_source,
     bench,
     ls,
     date_range,
@@ -9549,7 +9565,7 @@ def po_render_rolling(
         perf = _po_get_performance_frames(
             results,
             selected_portfolio,
-            raw_data,
+            dataset_source,
             periodicity=periodicity,
             benchmark_assignments=bench,
             long_short_assignments=ls,
@@ -10016,7 +10032,7 @@ def po_render_drawdown(
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
     State("po-attribution-chart-switch", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("dashmat-original-periodicity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
@@ -10034,7 +10050,7 @@ def _po_render_attribution_views_callback(
     active_tab,
     selected_portfolio,
     switch_value,
-    raw_data,
+    raw_data_identity,
     orig_periodicity,
     periodicity,
     bench,
@@ -10053,7 +10069,7 @@ def _po_render_attribution_views_callback(
         active_tab,
         switch_value,
         bootstrap_state,
-        raw_data,
+        raw_data_identity,
         orig_periodicity,
         periodicity,
         bench,
@@ -10317,7 +10333,7 @@ def po_render_attribution_views(
     active_tab,
     switch_value,
     bootstrap_state,
-    raw_data,
+    dataset_source,
     orig_periodicity,
     periodicity,
     bench,
@@ -10336,7 +10352,7 @@ def po_render_attribution_views(
             active_tab,
             "table",
             bootstrap_state,
-            raw_data,
+            dataset_source,
             periodicity,
             bench,
             ls,
@@ -10350,7 +10366,7 @@ def po_render_attribution_views(
         active_tab,
         "chart",
         bootstrap_state,
-        raw_data,
+        dataset_source,
         orig_periodicity,
         periodicity,
         bench,
@@ -10375,7 +10391,7 @@ def po_render_attribution_views(
     State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-periodicity-select", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
     State("po-date-range-store", "data"),
@@ -10391,7 +10407,7 @@ def _po_render_statistics_callback(
     shared_benchmark_source,
     use_risk_free,
     periodicity=None,
-    raw_data=None,
+    raw_data_identity=None,
     bench=None,
     ls=None,
     date_range=None,
@@ -10407,7 +10423,7 @@ def _po_render_statistics_callback(
         shared_benchmark_source,
         use_risk_free,
         periodicity,
-        raw_data,
+        raw_data_identity,
         bench,
         ls,
         date_range,
@@ -10423,7 +10439,7 @@ def po_render_statistics(
     shared_benchmark_source,
     use_risk_free,
     periodicity=None,
-    raw_data=None,
+    dataset_source=None,
     bench=None,
     ls=None,
     date_range=None,
@@ -10438,7 +10454,7 @@ def po_render_statistics(
             perf = _po_get_performance_frames(
                 results,
                 selected_portfolio,
-                raw_data,
+                dataset_source,
                 periodicity,
                 bench,
                 ls,
@@ -11054,7 +11070,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                     snapshot = _po_resolve_frontier_snapshot(
                         selected_portfolio=pname,
                         portfolio_data=pdata,
-                        raw_data=raw_data,
+                        dataset_source=raw_data,
                         periodicity=run_inputs.get("periodicity"),
                         bench=run_inputs.get("benchmark_assignments"),
                         ls=run_inputs.get("long_short_assignments"),
@@ -11149,7 +11165,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
     State("po-weight-portfolio-select", "value"),
     State("po-risk-chart-switch", "value"),
     State("po-bootstrap-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -11167,7 +11183,7 @@ def _po_render_risk_views_callback(
     selected_portfolio,
     switch_value,
     bootstrap_state,
-    raw_data,
+    raw_data_identity,
     periodicity,
     bench,
     ls,
@@ -11185,7 +11201,7 @@ def _po_render_risk_views_callback(
         active_tab,
         switch_value,
         bootstrap_state,
-        raw_data,
+        raw_data_identity,
         periodicity,
         bench,
         ls,
@@ -11375,7 +11391,7 @@ def po_render_risk_views(
     active_tab,
     switch_value,
     bootstrap_state,
-    raw_data,
+    dataset_source,
     periodicity,
     bench,
     ls,
@@ -11394,7 +11410,7 @@ def po_render_risk_views(
             active_tab,
             "table",
             bootstrap_state,
-            raw_data,
+            dataset_source,
             periodicity,
             bench,
             ls,
@@ -11409,7 +11425,7 @@ def po_render_risk_views(
         active_tab,
         "chart",
         bootstrap_state,
-        raw_data,
+        dataset_source,
         periodicity,
         bench,
         ls,
@@ -11701,7 +11717,7 @@ def po_sync_frontier_controls(
     State("po-bootstrap-store", "data"),
     State("po-frontier-window-select", "value"),
     State("po-frontier-rm-select", "value"),
-    State("dashmat-raw-data-store", "data"),
+    State("dashmat-raw-data-identity-store", "data"),
     State("po-periodicity-select", "value"),
     State("po-benchmark-assignments-store", "data"),
     State("po-long-short-store", "data"),
@@ -11725,7 +11741,7 @@ def _po_render_frontier_views_callback(
     bootstrap_state,
     window_idx,
     rm,
-    raw_data,
+    raw_data_identity,
     periodicity,
     bench,
     ls,
@@ -11749,7 +11765,7 @@ def _po_render_frontier_views_callback(
         bootstrap_state,
         window_idx,
         rm,
-        raw_data,
+        raw_data_identity,
         periodicity,
         bench,
         ls,
@@ -11768,7 +11784,7 @@ def _po_render_frontier_views_callback(
 
 def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                              window_idx, rm,
-                             raw_data, periodicity, bench, ls, date_range,
+                             dataset_source, periodicity, bench, ls, date_range,
                              vol_scaler, vol_scaling, cmabench_assignments, shared_benchmark_source, use_risk_free, series_select, theme,
                              linear_constraints, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "chart":
@@ -11784,9 +11800,9 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
     config = portfolio_data.get("config", {})
     opt_series = config.get("selected_series", [])
 
-    if not window_weights or not opt_series or not raw_data:
+    if not window_weights or not opt_series or not _dataset_key_from_source(dataset_source):
         return no_update, _po_chart_graph_style(False), dmc.Text("No frontier data available.", c="dimmed"), _po_chart_empty_style(True)
-    missing_sources = _po_missing_source_series(results, selected_portfolio, raw_data)
+    missing_sources = _po_missing_source_series(results, selected_portfolio, dataset_source)
     if missing_sources:
         return (
             no_update,
@@ -11811,7 +11827,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
         snapshot = _po_resolve_frontier_snapshot(
             selected_portfolio=selected_portfolio,
             portfolio_data=portfolio_data,
-            raw_data=raw_data,
+            dataset_source=dataset_source,
             periodicity=periodicity,
             bench=bench,
             ls=ls,
@@ -11914,7 +11930,7 @@ def po_render_frontier_table(
     bootstrap_state,
     window_idx,
     rm,
-    raw_data,
+    dataset_source,
     periodicity,
     bench,
     ls,
@@ -11937,9 +11953,9 @@ def po_render_frontier_table(
     window_weights = portfolio_data.get("window_weights", []) or []
     config = portfolio_data.get("config", {}) or {}
     opt_series = config.get("selected_series", []) or []
-    if not window_weights or not opt_series or not raw_data:
+    if not window_weights or not opt_series or not _dataset_key_from_source(dataset_source):
         return html.Div()
-    if _po_missing_source_series(results, selected_portfolio, raw_data):
+    if _po_missing_source_series(results, selected_portfolio, dataset_source):
         return html.Div()
 
     with timed_block(
@@ -11952,7 +11968,7 @@ def po_render_frontier_table(
             snapshot = _po_resolve_frontier_snapshot(
                 selected_portfolio=selected_portfolio,
                 portfolio_data=portfolio_data,
-                raw_data=raw_data,
+                dataset_source=dataset_source,
                 periodicity=periodicity,
                 bench=bench,
                 ls=ls,
@@ -11983,7 +11999,7 @@ def po_render_frontier_views(
     bootstrap_state,
     window_idx,
     rm,
-    raw_data,
+    dataset_source,
     periodicity,
     bench,
     ls,
@@ -12008,7 +12024,7 @@ def po_render_frontier_views(
             bootstrap_state,
             window_idx,
             rm,
-            raw_data,
+            dataset_source,
             periodicity,
             bench,
             ls,
@@ -12027,7 +12043,7 @@ def po_render_frontier_views(
         bootstrap_state,
         window_idx,
         rm,
-        raw_data,
+        dataset_source,
         periodicity,
         bench,
         ls,
