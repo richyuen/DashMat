@@ -17,6 +17,7 @@ from utils.account_list_modal import (
 from utils.perf_timing import configure_timing_logger
 from utils.raw_dataset import cache_raw_dataset
 from utils.returns import _build_raw_data_metadata_cached
+from utils.shared_benchmark import register_shared_benchmark_callbacks
 from utils.server_timing import register_server_timing_hooks
 
 
@@ -89,6 +90,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
     dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session"),
+    dcc.Store(id="dashmat-saved-series-stamp-store", data=None, storage_type="memory"),
     dcc.Store(id="dashmat-db-import-provenance-store", data={}, storage_type="session"),
     *build_account_list_components(),
     dmc.AppShell(
@@ -275,6 +277,7 @@ register_account_list_callbacks(
     mrd_engine=MRD_ENGINE,
     perf_engine=PERF_ENGINE,
 )
+register_shared_benchmark_callbacks(app, db_engine=DB_ENGINE, mrd_engine=MRD_ENGINE)
 
 # Theme consumer callbacks are defined in page modules for charts.
 

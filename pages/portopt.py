@@ -75,6 +75,10 @@ from utils.shared_metrics import (
     risk_free_json_from_store as _risk_free_json_from_store,
     spx_json_from_store as _spx_json_from_store,
 )
+from utils.shared_benchmark import (
+    risk_free_json_from_source as _risk_free_json_from_source,
+    spx_json_from_source as _spx_json_from_source,
+)
 from utils.saved_series import save_series_to_raw_data
 from utils.account_lists import (
     add_db_import_provenance_entry,
@@ -1373,7 +1377,7 @@ def _annualized_return_for_periodicity_local(returns: pd.Series, periodicity: st
 
 def _risk_free_series_for_periodicity(saved_series_store, periodicity):
     """Get cached risk-free series (BCTBill13_TRIndex) for selected periodicity."""
-    rf_json = _risk_free_json_from_store(saved_series_store)
+    rf_json = _risk_free_json_from_source(saved_series_store)
     if not rf_json:
         return None
     try:
@@ -5753,7 +5757,7 @@ clientside_callback(
     Input("po-rolling-return-type-select", "value"),
     Input("po-rolling-metric-select", "value"),
     Input("po-rolling-chart-switch", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("po-use-risk-free-store", "data"),
     Input("dashmat-raw-data-meta-store", "data"),
     Input("po-results-meta-store", "data"),
@@ -5776,7 +5780,7 @@ clientside_callback(
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
     Input("po-periodicity-select", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("po-use-risk-free-store", "data"),
     Input("dashmat-raw-data-meta-store", "data"),
     Input("po-results-meta-store", "data"),
@@ -5961,6 +5965,10 @@ clientside_callback(
     Output("po-frontier-controls-trigger-store", "data"),
     Input("po-vis-tabs", "value"),
     Input("po-weight-portfolio-select", "value"),
+    Input("po-periodicity-select", "value"),
+    Input("po-use-risk-free-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
+    Input("po-cmabench-assignments-store", "data"),
     Input("po-results-meta-store", "data"),
     prevent_initial_call=True,
 )
@@ -5987,7 +5995,7 @@ clientside_callback(
     Input("po-vol-scaler-value-store", "data"),
     Input("po-vol-scaling-assignments-store", "data"),
     Input("po-cmabench-assignments-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
+    Input("dashmat-saved-series-stamp-store", "data"),
     Input("po-linear-constraints-store", "data"),
     Input("po-results-meta-store", "data"),
     prevent_initial_call=True,
@@ -9420,7 +9428,7 @@ clientside_callback(
     State("po-rolling-return-type-select", "value"),
     State("po-rolling-metric-select", "value"),
     State("po-rolling-chart-switch", "value"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("dashmat-raw-data-store", "data"),
     State("po-benchmark-assignments-store", "data"),
@@ -9441,7 +9449,7 @@ def _po_render_rolling_callback(
     return_type,
     metric,
     view_mode,
-    saved_series_store,
+    shared_benchmark_source,
     use_risk_free,
     raw_data,
     bench,
@@ -9462,7 +9470,7 @@ def _po_render_rolling_callback(
         return_type,
         metric,
         view_mode,
-        saved_series_store,
+        shared_benchmark_source,
         use_risk_free,
         raw_data,
         bench,
@@ -9483,7 +9491,7 @@ def po_render_rolling(
     return_type,
     metric,
     view_mode,
-    saved_series_store,
+    shared_benchmark_source,
     use_risk_free,
     raw_data,
     bench,
@@ -9516,7 +9524,7 @@ def po_render_rolling(
 
     metric = metric or "total_return"
     with timed_block("portopt.render_rolling.resolve_benchmark", portfolio=selected_portfolio) as timing_fields:
-        risk_free_json = _risk_free_json_from_store(saved_series_store)
+        risk_free_json = _risk_free_json_from_source(shared_benchmark_source)
         timing_fields["risk_free_bytes"] = len(risk_free_json)
     with timed_block("portopt.render_rolling.compute", portfolio=selected_portfolio, series_count=len(ordered_cols)):
         rolling_df = calculate_rolling_returns(
@@ -10322,7 +10330,7 @@ def po_render_attribution_views(
     Input("po-statistics-tab-trigger-store", "data"),
     State("po-vis-tabs", "value"),
     State("po-weight-portfolio-select", "value"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-periodicity-select", "value"),
     State("dashmat-raw-data-store", "data"),
@@ -10338,7 +10346,7 @@ def _po_render_statistics_callback(
     trigger_payload,
     active_tab,
     selected_portfolio,
-    saved_series_store,
+    shared_benchmark_source,
     use_risk_free,
     periodicity=None,
     raw_data=None,
@@ -10354,7 +10362,7 @@ def _po_render_statistics_callback(
         results,
         active_tab,
         selected_portfolio,
-        saved_series_store,
+        shared_benchmark_source,
         use_risk_free,
         periodicity,
         raw_data,
@@ -10370,7 +10378,7 @@ def po_render_statistics(
     results,
     active_tab,
     selected_portfolio,
-    saved_series_store,
+    shared_benchmark_source,
     use_risk_free,
     periodicity=None,
     raw_data=None,
@@ -10402,8 +10410,8 @@ def po_render_statistics(
 
             series_names = list(ordered_cols)
             with timed_block("portopt.render_statistics.resolve_benchmark", portfolio=selected_portfolio) as timing_fields:
-                risk_free_json = _risk_free_json_from_store(saved_series_store)
-                spx_json = _spx_json_from_store(saved_series_store)
+                risk_free_json = _risk_free_json_from_source(shared_benchmark_source)
+                spx_json = _spx_json_from_source(shared_benchmark_source)
                 timing_fields["risk_free_bytes"] = len(risk_free_json)
                 timing_fields["spx_bytes"] = len(spx_json)
             with timed_block("portopt.render_statistics.compute", portfolio=selected_portfolio, series_count=len(series_names)):
@@ -11515,7 +11523,7 @@ def po_render_turnover_views(selected_portfolio, results, active_tab, switch_val
     State("po-frontier-window-select", "disabled"),
     State("po-periodicity-select", "value"),
     State("po-use-risk-free-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-cmabench-assignments-store", "data"),
     State("po-results-store", "data"),
     prevent_initial_call=True,
@@ -11531,7 +11539,7 @@ def _po_sync_frontier_controls_callback(
     current_window_disabled,
     periodicity,
     use_risk_free,
-    saved_series_store,
+    shared_benchmark_source,
     cmabench_assignments,
     results,
 ):
@@ -11547,7 +11555,7 @@ def _po_sync_frontier_controls_callback(
         current_window_disabled,
         periodicity,
         use_risk_free,
-        saved_series_store,
+        shared_benchmark_source,
         cmabench_assignments,
     )
 
@@ -11601,7 +11609,7 @@ def po_sync_frontier_controls(
     current_window_disabled,
     periodicity,
     use_risk_free,
-    saved_series_store,
+    shared_benchmark_source,
     cmabench_assignments,
 ):
     with timed_block("portopt.render_frontier.controls", portfolio=selected_portfolio, active_tab=active_tab):
@@ -11619,7 +11627,7 @@ def po_sync_frontier_controls(
             next_rm,
             use_risk_free,
             periodicity,
-            saved_series_store,
+            shared_benchmark_source,
             cmabench_assignments,
         )
 
@@ -11656,7 +11664,7 @@ def po_sync_frontier_controls(
     State("po-vol-scaler-value-store", "data"),
     State("po-vol-scaling-assignments-store", "data"),
     State("po-cmabench-assignments-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-series-select", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
@@ -11680,7 +11688,7 @@ def _po_render_frontier_views_callback(
     vol_scaler,
     vol_scaling,
     cmabench_assignments,
-    saved_series_store,
+    shared_benchmark_source,
     use_risk_free,
     series_select,
     theme,
@@ -11704,7 +11712,7 @@ def _po_render_frontier_views_callback(
         vol_scaler,
         vol_scaling,
         cmabench_assignments,
-        saved_series_store,
+        shared_benchmark_source,
         use_risk_free,
         series_select,
         theme,
@@ -11716,7 +11724,7 @@ def _po_render_frontier_views_callback(
 def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_value, bootstrap_state,
                              window_idx, rm,
                              raw_data, periodicity, bench, ls, date_range,
-                             vol_scaler, vol_scaling, cmabench_assignments, saved_series_store, use_risk_free, series_select, theme,
+                             vol_scaler, vol_scaling, cmabench_assignments, shared_benchmark_source, use_risk_free, series_select, theme,
                              linear_constraints, trigger_id=None):
     if not _po_bootstrap_tab_render_ready(active_tab, "frontier", bootstrap_state) or switch_value != "chart":
         raise PreventUpdate
@@ -11762,7 +11770,7 @@ def po_render_frontier_chart(selected_portfolio, results, active_tab, switch_val
             window_idx=window_idx,
             rm=rm,
             linear_constraints=linear_constraints,
-            saved_series_store=saved_series_store,
+            saved_series_store=shared_benchmark_source,
             cmabench_assignments=cmabench_assignments,
             use_risk_free=result_use_risk_free,
         )
@@ -11856,7 +11864,7 @@ def po_render_frontier_table(
     vol_scaler,
     vol_scaling,
     cmabench_assignments,
-    saved_series_store,
+    shared_benchmark_source,
     use_risk_free,
     linear_constraints,
 ):
@@ -11896,7 +11904,7 @@ def po_render_frontier_table(
                 window_idx=window_idx,
                 rm=rm,
                 linear_constraints=linear_constraints,
-                saved_series_store=saved_series_store,
+                saved_series_store=shared_benchmark_source,
                 cmabench_assignments=cmabench_assignments,
                 use_risk_free=result_use_risk_free,
             )
@@ -11926,7 +11934,7 @@ def po_render_frontier_views(
     vol_scaler,
     vol_scaling,
     cmabench_assignments,
-    saved_series_store,
+    shared_benchmark_source,
     use_risk_free,
     series_select,
     theme,
@@ -11950,7 +11958,7 @@ def po_render_frontier_views(
             vol_scaler,
             vol_scaling,
             cmabench_assignments,
-            saved_series_store,
+            shared_benchmark_source,
             use_risk_free,
             linear_constraints,
         )
@@ -11970,7 +11978,7 @@ def po_render_frontier_views(
         vol_scaler,
         vol_scaling,
         cmabench_assignments,
-        saved_series_store,
+        shared_benchmark_source,
         use_risk_free,
         series_select,
         theme,
@@ -11987,7 +11995,7 @@ def po_render_frontier_rf_warning(
     rm,
     use_risk_free,
     periodicity,
-    saved_series_store,
+    shared_benchmark_source,
     cmabench_assignments,
 ):
     hidden = {"display": "none"}
@@ -12035,7 +12043,7 @@ def po_render_frontier_rf_warning(
             periodicity=run_inputs.get("periodicity"),
             expected_mu_annual=None,
             reference_index=None,
-            saved_series_store=saved_series_store,
+            saved_series_store=shared_benchmark_source,
             cmabench_assignments=run_inputs.get("cmabench_assignments"),
             use_risk_free=result_use_risk_free,
         )

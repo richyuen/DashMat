@@ -138,8 +138,8 @@ def test_shared_saved_series_cache_store_is_session_backed():
     app_text = Path("app.py").read_text(encoding="utf-8")
 
     assert 'dcc.Store(id="dashmat-saved-series-cache-store", data=None, storage_type="session")' in app_text
-    assert 'dcc.Store(id="dashmat-saved-series-stamp-store"' not in app_text
-    assert "register_shared_benchmark_callbacks" not in app_text
+    assert 'dcc.Store(id="dashmat-saved-series-stamp-store", data=None, storage_type="memory")' in app_text
+    assert "register_shared_benchmark_callbacks" in app_text
 
 
 def test_app_shell_hosts_shared_account_list_modal_and_store():
@@ -221,9 +221,12 @@ def test_shared_saved_series_cache_store_contract_matches_pages():
     portopt_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     regression_text = Path("pages/regression.py").read_text(encoding="utf-8")
 
-    for page_text in (analytics_text, portopt_text, regression_text):
-        assert 'dashmat-saved-series-cache-store' in page_text
-        assert 'dashmat-saved-series-stamp-store' not in page_text
+    assert 'dashmat-saved-series-cache-store' in analytics_text
+    assert 'dashmat-saved-series-stamp-store' not in analytics_text
+    assert 'dashmat-saved-series-cache-store' in regression_text
+    assert 'dashmat-saved-series-stamp-store' not in regression_text
+    assert 'dashmat-saved-series-cache-store' in portopt_text
+    assert 'dashmat-saved-series-stamp-store' in portopt_text
 
     assert 'at-shared-benchmark-stamp-store' in analytics_text
 

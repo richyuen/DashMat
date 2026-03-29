@@ -113,6 +113,39 @@ def test_wait_for_quiet_window_waits_for_requests_to_settle():
     assert len(tracker.records) == 1
 
 
+def test_apply_network_profile_uses_cdp_emulation():
+    class _FakeSession:
+        def __init__(self):
+            self.calls = []
+
+        def send(self, method, params=None):
+            self.calls.append((method, params))
+
+    class _FakeContext:
+        def __init__(self, session):
+            self._session = session
+
+        def new_cdp_session(self, page):
+            assert page is fake_page
+            return self._session
+
+    class _FakePage:
+        pass
+
+    session = _FakeSession()
+    fake_page = _FakePage()
+    fake_page.context = _FakeContext(session)
+
+    applied = harness._apply_network_profile(fake_page, "office-wan")
+
+    assert applied["name"] == "office-wan"
+    assert ("Network.enable", None) in session.calls
+    emulate_call = next(call for call in session.calls if call[0] == "Network.emulateNetworkConditions")
+    assert emulate_call[1]["latency"] == 40
+    assert emulate_call[1]["downloadThroughput"] > 0
+    assert emulate_call[1]["uploadThroughput"] > 0
+
+
 def _tmp_repo_root() -> Path:
     root = Path("tests/.tmp") / f"ui_callback_harness_{uuid4().hex}"
     root.mkdir(parents=True, exist_ok=True)
@@ -125,14 +158,15 @@ def test_main_writes_result_file(monkeypatch, capsys):
     monkeypatch.setattr(
         harness,
         "run_page_suite",
-        lambda page_name, base_url, db_series, headless, runs: {
+        lambda page_name, base_url, db_series, headless, runs, network_profile: {
             "page": page_name,
             "runs": runs,
+            "networkProfile": {"name": network_profile},
             "scenarios": {"scenario": {"summary": {"runs": 1, "scenarioClass": "ui_only"}, "runs": []}},
         },
     )
 
-    exit_code = harness.main(["--pages", "portopt", "--runs", "1", "--label", "unit-test"])
+    exit_code = harness.main(["--pages", "portopt", "--runs", "1", "--label", "unit-test", "--network-profile", "office-wan"])
     out = capsys.readouterr().out
 
     assert exit_code == 0
@@ -140,7 +174,9 @@ def test_main_writes_result_file(monkeypatch, capsys):
     result_path = Path(out.strip().split("RESULT_PATH=", 1)[1])
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     assert payload["label"] == "unit-test"
+    assert payload["networkProfile"] == "office-wan"
     assert payload["pages"]["portopt"]["page"] == "portopt"
+    assert payload["pages"]["portopt"]["networkProfile"]["name"] == "office-wan"
 
 
 def test_main_returns_nonzero_on_failure(monkeypatch, capsys):

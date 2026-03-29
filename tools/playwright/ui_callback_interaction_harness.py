@@ -25,6 +25,63 @@ from utils.returns import df_to_json
 DEFAULT_DB_SERIES = warm.DEFAULT_DB_SERIES
 QUIET_WINDOW_MS = 250
 QUIET_WINDOW_TIMEOUT_MS = 10000
+TIMEOUT_SCALE = 1.0
+
+NETWORK_PROFILES = {
+    "none": None,
+    "office-wan": {
+        "latencyMs": 40,
+        "downloadKbps": 10000,
+        "uploadKbps": 5000,
+        "connectionType": "cellular4g",
+    },
+    "slow4g": {
+        "latencyMs": 150,
+        "downloadKbps": 4000,
+        "uploadKbps": 3000,
+        "connectionType": "cellular4g",
+    },
+    "fast3g": {
+        "latencyMs": 150,
+        "downloadKbps": 1600,
+        "uploadKbps": 750,
+        "connectionType": "cellular3g",
+    },
+}
+
+NETWORK_TIMEOUT_MULTIPLIERS = {
+    "none": 1.0,
+    "office-wan": 3.0,
+    "slow4g": 4.0,
+    "fast3g": 5.0,
+}
+
+
+def _kbps_to_bytes_per_second(kbps: int) -> int:
+    return max(int(kbps * 1000 / 8), 1)
+
+
+def _scaled_timeout(timeout_ms: int) -> int:
+    return max(int(round(timeout_ms * TIMEOUT_SCALE)), timeout_ms)
+
+
+def _apply_network_profile(page, profile_name: str) -> dict[str, object] | None:
+    profile = NETWORK_PROFILES.get(profile_name)
+    if not profile:
+        return None
+    session = page.context.new_cdp_session(page)
+    session.send("Network.enable")
+    session.send(
+        "Network.emulateNetworkConditions",
+        {
+            "offline": False,
+            "latency": int(profile["latencyMs"]),
+            "downloadThroughput": _kbps_to_bytes_per_second(int(profile["downloadKbps"])),
+            "uploadThroughput": _kbps_to_bytes_per_second(int(profile["uploadKbps"])),
+            "connectionType": str(profile["connectionType"]),
+        },
+    )
+    return {"name": profile_name, **profile}
 
 
 def build_synthetic_raw_dataset(series_names: list[str]) -> tuple[dict[str, object], dict[str, object]]:
@@ -118,7 +175,7 @@ def wait_for_input_disabled(page, selector: str, expected: bool, timeout: int = 
         }
         """,
         arg=[selector, expected],
-        timeout=timeout,
+        timeout=_scaled_timeout(timeout),
     )
 
 
@@ -134,7 +191,7 @@ def wait_for_input_value(page, selector: str, expected: str, timeout: int = 1000
         }
         """,
         arg=[selector, expected],
-        timeout=timeout,
+        timeout=_scaled_timeout(timeout),
     )
 
 
@@ -149,12 +206,12 @@ def wait_for_text_content(page, selector: str, expected: str, timeout: int = 100
         }
         """,
         arg=[selector, expected],
-        timeout=timeout,
+        timeout=_scaled_timeout(timeout),
     )
 
 
 def wait_for_js_condition(page, function_body: str, timeout: int = 10000) -> None:
-    page.wait_for_function(function_body, timeout=timeout)
+    page.wait_for_function(function_body, timeout=_scaled_timeout(timeout))
 
 
 def wait_for_style_display(page, selector: str, expected: str, timeout: int = 10000) -> None:
@@ -167,7 +224,7 @@ def wait_for_style_display(page, selector: str, expected: str, timeout: int = 10
         }
         """,
         arg=[selector, expected],
-        timeout=timeout,
+        timeout=_scaled_timeout(timeout),
     )
 
 
@@ -177,7 +234,7 @@ def wait_for_quiet_window(
     quiet_ms: int = QUIET_WINDOW_MS,
     timeout_ms: int = QUIET_WINDOW_TIMEOUT_MS,
 ) -> None:
-    deadline = time.perf_counter() + (timeout_ms / 1000.0)
+    deadline = time.perf_counter() + (_scaled_timeout(timeout_ms) / 1000.0)
     stable_started_at: float | None = None
     last_record_count = len(tracker.records)
     while time.perf_counter() < deadline:
@@ -194,6 +251,30 @@ def wait_for_quiet_window(
                 return
         page.wait_for_timeout(25)
     raise TimeoutError(f"Timed out waiting for a {quiet_ms}ms quiet window")
+
+
+def wait_content_ready(page, selector: str, timeout: int = 10000) -> None:
+    warm.wait_content_ready(page, selector, timeout=_scaled_timeout(timeout))
+
+
+def wait_persisted_store_value(page, store_id: str, expected, timeout: int = 10000) -> None:
+    warm.wait_for_persisted_store_value(page, store_id, expected, timeout=_scaled_timeout(timeout))
+
+
+def wait_dash_hydrated(page, timeout: int = 30000) -> None:
+    warm.wait_dash_hydrated(page, timeout=_scaled_timeout(timeout))
+
+
+def wait_visible(page, selector: str, timeout: int = 30000) -> None:
+    warm.wait_visible(page, selector, timeout=_scaled_timeout(timeout))
+
+
+def wait_ready(page, selector: str, timeout: int = 30000) -> None:
+    warm.wait_ready(page, selector, timeout=_scaled_timeout(timeout))
+
+
+def wait_hidden_or_absent(page, selector: str, timeout: int = 30000) -> None:
+    warm.wait_hidden_or_absent(page, selector, timeout=_scaled_timeout(timeout))
 
 
 def measure_scenario(
@@ -523,7 +604,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             targeted_outputs=["po-bl-tau-store.data"],
             prepare=lambda: warm.set_component_value(page, "po-bl-tau-input", 0.05),
             action=lambda: warm.set_component_value(page, "po-bl-tau-input", 0.12),
-            wait_for_ready=lambda: warm.wait_for_persisted_store_value(page, "po-bl-tau-store", 0.12, timeout=10000),
+            wait_for_ready=lambda: wait_persisted_store_value(page, "po-bl-tau-store", 0.12, timeout=10000),
         )
     )
 
@@ -555,7 +636,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_props(page, "po-start-date-picker", {"value": "2024-01-02"}),
                 warm.set_component_props(page, "po-end-date-picker", {"value": "2024-12-31"}),
             ),
-            wait_for_ready=lambda: warm.wait_for_persisted_store_value(
+            wait_for_ready=lambda: wait_persisted_store_value(
                 page,
                 "po-date-range-store",
                 {"start": "2024-01-02", "end": "2024-12-31"},
@@ -592,7 +673,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-statistics-grid-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-statistics-grid-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -610,7 +691,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-weight-chart-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-weight-chart-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -626,7 +707,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-weight-chart-switch", "table"),
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-weight-grid-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-weight-grid-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -644,7 +725,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-growth-chart-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-growth-chart-container", timeout=10000),
             perf_target=False,
             scenario_class="visible_result_tab",
         )
@@ -663,7 +744,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-turnover-chart-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-turnover-chart-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -679,7 +760,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-turnover-chart-switch", "table"),
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-turnover-grid-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-turnover-grid-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -697,7 +778,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-frontier-chart-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-frontier-chart-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -713,7 +794,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-frontier-chart-switch", "table"),
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-frontier-grid-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-frontier-grid-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -731,7 +812,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-risk-chart-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-risk-chart-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -747,7 +828,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-risk-chart-switch", "table"),
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-risk-grid-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-risk-grid-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -765,7 +846,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 "Harness Portfolio 1",
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-attribution-chart-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-attribution-chart-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -781,7 +862,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-attribution-chart-switch", "table"),
             ),
             action=lambda: warm.set_component_value(page, "po-weight-portfolio-select", "Harness Portfolio 2"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-attribution-grid-container", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-attribution-grid-container", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -794,7 +875,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             targeted_outputs=["po-statistics-grid-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
             action=lambda: warm.set_component_value(page, "po-vis-tabs", "statistics"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-statistics-grid-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-statistics-grid-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -812,7 +893,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-rolling-metric-select", "total_return"),
             ),
             action=lambda: warm.set_component_value(page, "po-rolling-metric-select", "volatility"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-rolling-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-rolling-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -829,7 +910,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-rolling-metric-select", "total_return"),
             ),
             action=lambda: warm.set_component_value(page, "po-rolling-window-select", "6m"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-rolling-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-rolling-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -846,7 +927,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
                 warm.set_component_value(page, "po-rolling-return-type-select", "annualized"),
             ),
             action=lambda: warm.set_component_value(page, "po-rolling-return-type-select", "cumulative"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-rolling-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-rolling-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -859,7 +940,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             targeted_outputs=["po-returns-grid-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
             action=lambda: warm.set_component_value(page, "po-vis-tabs", "returns"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-returns-grid-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-returns-grid-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -872,7 +953,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             targeted_outputs=["po-calendar-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
             action=lambda: warm.set_component_value(page, "po-vis-tabs", "calendar"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-calendar-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-calendar-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -885,7 +966,7 @@ def run_portopt_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_serie
             targeted_outputs=["po-drawdown-content.children"],
             prepare=lambda: _seed_portopt_result_state(page, resolved_db_series, "weight"),
             action=lambda: warm.set_component_value(page, "po-vis-tabs", "drawdown"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#po-drawdown-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#po-drawdown-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -897,7 +978,7 @@ def seed_portopt_page(page, base_url: str, db_series: list[str]) -> None:
     opt_series = warm.resolve_portopt_series(db_series)
     raw_data_payload, raw_meta_payload = build_synthetic_raw_dataset(opt_series)
     page.goto(base_url + "/portopt", wait_until="domcontentloaded")
-    warm.wait_dash_hydrated(page, timeout=30000)
+    wait_dash_hydrated(page, timeout=30000)
     warm.try_set_component_props(page, "po-page-visited-store", {"data": True})
     warm.try_set_component_props(page, "dashmat-raw-data-store", {"data": raw_data_payload})
     warm.try_set_component_props(page, "dashmat-raw-data-meta-store", {"data": raw_meta_payload})
@@ -905,9 +986,9 @@ def seed_portopt_page(page, base_url: str, db_series: list[str]) -> None:
     warm.try_set_component_props(page, "po-series-select-value-store", {"data": opt_series})
     warm.try_set_component_props(page, "po-series-order-store", {"data": opt_series})
     warm.try_set_component_props(page, "po-cmabench-defaults-store", {"data": {}})
-    warm.wait_visible(page, "#po-main-container", timeout=30000)
-    warm.wait_ready(page, "#po-opt-model-select", timeout=30000)
-    warm.wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
+    wait_visible(page, "#po-main-container", timeout=30000)
+    wait_ready(page, "#po-opt-model-select", timeout=30000)
+    wait_hidden_or_absent(page, "#po-ui-blocker-overlay", timeout=30000)
 
 
 def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_series: list[str]) -> list[dict[str, object]]:
@@ -1058,7 +1139,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
                 warm.set_component_value(page, "reg-use-risk-free-switch", "tbill"),
             ),
             action=lambda: warm.set_component_value(page, "reg-use-risk-free-switch", "zero"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#reg-statistics-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-statistics-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -1075,7 +1156,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
                 warm.set_component_value(page, "reg-rolling-return-type-select", "annualized"),
             ),
             action=lambda: warm.set_component_value(page, "reg-rolling-metric-select", "volatility"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -1091,7 +1172,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
                 warm.set_component_value(page, "reg-rolling-window-select", "1y"),
             ),
             action=lambda: warm.set_component_value(page, "reg-rolling-window-select", "3y"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -1108,7 +1189,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
                 warm.set_component_value(page, "reg-rolling-return-type-select", "annualized"),
             ),
             action=lambda: warm.set_component_value(page, "reg-rolling-return-type-select", "cumulative"),
-            wait_for_ready=lambda: warm.wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
             scenario_class="visible_result_tab",
         )
     )
@@ -1123,7 +1204,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
             action=lambda: warm.set_component_value(page, "reg-result-select", "Harness Result 2"),
             wait_for_ready=lambda: (
                 wait_for_input_value(page, "#reg-result-select", "Harness Result 2"),
-                warm.wait_content_ready(page, "#reg-anova-content", timeout=10000),
+                wait_content_ready(page, "#reg-anova-content", timeout=10000),
             ),
             scenario_class="visible_result_tab",
         )
@@ -1139,7 +1220,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
             action=lambda: warm.set_component_value(page, "reg-result-select", "Harness Result 2"),
             wait_for_ready=lambda: (
                 wait_for_input_value(page, "#reg-result-select", "Harness Result 2"),
-                warm.wait_content_ready(page, "#reg-statistics-content", timeout=10000),
+                wait_content_ready(page, "#reg-statistics-content", timeout=10000),
             ),
             scenario_class="visible_result_tab",
         )
@@ -1155,7 +1236,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
             action=lambda: warm.set_component_value(page, "reg-result-select", "Harness Result 2"),
             wait_for_ready=lambda: (
                 wait_for_input_value(page, "#reg-result-select", "Harness Result 2"),
-                warm.wait_content_ready(page, "#reg-scatter-content", timeout=10000),
+                wait_content_ready(page, "#reg-scatter-content", timeout=10000),
             ),
             scenario_class="visible_result_tab",
         )
@@ -1171,7 +1252,7 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
             action=lambda: warm.set_component_value(page, "reg-result-select", "Harness Result 2"),
             wait_for_ready=lambda: (
                 wait_for_input_value(page, "#reg-result-select", "Harness Result 2"),
-                warm.wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
+                wait_content_ready(page, "#reg-rolling-returns-content", timeout=10000),
             ),
             scenario_class="visible_result_tab",
         )
@@ -1208,7 +1289,7 @@ def seed_regression_page(page, base_url: str, db_series: list[str]) -> None:
     series_order = [dep_var] + x_series
     raw_data_payload, raw_meta_payload = build_synthetic_raw_dataset(series_order)
     page.goto(base_url + "/regression", wait_until="domcontentloaded")
-    warm.wait_dash_hydrated(page, timeout=30000)
+    wait_dash_hydrated(page, timeout=30000)
     warm.try_set_component_props(page, "reg-page-visited-store", {"data": True})
     warm.try_set_component_props(page, "dashmat-raw-data-store", {"data": raw_data_payload})
     warm.try_set_component_props(page, "dashmat-raw-data-meta-store", {"data": raw_meta_payload})
@@ -1216,9 +1297,9 @@ def seed_regression_page(page, base_url: str, db_series: list[str]) -> None:
     warm.try_set_component_props(page, "reg-series-select-value-store", {"data": x_series})
     warm.try_set_component_props(page, "reg-series-order-store", {"data": series_order})
     warm.try_set_component_props(page, "reg-dependent-var-store", {"data": dep_var})
-    warm.wait_visible(page, "#reg-main-container", timeout=30000)
-    warm.wait_ready(page, "#reg-model-select", timeout=30000)
-    warm.wait_hidden_or_absent(page, "#reg-ui-blocker-overlay", timeout=30000)
+    wait_visible(page, "#reg-main-container", timeout=30000)
+    wait_ready(page, "#reg-model-select", timeout=30000)
+    wait_hidden_or_absent(page, "#reg-ui-blocker-overlay", timeout=30000)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1229,11 +1310,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--label", default="ui-callback-harness")
     parser.add_argument("--db-series", nargs="*", default=DEFAULT_DB_SERIES)
+    parser.add_argument("--network-profile", choices=list(NETWORK_PROFILES.keys()), default="none")
     return parser
 
 
-def run_page_suite(page_name: str, base_url: str, db_series: list[str], headless: bool, runs: int) -> dict[str, object]:
+def run_page_suite(
+    page_name: str,
+    base_url: str,
+    db_series: list[str],
+    headless: bool,
+    runs: int,
+    network_profile: str,
+) -> dict[str, object]:
     run_results: list[dict[str, object]] = []
+    applied_network_profile: dict[str, object] | None = None
     for _ in range(max(runs, 1)):
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=headless)
@@ -1242,9 +1332,11 @@ def run_page_suite(page_name: str, base_url: str, db_series: list[str], headless
             tracker = warm.DashUpdateRequestTracker(page)
             if page_name == "portopt":
                 seed_portopt_page(page, base_url, db_series)
+                applied_network_profile = _apply_network_profile(page, network_profile)
                 run_results.extend(run_portopt_scenarios(page, tracker, db_series))
             else:
                 seed_regression_page(page, base_url, db_series)
+                applied_network_profile = _apply_network_profile(page, network_profile)
                 run_results.extend(run_regression_scenarios(page, tracker, db_series))
             context.close()
             browser.close()
@@ -1255,14 +1347,17 @@ def run_page_suite(page_name: str, base_url: str, db_series: list[str], headless
     return {
         "page": page_name,
         "runs": max(runs, 1),
+        "networkProfile": applied_network_profile or {"name": "none"},
         "scenarios": {name: {"summary": summarize_run_group(values), "runs": values} for name, values in grouped.items()},
     }
 
 
 def main(argv: list[str] | None = None) -> int:
+    global TIMEOUT_SCALE
     parser = build_parser()
     args = parser.parse_args(argv)
     pages = ["portopt", "regression"] if args.pages == "both" else [args.pages]
+    TIMEOUT_SCALE = NETWORK_TIMEOUT_MULTIPLIERS.get(args.network_profile, 1.0)
 
     out_dir = REPO_ROOT / "output" / "playwright"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1274,8 +1369,16 @@ def main(argv: list[str] | None = None) -> int:
             "timestamp": datetime.now().astimezone().isoformat(),
             "label": args.label,
             "baseUrl": args.base_url,
+            "networkProfile": args.network_profile,
             "pages": {
-                page_name: run_page_suite(page_name, args.base_url, list(args.db_series or DEFAULT_DB_SERIES), args.headless, args.runs)
+                page_name: run_page_suite(
+                    page_name,
+                    args.base_url,
+                    list(args.db_series or DEFAULT_DB_SERIES),
+                    args.headless,
+                    args.runs,
+                    args.network_profile,
+                )
                 for page_name in pages
             },
         }

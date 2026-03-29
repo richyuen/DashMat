@@ -109,12 +109,14 @@ def _sample_window_weights() -> list[dict]:
     ]
 
 
-def test_portopt_uses_shared_saved_series_cache_store():
+def test_portopt_uses_shared_benchmark_stamp_on_hot_paths():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
 
-    assert 'Input("dashmat-saved-series-cache-store", "data")' in page_text
+    assert 'Input("dashmat-saved-series-stamp-store", "data")' in page_text
+    assert 'State("dashmat-saved-series-stamp-store", "data")' in page_text
     assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
-    assert 'dashmat-saved-series-stamp-store' not in page_text
+    assert "_risk_free_json_from_source" in page_text
+    assert "_spx_json_from_source" in page_text
 
 
 def test_portopt_clientside_callback_registrations_present_for_migrated_helpers():
