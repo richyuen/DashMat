@@ -27,7 +27,6 @@ from utils.date_range_flow import (
     resolve_button_range,
     resolve_initial_range,
 )
-from utils.add_series_flow import import_selected_disabled
 from utils.upload_flow import (
     import_selected_workbook_sheets as _shared_import_selected_workbook_sheets,
     import_single_upload as _shared_import_single_upload,
@@ -316,6 +315,14 @@ def _fmt(v, decimals=6):
 
 def _reg_tab_render_ready(active_tab, expected_tab: str, initial_tab_ready) -> bool:
     return active_tab == expected_tab and bool(initial_tab_ready)
+
+
+def _reg_require_tab_trigger(trigger_payload, expected_tab: str) -> dict:
+    if not isinstance(trigger_payload, dict):
+        raise PreventUpdate
+    if str(trigger_payload.get("tab") or "") != expected_tab:
+        raise PreventUpdate
+    return trigger_payload
 
 
 def _reg_json_text(value):
@@ -782,7 +789,45 @@ def _reg_build_display_series_cached(entry_payload, raw_data):
     return df_to_json(display_df), list(display_df.columns)
 
 
+def _reg_has_display_projection(entry):
+    if not isinstance(entry, dict):
+        return False
+    display_json = entry.get("display_json")
+    display_columns = entry.get("display_columns")
+    return bool(display_json) and isinstance(display_columns, list) and bool(display_columns)
+
+
+def _reg_read_display_projection(entry):
+    if not _reg_has_display_projection(entry):
+        return pd.DataFrame(), []
+    try:
+        display_df = json_to_df(entry.get("display_json"))
+    except Exception:
+        return pd.DataFrame(), []
+    ordered_cols = [
+        str(column)
+        for column in (entry.get("display_columns") or [])
+        if str(column) in getattr(display_df, "columns", [])
+    ]
+    if display_df is None or display_df.empty or not ordered_cols:
+        return pd.DataFrame(), []
+    return display_df, ordered_cols
+
+
+def _reg_attach_display_projection(entry, raw_data):
+    if not isinstance(entry, dict):
+        return {}
+    display_json, ordered_cols = _reg_build_display_series_cached(canonical_json_dumps(entry), raw_data)
+    next_entry = dict(entry)
+    next_entry["display_json"] = display_json if display_json and ordered_cols else None
+    next_entry["display_columns"] = ordered_cols if display_json and ordered_cols else []
+    return next_entry
+
+
 def _reg_build_display_series(entry, raw_data):
+    projected_df, projected_cols = _reg_read_display_projection(entry)
+    if not projected_df.empty and projected_cols:
+        return projected_df, projected_cols
     entry_payload = canonical_json_dumps(entry or {})
     display_json, ordered_cols = _reg_build_display_series_cached(entry_payload, raw_data)
     if not display_json or not ordered_cols:
@@ -806,6 +851,12 @@ def _reg_resolve_display_bundle(selected, results, raw_data, *, trigger_id=None,
     ):
         display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
     return selected_name, entry, display_df, ordered_cols
+
+
+def _reg_selected_results_dict(selected, active_entry):
+    if not selected or not isinstance(active_entry, dict):
+        return {}
+    return {selected: active_entry}
 
 
 def _reg_prefixed(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
@@ -1791,9 +1842,20 @@ layout = dmc.Container(
         dcc.Store(id="reg-linear-constraints-store", data=[], storage_type="session"),
         # Results
         dcc.Store(id="reg-results-store", data={}, storage_type="session"),
+        dcc.Store(id="reg-active-result-entry-store", data=None, storage_type="memory"),
         dcc.Store(id="reg-active-tab-store", data="anova", storage_type="session"),
         dcc.Store(id="reg-page-visited-store", data=False, storage_type="session"),
         dcc.Store(id="reg-initial-tab-render-ready-store", data=False, storage_type="memory"),
+        dcc.Store(id="reg-anova-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-rolling-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-rolling-returns-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-weights-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-statistics-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-returns-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-growth-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-calendar-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-drawdown-tab-trigger-store", data=None, storage_type="memory"),
+        dcc.Store(id="reg-scatter-tab-trigger-store", data=None, storage_type="memory"),
         # Save/Load session + cache
         dcc.Store(id="reg-save-session-dummy", data=None, storage_type="memory"),
         dcc.Store(id="reg-load-session-dummy", data=None, storage_type="memory"),
@@ -2106,67 +2168,200 @@ clientside_callback(
 # Server callbacks
 # ===========================================================================
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionModelSelectSync"),
     Output("reg-arima-garch-panel", "style"),
     Output("reg-alpha-container", "style"),
     Output("reg-l1-ratio-container", "style"),
     Output("reg-force-zero-intercept-switch", "disabled"),
-    Input("reg-model-select", "value"),
-    prevent_initial_call=False,
-)
-def reg_toggle_model_controls(model):
-    show = {"display": "block"}
-    hide = {"display": "none"}
-    arima = show if model in ("ols", "constrained_ols") else hide
-    alpha = show if model in ("ridge", "lasso", "elastic_net") else hide
-    l1 = show if model == "elastic_net" else hide
-    return arima, alpha, l1, (model == "style_analysis")
-
-
-@callback(
     Output("reg-force-zero-intercept-switch", "checked"),
-    Input("reg-model-select", "value"),
-    State("reg-force-zero-intercept-switch", "checked"),
-    prevent_initial_call=True,
-)
-def reg_force_zero_for_style(model, current):
-    return True if model == "style_analysis" else current
-
-
-@callback(
     Output("reg-regression-name-input", "value"),
     Input("reg-model-select", "value"),
+    State("reg-force-zero-intercept-switch", "checked"),
     prevent_initial_call=False,
 )
-def reg_sync_name_with_model(model):
-    return _MODEL_DEFAULT_NAME.get(model, "Regression")
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionToggleWindowControls"),
     Output("reg-window-size-input", "disabled"),
     Output("reg-opt-step-input", "disabled"),
     Output("reg-opt-step-unit-select", "disabled"),
     Input("reg-window-type-select", "value"),
     prevent_initial_call=False,
 )
-def reg_toggle_window_controls(window_type):
-    is_full = window_type == "full"
-    return is_full, is_full, is_full
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionToggleRollingReturnType"),
     Output("reg-rolling-return-type-select", "disabled"),
     Output("reg-rolling-return-type-select", "style"),
     Input("reg-rolling-metric-select", "value"),
     prevent_initial_call=False,
 )
-def reg_toggle_rolling_return_type(metric):
-    disabled = (metric or "total_return") != "total_return"
-    style = {} if not disabled else {"opacity": 0.5, "pointerEvents": "none"}
-    return disabled, style
 
 
-@callback(
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("anova", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-anova-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("rolling", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-rolling-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    Input("reg-rolling-summary-chart-switch", "value"),
+    Input("reg-rolling-summary-detail-switch", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("statistics", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-statistics-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-active-result-entry-store", "data"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-use-risk-free-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("rolling_returns", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-rolling-returns-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-active-result-entry-store", "data"),
+    Input("reg-rolling-window-select", "value"),
+    Input("reg-rolling-return-type-select", "value"),
+    Input("reg-rolling-metric-select", "value"),
+    Input("reg-rolling-chart-switch", "value"),
+    Input("dashmat-saved-series-cache-store", "data"),
+    Input("reg-use-risk-free-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("weights", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-weights-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    Input("reg-weights-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("returns", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-returns-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-active-result-entry-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("growth", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-growth-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-active-result-entry-store", "data"),
+    Input("reg-growth-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("calendar", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-calendar-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-active-result-entry-store", "data"),
+    Input("reg-calendar-view-select", "value"),
+    Input("reg-partial-period-store", "data"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("drawdown", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-drawdown-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-active-result-entry-store", "data"),
+    Input("reg-drawdown-chart-switch", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(activeTab, initialTabReady) {
+        return window.dash_clientside.dashmat_callbacks.analyticsTabTrigger("scatter", activeTab, initialTabReady, true);
+    }
+    """,
+    Output("reg-scatter-tab-trigger-store", "data"),
+    Input("reg-tabs", "value"),
+    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-active-result-entry-store", "data"),
+    Input("reg-scatter-mode-select", "value"),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionSyncScatterXOptions"),
     Output("reg-scatter-x-select", "data"),
     Output("reg-scatter-x-select", "value"),
     Output("reg-scatter-x-select", "disabled"),
@@ -2176,21 +2371,6 @@ def reg_toggle_rolling_return_type(metric):
     State("reg-scatter-x-select", "value"),
     prevent_initial_call=False,
 )
-def reg_sync_scatter_x_options(selected, results, mode, current_x):
-    if not selected or not results or selected not in results:
-        return [], None, True
-
-    entry = results[selected] or {}
-    indep_vars = list(dict.fromkeys(entry.get("independent_vars") or []))
-    options = [{"value": x, "label": x} for x in indep_vars]
-    needs_x = mode in {"actual_vs_x", "predicted_vs_x"}
-    if not needs_x:
-        return options, current_x if current_x in indep_vars else None, True
-    if not indep_vars:
-        return [], None, True
-    if current_x in indep_vars:
-        return options, current_x, False
-    return options, indep_vars[0], False
 
 
 @callback(
@@ -2631,7 +2811,8 @@ def reg_stage_raw_db_row(
     return rows, rows, n_no, True
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionDeleteRawDbRow"),
     Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
     Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("reg-raw-db-add-error-alert", "children", allow_duplicate=True),
@@ -2641,24 +2822,10 @@ def reg_stage_raw_db_row(
     State("reg-raw-db-add-grid", "selectedRows"),
     prevent_initial_call=True,
 )
-def reg_delete_raw_db_row(n_delete, staged_rows, selected_rows):
-    if not n_delete:
-        raise PreventUpdate
-    rows = [dict(r) for r in (staged_rows or []) if isinstance(r, dict)]
-    n_no = no_update
-    if not rows:
-        return rows, rows, "No staged rows to delete.", False
-    selected = selected_rows or []
-    if not selected:
-        return rows, rows, "Select one staged row to delete.", False
-    selected_id = str((selected[0] or {}).get("row_id", "")).strip()
-    if not selected_id:
-        return rows, rows, "Select one staged row to delete.", False
-    kept = [r for r in rows if str(r.get("row_id", "")).strip() != selected_id]
-    return kept, kept, n_no, True
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionClearRawDbRows"),
     Output("reg-raw-db-add-rows-store", "data", allow_duplicate=True),
     Output("reg-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("reg-raw-db-add-error-alert", "children", allow_duplicate=True),
@@ -2666,10 +2833,6 @@ def reg_delete_raw_db_row(n_delete, staged_rows, selected_rows):
     Input("reg-raw-db-clear-rows-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def reg_clear_raw_db_rows(n_clear):
-    if not n_clear:
-        raise PreventUpdate
-    return [], [], no_update, True
 
 
 clientside_callback(
@@ -3437,12 +3600,11 @@ def reg_handle_sheet_select_ok(
         return n_no, n_no, n_no, n_no, True, contents, filename, workbook_sheets, n_no, False
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionToggleSheetSelectDisabled"),
     Output("reg-sheet-select-ok-button", "disabled"),
     Input("reg-sheet-select-dropdown", "value"),
 )
-def reg_toggle_sheet_select_import_selected_disabled(selected_sheets):
-    return import_selected_disabled(selected_sheets)
 
 
 clientside_callback(
@@ -4119,25 +4281,21 @@ def reg_update_constraints(n_add, n_clear, cell_change, current_rows):
 # File menu state + Excel export
 # ---------------------------------------------------------------------------
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionToggleFileMenuActions"),
     Output("reg-menu-save-session", "disabled"),
     Output("reg-menu-download-excel", "disabled"),
     Input("dashmat-raw-data-store", "data"),
     Input("reg-results-store", "data"),
     prevent_initial_call=False,
 )
-def reg_toggle_file_menu_actions(raw_data, results):
-    save_disabled = not bool(raw_data)
-    download_disabled = not bool(results)
-    return save_disabled, download_disabled
 
 
 @callback(
     Output("reg-download-excel", "data"),
     Input("reg-menu-download-excel", "n_clicks"),
-    State("reg-results-store", "data"),
-    State("dashmat-raw-data-store", "data"),
     State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
     State("reg-anova-window-select", "value"),
     State("reg-rolling-window-select", "value"),
     State("reg-rolling-return-type-select", "value"),
@@ -4151,9 +4309,8 @@ def reg_toggle_file_menu_actions(raw_data, results):
 )
 def reg_download_excel(
     n_clicks,
-    results,
-    raw_data,
     selected_result=None,
+    active_entry=None,
     selected_anova_window=None,
     rolling_window=None,
     rolling_return_type=None,
@@ -4164,17 +4321,15 @@ def reg_download_excel(
     saved_series_store=None,
     use_risk_free=True,
 ):
-    if n_clicks is None or not results:
+    if n_clicks is None or not selected_result or not isinstance(active_entry, dict):
         raise PreventUpdate
 
-    selected_name, selected_entry = _reg_get_selected_result_entry(selected_result, results)
-    if not selected_name or not selected_entry:
-        raise PreventUpdate
-    entry = selected_entry
+    selected_name = selected_result
+    entry = active_entry
     config = entry.get("config") or {}
     periodicity = entry.get("periodicity", "daily")
     wrs = entry.get("window_results") or []
-    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    display_df, ordered_cols = _reg_build_display_series(entry, None)
 
     def _info_df(message):
         return pd.DataFrame({"Info": [message]})
@@ -4805,6 +4960,7 @@ def reg_run_regression(
         "periodicity": periodicity or "daily",
         "arima_garch_summary": _clean_dict(arima_garch_summary),
     }
+    result_entry = _reg_attach_display_projection(result_entry, raw_data)
 
     new_results = {**current_results, name: result_entry}
     result_options = [{"value": k, "label": k} for k in new_results]
@@ -4843,7 +4999,42 @@ def reg_sync_result_options(results, current_val, current_options, current_disab
         )
 
 
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionProjectActiveResultEntry"),
+    Output("reg-active-result-entry-store", "data"),
+    Input("reg-result-select", "value"),
+    Input("reg-results-store", "data"),
+    State("reg-active-result-entry-store", "data"),
+    prevent_initial_call=False,
+)
+
+
 @callback(
+    Output("reg-results-store", "data", allow_duplicate=True),
+    Input("reg-page-load-trigger", "n_intervals"),
+    Input("reg-load-session-dummy", "data"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    State("reg-results-store", "data"),
+    State("dashmat-raw-data-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def reg_hydrate_display_projections(_page_load, _load_session, _raw_meta, results, raw_data):
+    if not results or not raw_data:
+        return no_update
+
+    updated = None
+    for name, entry in (results or {}).items():
+        if _reg_has_display_projection(entry):
+            continue
+        if updated is None:
+            updated = dict(results)
+        updated[name] = _reg_attach_display_projection(entry or {}, raw_data)
+
+    return updated if updated is not None else no_update
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionSyncSaveSeriesUi"),
     Output("reg-save-series-button", "disabled"),
     Output("reg-save-series-status-text", "children"),
     Input("reg-result-select", "value"),
@@ -4852,23 +5043,10 @@ def reg_sync_result_options(results, current_val, current_options, current_disab
     State("reg-save-series-status-text", "children"),
     prevent_initial_call=False,
 )
-def reg_sync_save_series_ui(selected, results, current_disabled, current_status):
-    with timed_block("regression.sync_save_series_ui", result=selected):
-        if not selected or not results or selected not in results:
-            next_disabled, next_status = True, ""
-        else:
-            saved_name = ((results or {}).get(selected) or {}).get("saved_series_name")
-            if not saved_name:
-                next_disabled, next_status = False, ""
-            else:
-                next_disabled, next_status = False, f"Saved as {saved_name}."
-        return (
-            no_update if current_disabled == next_disabled else next_disabled,
-            no_update if current_status == next_status else next_status,
-        )
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="regressionSyncAnovaWindowOptions"),
     Output("reg-anova-window-select", "data"),
     Output("reg-anova-window-select", "value"),
     Output("reg-anova-window-select", "disabled"),
@@ -4879,34 +5057,6 @@ def reg_sync_save_series_ui(selected, results, current_disabled, current_status)
     State("reg-anova-window-select", "disabled"),
     prevent_initial_call=False,
 )
-def reg_sync_anova_window_options(selected, results, current_options, current_window, current_disabled):
-    with timed_block("regression.sync_anova_window_options", result=selected):
-        if not selected or not results or selected not in results:
-            next_options, next_value, next_disabled = [], None, True
-        else:
-            wrs = (results[selected] or {}).get("window_results") or []
-            if not wrs:
-                next_options, next_value, next_disabled = [], None, True
-            else:
-                next_options = []
-                for idx, wr in enumerate(wrs):
-                    apply_start = str((wr or {}).get("apply_start") or "")[:10]
-                    apply_end = str((wr or {}).get("apply_end") or "")[:10]
-                    next_options.append(
-                        {
-                            "value": str(idx),
-                            "label": f"Window {idx + 1}: {apply_start} to {apply_end}",
-                        }
-                    )
-                valid_values = {opt["value"] for opt in next_options}
-                next_value = current_window if current_window in valid_values else str(len(wrs) - 1)
-                next_disabled = False
-
-        return (
-            no_update if current_options == next_options else next_options,
-            no_update if current_window == next_value else next_value,
-            no_update if current_disabled == next_disabled else next_disabled,
-        )
 
 
 @callback(
@@ -4983,14 +5133,16 @@ def reg_delete_result(n_clicks, selected, results):
 
 @callback(
     Output("reg-anova-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("reg-anova-window-select", "value"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
+    Input("reg-anova-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-anova-window-select", "value"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_anova_callback(selected, selected_window, active_tab="anova", initial_tab_ready=True, results=None):
+def _reg_render_anova_callback(trigger_payload, selected, selected_window, active_tab="anova", initial_tab_ready=True, results=None):
+    _reg_require_tab_trigger(trigger_payload, "anova")
     return reg_render_anova(
         selected,
         results,
@@ -5141,16 +5293,18 @@ def reg_render_anova(selected, results, selected_window, active_tab="anova", ini
 
 @callback(
     Output("reg-rolling-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("reg-rolling-summary-chart-switch", "value"),
-    Input("reg-rolling-summary-detail-switch", "value"),
+    Input("reg-rolling-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-rolling-summary-chart-switch", "value"),
+    State("reg-rolling-summary-detail-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_rolling_callback(selected, view_mode, detail_mode, theme, active_tab="rolling", initial_tab_ready=True, results=None):
+def _reg_render_rolling_callback(trigger_payload, selected, view_mode, detail_mode, theme, active_tab="rolling", initial_tab_ready=True, results=None):
+    _reg_require_tab_trigger(trigger_payload, "rolling")
     return reg_render_rolling(
         selected,
         results,
@@ -5254,23 +5408,24 @@ def reg_render_rolling(selected, results, view_mode, detail_mode, theme, active_
 
 @callback(
     Output("reg-rolling-returns-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-rolling-window-select", "value"),
-    Input("reg-rolling-return-type-select", "value"),
-    Input("reg-rolling-metric-select", "value"),
-    Input("reg-rolling-chart-switch", "value"),
-    Input("dashmat-saved-series-cache-store", "data"),
-    Input("reg-use-risk-free-store", "data"),
+    Input("reg-rolling-returns-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
+    State("reg-rolling-window-select", "value"),
+    State("reg-rolling-return-type-select", "value"),
+    State("reg-rolling-metric-select", "value"),
+    State("reg-rolling-chart-switch", "value"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("reg-use-risk-free-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    State("reg-results-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
 def _reg_render_rolling_returns_callback(
+    trigger_payload,
     selected,
-    raw_data,
+    active_entry,
     rolling_window,
     rolling_return_type,
     rolling_metric,
@@ -5280,12 +5435,12 @@ def _reg_render_rolling_returns_callback(
     theme,
     active_tab="rolling_returns",
     initial_tab_ready=True,
-    results=None,
 ):
+    _reg_require_tab_trigger(trigger_payload, "rolling_returns")
     return reg_render_rolling_returns(
         selected,
-        results,
-        raw_data,
+        _reg_selected_results_dict(selected, active_entry),
+        None,
         rolling_window,
         rolling_return_type,
         rolling_metric,
@@ -5441,15 +5596,17 @@ def reg_render_rolling_returns(
 
 @callback(
     Output("reg-weights-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("reg-weights-chart-switch", "value"),
+    Input("reg-weights-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-weights-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     State("reg-results-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_weights_callback(selected, view_mode, theme, active_tab="weights", initial_tab_ready=True, results=None):
+def _reg_render_weights_callback(trigger_payload, selected, view_mode, theme, active_tab="weights", initial_tab_ready=True, results=None):
+    _reg_require_tab_trigger(trigger_payload, "weights")
     return reg_render_weights(
         selected,
         results,
@@ -5541,18 +5698,19 @@ def reg_render_weights(selected, results, view_mode, theme, active_tab="weights"
 
 @callback(
     Output("reg-returns-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    State("reg-results-store", "data"),
+    Input("reg-returns-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_returns_callback(selected, raw_data, active_tab="returns", initial_tab_ready=True, results=None):
+def _reg_render_returns_callback(trigger_payload, selected, active_entry, active_tab="returns", initial_tab_ready=True):
+    _reg_require_tab_trigger(trigger_payload, "returns")
     return reg_render_returns(
         selected,
-        results,
-        raw_data,
+        _reg_selected_results_dict(selected, active_entry),
+        None,
         active_tab,
         initial_tab_ready,
         trigger_id=callback_context.triggered_id,
@@ -5609,20 +5767,21 @@ def reg_render_returns(selected, results, raw_data, active_tab="returns", initia
 
 @callback(
     Output("reg-growth-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-growth-chart-switch", "value"),
+    Input("reg-growth-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
+    State("reg-growth-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    State("reg-results-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_growth_callback(selected, raw_data, view_mode, theme, active_tab="growth", initial_tab_ready=True, results=None):
+def _reg_render_growth_callback(trigger_payload, selected, active_entry, view_mode, theme, active_tab="growth", initial_tab_ready=True):
+    _reg_require_tab_trigger(trigger_payload, "growth")
     return reg_render_growth(
         selected,
-        results,
-        raw_data,
+        _reg_selected_results_dict(selected, active_entry),
+        None,
         view_mode,
         theme,
         active_tab,
@@ -5711,19 +5870,20 @@ def reg_render_growth(selected, results, raw_data, view_mode, theme, active_tab=
     Output("reg-calendar-series-select", "disabled"),
     Output("reg-calendar-series-select", "data"),
     Output("reg-calendar-series-select", "value"),
-    Input("reg-result-select", "value"),
-    Input("reg-results-store", "data"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-calendar-view-select", "value"),
+    Input("reg-calendar-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
+    State("reg-calendar-view-select", "value"),
     State("reg-calendar-series-select", "value"),
     prevent_initial_call=False,
 )
-def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, current_series):
-    _name, entry = _reg_get_selected_result_entry(selected, results)
+def reg_sync_calendar_series_select(trigger_payload, selected, active_entry, calendar_view, current_series):
+    _reg_require_tab_trigger(trigger_payload, "calendar")
+    _name, entry = _reg_get_selected_result_entry(selected, _reg_selected_results_dict(selected, active_entry))
     if not entry:
         return True, [], None
 
-    display_df, ordered_cols = _reg_build_display_series(entry, raw_data)
+    display_df, ordered_cols = _reg_build_display_series(entry, None)
     options = [{"value": c, "label": c} for c in ordered_cols]
     if (calendar_view or "annual") != "monthly":
         return True, options, None
@@ -5735,21 +5895,22 @@ def reg_sync_calendar_series_select(selected, results, raw_data, calendar_view, 
 
 @callback(
     Output("reg-calendar-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-calendar-view-select", "value"),
-    Input("reg-calendar-series-select", "value"),
-    Input("reg-partial-period-store", "data"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    State("reg-results-store", "data"),
+    Input("reg-calendar-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
+    State("reg-calendar-view-select", "value"),
+    State("reg-calendar-series-select", "value"),
+    State("reg-partial-period-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_calendar_callback(selected, raw_data, calendar_view, calendar_series, partial_mode, active_tab="calendar", initial_tab_ready=True, results=None):
+def _reg_render_calendar_callback(trigger_payload, selected, active_entry, calendar_view, calendar_series, partial_mode, active_tab="calendar", initial_tab_ready=True):
+    _reg_require_tab_trigger(trigger_payload, "calendar")
     return reg_render_calendar(
         selected,
-        results,
-        raw_data,
+        _reg_selected_results_dict(selected, active_entry),
+        None,
         calendar_view,
         calendar_series,
         active_tab,
@@ -5845,20 +6006,21 @@ def reg_render_calendar(selected, results, raw_data, calendar_view, calendar_ser
 
 @callback(
     Output("reg-drawdown-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("reg-drawdown-chart-switch", "value"),
+    Input("reg-drawdown-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
+    State("reg-drawdown-chart-switch", "value"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    State("reg-results-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_drawdown_callback(selected, raw_data, view_mode, theme, active_tab="drawdown", initial_tab_ready=True, results=None):
+def _reg_render_drawdown_callback(trigger_payload, selected, active_entry, view_mode, theme, active_tab="drawdown", initial_tab_ready=True):
+    _reg_require_tab_trigger(trigger_payload, "drawdown")
     return reg_render_drawdown(
         selected,
-        results,
-        raw_data,
+        _reg_selected_results_dict(selected, active_entry),
+        None,
         view_mode,
         theme,
         active_tab,
@@ -5959,20 +6121,21 @@ def reg_render_drawdown(selected, results, raw_data, view_mode, theme, active_ta
 
 @callback(
     Output("reg-statistics-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
-    Input("dashmat-saved-series-cache-store", "data"),
-    Input("reg-use-risk-free-store", "data"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    State("reg-results-store", "data"),
+    Input("reg-statistics-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-active-result-entry-store", "data"),
+    State("dashmat-saved-series-cache-store", "data"),
+    State("reg-use-risk-free-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_statistics_callback(selected, raw_data=None, saved_series_store=None, use_risk_free=True, active_tab="statistics", initial_tab_ready=True, results=None):
+def _reg_render_statistics_callback(trigger_payload, selected, active_entry=None, saved_series_store=None, use_risk_free=True, active_tab="statistics", initial_tab_ready=True):
+    _reg_require_tab_trigger(trigger_payload, "statistics")
     return reg_render_statistics(
         selected,
-        results,
-        raw_data,
+        _reg_selected_results_dict(selected, active_entry),
+        None,
         saved_series_store,
         use_risk_free,
         active_tab,
@@ -6153,23 +6316,24 @@ def reg_render_statistics(selected, results, raw_data=None, saved_series_store=N
 
 @callback(
     Output("reg-scatter-content", "children"),
-    Input("reg-result-select", "value"),
-    Input("reg-scatter-mode-select", "value"),
-    Input("reg-scatter-x-select", "value"),
-    Input("dashmat-raw-data-store", "data"),
+    Input("reg-scatter-tab-trigger-store", "data"),
+    State("reg-result-select", "value"),
+    State("reg-scatter-mode-select", "value"),
+    State("reg-scatter-x-select", "value"),
+    State("reg-active-result-entry-store", "data"),
     State("global-color-scheme-toggle", "computedColorScheme"),
-    Input("reg-tabs", "value"),
-    Input("reg-initial-tab-render-ready-store", "data"),
-    State("reg-results-store", "data"),
+    State("reg-tabs", "value"),
+    State("reg-initial-tab-render-ready-store", "data"),
     prevent_initial_call=True,
 )
-def _reg_render_scatter_callback(selected, mode, x_var, raw_data, theme, active_tab="scatter", initial_tab_ready=True, results=None):
+def _reg_render_scatter_callback(trigger_payload, selected, mode, x_var, active_entry, theme, active_tab="scatter", initial_tab_ready=True):
+    _reg_require_tab_trigger(trigger_payload, "scatter")
     return reg_render_scatter(
         selected,
-        results,
+        _reg_selected_results_dict(selected, active_entry),
         mode,
         x_var,
-        raw_data,
+        None,
         theme,
         active_tab,
         initial_tab_ready,

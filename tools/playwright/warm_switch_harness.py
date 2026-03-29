@@ -1481,8 +1481,13 @@ REGRESSION_TAB_CONFIG = {
     "anova": {"content": "#reg-anova-content", "label": "ANOVA"},
     "returns": {"content": "#reg-returns-content", "label": "Returns"},
     "rolling": {"content": "#reg-rolling-content", "label": "Rolling Summary", "switch": "reg-rolling-summary-chart-switch", "switch_value": "chart"},
+    "rolling_returns": {"content": "#reg-rolling-returns-content", "label": "Rolling", "switch": "reg-rolling-chart-switch", "switch_value": "chart"},
+    "weights": {"content": "#reg-weights-content", "label": "Weights", "switch": "reg-weights-chart-switch", "switch_value": "chart"},
+    "statistics": {"content": "#reg-statistics-content", "label": "Statistics"},
+    "calendar": {"content": "#reg-calendar-content", "label": "Calendar"},
     "growth": {"content": "#reg-growth-content", "label": "Growth of $1", "switch": "reg-growth-chart-switch", "switch_value": "chart"},
     "drawdown": {"content": "#reg-drawdown-content", "label": "Drawdown", "switch": "reg-drawdown-chart-switch", "switch_value": "chart"},
+    "scatter": {"content": "#reg-scatter-content", "label": "Scatter"},
 }
 
 

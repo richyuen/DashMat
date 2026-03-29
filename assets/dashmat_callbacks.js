@@ -11,6 +11,26 @@
   const flexStyle = { display: "flex", flexDirection: "column", flex: "1", overflow: "hidden" };
   const flexScrollStyle = { display: "flex", flexDirection: "column", flex: "1", overflow: "auto" };
   const hiddenStyle = { display: "none" };
+  const portoptModelDefaultNames = {
+    risk_parity: "RP",
+    factor_risk_parity: "FRP",
+    hierarchical_risk_parity: "HRP",
+    hrp: "HRP",
+    maximize_sharpe: "MSR",
+    minimize_variance: "MinVar",
+    minimize_cvar: "MinCVaR",
+    equal_weight: "EW",
+    ex_ante_mv: "ExAnteMV",
+    black_litterman: "BL"
+  };
+  const regressionModelDefaultNames = {
+    ols: "OLS",
+    constrained_ols: "Constrained OLS",
+    style_analysis: "Style Analysis",
+    ridge: "Ridge",
+    lasso: "Lasso",
+    elastic_net: "Elastic Net"
+  };
   const deferredModalOpenHandles = {};
 
   function cancelDeferredModalOpen(modalId) {
@@ -56,6 +76,64 @@
 
   function normalizePath(pathname) {
     return String(pathname || "").split("?")[0].replace(/\/$/, "") || "/";
+  }
+
+  function stableValue(value) {
+    if (Array.isArray(value)) {
+      return value.map(stableValue);
+    }
+    if (value && typeof value === "object") {
+      const out = {};
+      Object.keys(value).sort().forEach(function (key) {
+        out[key] = stableValue(value[key]);
+      });
+      return out;
+    }
+    return value;
+  }
+
+  function sameValue(left, right) {
+    if (left === right) {
+      return true;
+    }
+    const leftIsObject = left !== null && typeof left === "object";
+    const rightIsObject = right !== null && typeof right === "object";
+    if (leftIsObject || rightIsObject) {
+      try {
+        return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+      } catch (_err) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function pythonTruthy(value) {
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    if (value && typeof value === "object") {
+      return Object.keys(value).length > 0;
+    }
+    return !!value;
+  }
+
+  function periodicityDefaults(periodicity) {
+    if (periodicity && periodicity.indexOf("weekly") === 0) {
+      return [52, 4, 1, 13];
+    }
+    if (periodicity === "monthly") {
+      return [12, 1, 1, 6];
+    }
+    return [252, 21, 1, 63];
+  }
+
+  function portoptModelDefaultName(model) {
+    return portoptModelDefaultNames[model] || "Port";
+  }
+
+  function regressionModelDefaultName(model) {
+    return regressionModelDefaultNames[model] || "Regression";
   }
 
   function clickUploadInput(rootId) {
@@ -2809,20 +2887,8 @@
       "black_litterman"
     ];
     const resolvedOptModel = validModels.indexOf(storedOptModel) !== -1 ? storedOptModel : "risk_parity";
-    const modelDefaults = {
-      risk_parity: "RP",
-      factor_risk_parity: "FRP",
-      hierarchical_risk_parity: "HRP",
-      hrp: "HRP",
-      maximize_sharpe: "MSR",
-      minimize_variance: "MinVar",
-      minimize_cvar: "MinCVaR",
-      equal_weight: "EW",
-      ex_ante_mv: "ExAnteMV",
-      black_litterman: "BL"
-    };
     const trimmedName = typeof storedPortfolioName === "string" ? storedPortfolioName.trim() : "";
-    const resolvedPortfolioName = trimmedName || modelDefaults[resolvedOptModel] || "Port";
+    const resolvedPortfolioName = trimmedName || portoptModelDefaultName(resolvedOptModel);
 
     const expWeighted = !!storedExpWtCov;
     const resolvedHalflife = storedHalflife !== null && storedHalflife !== undefined && Number.isFinite(Number(storedHalflife)) && Number(storedHalflife) > 0
@@ -3006,6 +3072,259 @@
       .concat(renderState(frontierView));
   }
 
+  function portoptToggleRawDivideBy(mode, convertToReturns, opened) {
+    if (!opened) {
+      return noUpdate();
+    }
+    const modeKey = String(mode || "").trim().toLowerCase();
+    return !(modeKey === "factor" && !Boolean(convertToReturns));
+  }
+
+  function portoptSyncReturnsBasisFromMirrors(returnsValue, calendarValue, drawdownValue, currentValue) {
+    const valueByTrigger = {
+      "po-returns-basis-control-returns": returnsValue,
+      "po-returns-basis-control-calendar": calendarValue,
+      "po-returns-basis-control-drawdown": drawdownValue
+    };
+    const nextValue = valueByTrigger[triggeredId()];
+    if (nextValue === null || nextValue === undefined) {
+      return noUpdate();
+    }
+    const normalized = nextValue === "excess" ? "excess" : "total";
+    const currentNormalized = currentValue === "excess" ? "excess" : "total";
+    return normalized === currentNormalized ? noUpdate() : normalized;
+  }
+
+  function portoptSyncReturnsBasisMirrors(currentValue, returnsValue, calendarValue, drawdownValue) {
+    const normalized = currentValue === "excess" ? "excess" : "total";
+    function syncValue(value) {
+      return value === normalized ? noUpdate() : normalized;
+    }
+    return [syncValue(returnsValue), syncValue(calendarValue), syncValue(drawdownValue)];
+  }
+
+  function portoptSyncNameWithModel(model) {
+    return portoptModelDefaultName(model);
+  }
+
+  function portoptClearReturns(nClicks, selectedSeries) {
+    const nu = noUpdate();
+    if (!nClicks) {
+      return [nu, nu, nu];
+    }
+    const rows = (selectedSeries || []).map(function (series) {
+      return { Asset: series, Return: 0.0, Volatility: 0.0 };
+    });
+    return [rows, {}, {}];
+  }
+
+  function portoptUpdateMatrixUi(mode) {
+    const resolvedMode = mode || "ret_cov";
+    if (resolvedMode === "ret_vol_corr") {
+      return ["Correlation Matrix", "Upload Corr CSV", "Expected Returns and Volatility"];
+    }
+    return ["Covariance Matrix", "Upload Cov CSV", "Expected Returns"];
+  }
+
+  function portoptSyncTau(value) {
+    return value || 0.05;
+  }
+
+  function portoptInitTau(storeValue) {
+    if (storeValue === null || storeValue === undefined) {
+      return noUpdate();
+    }
+    return storeValue;
+  }
+
+  function portoptInitLinearConstraintsGrid(storeData, currentRows) {
+    if (storeData === null || storeData === undefined) {
+      return noUpdate();
+    }
+    return sameValue(currentRows, storeData) ? noUpdate() : storeData;
+  }
+
+  function portoptUpdateOptStepOnUnitChange(unit, periodicity, storedStep) {
+    const defaults = periodicityDefaults(periodicity);
+    const stepDefault = unit === "months" ? defaults[2] : defaults[1];
+    if (storedStep !== null && storedStep !== undefined && storedStep !== stepDefault) {
+      return storedStep;
+    }
+    return stepDefault;
+  }
+
+  function portoptUpdateDateRangeStore(start, end) {
+    if (start && end) {
+      return { start: start, end: end };
+    }
+    return noUpdate();
+  }
+
+  function portoptToggleRollingReturnType(metric) {
+    const disabled = ["total_return", "excess_return"].indexOf(metric || "total_return") === -1;
+    return [disabled, disabled ? { opacity: 0.5, pointerEvents: "none" } : {}];
+  }
+
+  function portoptClearRawDbRows(nClear) {
+    const nu = noUpdate();
+    if (!nClear) {
+      return [nu, nu, nu, nu];
+    }
+    return [[], [], nu, true];
+  }
+
+  function regressionModelSelectSync(model, current) {
+    const show = { display: "block" };
+    const hide = hiddenStyle;
+    const resolvedModel = model || "ols";
+    const checked = !triggeredId()
+      ? noUpdate()
+      : (resolvedModel === "style_analysis" ? true : current);
+    return [
+      (resolvedModel === "ols" || resolvedModel === "constrained_ols") ? show : hide,
+      (resolvedModel === "ridge" || resolvedModel === "lasso" || resolvedModel === "elastic_net") ? show : hide,
+      resolvedModel === "elastic_net" ? show : hide,
+      resolvedModel === "style_analysis",
+      checked,
+      regressionModelDefaultName(resolvedModel)
+    ];
+  }
+
+  function regressionToggleWindowControls(windowType) {
+    const isFull = windowType === "full";
+    return [isFull, isFull, isFull];
+  }
+
+  function regressionToggleRollingReturnType(metric) {
+    const disabled = (metric || "total_return") !== "total_return";
+    return [disabled, disabled ? { opacity: 0.5, pointerEvents: "none" } : {}];
+  }
+
+  function regressionClearRawDbRows(nClear) {
+    const nu = noUpdate();
+    if (!nClear) {
+      return [nu, nu, nu, nu];
+    }
+    return [[], [], nu, true];
+  }
+
+  function regressionDeleteRawDbRow(nDelete, stagedRows, selectedRows) {
+    const nu = noUpdate();
+    if (!nDelete) {
+      return [nu, nu, nu, nu];
+    }
+    const rows = (stagedRows || []).filter(function (row) {
+      return row && typeof row === "object";
+    }).map(function (row) {
+      return Object.assign({}, row);
+    });
+    if (!rows.length) {
+      return [rows, rows, "No staged rows to delete.", false];
+    }
+    const selected = selectedRows || [];
+    if (!selected.length) {
+      return [rows, rows, "Select one staged row to delete.", false];
+    }
+    const selectedId = String(((selected[0] || {}).row_id) || "").trim();
+    if (!selectedId) {
+      return [rows, rows, "Select one staged row to delete.", false];
+    }
+    const kept = rows.filter(function (row) {
+      return String((row && row.row_id) || "").trim() !== selectedId;
+    });
+    return [kept, kept, nu, true];
+  }
+
+  function regressionToggleSheetSelectDisabled(selectedSheets) {
+    return !pythonTruthy(selectedSheets);
+  }
+
+  function regressionToggleFileMenuActions(rawData, results) {
+    return [!pythonTruthy(rawData), !pythonTruthy(results)];
+  }
+
+  function regressionSyncSaveSeriesUi(selected, results, currentDisabled, currentStatus) {
+    const entry = (selected && results && results[selected]) ? results[selected] : null;
+    let nextDisabled = true;
+    let nextStatus = "";
+    if (entry) {
+      const savedName = entry.saved_series_name;
+      nextDisabled = false;
+      nextStatus = savedName ? "Saved as " + savedName + "." : "";
+    }
+    return [
+      currentDisabled === nextDisabled ? noUpdate() : nextDisabled,
+      currentStatus === nextStatus ? noUpdate() : nextStatus
+    ];
+  }
+
+  function regressionSyncAnovaWindowOptions(selected, results, currentOptions, currentWindow, currentDisabled) {
+    let nextOptions = [];
+    let nextValue = null;
+    let nextDisabled = true;
+    const entry = (selected && results && results[selected]) ? results[selected] : null;
+    const windowResults = entry && Array.isArray(entry.window_results) ? entry.window_results : [];
+    if (windowResults.length) {
+      nextOptions = windowResults.map(function (wr, idx) {
+        const applyStart = String(((wr || {}).apply_start) || "").slice(0, 10);
+        const applyEnd = String(((wr || {}).apply_end) || "").slice(0, 10);
+        return {
+          value: String(idx),
+          label: "Window " + String(idx + 1) + ": " + applyStart + " to " + applyEnd
+        };
+      });
+      const validValues = nextOptions.map(function (opt) { return opt.value; });
+      nextValue = validValues.indexOf(currentWindow) !== -1 ? currentWindow : String(windowResults.length - 1);
+      nextDisabled = false;
+    }
+    return [
+      sameValue(currentOptions, nextOptions) ? noUpdate() : nextOptions,
+      currentWindow === nextValue ? noUpdate() : nextValue,
+      currentDisabled === nextDisabled ? noUpdate() : nextDisabled
+    ];
+  }
+
+  function regressionSyncScatterXOptions(selected, results, mode, currentX) {
+    const entry = (selected && results && results[selected]) ? results[selected] : null;
+    if (!entry) {
+      return [[], null, true];
+    }
+    const indepVars = Array.isArray(entry.independent_vars)
+      ? entry.independent_vars.filter(Boolean)
+      : [];
+    const options = indepVars.map(function (name) {
+      return { value: name, label: name };
+    });
+    const needsX = mode === "actual_vs_x" || mode === "predicted_vs_x";
+    if (!needsX) {
+      return [options, indepVars.indexOf(currentX) !== -1 ? currentX : null, true];
+    }
+    if (!indepVars.length) {
+      return [[], null, true];
+    }
+    return [
+      options,
+      indepVars.indexOf(currentX) !== -1 ? currentX : indepVars[0],
+      false
+    ];
+  }
+
+  function regressionProjectActiveResultEntry(selected, results, currentEntry) {
+    const nextEntry = (selected && results && results[selected]) ? results[selected] : null;
+    const hasProjection = nextEntry
+      && typeof nextEntry.display_json === "string"
+      && nextEntry.display_json.length > 0
+      && Array.isArray(nextEntry.display_columns)
+      && nextEntry.display_columns.length > 0;
+    if (nextEntry && !hasProjection) {
+      return noUpdate();
+    }
+    if (sameValue(currentEntry, nextEntry)) {
+      return noUpdate();
+    }
+    return nextEntry;
+  }
+
   function patchPlotlyTheme(colorScheme) {
     var isDark = colorScheme === "dark";
     var template = isDark ? "plotly_dark" : "plotly_white";
@@ -3063,20 +3382,44 @@
       openPortoptSeriesModal: openPortoptSeriesModal,
       applyPortoptSeriesSnapshot: applyPortoptSeriesSnapshot,
       portoptActiveVisTrigger: portoptActiveVisTrigger,
+      portoptClearRawDbRows: portoptClearRawDbRows,
+      portoptClearReturns: portoptClearReturns,
+      portoptInitLinearConstraintsGrid: portoptInitLinearConstraintsGrid,
+      portoptInitTau: portoptInitTau,
       portoptReportingBasisControl: portoptReportingBasisControl,
+      portoptSyncNameWithModel: portoptSyncNameWithModel,
+      portoptSyncReturnsBasisFromMirrors: portoptSyncReturnsBasisFromMirrors,
+      portoptSyncReturnsBasisMirrors: portoptSyncReturnsBasisMirrors,
+      portoptSyncTau: portoptSyncTau,
+      portoptToggleRawDivideBy: portoptToggleRawDivideBy,
+      portoptToggleRollingReturnType: portoptToggleRollingReturnType,
       portoptToggleUiElements: portoptToggleUiElements,
       portoptLinearConstraintColumnDefs: portoptLinearConstraintColumnDefs,
       portoptMatrixGridData: portoptMatrixGridData,
       portoptReturnsGridData: portoptReturnsGridData,
+      portoptUpdateDateRangeStore: portoptUpdateDateRangeStore,
+      portoptUpdateMatrixUi: portoptUpdateMatrixUi,
+      portoptUpdateOptStepOnUnitChange: portoptUpdateOptStepOnUnitChange,
       openRegressionSeriesModal: openRegressionSeriesModal,
       portoptBootstrapRestore: portoptBootstrapRestore,
       portoptControlSync: portoptControlSync,
       portoptInitialSeriesBlocker: portoptInitialSeriesBlocker,
       portoptMarkVisitedTabLoaded: portoptMarkVisitedTabLoaded,
+      regressionClearRawDbRows: regressionClearRawDbRows,
       syncPortoptSeriesModalGrid: syncPortoptSeriesModalGrid,
       portoptViewSync: portoptViewSync,
+      regressionDeleteRawDbRow: regressionDeleteRawDbRow,
       regressionInitialSeriesBlocker: regressionInitialSeriesBlocker,
       regressionControlSync: regressionControlSync,
+      regressionModelSelectSync: regressionModelSelectSync,
+      regressionProjectActiveResultEntry: regressionProjectActiveResultEntry,
+      regressionSyncAnovaWindowOptions: regressionSyncAnovaWindowOptions,
+      regressionSyncSaveSeriesUi: regressionSyncSaveSeriesUi,
+      regressionSyncScatterXOptions: regressionSyncScatterXOptions,
+      regressionToggleFileMenuActions: regressionToggleFileMenuActions,
+      regressionToggleRollingReturnType: regressionToggleRollingReturnType,
+      regressionToggleSheetSelectDisabled: regressionToggleSheetSelectDisabled,
+      regressionToggleWindowControls: regressionToggleWindowControls,
       saveWorkspaceSession: saveWorkspaceSession,
       syncAnalyticsPeriodicity: syncAnalyticsPeriodicity,
       syncPortoptPeriodicity: syncPortoptPeriodicity,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO, StringIO
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
@@ -106,12 +108,110 @@ def _series_snapshot(rows: list[dict]) -> dict:
     return {"rows": rows, "capturedAt": 1}
 
 
+def _run_dashmat_callbacks_js(expression: str):
+    repo_root = Path(__file__).resolve().parents[2]
+    script = f"""
+const path = require("path");
+global.window = {{ dash_clientside: {{ no_update: {{ __dash_no_update__: true }} }} }};
+require(path.resolve("assets/dashmat_callbacks.js"));
+const ns = window.dash_clientside.dashmat_callbacks;
+function normalize(value) {{
+  if (value && value.__dash_no_update__) {{
+    return "__NO_UPDATE__";
+  }}
+  if (Array.isArray(value)) {{
+    return value.map(normalize);
+  }}
+  if (value && typeof value === "object") {{
+    const out = {{}};
+    for (const [key, nextValue] of Object.entries(value)) {{
+      out[key] = normalize(nextValue);
+    }}
+    return out;
+  }}
+  return value;
+}}
+const result = {expression};
+process.stdout.write(JSON.stringify(normalize(result)));
+"""
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
 def test_regression_uses_shared_saved_series_cache_store():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
 
     assert 'Input("dashmat-saved-series-cache-store", "data")' in page_text
     assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
     assert 'dashmat-saved-series-stamp-store' not in page_text
+
+
+def test_regression_clientside_callback_registrations_present_for_migrated_helpers():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    for function_name in (
+        "regressionModelSelectSync",
+        "regressionToggleWindowControls",
+        "regressionToggleRollingReturnType",
+        "regressionDeleteRawDbRow",
+        "regressionClearRawDbRows",
+        "regressionSyncAnovaWindowOptions",
+        "regressionSyncSaveSeriesUi",
+        "regressionSyncScatterXOptions",
+        "regressionToggleSheetSelectDisabled",
+        "regressionToggleFileMenuActions",
+        ):
+        assert f'ClientsideFunction(namespace="dashmat_callbacks", function_name="{function_name}")' in page_text
+        assert f"function {function_name}(" in js_text
+
+
+def test_regression_tab_trigger_stores_gate_result_families():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+
+    expected_tabs = (
+        "anova",
+        "rolling",
+        "rolling_returns",
+        "weights",
+        "statistics",
+        "returns",
+        "growth",
+        "calendar",
+        "drawdown",
+        "scatter",
+    )
+    for tab_name in expected_tabs:
+        store_id = f'reg-{tab_name.replace("_", "-")}-tab-trigger-store'
+        if tab_name == "rolling_returns":
+            store_id = "reg-rolling-returns-tab-trigger-store"
+        assert f'dcc.Store(id="{store_id}", data=None, storage_type="memory")' in page_text
+        assert f'analyticsTabTrigger("{tab_name}", activeTab, initialTabReady, true)' in page_text
+        assert f'Input("{store_id}", "data")' in page_text
+        assert f'_reg_require_tab_trigger(trigger_payload, "{tab_name}")' in page_text
+
+    assert 'Input("dashmat-raw-data-store", "data")' not in page_text.split('def _reg_render_returns_callback', 1)[0].rsplit("@callback(", 1)[-1]
+    assert 'Input("dashmat-raw-data-store", "data")' not in page_text.split('def _reg_render_growth_callback', 1)[0].rsplit("@callback(", 1)[-1]
+    assert 'Input("dashmat-raw-data-store", "data")' not in page_text.split('def _reg_render_calendar_callback', 1)[0].rsplit("@callback(", 1)[-1]
+    assert 'Input("dashmat-raw-data-store", "data")' not in page_text.split('def _reg_render_drawdown_callback', 1)[0].rsplit("@callback(", 1)[-1]
+    assert 'Input("dashmat-raw-data-store", "data")' not in page_text.split('def _reg_render_scatter_callback', 1)[0].rsplit("@callback(", 1)[-1]
+
+
+def test_regression_calendar_series_sync_is_gated_by_calendar_trigger():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    callback_block = page_text.split("def reg_sync_calendar_series_select", 1)[0].rsplit("@callback(", 1)[-1]
+
+    assert 'Input("reg-calendar-tab-trigger-store", "data")' in callback_block
+    assert 'State("reg-result-select", "value")' in callback_block
+    assert 'State("reg-active-result-entry-store", "data")' in callback_block
+    assert 'State("dashmat-raw-data-store", "data")' not in callback_block
+    assert 'Input("reg-result-select", "value")' not in callback_block
 
 
 def test_reg_run_regression_includes_run_level_arima_summary_and_per_var_bounds(monkeypatch, regression_page):
@@ -1305,11 +1405,58 @@ def test_reg_build_display_series_clips_to_effective_window_for_full_lagged_self
     assert display_df.iloc[0]["Y (lag 1)"] == pytest.approx(raw_df.iloc[0]["Y"])
 
 
-def test_reg_sync_name_with_model_uses_model_defaults(regression_page):
-    assert regression_page.reg_sync_name_with_model("ols") == "OLS"
-    assert regression_page.reg_sync_name_with_model("ridge") == "Ridge"
-    assert regression_page.reg_sync_name_with_model("style_analysis") == "Style Analysis"
-    assert regression_page.reg_sync_name_with_model("unknown_model") == "Regression"
+def test_regression_clientside_model_select_sync_matches_expected_outputs():
+    initial = _run_dashmat_callbacks_js(
+        "ns.regressionModelSelectSync('ols', false)"
+    )
+    assert initial == [
+        {"display": "block"},
+        {"display": "none"},
+        {"display": "none"},
+        False,
+        "__NO_UPDATE__",
+        "OLS",
+    ]
+
+    triggered = _run_dashmat_callbacks_js(
+        "(window.dash_clientside.callback_context = { triggered: [{ prop_id: 'reg-model-select.value' }] }, "
+        "ns.regressionModelSelectSync('style_analysis', false))"
+    )
+    assert triggered == [
+        {"display": "none"},
+        {"display": "none"},
+        {"display": "none"},
+        True,
+        True,
+        "Style Analysis",
+    ]
+
+
+def test_regression_clientside_window_and_rolling_helpers():
+    assert _run_dashmat_callbacks_js("ns.regressionToggleWindowControls('full')") == [True, True, True]
+    assert _run_dashmat_callbacks_js("ns.regressionToggleWindowControls('rolling')") == [False, False, False]
+    assert _run_dashmat_callbacks_js("ns.regressionToggleRollingReturnType('volatility')") == [
+        True,
+        {"opacity": 0.5, "pointerEvents": "none"},
+    ]
+    assert _run_dashmat_callbacks_js("ns.regressionToggleSheetSelectDisabled([])") is True
+    assert _run_dashmat_callbacks_js("ns.regressionToggleSheetSelectDisabled(['Sheet1'])") is False
+
+
+def test_regression_clientside_raw_db_and_menu_helpers():
+    assert _run_dashmat_callbacks_js("ns.regressionClearRawDbRows(1)") == [[], [], "__NO_UPDATE__", True]
+    assert _run_dashmat_callbacks_js("ns.regressionDeleteRawDbRow(1, [], [])") == [
+        [],
+        [],
+        "No staged rows to delete.",
+        False,
+    ]
+    assert _run_dashmat_callbacks_js(
+        'ns.regressionDeleteRawDbRow(1, [{"row_id":"A"},{"row_id":"B"}], [{"row_id":"A"}])'
+    ) == [[{"row_id": "B"}], [{"row_id": "B"}], "__NO_UPDATE__", True]
+    assert _run_dashmat_callbacks_js("ns.regressionToggleFileMenuActions(null, {})") == [True, True]
+    assert _run_dashmat_callbacks_js('ns.regressionToggleFileMenuActions("raw", {})') == [False, True]
+    assert _run_dashmat_callbacks_js('ns.regressionToggleFileMenuActions("raw", {"R1": {}})') == [False, False]
 
 
 def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, regression_page):
@@ -1427,11 +1574,12 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     )
     monkeypatch.setattr(regression_page.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
 
+    projected_entry = regression_page._reg_attach_display_projection(results["R1"], None)
+
     payload = regression_page.reg_download_excel(
         1,
-        results,
-        None,
         "R1",
+        projected_entry,
         0,
         "1y",
         "annualized",
@@ -1485,7 +1633,7 @@ def test_reg_download_excel_matches_tab_order_and_settings_sheet(monkeypatch, re
     assert "GARCH.mu" in set(anova_df.get("Parameter", pd.Series(dtype=str)).dropna())
 
 
-def test_reg_sync_anova_window_options_preserves_current_window_when_valid(monkeypatch, regression_page):
+def test_regression_sync_anova_window_options_preserves_current_window_when_valid():
     idx = pd.date_range("2024-01-01", periods=3, freq="D")
     results = {
         "R1": {
@@ -1496,16 +1644,16 @@ def test_reg_sync_anova_window_options_preserves_current_window_when_valid(monke
             ]
         }
     }
-    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-result-select"})())
-
-    options, value, disabled = regression_page.reg_sync_anova_window_options("R1", results, [], "1", True)
+    options, value, disabled = _run_dashmat_callbacks_js(
+        f'ns.regressionSyncAnovaWindowOptions("R1", {json.dumps(results, default=str)}, [], "1", true)'
+    )
 
     assert len(options) == 3
-    assert value is no_update
+    assert value == "__NO_UPDATE__"
     assert disabled is False
 
 
-def test_reg_sync_anova_window_options_defaults_to_latest_when_current_invalid(monkeypatch, regression_page):
+def test_regression_sync_anova_window_options_defaults_to_latest_when_current_invalid():
     idx = pd.date_range("2024-01-01", periods=3, freq="D")
     results = {
         "R1": {
@@ -1516,30 +1664,104 @@ def test_reg_sync_anova_window_options_defaults_to_latest_when_current_invalid(m
             ]
         }
     }
-    monkeypatch.setattr(regression_page, "callback_context", type("Ctx", (), {"triggered_id": "reg-results-store"})())
-
-    _options, value, _disabled = regression_page.reg_sync_anova_window_options("R1", results, [], "99", True)
+    _options, value, _disabled = _run_dashmat_callbacks_js(
+        f'ns.regressionSyncAnovaWindowOptions("R1", {json.dumps(results, default=str)}, [], "99", true)'
+    )
 
     assert value == "2"
 
 
-def test_reg_sync_scatter_x_options_disables_x_for_qq_mode(regression_page):
+def test_regression_sync_save_series_ui_preserves_existing_status_when_unchanged():
+    result = _run_dashmat_callbacks_js(
+        'ns.regressionSyncSaveSeriesUi("R1", {"R1": {"saved_series_name": "Saved Result"}}, false, "Saved as Saved Result.")'
+    )
+
+    assert result == ["__NO_UPDATE__", "__NO_UPDATE__"]
+
+
+def test_regression_sync_save_series_ui_clears_status_when_result_missing():
+    result = _run_dashmat_callbacks_js(
+        'ns.regressionSyncSaveSeriesUi(null, {}, false, "Saved as Saved Result.")'
+    )
+
+    assert result == [True, ""]
+
+
+def test_regression_sync_scatter_x_options_disables_x_for_qq_mode():
     results = {"R1": {"independent_vars": ["X1", "X2"]}}
 
-    options, value, disabled = regression_page.reg_sync_scatter_x_options("R1", results, "qq", "X1")
+    options, value, disabled = _run_dashmat_callbacks_js(
+        f'ns.regressionSyncScatterXOptions("R1", {json.dumps(results)}, "qq", "X1")'
+    )
 
     assert [opt["value"] for opt in options] == ["X1", "X2"]
     assert value == "X1"
     assert disabled is True
 
 
-def test_reg_render_callbacks_read_results_store_as_state():
+def test_regression_sync_scatter_x_options_defaults_to_first_x_when_needed():
+    results = {"R1": {"independent_vars": ["X1", "X2"]}}
+
+    options, value, disabled = _run_dashmat_callbacks_js(
+        f'ns.regressionSyncScatterXOptions("R1", {json.dumps(results)}, "actual_vs_x", "Missing")'
+    )
+
+    assert [opt["value"] for opt in options] == ["X1", "X2"]
+    assert value == "X1"
+    assert disabled is False
+
+
+def test_regression_project_active_result_entry_requires_projection():
+    entry = {"display_json": "{}", "display_columns": ["Predicted"]}
+    assert _run_dashmat_callbacks_js(
+        f'ns.regressionProjectActiveResultEntry("R1", {json.dumps({"R1": entry})}, null)'
+    ) == entry
+    assert _run_dashmat_callbacks_js(
+        f'ns.regressionProjectActiveResultEntry("R1", {json.dumps({"R1": {"predicted_json": "x"}})}, null)'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        f'ns.regressionProjectActiveResultEntry("R1", {json.dumps({"R1": entry})}, {json.dumps(entry)})'
+    ) == "__NO_UPDATE__"
+
+
+def test_reg_attach_display_projection_round_trips_display_bundle(regression_page):
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    entry = {
+        "periodicity": "daily",
+        "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.01, 0.02, 0.03]}, index=idx)),
+        "residuals_json": df_to_json(pd.DataFrame({"residuals": [0.001, -0.001, 0.002]}, index=idx)),
+    }
+
+    projected = regression_page._reg_attach_display_projection(entry, None)
+    display_df, ordered_cols = regression_page._reg_build_display_series(projected, None)
+
+    assert projected["display_json"]
+    assert projected["display_columns"] == ["Predicted", "Actual (Y)", "Residual"]
+    assert ordered_cols == ["Predicted", "Actual (Y)", "Residual"]
+    assert list(display_df.columns) == ["Predicted", "Actual (Y)", "Residual"]
+
+
+def test_reg_hydrate_display_projections_backfills_legacy_results(regression_page):
+    idx = pd.date_range("2024-01-01", periods=2, freq="D")
+    results = {
+        "R1": {
+            "periodicity": "daily",
+            "predicted_json": df_to_json(pd.DataFrame({"predicted": [0.01, 0.02]}, index=idx)),
+            "residuals_json": df_to_json(pd.DataFrame({"residuals": [0.0, 0.001]}, index=idx)),
+        }
+    }
+
+    updated = regression_page.reg_hydrate_display_projections(1, None, {"has_data": True}, results, "raw-json")
+
+    assert "display_json" in updated["R1"]
+    assert updated["R1"]["display_columns"] == ["Predicted", "Actual (Y)", "Residual"]
+    assert regression_page.reg_hydrate_display_projections(1, None, {"has_data": True}, updated, "raw-json") is no_update
+
+
+def test_reg_display_render_callbacks_read_active_entry_store_as_state():
     page_text = Path("pages/regression.py").read_text(encoding="utf-8")
-    render_callbacks = [
-        "_reg_render_anova_callback",
-        "_reg_render_rolling_callback",
+    display_render_callbacks = [
         "_reg_render_rolling_returns_callback",
-        "_reg_render_weights_callback",
         "_reg_render_returns_callback",
         "_reg_render_growth_callback",
         "_reg_render_calendar_callback",
@@ -1548,10 +1770,43 @@ def test_reg_render_callbacks_read_results_store_as_state():
         "_reg_render_scatter_callback",
     ]
 
-    for callback_name in render_callbacks:
+    for callback_name in display_render_callbacks:
         callback_block = page_text.split(f"def {callback_name}", 1)[0].rsplit("@callback(", 1)[-1]
-        assert 'State("reg-results-store", "data")' in callback_block
+        assert 'State("reg-active-result-entry-store", "data")' in callback_block
+        assert 'State("dashmat-raw-data-store", "data")' not in callback_block
         assert 'Input("reg-results-store", "data")' not in callback_block
+
+
+def test_reg_render_callbacks_use_family_trigger_inputs():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+    expected_blocks = {
+        "_reg_render_anova_callback": 'Input("reg-anova-tab-trigger-store", "data")',
+        "_reg_render_rolling_callback": 'Input("reg-rolling-tab-trigger-store", "data")',
+        "_reg_render_rolling_returns_callback": 'Input("reg-rolling-returns-tab-trigger-store", "data")',
+        "_reg_render_weights_callback": 'Input("reg-weights-tab-trigger-store", "data")',
+        "_reg_render_returns_callback": 'Input("reg-returns-tab-trigger-store", "data")',
+        "_reg_render_growth_callback": 'Input("reg-growth-tab-trigger-store", "data")',
+        "_reg_render_calendar_callback": 'Input("reg-calendar-tab-trigger-store", "data")',
+        "_reg_render_drawdown_callback": 'Input("reg-drawdown-tab-trigger-store", "data")',
+        "_reg_render_statistics_callback": 'Input("reg-statistics-tab-trigger-store", "data")',
+        "_reg_render_scatter_callback": 'Input("reg-scatter-tab-trigger-store", "data")',
+    }
+
+    for callback_name, trigger_input in expected_blocks.items():
+        callback_block = page_text.split(f"def {callback_name}", 1)[0].rsplit("@callback(", 1)[-1]
+        assert trigger_input in callback_block
+        assert 'Input("reg-tabs", "value")' not in callback_block
+
+
+def test_regression_page_wires_active_result_projection_and_hydration():
+    page_text = Path("pages/regression.py").read_text(encoding="utf-8")
+
+    assert 'dcc.Store(id="reg-active-result-entry-store", data=None, storage_type="memory")' in page_text
+    assert 'function_name="regressionProjectActiveResultEntry"' in page_text
+    assert 'def reg_hydrate_display_projections' in page_text
+    callback_block = page_text.split("def reg_hydrate_display_projections", 1)[0].rsplit("@callback(", 1)[-1]
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in callback_block
+    assert 'Input("reg-result-select", "value")' not in callback_block
 
 
 def test_warm_switch_harness_tracks_regression_render_timing():

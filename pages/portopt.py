@@ -4595,17 +4595,14 @@ def po_sync_raw_modal_controls(mode, series_key, opened, current_fee, current_in
     )
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptToggleRawDivideBy"),
     Output("po-raw-db-add-divide-by", "disabled"),
     Input("po-raw-db-add-mode-store", "data"),
     Input("po-raw-db-add-convert-returns", "checked"),
     Input("po-raw-db-add-modal", "opened"),
     prevent_initial_call=True,
 )
-def po_toggle_raw_divide_by(mode, convert_to_returns, opened):
-    if not opened:
-        raise PreventUpdate
-    return not (str(mode or "").strip().lower() == "factor" and not bool(convert_to_returns))
 
 
 @callback(
@@ -4775,7 +4772,8 @@ def po_delete_raw_db_row(n_delete, staged_rows, selected_rows):
     return kept, kept, n_no, True
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptClearRawDbRows"),
     Output("po-raw-db-add-rows-store", "data", allow_duplicate=True),
     Output("po-raw-db-add-grid", "rowData", allow_duplicate=True),
     Output("po-raw-db-add-error-alert", "children", allow_duplicate=True),
@@ -4783,10 +4781,6 @@ def po_delete_raw_db_row(n_delete, staged_rows, selected_rows):
     Input("po-raw-db-clear-rows-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def po_clear_raw_db_rows(n_clear):
-    if not n_clear:
-        raise PreventUpdate
-    return [], [], no_update, True
 
 
 clientside_callback(
@@ -5291,7 +5285,8 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncReturnsBasisFromMirrors"),
     Output("po-returns-basis-control", "value", allow_duplicate=True),
     Input("po-returns-basis-control-returns", "value"),
     Input("po-returns-basis-control-calendar", "value"),
@@ -5299,22 +5294,10 @@ clientside_callback(
     State("po-returns-basis-control", "value"),
     prevent_initial_call=True,
 )
-def sync_po_returns_basis_from_mirrors(returns_value, calendar_value, drawdown_value, current_value):
-    value_by_trigger = {
-        "po-returns-basis-control-returns": returns_value,
-        "po-returns-basis-control-calendar": calendar_value,
-        "po-returns-basis-control-drawdown": drawdown_value,
-    }
-    next_value = value_by_trigger.get(callback_context.triggered_id)
-    if next_value is None:
-        return no_update
-    normalized = "excess" if next_value == "excess" else "total"
-    if normalized == ("excess" if current_value == "excess" else "total"):
-        return no_update
-    return normalized
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncReturnsBasisMirrors"),
     Output("po-returns-basis-control-returns", "value"),
     Output("po-returns-basis-control-calendar", "value"),
     Output("po-returns-basis-control-drawdown", "value"),
@@ -5324,13 +5307,6 @@ def sync_po_returns_basis_from_mirrors(returns_value, calendar_value, drawdown_v
     State("po-returns-basis-control-drawdown", "value"),
     prevent_initial_call=False,
 )
-def sync_po_returns_basis_mirrors(current_value, returns_value, calendar_value, drawdown_value):
-    normalized = "excess" if current_value == "excess" else "total"
-
-    def _sync(value):
-        return no_update if value == normalized else normalized
-
-    return _sync(returns_value), _sync(calendar_value), _sync(drawdown_value)
 
 
 # Sync periodicity to Analytics only on raw-data load/update events.
@@ -5386,13 +5362,12 @@ def _po_require_active_vis_trigger(trigger_payload, expected_tab):
         raise PreventUpdate
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncNameWithModel"),
     Output("po-portfolio-name-input", "value", allow_duplicate=True),
     Input("po-opt-model-select", "value"),
     prevent_initial_call=True,
 )
-def po_sync_name_with_model(model):
-    return _po_default_name_for_model(model)
 
 
 # Toggle window params based on model AND window type
@@ -5532,7 +5507,8 @@ def po_upload_returns_csv(contents, filename):
 
 
 # Clear returns
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptClearReturns"),
     Output("po-ex-ante-returns-grid", "rowData", allow_duplicate=True),
     Output("po-ex-ante-returns-store", "data", allow_duplicate=True),
     Output("po-ex-ante-vol-store", "data", allow_duplicate=True),
@@ -5540,12 +5516,6 @@ def po_upload_returns_csv(contents, filename):
     State("po-series-select", "data"),
     prevent_initial_call=True,
 )
-def po_clear_returns(n_clicks, selected_series):
-    """Reset returns grid to zeros."""
-    if not n_clicks:
-        raise PreventUpdate
-    rows = [{"Asset": s, "Return": 0.0, "Volatility": 0.0} for s in (selected_series or [])]
-    return rows, {}, {}
 
 
 @callback(
@@ -5713,17 +5683,13 @@ def po_load_cma_from_db(n_clicks, version, cma_type, target, selected_series, cm
 
 
 # Update matrix UI (title, upload button) based on mode
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptUpdateMatrixUi"),
     Output("po-ex-ante-matrix-title", "children"),
     Output("po-ex-ante-matrix-upload-btn", "children"),
     Output("po-ex-ante-returns-title", "children"),
     Input("po-ex-ante-mode-store", "data"),
 )
-def po_update_matrix_ui(mode):
-    mode = mode or "ret_cov"
-    if mode == "ret_vol_corr":
-        return "Correlation Matrix", "Upload Corr CSV", "Expected Returns and Volatility"
-    return "Covariance Matrix", "Upload Cov CSV", "Expected Returns"
 
 
 # Populate matrix grid
@@ -6113,24 +6079,20 @@ def po_clear_bl_views(n_clicks):
     return [], []
 
 # Sync Tau to store
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptSyncTau"),
     Output("po-bl-tau-store", "data", allow_duplicate=True),
     Input("po-bl-tau-input", "value"),
     prevent_initial_call=True,
 )
-def po_sync_tau(value):
-    return value or 0.05
 
 # Init Tau from store
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitTau"),
     Output("po-bl-tau-input", "value", allow_duplicate=True),
     Input("po-bl-tau-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_tau(store_value):
-    if store_value is None:
-        raise PreventUpdate
-    return store_value
 
 
 # Sync BL views grid to store (on edit)
@@ -6259,18 +6221,13 @@ def po_sync_linear_constraints_to_store(cell_change, row_data):
 
 
 # Init Linear Constraints from Store (Persistence)
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptInitLinearConstraintsGrid"),
     Output("po-linear-constraints-grid", "rowData", allow_duplicate=True),
     Input("po-linear-constraints-store", "data"),
     State("po-linear-constraints-grid", "rowData"),
     prevent_initial_call="initial_duplicate",
 )
-def po_init_linear_constraints_grid(store_data, current_rows):
-    if store_data is None:
-        raise PreventUpdate
-    if current_rows == store_data:
-        raise PreventUpdate
-    return store_data
 
 # Toggle portfolio selector visibility based on active tab
 clientside_callback(
@@ -6596,22 +6553,14 @@ def po_update_periodicity_defaults(periodicity, unit, stored_ws, stored_step, st
     return ws, step, hl
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptUpdateOptStepOnUnitChange"),
     Output("po-opt-step-input", "value", allow_duplicate=True),
     Input("po-opt-step-unit-select", "value"),
     State("po-periodicity-select", "value"),
     State("po-opt-step-store", "data"),
     prevent_initial_call=True,
 )
-def po_update_opt_step_on_unit_change(unit, periodicity, stored_step):
-    # On initial restore, preserve stored opt step value
-    if stored_step is not None:
-        ws, step_p, step_m, hl = _periodicity_defaults(periodicity)
-        step_default = step_m if unit == "months" else step_p
-        if stored_step != step_default:
-            return stored_step
-    ws, step_periods, step_months, hl = _periodicity_defaults(periodicity)
-    return step_months if unit == "months" else step_periods
 
 
 # ---------------------------------------------------------------------------
@@ -8173,16 +8122,13 @@ def po_date_range_buttons(common_clicks, common_daily_clicks, max_clicks, candid
         raise PreventUpdate
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptUpdateDateRangeStore"),
     Output("po-date-range-store", "data", allow_duplicate=True),
     Input("po-start-date-picker", "value"),
     Input("po-end-date-picker", "value"),
     prevent_initial_call=True,
 )
-def po_update_date_range_store(start, end):
-    if start and end:
-        return {"start": start, "end": end}
-    return no_update
 
 
 # ===========================================================================
@@ -9186,15 +9132,13 @@ def po_render_growth_chart(
 # Rolling / Calendar / Drawdown tabs
 # ---------------------------------------------------------------------------
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="portoptToggleRollingReturnType"),
     Output("po-rolling-return-type-select", "disabled"),
     Output("po-rolling-return-type-select", "style"),
     Input("po-rolling-metric-select", "value"),
     prevent_initial_call=False,
 )
-def po_toggle_rolling_return_type(metric):
-    disabled = (metric or "total_return") not in {"total_return", "excess_return"}
-    return disabled, ({} if not disabled else {"opacity": 0.5, "pointerEvents": "none"})
 
 
 @callback(

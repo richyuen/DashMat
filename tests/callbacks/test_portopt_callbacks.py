@@ -117,6 +117,29 @@ def test_portopt_uses_shared_saved_series_cache_store():
     assert 'dashmat-saved-series-stamp-store' not in page_text
 
 
+def test_portopt_clientside_callback_registrations_present_for_migrated_helpers():
+    page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+
+    for function_name in (
+        "portoptToggleRawDivideBy",
+        "portoptSyncReturnsBasisFromMirrors",
+        "portoptSyncReturnsBasisMirrors",
+        "portoptSyncNameWithModel",
+        "portoptClearReturns",
+        "portoptUpdateMatrixUi",
+        "portoptSyncTau",
+        "portoptInitTau",
+        "portoptInitLinearConstraintsGrid",
+        "portoptUpdateOptStepOnUnitChange",
+        "portoptUpdateDateRangeStore",
+        "portoptToggleRollingReturnType",
+        "portoptClearRawDbRows",
+    ):
+        assert f'ClientsideFunction(namespace="dashmat_callbacks", function_name="{function_name}")' in page_text
+        assert f"function {function_name}(" in js_text
+
+
 def _collect_component_text(node):
     if node is None:
         return []
@@ -339,37 +362,29 @@ def test_po_bootstrap_tab_render_ready_requires_matching_loaded_tab(page_modules
     assert portopt._po_bootstrap_tab_render_ready("frontier", "risk", bootstrap_state) is False
 
 
-def test_sync_po_returns_basis_from_mirrors_updates_canonical(monkeypatch, page_modules):
-    _, portopt = page_modules
-    monkeypatch.setattr(
-        portopt,
-        "callback_context",
-        type("Ctx", (), {"triggered_id": "po-returns-basis-control-calendar"})(),
-    )
+def test_portopt_toggle_raw_divide_by_clientside():
+    assert _run_dashmat_callbacks_js("ns.portoptToggleRawDivideBy('factor', false, true)") is False
+    assert _run_dashmat_callbacks_js("ns.portoptToggleRawDivideBy('factor', true, true)") is True
+    assert _run_dashmat_callbacks_js("ns.portoptToggleRawDivideBy(' factor ', false, true)") is False
+    assert _run_dashmat_callbacks_js("ns.portoptToggleRawDivideBy('factor', false, false)") == "__NO_UPDATE__"
 
-    result = portopt.sync_po_returns_basis_from_mirrors(
-        "total",
-        "excess",
-        "total",
-        "total",
-    )
 
+def test_portopt_sync_returns_basis_from_mirrors_clientside():
+    result = _run_dashmat_callbacks_js(
+        "(window.dash_clientside.callback_context = { triggered: [{ prop_id: 'po-returns-basis-control-calendar.value' }] }, "
+        "ns.portoptSyncReturnsBasisFromMirrors('total', 'excess', 'total', 'total'))"
+    )
     assert result == "excess"
+    assert _run_dashmat_callbacks_js(
+        "ns.portoptSyncReturnsBasisFromMirrors('total', 'excess', 'total', 'excess')"
+    ) == "__NO_UPDATE__"
 
 
-def test_sync_po_returns_basis_mirrors_only_updates_mismatched(page_modules):
-    _, portopt = page_modules
-
-    result = portopt.sync_po_returns_basis_mirrors(
-        "excess",
-        "excess",
-        "total",
-        "excess",
+def test_portopt_sync_returns_basis_mirrors_clientside():
+    result = _run_dashmat_callbacks_js(
+        "ns.portoptSyncReturnsBasisMirrors('excess', 'excess', 'total', 'excess')"
     )
-
-    assert result[0] is no_update
-    assert result[1] == "excess"
-    assert result[2] is no_update
+    assert result == ["__NO_UPDATE__", "excess", "__NO_UPDATE__"]
 
 
 def test_po_open_modal_uses_clientside_open_seed_callback():
@@ -1216,12 +1231,46 @@ def test_po_default_name_for_model_uses_short_aliases(page_modules):
     assert portopt._po_default_name_for_model("unknown_model") == "Port"
 
 
-def test_po_sync_name_with_model_uses_aliases(page_modules):
-    _, portopt = page_modules
-
-    assert portopt.po_sync_name_with_model("risk_parity") == "RP"
-    assert portopt.po_sync_name_with_model("black_litterman") == "BL"
-    assert portopt.po_sync_name_with_model("minimize_variance") == "MinVar"
+def test_portopt_clientside_helpers_cover_name_tau_date_and_grid_behavior():
+    assert _run_dashmat_callbacks_js('ns.portoptSyncNameWithModel("risk_parity")') == "RP"
+    assert _run_dashmat_callbacks_js('ns.portoptSyncNameWithModel("black_litterman")') == "BL"
+    assert _run_dashmat_callbacks_js("ns.portoptClearReturns(1, ['Asset_A'])") == [
+        [{"Asset": "Asset_A", "Return": 0.0, "Volatility": 0.0}],
+        {},
+        {},
+    ]
+    assert _run_dashmat_callbacks_js("ns.portoptClearReturns(null, ['Asset_A'])") == [
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+        "__NO_UPDATE__",
+    ]
+    assert _run_dashmat_callbacks_js('ns.portoptUpdateMatrixUi("ret_vol_corr")') == [
+        "Correlation Matrix",
+        "Upload Corr CSV",
+        "Expected Returns and Volatility",
+    ]
+    assert _run_dashmat_callbacks_js("ns.portoptSyncTau(null)") == 0.05
+    assert _run_dashmat_callbacks_js("ns.portoptSyncTau(0.12)") == 0.12
+    assert _run_dashmat_callbacks_js("ns.portoptInitTau(null)") == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js("ns.portoptInitTau(0.07)") == 0.07
+    assert _run_dashmat_callbacks_js(
+        'ns.portoptInitLinearConstraintsGrid([{"Series":"Asset_A"}], [{"Series":"Asset_A"}])'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        'ns.portoptInitLinearConstraintsGrid([{"Series":"Asset_A"}], [])'
+    ) == [{"Series": "Asset_A"}]
+    assert _run_dashmat_callbacks_js('ns.portoptUpdateOptStepOnUnitChange("periods", "monthly", 6)') == 6
+    assert _run_dashmat_callbacks_js('ns.portoptUpdateOptStepOnUnitChange("periods", "monthly", 1)') == 1
+    assert _run_dashmat_callbacks_js('ns.portoptUpdateDateRangeStore("2024-01-01", "2024-12-31")') == {
+        "start": "2024-01-01",
+        "end": "2024-12-31",
+    }
+    assert _run_dashmat_callbacks_js('ns.portoptUpdateDateRangeStore("2024-01-01", null)') == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js('ns.portoptToggleRollingReturnType("volatility")') == [
+        True,
+        {"opacity": 0.5, "pointerEvents": "none"},
+    ]
+    assert _run_dashmat_callbacks_js("ns.portoptClearRawDbRows(1)") == [[], [], "__NO_UPDATE__", True]
 
 
 def test_po_render_growth_chart_table_mode_returns_grid_with_wide_date_column(monkeypatch, page_modules):
