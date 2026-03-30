@@ -1006,8 +1006,7 @@ def test_at_series_selection_blocker_release_uses_virtual_rows():
     assert "function releaseBlockerOnSeriesGridReady(virtualRows, modalOpened)" in js_text
 
 
-def test_compute_saved_series_stamp_uses_raw_meta_max_date(monkeypatch, raw_json):
-    raw_meta = _raw_meta(raw_json)
+def test_compute_saved_series_stamp_builds_stamp_without_raw_meta(monkeypatch):
     saved_df = pd.DataFrame(
         {
             shared_benchmark.RISK_FREE_SERIES: [0.001, 0.0015],
@@ -1019,7 +1018,7 @@ def test_compute_saved_series_stamp_uses_raw_meta_max_date(monkeypatch, raw_json
 
     monkeypatch.setattr(shared_benchmark, "load_cma_returns_for_benches", lambda *_args, **_kwargs: saved_df)
 
-    result = shared_benchmark.compute_saved_series_stamp(raw_meta, None)
+    result = shared_benchmark.compute_saved_series_stamp(None)
 
     assert result["spx_max_date"] == "2025-02-28"
     assert result["risk_free_hash"]
@@ -2044,19 +2043,7 @@ def test_shared_benchmark_stamp_store_helpers_round_trip():
     }
 
 
-def test_compute_saved_series_stamp_clears_without_raw_data():
-    stamp = {
-        "risk_free_max_date": "2024-12-31",
-        "spx_max_date": "2025-01-31",
-        "risk_free_hash": "rf-hash",
-        "spx_hash": "spx-hash",
-    }
-
-    assert shared_benchmark.compute_saved_series_stamp(None, stamp) is None
-    assert shared_benchmark.compute_saved_series_stamp({}, stamp) is None
-
-
-def test_compute_saved_series_stamp_dedupes_unchanged(monkeypatch, raw_json):
+def test_compute_saved_series_stamp_dedupes_unchanged(monkeypatch):
     saved_df = pd.DataFrame(
         {
             shared_benchmark.RISK_FREE_SERIES: [0.001, 0.0015],
@@ -2067,10 +2054,28 @@ def test_compute_saved_series_stamp_dedupes_unchanged(monkeypatch, raw_json):
     saved_df.index.name = "Date"
     monkeypatch.setattr(shared_benchmark, "load_cma_returns_for_benches", lambda *_args, **_kwargs: saved_df)
 
-    next_stamp = shared_benchmark.compute_saved_series_stamp(_raw_meta(raw_json), None)
+    next_stamp = shared_benchmark.compute_saved_series_stamp(None)
 
     with pytest.raises(PreventUpdate):
-        shared_benchmark.compute_saved_series_stamp(_raw_meta(raw_json), next_stamp)
+        shared_benchmark.compute_saved_series_stamp(next_stamp)
+
+
+def test_compute_saved_series_stamp_skips_when_current_stamp_has_hashes(monkeypatch):
+    monkeypatch.setattr(
+        shared_benchmark,
+        "load_cma_returns_for_benches",
+        lambda *_args, **_kwargs: pytest.fail("load_cma_returns_for_benches should not be called"),
+    )
+
+    with pytest.raises(PreventUpdate):
+        shared_benchmark.compute_saved_series_stamp(
+            {
+                "risk_free_max_date": "2025-02-28",
+                "spx_max_date": "2025-02-28",
+                "risk_free_hash": "rf-hash",
+                "spx_hash": "spx-hash",
+            }
+        )
 
 
 def test_resolve_shared_benchmark_payload_uses_stamp_lookup_when_cache_misses(monkeypatch):

@@ -189,25 +189,9 @@ def spx_json_from_source(shared_benchmark_source) -> str:
     return str(resolve_shared_benchmark_payload(shared_benchmark_source).get("spx_json") or "")
 
 
-def compute_saved_series_stamp(raw_meta, current_stamp, db_engine=DB_ENGINE, mrd_engine=MRD_ENGINE):
-    if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
-        return None
-
-    raw_end = pd.to_datetime(raw_meta.get("max_date"), errors="coerce")
-    if pd.isna(raw_end):
-        return None
-
+def compute_saved_series_stamp(current_stamp, db_engine=DB_ENGINE, mrd_engine=MRD_ENGINE):
     normalized_current = coerce_shared_benchmark_stamp(current_stamp)
-    stamp_is_fresh = bool(
-        normalized_current.get("risk_free_hash") and normalized_current.get("spx_hash")
-    )
-    if stamp_is_fresh:
-        for field in ("risk_free_max_date", "spx_max_date"):
-            payload_max = pd.to_datetime(normalized_current.get(field), errors="coerce")
-            if pd.isna(payload_max) or raw_end > payload_max:
-                stamp_is_fresh = False
-                break
-    if stamp_is_fresh:
+    if normalized_current.get("risk_free_hash") and normalized_current.get("spx_hash"):
         raise PreventUpdate
 
     try:
@@ -237,9 +221,12 @@ def compute_saved_series_stamp(raw_meta, current_stamp, db_engine=DB_ENGINE, mrd
 def register_shared_benchmark_callbacks(app, db_engine=DB_ENGINE, mrd_engine=MRD_ENGINE) -> None:
     @app.callback(
         Output("dashmat-saved-series-stamp-store", "data"),
-        Input("dashmat-raw-data-meta-store", "data"),
+        Input("_pages_location", "pathname"),
         State("dashmat-saved-series-stamp-store", "data"),
         prevent_initial_call=False,
     )
-    def refresh_saved_series_stamp_store(raw_meta, current_stamp):
-        return compute_saved_series_stamp(raw_meta, current_stamp, db_engine=db_engine, mrd_engine=mrd_engine)
+    def refresh_saved_series_stamp_store(pathname, current_stamp):
+        normalized_path = str(pathname or "").split("?")[0].rstrip("/") or "/"
+        if normalized_path not in {"/analyticstool", "/portopt", "/regression"}:
+            raise PreventUpdate
+        return compute_saved_series_stamp(current_stamp, db_engine=db_engine, mrd_engine=mrd_engine)

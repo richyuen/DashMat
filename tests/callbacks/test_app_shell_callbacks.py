@@ -142,6 +142,16 @@ def test_shared_saved_series_stamp_store_is_memory_backed():
     assert "register_shared_benchmark_callbacks" in app_text
 
 
+def test_shared_saved_series_stamp_refresh_is_bootstrap_driven():
+    from pathlib import Path
+
+    shared_text = Path("utils/shared_benchmark.py").read_text(encoding="utf-8")
+
+    assert 'Input("_pages_location", "pathname")' in shared_text
+    assert 'Input("dashmat-raw-data-meta-store", "data")' not in shared_text
+    assert 'if normalized_path not in {"/analyticstool", "/portopt", "/regression"}:' in shared_text
+
+
 def test_app_shell_hosts_shared_account_list_modal_and_store():
     from pathlib import Path
 
