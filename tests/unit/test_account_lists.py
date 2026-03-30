@@ -367,6 +367,10 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
     assert session_payload[AT_STORE_IDS["selected"]] == ["A", "C"]
     assert session_payload[AT_STORE_IDS["bench"]]["C"] == "B"
     assert session_payload[REG_STORE_IDS["dep"]] == "A"
+    assert session_payload["dashmat-raw-data-identity-store"]["dataset_key"] == session_payload["dashmat-raw-data-store"]["dataset_key"]
+    assert session_payload["dashmat-raw-data-identity-store"]["has_data"] is True
+    assert session_payload["dashmat-raw-data-meta-store"]["dataset_key"] == session_payload["dashmat-raw-data-store"]["dataset_key"]
+    assert session_payload["dashmat-raw-data-meta-store"]["original_periodicity"] == "daily"
     assert session_payload["at-periodicity-value-store"] == "monthly"
     assert session_payload["at-partial-period-store"] == "full"
     normalized_provenance = normalize_db_import_provenance_store(session_payload["dashmat-db-import-provenance-store"])
@@ -414,6 +418,8 @@ def test_build_account_list_session_payload_skips_extra_controls_when_apply_sett
     )
 
     assert session_payload[AT_STORE_IDS["selected"]] == ["C"]
+    assert session_payload["dashmat-raw-data-identity-store"]["has_data"] is True
+    assert session_payload["dashmat-raw-data-meta-store"]["dataset_key"] == session_payload["dashmat-raw-data-store"]["dataset_key"]
     assert "at-active-tab-store" not in session_payload
 
 
@@ -471,5 +477,7 @@ def test_build_account_list_session_payload_skips_redundant_fetch_for_saved_benc
     assert calls == ["asset-with-bench"]
     assert stats["added_series"] == ["Asset", "BM"]
     assert stats["skipped_conflicts"] == ["BM"]
+    assert session_payload["dashmat-raw-data-identity-store"]["dataset_key"] == session_payload["dashmat-raw-data-store"]["dataset_key"]
+    assert session_payload["dashmat-raw-data-meta-store"]["dataset_key"] == session_payload["dashmat-raw-data-store"]["dataset_key"]
     loaded_df = json_to_df(session_payload["dashmat-raw-data-store"]["raw_data_json"])
     assert list(loaded_df.columns) == ["Asset", "BM"]

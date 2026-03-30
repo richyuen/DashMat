@@ -15,7 +15,6 @@ from utils.account_list_modal import (
     register_account_list_callbacks,
 )
 from utils.perf_timing import configure_timing_logger
-from utils.raw_dataset import cache_raw_dataset
 from utils.returns import _build_raw_data_metadata_cached
 from utils.shared_benchmark import register_shared_benchmark_callbacks
 from utils.server_timing import register_server_timing_hooks
@@ -87,6 +86,7 @@ _provider_kwargs = {"id": "mantine-provider", "children": [
     dcc.Store(id="dashmat-raw-data-store", data=None, storage_type="session"),
     dcc.Store(id="dashmat-raw-data-identity-store", data=None, storage_type="memory"),
     dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="memory"),
+    dcc.Store(id="dashmat-raw-data-meta-refresh-trigger-store", data=None, storage_type="memory"),
     dcc.Store(id="dashmat-original-periodicity-store", data="daily", storage_type="session"),
     dcc.Store(id="dashmat-pending-new-series-store", data={}, storage_type="session"),
     dcc.Store(id="dashmat-saved-series-stamp-store", data=None, storage_type="memory"),
@@ -225,7 +225,8 @@ def guard_protected_pages(pathname, userinfo):
 
 app.clientside_callback(
     """
-    function(rawData, currentIdentity) {
+    function(rawData, originalPeriodicity, pathname, loadState, currentIdentity, currentMeta, currentTrigger) {
+        const noUpdate = window.dash_clientside.no_update;
         let datasetKey = null;
         let hasData = false;
         if (rawData && typeof rawData === "object" && !Array.isArray(rawData)) {
@@ -233,40 +234,70 @@ app.clientside_callback(
             hasData = !!datasetKey;
         }
         const nextIdentity = {dataset_key: datasetKey, has_data: hasData};
+        let nextIdentityResult = nextIdentity;
         if (currentIdentity) {
             const currentDatasetKey = ((currentIdentity.dataset_key || "").toString().trim()) || null;
             const currentHasData = !!currentIdentity.has_data;
             if (currentDatasetKey === datasetKey && currentHasData === hasData) {
-                return window.dash_clientside.no_update;
+                nextIdentityResult = noUpdate;
             }
         }
-        return nextIdentity;
+        const resolvedPeriodicity = ((originalPeriodicity || "").toString().trim()) || "daily";
+        const currentMetaDatasetKey = currentMeta && typeof currentMeta === "object"
+            ? (((currentMeta.dataset_key || "").toString().trim()) || null)
+            : null;
+        const currentMetaPeriodicity = currentMeta && typeof currentMeta === "object"
+            ? ((((currentMeta.original_periodicity || "").toString().trim()) || "daily"))
+            : null;
+        const metaIsCurrent = currentMetaDatasetKey === datasetKey && currentMetaPeriodicity === resolvedPeriodicity;
+        const normalizedPath = ((pathname || "").toString().trim()) || "";
+        const loadStatus = loadState && typeof loadState === "object"
+            ? (((loadState.status || "").toString().trim().toLowerCase()) || "idle")
+            : "idle";
+        if (normalizedPath.indexOf("/analyticstool") === 0 && loadStatus === "live_applying") {
+            return [nextIdentityResult, noUpdate];
+        }
+        if (metaIsCurrent) {
+            return [nextIdentityResult, noUpdate];
+        }
+        const nextTrigger = {
+            dataset_key: datasetKey,
+            original_periodicity: resolvedPeriodicity
+        };
+        if (currentTrigger && typeof currentTrigger === "object") {
+            const currentTriggerDatasetKey = ((currentTrigger.dataset_key || "").toString().trim()) || null;
+            const currentTriggerPeriodicity = ((currentTrigger.original_periodicity || "").toString().trim()) || "daily";
+            if (currentTriggerDatasetKey === datasetKey && currentTriggerPeriodicity === resolvedPeriodicity) {
+                return [nextIdentityResult, noUpdate];
+            }
+        }
+        return [nextIdentityResult, nextTrigger];
     }
     """,
     Output("dashmat-raw-data-identity-store", "data"),
+    Output("dashmat-raw-data-meta-refresh-trigger-store", "data"),
     Input("dashmat-raw-data-store", "data"),
+    Input("dashmat-original-periodicity-store", "data"),
+    Input("_pages_location", "pathname"),
+    Input("dashmat-account-list-load-state-store", "data"),
     State("dashmat-raw-data-identity-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
+    State("dashmat-raw-data-meta-refresh-trigger-store", "data"),
     prevent_initial_call=False,
 )
 
 
 @app.callback(
     Output("dashmat-raw-data-meta-store", "data"),
-    Input("dashmat-raw-data-identity-store", "data"),
-    Input("dashmat-original-periodicity-store", "data"),
-    State("dashmat-raw-data-store", "data"),
+    Input("dashmat-raw-data-meta-refresh-trigger-store", "data"),
     prevent_initial_call=False,
 )
-def refresh_raw_data_meta_store(raw_data_identity, original_periodicity, raw_data_store):
-    # Ensure the server-side dataset cache is warm before any downstream
-    # callbacks that look up data by key alone.  This is the single callback
-    # that receives the full raw-data payload; all others use the lightweight
-    # dataset-key store.
-    if raw_data_store is not None:
-        cache_raw_dataset(raw_data_store)
+def refresh_raw_data_meta_store(refresh_trigger):
     dataset_key = None
-    if isinstance(raw_data_identity, dict):
-        dataset_key = str(raw_data_identity.get("dataset_key") or "").strip() or None
+    original_periodicity = None
+    if isinstance(refresh_trigger, dict):
+        dataset_key = str(refresh_trigger.get("dataset_key") or "").strip() or None
+        original_periodicity = str(refresh_trigger.get("original_periodicity") or "").strip() or None
     return _build_raw_data_metadata_cached(dataset_key, original_periodicity)
 
 

@@ -18,6 +18,7 @@ from utils.raw_dataset import build_raw_data_store_payload, get_dataset_key, get
 from utils.perf_timing import timed_block
 from utils.returns import (
     align_monthly_index_to_month_end,
+    build_raw_data_metadata,
     merge_returns,
     resample_returns,
 )
@@ -1245,8 +1246,15 @@ def build_account_list_session_payload(
                 "color": "orange" if skipped_conflicts or missing_series else "green",
             }
 
+            raw_data_payload = build_raw_data_store_payload(merged_df)
+            raw_data_dataset_key = str(raw_data_payload.get("dataset_key") or "").strip() or None
             session_payload = {
-                "dashmat-raw-data-store": build_raw_data_store_payload(merged_df),
+                "dashmat-raw-data-store": raw_data_payload,
+                "dashmat-raw-data-identity-store": {
+                    "dataset_key": raw_data_dataset_key,
+                    "has_data": bool(raw_data_dataset_key),
+                },
+                "dashmat-raw-data-meta-store": build_raw_data_metadata(raw_data_payload, combined_periodicity),
                 "dashmat-original-periodicity-store": combined_periodicity,
                 "dashmat-db-import-provenance-store": updated_provenance,
                 "dashmat-account-list-notice-store": notice,

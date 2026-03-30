@@ -59,7 +59,7 @@ def test_guard_protected_pages_redirects_or_prevent_update():
         app_module.guard_protected_pages("/", {"role": "Test"})
 
 
-def test_refresh_raw_data_meta_store_uses_identity_store(monkeypatch):
+def test_refresh_raw_data_meta_store_uses_refresh_trigger_store(monkeypatch):
     import app as app_module
 
     captured = {}
@@ -72,54 +72,26 @@ def test_refresh_raw_data_meta_store_uses_identity_store(monkeypatch):
     monkeypatch.setattr(app_module, "_build_raw_data_metadata_cached", fake_builder)
 
     result = app_module.refresh_raw_data_meta_store(
-        {"dataset_key": "seed-key", "has_data": True}, "daily", None,
+        {"dataset_key": "seed-key", "original_periodicity": "daily"},
     )
 
     assert captured == {"dataset_key": "seed-key", "original_periodicity": "daily"}
     assert result == {"dataset_key": "seed-key", "original_periodicity": "daily"}
 
 
-def test_refresh_raw_data_meta_store_warms_cache_from_raw_data_store(monkeypatch):
-    """Cold-cache resilience: the callback re-hydrates the server cache from
-    the raw-data-store payload so downstream key-only callbacks succeed."""
+def test_refresh_raw_data_meta_store_returns_empty_metadata_without_trigger(monkeypatch):
     import app as app_module
-    from utils.raw_dataset import (
-        build_raw_data_store_payload,
-        clear_raw_dataset_cache,
-        get_raw_dataset_df,
-    )
-    import pandas as pd
 
-    idx = pd.date_range("2024-01-01", periods=3, freq="D")
-    df = pd.DataFrame({"A": [0.01, 0.02, 0.03]}, index=idx)
-    payload = build_raw_data_store_payload(df)
-    dataset_key = payload["dataset_key"]
-
-    # Simulate cold cache (server restart / eviction)
-    clear_raw_dataset_cache()
-    from cache_config import cache as cache_proxy
-    cache_proxy.clear()
-
-    # Before the fix, get_raw_dataset_df would raise KeyError here
-    with pytest.raises(KeyError):
-        get_raw_dataset_df(dataset_key)
-
-    # The callback warms the cache from the raw-data-store payload
     monkeypatch.setattr(
         app_module,
         "_build_raw_data_metadata_cached",
-        lambda dk, p: {"dataset_key": dk},
-    )
-    app_module.refresh_raw_data_meta_store(
-        {"dataset_key": dataset_key, "has_data": True},
-        "daily",
-        payload,
+        lambda dk, p: {"dataset_key": dk, "original_periodicity": p},
     )
 
-    # Now key-only lookup succeeds
-    result = get_raw_dataset_df(dataset_key)
-    assert list(result.columns) == ["A"]
-    assert len(result) == 3
+    assert app_module.refresh_raw_data_meta_store(None) == {
+        "dataset_key": None,
+        "original_periodicity": None,
+    }
 
 
 def test_raw_data_meta_store_is_memory_backed():
@@ -130,6 +102,7 @@ def test_raw_data_meta_store_is_memory_backed():
 
     app_text = Path("app.py").read_text(encoding="utf-8")
     assert 'dcc.Store(id="dashmat-raw-data-meta-store", data=None, storage_type="memory")' in app_text
+    assert 'dcc.Store(id="dashmat-raw-data-meta-refresh-trigger-store", data=None, storage_type="memory")' in app_text
 
 
 def test_shared_saved_series_stamp_store_is_memory_backed():
@@ -198,8 +171,16 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'Input("dashmat-account-list-modal", "opened")' in account_list_text
     assert 'Input("dashmat-account-list-selected-id-store", "data")' in account_list_text
     assert 'Input("dashmat-raw-data-store", "data")' in app_text
+    assert 'Output("dashmat-raw-data-meta-refresh-trigger-store", "data")' in app_text
     assert 'State("dashmat-raw-data-identity-store", "data")' in app_text
-    assert 'Input("dashmat-raw-data-identity-store", "data")' in app_text
+    assert 'State("dashmat-raw-data-meta-store", "data")' in app_text
+    assert 'State("dashmat-raw-data-meta-refresh-trigger-store", "data")' in app_text
+    assert 'Input("dashmat-account-list-load-state-store", "data")' in app_text
+    assert 'Input("_pages_location", "pathname")' in app_text
+    assert 'Input("dashmat-raw-data-meta-refresh-trigger-store", "data")' in app_text
+    assert 'normalizedPath.indexOf("/analyticstool") === 0 && loadStatus === "live_applying"' in app_text
+    assert 'Input("dashmat-raw-data-identity-store", "data")' not in app_text
+    assert 'State("dashmat-raw-data-store", "data")' not in app_text
     assert '"welcome-load-account-list-btn"' in welcome_text
     assert '"Load Account List"' in welcome_text
     assert 'Input("at-welcome-load-account-list-btn", "n_clicks", allow_optional=True)' in account_list_text
@@ -217,6 +198,11 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dashmat-account-list-load-timing' in account_list_text
     assert 'State("_pages_location", "pathname")' in account_list_text
     assert 'window.dash_clientside.set_props("at-state-ready-store", {data: false});' in account_list_text
+    assert '"dashmat-raw-data-identity-store"' in account_list_text
+    assert '"dashmat-raw-data-meta-store"' in account_list_text
+    assert account_list_text.index('"dashmat-original-periodicity-store"') < account_list_text.index('"dashmat-raw-data-identity-store"')
+    assert account_list_text.index('"dashmat-raw-data-identity-store"') < account_list_text.index('"dashmat-raw-data-meta-store"')
+    assert account_list_text.index('"dashmat-raw-data-meta-store"') < account_list_text.index('"dashmat-raw-data-store"')
     assert '__AT_STORE_IDS__.forEach(function(id)' in account_list_text
     assert 'window.dash_clientside.set_props(id, {data: changedEntryMap[id]});' in account_list_text
     assert 'State("dashmat-account-list-load-state-store", "data")' in account_list_text

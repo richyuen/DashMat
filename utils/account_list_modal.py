@@ -907,9 +907,11 @@ def register_account_list_callbacks(
             list(dict.fromkeys(list(AT_STORE_IDS.values()) + list(AT_EXTRA_CONTROL_STORE_IDS)))
         ))
         .replace("__AT_SHARED_IDS__", json.dumps([
-            "dashmat-db-import-provenance-store",
             "dashmat-original-periodicity-store",
+            "dashmat-raw-data-identity-store",
+            "dashmat-raw-data-meta-store",
             "dashmat-raw-data-store",
+            "dashmat-db-import-provenance-store",
         ])),
         Output("dashmat-account-list-session-apply-store", "data", allow_duplicate=True),
         Output("dashmat-account-list-modal", "opened", allow_duplicate=True),
