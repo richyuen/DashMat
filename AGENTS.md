@@ -30,6 +30,7 @@
 - For reload-based flows, measure `click -> reload start` separately from `reload start -> controls ready`; pre-reload wins do not prove the post-reload wait improved.
 - For same-page live-apply flows, measure `click -> live-apply commit` separately from `live-apply commit -> controls ready`; skipping a reload does not guarantee the post-apply ready path is fast.
 - For same-page live-apply perf paths, internal-only payload retention is not free; if a retained client payload/store makes end-to-end medians worse, roll it back even when Dash request count stays flat.
+- When a page already has an active-entry projection store, migrate remaining hot render families onto that store before inventing another projection layer.
 - Before bypassing a page's generic restore/bootstrap path, prove the retained same-page payload is complete and durable enough to reproduce that page's restore inputs; if the payload contract is incomplete or too short-lived, harden it first instead of forcing the bypass.
 - When a perf phase intentionally changes the ready outcome to an empty/cleared state, update the harness ready criteria first; do not judge timing with stale "content must render" assumptions from the old flow.
 - For account-list timing runs, verify the chosen fixture can actually reach the intended ready state; do not use a saved list with an empty restored selection when measuring click-to-ready.
@@ -39,6 +40,7 @@
 - Do not assume a partial per-family trigger split will reduce request count or medians; if the `1`-run smoke stays flat or regresses, roll it back and re-attribute before migrating more families.
 - Start measured sub-flow windows only after prior Dash traffic has settled, and count requests by request start time.
 - Use callback/request attribution to choose the next perf phase; do not pick targets from medians alone.
+- Before batching several remaining render families into one payload-reduction phase, add harness coverage for each family and use a fresh `1`-run smoke to classify them; do not treat unmeasured families as equal co-targets.
 - If a slower page already honors the intended restored-tab/bootstrap rule, do not force a symmetry-based fix for that rule; choose the next perf phase from the measured bottleneck instead.
 - Prefer reducing fan-out first:
   - metadata/routing stores over full payload stores
@@ -55,6 +57,7 @@
 - Avoid cycles in trigger-store graphs: do not feed a trigger emitter from a control whose value is derived downstream from that same trigger path.
 - If moving pure browser-visible logic clientside for perf, keep the Python path as the reference and add parity tests.
 - Do not keep a perf change just because one sub-phase median improves; a fresh clean-`HEAD` A/B must still show an end-to-end median win.
+- If a broad payload-reduction batch is ambiguous, keep useful harness-only scenario additions but roll back the page-code changes.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
 - When a payload-reduction phase is ambiguous on localhost but the target users are WAN-like, rerun the same browser A/B under a realistic throttled network profile before deciding; lower request bytes can become a real end-to-end win once RTT and throughput matter.
 - Do not assume removing one closed-modal callback family will improve startup timing by itself; if the targeted family disappears from attribution but reset request count stays flat, retarget instead of widening the same approach.
@@ -74,6 +77,7 @@
 - Before rolling back a change, stop and discuss the rollback decision with the user; do not revert code unilaterally.
 - Prefer short Python Playwright scripts over long shell one-liners.
 - For A/B runs, use separate ports instead of editing `app.py`.
+- When a new perf scenario is added during the phase, run the same harness revision against both clean `HEAD` and the working tree; do not compare a new-scenario worktree run against older harness output that never measured that scenario.
 - Validate local SQLite files under `data/` before DB-backed browser runs.
 - New worktrees do not inherit local SQLite files; copy `data/dashmat_local.db`, `data/MRD.db`, and `data/Performance.db` before DB-backed browser runs.
 - For timed browser runs, use `tools/playwright/start_timed_server.ps1` instead of launching the app directly.
@@ -81,5 +85,6 @@
 - For harness timing correlation, pass the timed server `STDOUT` log path to the harness; do not use stderr.
 - If a timed run reports callback outputs that no longer exist in source, verify the serving port is not backed by a stale timed-server process before attributing the result to the current code.
 - Prefer extending the existing harnesses before creating new ones.
+- If a hot family only has an active-tab attribution scenario, add the matching tab-entry visible scenario before judging the phase so product and diagnostic coverage both exist.
 - Keep Playwright/runtime artifacts out of commits unless explicitly needed, and clean `output/` after ad hoc runs.
 - If upward-opening modal dropdowns clip at the top, fix `utils/dashmat_welcome_modal.py`, not page-specific modal instances.
