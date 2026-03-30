@@ -379,22 +379,37 @@ def test_at_candidate_bundle_uses_raw_data_meta_dataset_key(monkeypatch, page_mo
     )
 
 
-def test_at_date_candidate_stores_dedupe_unchanged_outputs(monkeypatch, page_modules):
+def test_restore_application_state_populates_dataset_key_and_candidates(monkeypatch, page_modules, raw_json):
     analyticstool, _ = page_modules
     candidates = {"available_series": ["Asset_A"], "max_start": "2020-01-31", "max_end": "2025-12-31"}
     common_daily = {"common_daily_start": "2020-01-31", "common_daily_end": "2025-12-31"}
     monkeypatch.setattr(analyticstool, "update_at_candidate_bundle", lambda *_args: (candidates, common_daily))
 
-    result = analyticstool.update_at_date_candidate_stores(
-        {"phase": "bootstrap"},
-        "ds-123",
-        "monthly",
-        ["Asset_A"],
-        candidates,
-        common_daily,
+    result = analyticstool.restore_application_state(
+        1,
+        _raw_meta(raw_json),
+        stored_periodicity="monthly",
+        stored_series=["Asset_A"],
+        stored_returns=None,
+        stored_vol=None,
+        stored_tab=None,
+        stored_roll_win=None,
+        stored_roll_metric=None,
+        stored_roll_type=None,
+        stored_roll_chart=None,
+        stored_dd_chart=None,
+        stored_gr_chart=None,
+        stored_monthly_view=None,
+        stored_monthly_series=[],
+        stored_order=[],
+        po_origin_series=[],
+        page_visited=False,
     )
 
-    assert result == (no_update, no_update)
+    assert result[16] is False
+    assert result[17] == analyticstool._dataset_key_from_meta(_raw_meta(raw_json))
+    assert result[18] == candidates
+    assert result[19] == common_daily
 
 
 def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():
@@ -405,7 +420,17 @@ def test_at_initialize_date_range_no_longer_depends_on_common_daily_store():
     assert 'Input("at-common-daily-candidates-store", "data")' not in init_callback
 
 
-def test_at_bootstrap_date_candidate_callback_uses_trigger_store():
+def test_restore_application_state_owns_dataset_key_and_candidate_outputs():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    callback_text = page_text.split('def restore_application_state(', 1)[0]
+    callback_text = callback_text.rsplit('@callback(', 1)[-1]
+    assert 'Output("at-dataset-key-store", "data")' in callback_text
+    assert 'Output("at-range-candidates-store", "data", allow_duplicate=True)' in callback_text
+    assert 'Output("at-common-daily-candidates-store", "data", allow_duplicate=True)' in callback_text
+    assert 'Input("dashmat-raw-data-meta-store", "data")' in callback_text
+
+
+def test_at_bootstrap_date_candidate_callback_uses_narrow_fallback_trigger():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     callback_text = page_text.split('def update_at_date_candidate_stores(', 1)[0]
     callback_text = callback_text.rsplit('@callback(', 1)[-1]
@@ -413,8 +438,9 @@ def test_at_bootstrap_date_candidate_callback_uses_trigger_store():
     assert 'State("at-dataset-key-store", "data")' in callback_text
     assert 'State("at-periodicity-select", "value")' in callback_text
     assert 'State("at-series-select", "data")' in callback_text
-    assert 'Output("at-range-candidates-store", "data", allow_duplicate=True)' in callback_text
-    assert 'Output("at-common-daily-candidates-store", "data", allow_duplicate=True)' in callback_text
+    trigger_text = page_text.split('Output("at-bootstrap-candidate-trigger-store", "data")', 1)[-1]
+    trigger_text = trigger_text.split('Output("at-candidate-refresh-trigger-store", "data")', 1)[0]
+    assert 'Input("at-range-candidates-store", "data")' in trigger_text
 
 
 def test_at_common_daily_button_uses_shared_clientside_helper():
@@ -624,11 +650,14 @@ def test_analytics_modal_preview_trigger_clientside_helper():
 
 def test_analytics_candidate_refresh_trigger_clientside_helper():
     bootstrap = _run_dashmat_callbacks_js(
-        'ns.analyticsBootstrapCandidateTrigger("dataset-1", "monthly", ["Asset_A"], false)'
+        'ns.analyticsBootstrapCandidateTrigger("dataset-1", "monthly", ["Asset_A"], {"available_series":[]}, false)'
     )
     assert bootstrap["phase"] == "bootstrap"
     assert _run_dashmat_callbacks_js(
-        'ns.analyticsBootstrapCandidateTrigger("dataset-1", "monthly", ["Asset_A"], true)'
+        'ns.analyticsBootstrapCandidateTrigger("dataset-1", "monthly", ["Asset_A"], {"available_series":["Asset_A"]}, false)'
+    ) == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsBootstrapCandidateTrigger("dataset-1", "monthly", ["Asset_A"], {"available_series":[]}, true)'
     ) == "__NO_UPDATE__"
 
     assert _run_dashmat_callbacks_js(
@@ -1059,6 +1088,9 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
     assert restored[14] == []
     assert restored[15] == []
     assert restored[16] is False
+    assert restored[17] == analyticstool._dataset_key_from_meta(_raw_meta(raw_json))
+    assert isinstance(restored[18], dict)
+    assert isinstance(restored[19], dict)
 
 
 def test_restore_application_state_silently_adds_po_series_after_first_visit(page_modules, raw_json):
@@ -1088,6 +1120,7 @@ def test_restore_application_state_silently_adds_po_series_after_first_visit(pag
     assert restored[14] == ["Asset_A", "Asset_C"]
     assert restored[15] == ["Asset_A", "Asset_B", "Asset_C"]
     assert restored[16] is False
+    assert restored[17] == analyticstool._dataset_key_from_meta(_raw_meta(raw_json))
 
 
 def test_restore_application_state_defers_non_active_tab_controls(page_modules, raw_json):
@@ -1125,6 +1158,8 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
     assert restored[12] is no_update
     assert restored[13] is no_update
     assert restored[14] == ["Asset_A"]
+    assert restored[16] is False
+    assert restored[17] == analyticstool._dataset_key_from_meta(_raw_meta(raw_json))
 
 
 def test_at_restore_secondary_controls_restores_only_active_tab_family(page_modules, raw_json):
@@ -1958,19 +1993,12 @@ def test_update_returns_grid_updates_candidates_and_uses_resolved_range(monkeypa
     assert captured["date_range"] == {"start": "2024-02-01", "end": "2024-12-31"}
 
 
-def test_update_at_dataset_key_store_dedupes_unchanged(page_modules):
-    analyticstool, _ = page_modules
-
-    assert (
-        analyticstool.update_at_dataset_key_store({"dataset_key": "unit-test-dataset"}, None)
-        == "unit-test-dataset"
-    )
-
-    with pytest.raises(PreventUpdate):
-        analyticstool.update_at_dataset_key_store(
-            {"dataset_key": "unit-test-dataset"},
-            "unit-test-dataset",
-        )
+def test_restore_application_state_replaces_dataset_key_callback_and_keeps_narrow_bootstrap_fallback():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'def update_at_dataset_key_store(' not in page_text
+    assert 'at-bootstrap-candidate-trigger-store' in page_text
+    assert 'analyticsBootstrapCandidateTrigger' in page_text
+    assert 'def update_at_date_candidate_stores(' in page_text
 
 
 def test_shared_benchmark_stamp_store_helpers_round_trip():
@@ -2096,13 +2124,13 @@ def test_returns_render_no_longer_writes_candidate_stores():
     assert 'Output("at-common-daily-candidates-store", "data", allow_duplicate=True)' not in render_callback
 
 
-def test_analytics_date_candidate_callback_uses_dataset_key_store():
+def test_analytics_date_candidates_are_restored_from_restore_callback():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
-    callback_text = page_text.split('def update_at_date_candidate_stores(', 1)[0]
+    callback_text = page_text.split('def restore_application_state(', 1)[0]
     callback_text = callback_text.rsplit('@callback(', 1)[-1]
-    assert 'State("at-dataset-key-store", "data")' in callback_text
-    assert 'State("at-periodicity-select", "value")' in callback_text
-    assert 'State("at-series-select", "data")' in callback_text
+    assert 'Output("at-dataset-key-store", "data")' in callback_text
+    assert 'Output("at-range-candidates-store", "data", allow_duplicate=True)' in callback_text
+    assert 'Output("at-common-daily-candidates-store", "data", allow_duplicate=True)' in callback_text
 
 
 def test_correlogram_candidate_refresh_callback_uses_trigger_store():

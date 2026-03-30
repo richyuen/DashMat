@@ -582,6 +582,15 @@ def _last_dash_response_to_ready_ms(
     return max(0, round((ready_ts - last_finished_ts) * 1000))
 
 
+def _wait_for_analytics_state_ready_only(page, timeout: int = 30000) -> None:
+    wait_for_persisted_store_value(
+        page,
+        "at-state-ready-store",
+        True,
+        timeout=_scaled_timeout(timeout),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Account-list load helpers
 # ---------------------------------------------------------------------------
@@ -604,12 +613,13 @@ def _open_welcome_account_list_load(page) -> None:
         raise RuntimeError("Could not open account-list modal from AT welcome screen.")
 
 
-def _select_and_load_account_list(page, fixture: dict) -> dict[str, float | None]:
-    """Select and load an account list through the modal's real callback flow.
+def _select_and_load_account_list(page, fixture: dict) -> None:
+    """Prepare a selected account list through the modal's real callback flow.
 
     Waits for the modal's row-fetch callback to populate the grid, then
     selects the target row in the AG Grid (which triggers the detail-load
-    callback), waits for the detail to resolve, and clicks Load.
+    callback), then waits for the detail to resolve and the Load button to
+    become enabled.
     """
     account_list_id = fixture["accountListId"]
 
@@ -659,9 +669,8 @@ def _select_and_load_account_list(page, fixture: dict) -> dict[str, float | None
     #    selected-id and selected-detail callbacks have completed).
     wait_ready(page, "#dashmat-account-list-load-button", timeout=_scaled_timeout(15000))
 
-    # 4. Click Load through the real callback. AnalyticsTool uses same-page
-    #    live apply, so waiting for a navigation event here can add a false
-    #    30s timeout to the measured path.
+def _click_selected_account_list_load(page) -> dict[str, float | None]:
+    """Click the already-prepared account-list load button."""
     load_clicked_ts = time.perf_counter()
     triggered = fire_component_click(page, "dashmat-account-list-load-button")
     if not triggered:
@@ -864,44 +873,64 @@ def _measure_account_list_run(
         reset_ts["reloadStartTs"],
     )
 
-    # Open account-list load from welcome, select and trigger load
-    load_timing_start = current_log_offset(server_log)
-    t_load_start = time.perf_counter()
-    timing_message_start = len(browser_timing_messages)
+    # Modal prep window: open modal, wait rows, select row, wait Load enabled.
+    modal_prep_timing_start = current_log_offset(server_log)
+    t_modal_prep_start = time.perf_counter()
     request_tracker.start_window()
-    load_window_start_at = request_tracker.window_start_at
     _open_welcome_account_list_load(page)
-    load_ts = _select_and_load_account_list(page, fixture)
-
-    # Wait for statistics ready
-    try:
-        # Account list load triggers a full page reload
-        wait_dash_hydrated(page, timeout=_scaled_timeout(60000))
-        hydrated_ts = time.perf_counter()
-        wait_visible(page, "#at-main-app-container", timeout=_scaled_timeout(60000))
-        _wait_statistics_ready(page, timeout=60000)
-    except Exception:
-        # Fallback: the load may navigate; re-wait
-        wait_dash_hydrated(page, timeout=_scaled_timeout(60000))
-        hydrated_ts = time.perf_counter()
-        _wait_statistics_ready(page, timeout=60000)
-
-    ready_ts = time.perf_counter()
+    _select_and_load_account_list(page, fixture)
     request_tracker.wait_for_settle()
     request_tracker.stop_window()
-    load_timing_end = current_log_offset(server_log)
-    load_to_ready_ms = round((ready_ts - t_load_start) * 1000)
-    load_summary = request_tracker.summary()
-    load_summary["timingSummary"] = parse_timing_log(
+    modal_prep_timing_end = current_log_offset(server_log)
+    modal_prep_ms = round((time.perf_counter() - t_modal_prep_start) * 1000)
+    modal_prep_summary = request_tracker.summary()
+    modal_prep_summary["timingSummary"] = parse_timing_log(
         server_log,
-        start_offset=load_timing_start,
-        end_offset=load_timing_end,
+        start_offset=modal_prep_timing_start,
+        end_offset=modal_prep_timing_end,
     )
-    load_last_response_to_ready_ms = _last_dash_response_to_ready_ms(
-        load_summary,
-        load_window_start_at,
-        ready_ts,
-        t_load_start,
+
+    # Click window: click Load through statistics ready.
+    click_timing_start = current_log_offset(server_log)
+    timing_message_start = len(browser_timing_messages)
+    request_tracker.start_window()
+    click_window_start_at = request_tracker.window_start_at
+    load_ts = _click_selected_account_list_load(page)
+    load_clicked_ts = float(load_ts["loadClickedTs"])
+
+    _wait_for_analytics_state_ready_only(page, timeout=60000)
+    state_ready_ts = time.perf_counter()
+    wait_analytics_statistics_idle(page, timeout=_scaled_timeout(60000))
+    statistics_ready_ts = time.perf_counter()
+    request_tracker.wait_for_settle()
+    request_tracker.stop_window()
+    click_timing_end = current_log_offset(server_log)
+    click_window_end_at = request_tracker.window_end_at
+    click_summary = request_tracker.summary()
+    click_summary["timingSummary"] = parse_timing_log(
+        server_log,
+        start_offset=click_timing_start,
+        end_offset=click_timing_end,
+    )
+    pre_state_ready_summary = request_tracker.summary(
+        start_at=click_window_start_at,
+        end_at=state_ready_ts,
+    )
+    post_state_ready_summary = request_tracker.summary(
+        start_at=state_ready_ts,
+        end_at=click_window_end_at,
+    )
+    click_last_response_to_state_ready_ms = _last_dash_response_to_ready_ms(
+        pre_state_ready_summary,
+        click_window_start_at,
+        state_ready_ts,
+        load_clicked_ts,
+    )
+    click_last_response_to_statistics_ready_ms = _last_dash_response_to_ready_ms(
+        click_summary,
+        click_window_start_at,
+        statistics_ready_ts,
+        load_clicked_ts,
     )
     total_ms = round((time.perf_counter() - t0) * 1000)
     browser_click_timing: dict[str, int | str] | None = None
@@ -909,24 +938,28 @@ def _measure_account_list_run(
         browser_click_timing = _parse_account_list_click_timing(message)
         if browser_click_timing:
             break
-    account_list_hydrated_to_statistics_ready_ms = max(
-        0,
-        round((ready_ts - hydrated_ts) * 1000),
-    )
     load_click_to_reload_start_ms = int(browser_click_timing.get("clickToReloadStartMs", 0)) if browser_click_timing else 0
-    account_list_reload_start_to_hydrated_ms = max(
-        0,
-        int(browser_click_timing.get("reloadStartToReadyMs", 0)) - account_list_hydrated_to_statistics_ready_ms,
-    ) if browser_click_timing and browser_click_timing.get("mode") == "reload" else 0
-    account_list_load_click_to_live_apply_commit_ms = (
+    account_list_reload_start_to_hydrated_ms = 0
+    account_list_click_to_live_apply_commit_ms = (
         int(browser_click_timing.get("clickToLiveApplyCommitMs", 0))
         if browser_click_timing and browser_click_timing.get("mode") == "live_apply"
         else 0
     )
-    account_list_live_apply_commit_to_ready_ms = (
+    account_list_live_apply_commit_to_state_ready_ms = (
         int(browser_click_timing.get("liveApplyCommitToReadyMs", 0))
         if browser_click_timing and browser_click_timing.get("mode") == "live_apply"
         else 0
+    )
+    if browser_click_timing and browser_click_timing.get("mode") == "reload":
+        account_list_reload_start_to_hydrated_ms = int(browser_click_timing.get("reloadStartToReadyMs", 0))
+
+    account_list_state_ready_to_statistics_ready_ms = max(
+        0,
+        round((statistics_ready_ts - state_ready_ts) * 1000),
+    )
+    account_list_click_to_statistics_ready_ms = max(
+        0,
+        round((statistics_ready_ts - load_clicked_ts) * 1000),
     )
 
     return {
@@ -939,16 +972,21 @@ def _measure_account_list_run(
         "resetReloadStartToHydratedMs": reset_reload_start_to_hydrated_ms,
         "resetHydratedToWelcomeVisibleMs": reset_hydrated_to_welcome_visible_ms,
         "resetLastDashResponseToWelcomeVisibleMs": reset_last_response_to_welcome_ms,
-        "accountListOpenToReadyMs": load_to_ready_ms,
+        "accountListModalPrepMs": modal_prep_ms,
         "accountListLoadClickToReloadStartMs": load_click_to_reload_start_ms,
         "accountListReloadStartToHydratedMs": account_list_reload_start_to_hydrated_ms,
-        "accountListLoadClickToLiveApplyCommitMs": account_list_load_click_to_live_apply_commit_ms,
-        "accountListLiveApplyCommitToStatisticsReadyMs": account_list_live_apply_commit_to_ready_ms,
-        "accountListHydratedToStatisticsReadyMs": account_list_hydrated_to_statistics_ready_ms,
-        "accountListLastDashResponseToReadyMs": load_last_response_to_ready_ms,
+        "accountListClickToLiveApplyCommitMs": account_list_click_to_live_apply_commit_ms,
+        "accountListLiveApplyCommitToStateReadyMs": account_list_live_apply_commit_to_state_ready_ms,
+        "accountListStateReadyToStatisticsReadyMs": account_list_state_ready_to_statistics_ready_ms,
+        "accountListClickToStatisticsReadyMs": account_list_click_to_statistics_ready_ms,
+        "accountListClickWindowLastDashResponseToStateReadyMs": click_last_response_to_state_ready_ms,
+        "accountListClickWindowLastDashResponseToStatisticsReadyMs": click_last_response_to_statistics_ready_ms,
         "totalRunMs": total_ms,
         "resetWindow": reset_summary,
-        "accountListWindow": load_summary,
+        "accountListModalPrepWindow": modal_prep_summary,
+        "accountListClickWindow": click_summary,
+        "accountListClickWindowPreStateReady": pre_state_ready_summary,
+        "accountListClickWindowPostStateReady": post_state_ready_summary,
     }
 
 
@@ -1022,22 +1060,30 @@ def _summarize_account_list_runs(run_results: list[dict]) -> dict:
     reset_reload_ms = [r["resetReloadStartToHydratedMs"] for r in run_results]
     reset_welcome_ms = [r["resetHydratedToWelcomeVisibleMs"] for r in run_results]
     reset_tail_ms = [r["resetLastDashResponseToWelcomeVisibleMs"] for r in run_results]
-    load_ms = [r["accountListOpenToReadyMs"] for r in run_results]
+    modal_prep_ms = [r["accountListModalPrepMs"] for r in run_results]
     load_click_ms = [r["accountListLoadClickToReloadStartMs"] for r in run_results]
     load_reload_ms = [r["accountListReloadStartToHydratedMs"] for r in run_results]
-    load_live_apply_click_ms = [r.get("accountListLoadClickToLiveApplyCommitMs", 0) for r in run_results]
-    load_live_apply_ready_ms = [r.get("accountListLiveApplyCommitToStatisticsReadyMs", 0) for r in run_results]
-    load_ready_ms = [r["accountListHydratedToStatisticsReadyMs"] for r in run_results]
-    tail_ms = [r["accountListLastDashResponseToReadyMs"] for r in run_results]
+    load_live_apply_click_ms = [r.get("accountListClickToLiveApplyCommitMs", 0) for r in run_results]
+    load_live_apply_ready_ms = [r.get("accountListLiveApplyCommitToStateReadyMs", 0) for r in run_results]
+    state_ready_to_stats_ms = [r["accountListStateReadyToStatisticsReadyMs"] for r in run_results]
+    click_to_stats_ms = [r["accountListClickToStatisticsReadyMs"] for r in run_results]
+    tail_to_state_ready_ms = [r["accountListClickWindowLastDashResponseToStateReadyMs"] for r in run_results]
+    tail_to_stats_ready_ms = [r["accountListClickWindowLastDashResponseToStatisticsReadyMs"] for r in run_results]
+    click_request_counts = [int(r["accountListClickWindow"]["dashUpdateRequestCount"]) for r in run_results]
+    click_request_bytes = [int(r["accountListClickWindow"]["dashUpdateRequestBytes"]) for r in run_results]
+    click_response_bytes = [int(r["accountListClickWindow"]["dashUpdateResponseBytes"]) for r in run_results]
+    pre_state_request_counts = [int(r["accountListClickWindowPreStateReady"]["dashUpdateRequestCount"]) for r in run_results]
+    pre_state_request_bytes = [int(r["accountListClickWindowPreStateReady"]["dashUpdateRequestBytes"]) for r in run_results]
+    post_state_request_counts = [int(r["accountListClickWindowPostStateReady"]["dashUpdateRequestCount"]) for r in run_results]
+    post_state_request_bytes = [int(r["accountListClickWindowPostStateReady"]["dashUpdateRequestBytes"]) for r in run_results]
     total_ms = [r["totalRunMs"] for r in run_results]
 
     callback_counter: Counter[str] = Counter()
     for run in run_results:
-        for window_key in ("resetWindow", "accountListWindow"):
-            window = run.get(window_key, {})
-            for request in window.get("dashUpdateRequests", []):
-                for output_id in request.get("outputs", []):
-                    callback_counter[output_id] += 1
+        window = run.get("accountListClickWindow", {})
+        for request in window.get("dashUpdateRequests", []):
+            for output_id in request.get("outputs", []):
+                callback_counter[output_id] += 1
 
     return {
         "runs": len(run_results),
@@ -1049,20 +1095,38 @@ def _summarize_account_list_runs(run_results: list[dict]) -> dict:
         "resetHydratedToWelcomeVisibleMedian": round(median(reset_welcome_ms)),
         "resetLastDashResponseToWelcomeVisibleMs": reset_tail_ms,
         "resetLastDashResponseToWelcomeVisibleMedian": round(median(reset_tail_ms)),
-        "accountListOpenToReadyMs": load_ms,
-        "accountListOpenToReadyMedian": round(median(load_ms)),
+        "accountListModalPrepMs": modal_prep_ms,
+        "accountListModalPrepMedian": round(median(modal_prep_ms)),
         "accountListLoadClickToReloadStartMs": load_click_ms,
         "accountListLoadClickToReloadStartMedian": round(median(load_click_ms)),
         "accountListReloadStartToHydratedMs": load_reload_ms,
         "accountListReloadStartToHydratedMedian": round(median(load_reload_ms)),
-        "accountListLoadClickToLiveApplyCommitMs": load_live_apply_click_ms,
-        "accountListLoadClickToLiveApplyCommitMedian": round(median(load_live_apply_click_ms)),
-        "accountListLiveApplyCommitToStatisticsReadyMs": load_live_apply_ready_ms,
-        "accountListLiveApplyCommitToStatisticsReadyMedian": round(median(load_live_apply_ready_ms)),
-        "accountListHydratedToStatisticsReadyMs": load_ready_ms,
-        "accountListHydratedToStatisticsReadyMedian": round(median(load_ready_ms)),
-        "accountListLastDashResponseToReadyMs": tail_ms,
-        "accountListLastDashResponseToReadyMedian": round(median(tail_ms)),
+        "accountListClickToLiveApplyCommitMs": load_live_apply_click_ms,
+        "accountListClickToLiveApplyCommitMedian": round(median(load_live_apply_click_ms)),
+        "accountListLiveApplyCommitToStateReadyMs": load_live_apply_ready_ms,
+        "accountListLiveApplyCommitToStateReadyMedian": round(median(load_live_apply_ready_ms)),
+        "accountListStateReadyToStatisticsReadyMs": state_ready_to_stats_ms,
+        "accountListStateReadyToStatisticsReadyMedian": round(median(state_ready_to_stats_ms)),
+        "accountListClickToStatisticsReadyMs": click_to_stats_ms,
+        "accountListClickToStatisticsReadyMedian": round(median(click_to_stats_ms)),
+        "accountListClickWindowLastDashResponseToStateReadyMs": tail_to_state_ready_ms,
+        "accountListClickWindowLastDashResponseToStateReadyMedian": round(median(tail_to_state_ready_ms)),
+        "accountListClickWindowLastDashResponseToStatisticsReadyMs": tail_to_stats_ready_ms,
+        "accountListClickWindowLastDashResponseToStatisticsReadyMedian": round(median(tail_to_stats_ready_ms)),
+        "accountListClickWindowRequestCount": click_request_counts,
+        "accountListClickWindowRequestCountMedian": round(median(click_request_counts)),
+        "accountListClickWindowRequestBytes": click_request_bytes,
+        "accountListClickWindowRequestBytesMedian": round(median(click_request_bytes)),
+        "accountListClickWindowResponseBytes": click_response_bytes,
+        "accountListClickWindowResponseBytesMedian": round(median(click_response_bytes)),
+        "accountListClickWindowPreStateReadyRequestCount": pre_state_request_counts,
+        "accountListClickWindowPreStateReadyRequestCountMedian": round(median(pre_state_request_counts)),
+        "accountListClickWindowPreStateReadyRequestBytes": pre_state_request_bytes,
+        "accountListClickWindowPreStateReadyRequestBytesMedian": round(median(pre_state_request_bytes)),
+        "accountListClickWindowPostStateReadyRequestCount": post_state_request_counts,
+        "accountListClickWindowPostStateReadyRequestCountMedian": round(median(post_state_request_counts)),
+        "accountListClickWindowPostStateReadyRequestBytes": post_state_request_bytes,
+        "accountListClickWindowPostStateReadyRequestBytesMedian": round(median(post_state_request_bytes)),
         "totalRunMs": total_ms,
         "totalRunMedian": round(median(total_ms)),
         "topCallbacksByFrequency": [

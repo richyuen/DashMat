@@ -19,6 +19,8 @@ from tools.playwright.at_statistics_harness import (
     REQUIRED_INDEX_COUNT,
     REQUIRED_PEER_COUNT,
     _last_dash_response_to_ready_ms,
+    _parse_account_list_click_timing,
+    _summarize_account_list_runs,
     _build_account_list_fixture_payload,
     _staged_row,
     build_run_specs,
@@ -471,3 +473,68 @@ def test_last_dash_response_to_ready_falls_back_when_no_requests():
     )
 
     assert result == 500
+
+
+def test_parse_account_list_click_timing_live_apply_payload():
+    message = (
+        "timing name=account_list.click_to_ready "
+        "click_to_live_apply_commit_ms=123 live_apply_commit_to_ready_ms=456 "
+        "total_click_to_ready_ms=579 page=/analyticstool"
+    )
+
+    assert _parse_account_list_click_timing(message) == {
+        "mode": "live_apply",
+        "clickToLiveApplyCommitMs": 123,
+        "liveApplyCommitToReadyMs": 456,
+        "totalClickToReadyMs": 579,
+    }
+
+
+def test_summarize_account_list_runs_uses_click_window_metrics():
+    run = {
+        "resetToWelcomeMs": 100,
+        "resetReloadStartToHydratedMs": 40,
+        "resetHydratedToWelcomeVisibleMs": 60,
+        "resetLastDashResponseToWelcomeVisibleMs": 20,
+        "accountListModalPrepMs": 200,
+        "accountListLoadClickToReloadStartMs": 0,
+        "accountListReloadStartToHydratedMs": 0,
+        "accountListClickToLiveApplyCommitMs": 150,
+        "accountListLiveApplyCommitToStateReadyMs": 250,
+        "accountListStateReadyToStatisticsReadyMs": 300,
+        "accountListClickToStatisticsReadyMs": 450,
+        "accountListClickWindowLastDashResponseToStateReadyMs": 25,
+        "accountListClickWindowLastDashResponseToStatisticsReadyMs": 55,
+        "totalRunMs": 800,
+        "accountListClickWindow": {
+            "dashUpdateRequestCount": 3,
+            "dashUpdateRequestBytes": 1200,
+            "dashUpdateResponseBytes": 3400,
+            "dashUpdateRequests": [
+                {"outputs": ["at-state-ready-store.data"]},
+                {"outputs": ["at-statistics-grid.columnDefs", "at-statistics-grid.rowData"]},
+            ],
+        },
+        "accountListClickWindowPreStateReady": {
+            "dashUpdateRequestCount": 2,
+            "dashUpdateRequestBytes": 900,
+            "dashUpdateRequests": [],
+        },
+        "accountListClickWindowPostStateReady": {
+            "dashUpdateRequestCount": 1,
+            "dashUpdateRequestBytes": 300,
+            "dashUpdateRequests": [],
+        },
+    }
+
+    summary = _summarize_account_list_runs([run])
+
+    assert summary["accountListModalPrepMedian"] == 200
+    assert summary["accountListClickToLiveApplyCommitMedian"] == 150
+    assert summary["accountListLiveApplyCommitToStateReadyMedian"] == 250
+    assert summary["accountListStateReadyToStatisticsReadyMedian"] == 300
+    assert summary["accountListClickToStatisticsReadyMedian"] == 450
+    assert summary["accountListClickWindowRequestCountMedian"] == 3
+    assert summary["accountListClickWindowPreStateReadyRequestCountMedian"] == 2
+    assert summary["accountListClickWindowPostStateReadyRequestCountMedian"] == 1
+    assert summary["topCallbacksByFrequency"][0]["callback"] == "at-state-ready-store.data"

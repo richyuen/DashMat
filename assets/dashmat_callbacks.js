@@ -2627,11 +2627,14 @@
     };
   }
 
-  function analyticsBootstrapCandidateTrigger(datasetKey, periodicity, selectedSeries, stateReady) {
+  function analyticsBootstrapCandidateTrigger(datasetKey, periodicity, selectedSeries, candidates, stateReady) {
     const hasDataset = typeof datasetKey === "string" && datasetKey.length > 0;
     const hasPeriodicity = typeof periodicity === "string" && periodicity.length > 0;
     const seriesList = Array.isArray(selectedSeries) ? selectedSeries.filter(Boolean) : [];
-    if (stateReady || !hasDataset || !hasPeriodicity || !seriesList.length) {
+    const candidateSeries = candidates && Array.isArray(candidates.available_series)
+      ? candidates.available_series.filter(Boolean)
+      : [];
+    if (stateReady || !hasDataset || !hasPeriodicity || !seriesList.length || candidateSeries.length) {
       return noUpdate();
     }
 

@@ -2989,18 +2989,6 @@ def refresh_saved_series_cache(raw_meta, cache_data):
 
 
 @callback(
-    Output("at-dataset-key-store", "data"),
-    Input("dashmat-raw-data-meta-store", "data"),
-    State("at-dataset-key-store", "data"),
-)
-def update_at_dataset_key_store(raw_meta, current_dataset_key):
-    next_dataset_key = _dataset_key_from_meta(raw_meta)
-    if next_dataset_key == current_dataset_key:
-        raise PreventUpdate
-    return next_dataset_key
-
-
-@callback(
     Output("at-shared-benchmark-stamp-store", "data"),
     Input("dashmat-saved-series-cache-store", "data"),
     State("at-shared-benchmark-stamp-store", "data"),
@@ -5313,6 +5301,9 @@ def _at_resolve_restore_state(
     Output("at-series-select", "data"),
     Output("at-series-order-store", "data", allow_duplicate=True),
     Output("at-state-ready-store", "data", allow_duplicate=True),
+    Output("at-dataset-key-store", "data"),
+    Output("at-range-candidates-store", "data", allow_duplicate=True),
+    Output("at-common-daily-candidates-store", "data", allow_duplicate=True),
     Input("at-page-load-trigger", "n_intervals"),
     Input("dashmat-raw-data-meta-store", "data"),
     State("at-periodicity-value-store", "data"),
@@ -5384,6 +5375,17 @@ def restore_application_state(
         drawdown_output = resolved["dd_chart"] if active_tab == "drawdown" else no_update
         growth_output = resolved["gr_chart"] if active_tab == "growth" else no_update
         monthly_output = resolved["monthly_view"] if active_tab == "calendar" else no_update
+        dataset_key = _dataset_key_from_meta(raw_meta)
+        with timed_block(
+            "analyticstool.compute_date_candidates",
+            periodicity=resolved["valid_periodicity"] or "daily",
+            series_count=len(resolved["valid_selection"] or ()),
+        ):
+            next_candidates, next_common_daily = update_at_candidate_bundle(
+                dataset_key,
+                resolved["valid_periodicity"],
+                resolved["valid_selection"],
+            )
 
         return (
             resolved["periodicity_options"],
@@ -5398,15 +5400,24 @@ def restore_application_state(
             resolved["valid_selection"],
             resolved["updated_order"],
             False,
+            dataset_key,
+            next_candidates,
+            next_common_daily,
         )
     except Exception:
         resolved = _at_restore_defaults()
+        next_candidates, next_common_daily = update_at_candidate_bundle(
+            None,
+            resolved["valid_periodicity"],
+            resolved["valid_selection"],
+        )
         return (
             resolved["periodicity_options"], resolved["valid_periodicity"],
             resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
             no_update, no_update, no_update, no_update, no_update, no_update,
             no_update, no_update, no_update,
             resolved["valid_selection"], resolved["updated_order"], False,
+            None, next_candidates, next_common_daily,
         )
 
 
@@ -5917,6 +5928,7 @@ clientside_callback(
     Input("at-dataset-key-store", "data"),
     Input("at-periodicity-select", "value"),
     Input("at-series-select", "data"),
+    Input("at-range-candidates-store", "data"),
     Input("at-state-ready-store", "data"),
     prevent_initial_call=False,
 )
