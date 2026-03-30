@@ -72,8 +72,6 @@ from utils.serialization import (
 )
 from utils.shared_metrics import (
     STATS_CONFIG,
-    risk_free_json_from_store as _risk_free_json_from_store,
-    spx_json_from_store as _spx_json_from_store,
 )
 from utils.shared_benchmark import (
     risk_free_json_from_source as _risk_free_json_from_source,
@@ -8540,7 +8538,7 @@ clientside_callback(
     State("po-linear-constraints-store", "data"),
     State("po-use-risk-free-store", "data"),
     State("po-reporting-basis-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     prevent_initial_call=True,
 )
 def po_run_optimization(n_clicks, raw_data, orig_periodicity, periodicity,
@@ -10660,7 +10658,7 @@ def po_render_returns(
     State("po-rolling-metric-select", "value"),
     State("po-returns-basis-store", "data"),
     State("po-use-risk-free-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("po-weight-portfolio-select", "value"),
     State("po-partial-period-store", "data"),
     prevent_initial_call=True,
@@ -10892,8 +10890,8 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                     "null",
                     0,
                     "{}",
-                    _risk_free_json_from_store(saved_series_store),
-                    _spx_json_from_store(saved_series_store),
+                    _risk_free_json_from_source(saved_series_store),
+                    _spx_json_from_source(saved_series_store),
                     result_use_risk_free,
                 )
                 if stats:
@@ -10952,7 +10950,7 @@ def po_download_excel(n_clicks, results, raw_data, periodicity, bench, cmabench,
                 rolling_metric or "total_return",
                 0,
                 "{}",
-                _risk_free_json_from_store(saved_series_store),
+                _risk_free_json_from_source(saved_series_store),
                 result_use_risk_free,
             )
         except Exception:

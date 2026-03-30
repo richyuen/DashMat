@@ -54,7 +54,7 @@ from utils.regression import run_regression, RegressionWindowResult
 from utils.serialization import canonical_json_dumps, date_range_payload_for_cache, mapping_payload_for_cache
 from utils.excel_export import write_excel_with_autofit
 from utils.shared_benchmark import risk_free_json_from_source, spx_json_from_source
-from utils.shared_metrics import STATS_CONFIG, risk_free_json_from_store, spx_json_from_store
+from utils.shared_metrics import STATS_CONFIG
 from utils.saved_series import save_series_to_raw_data, saved_series_store_names
 from utils.account_lists import (
     add_db_import_provenance_entry,
@@ -4323,7 +4323,7 @@ clientside_callback(
     State("reg-calendar-view-select", "value"),
     State("reg-calendar-series-select", "value"),
     State("reg-partial-period-store", "data"),
-    State("dashmat-saved-series-cache-store", "data"),
+    State("dashmat-saved-series-stamp-store", "data"),
     State("reg-use-risk-free-store", "data"),
     prevent_initial_call=True,
 )
@@ -4539,8 +4539,8 @@ def reg_download_excel(
                     "null",
                     0,
                     "{}",
-                    risk_free_json_from_store(saved_series_store),
-                    spx_json_from_store(saved_series_store),
+                    risk_free_json_from_source(saved_series_store),
+                    spx_json_from_source(saved_series_store),
                     bool(use_risk_free),
                 )
                 normalized = _normalize_stats_payload(stats_payload)
@@ -4617,7 +4617,7 @@ def reg_download_excel(
                 metric,
                 0,
                 "{}",
-                risk_free_json_from_store(saved_series_store),
+                risk_free_json_from_source(saved_series_store),
                 bool(use_risk_free),
             )
             if rolling_calc is not None and not rolling_calc.empty:

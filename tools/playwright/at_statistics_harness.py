@@ -1079,11 +1079,19 @@ def _summarize_account_list_runs(run_results: list[dict]) -> dict:
     total_ms = [r["totalRunMs"] for r in run_results]
 
     callback_counter: Counter[str] = Counter()
+    pre_state_callback_counter: Counter[str] = Counter()
+    post_state_callback_counter: Counter[str] = Counter()
     for run in run_results:
         window = run.get("accountListClickWindow", {})
         for request in window.get("dashUpdateRequests", []):
             for output_id in request.get("outputs", []):
                 callback_counter[output_id] += 1
+        for request in run.get("accountListClickWindowPreStateReady", {}).get("dashUpdateRequests", []):
+            for output_id in request.get("outputs", []):
+                pre_state_callback_counter[output_id] += 1
+        for request in run.get("accountListClickWindowPostStateReady", {}).get("dashUpdateRequests", []):
+            for output_id in request.get("outputs", []):
+                post_state_callback_counter[output_id] += 1
 
     return {
         "runs": len(run_results),
@@ -1132,6 +1140,14 @@ def _summarize_account_list_runs(run_results: list[dict]) -> dict:
         "topCallbacksByFrequency": [
             {"callback": cb, "count": count}
             for cb, count in callback_counter.most_common(12)
+        ],
+        "preStateReadyTopCallbacksByFrequency": [
+            {"callback": cb, "count": count}
+            for cb, count in pre_state_callback_counter.most_common(12)
+        ],
+        "postStateReadyTopCallbacksByFrequency": [
+            {"callback": cb, "count": count}
+            for cb, count in post_state_callback_counter.most_common(12)
         ],
         "runResults": run_results,
     }

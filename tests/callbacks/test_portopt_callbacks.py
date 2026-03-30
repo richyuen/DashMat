@@ -114,7 +114,7 @@ def test_portopt_uses_shared_benchmark_stamp_on_hot_paths():
 
     assert 'Input("dashmat-saved-series-stamp-store", "data")' in page_text
     assert 'State("dashmat-saved-series-stamp-store", "data")' in page_text
-    assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
+    assert 'State("dashmat-saved-series-cache-store", "data")' not in page_text
     assert "_risk_free_json_from_source" in page_text
     assert "_spx_json_from_source" in page_text
 

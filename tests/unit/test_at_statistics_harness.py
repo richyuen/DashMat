@@ -518,12 +518,17 @@ def test_summarize_account_list_runs_uses_click_window_metrics():
         "accountListClickWindowPreStateReady": {
             "dashUpdateRequestCount": 2,
             "dashUpdateRequestBytes": 900,
-            "dashUpdateRequests": [],
+            "dashUpdateRequests": [
+                {"outputs": ["dashmat-raw-data-meta-store.data"]},
+                {"outputs": ["dashmat-saved-series-cache-store.data"]},
+            ],
         },
         "accountListClickWindowPostStateReady": {
             "dashUpdateRequestCount": 1,
             "dashUpdateRequestBytes": 300,
-            "dashUpdateRequests": [],
+            "dashUpdateRequests": [
+                {"outputs": ["at-statistics-grid.rowData"]},
+            ],
         },
     }
 
@@ -538,3 +543,5 @@ def test_summarize_account_list_runs_uses_click_window_metrics():
     assert summary["accountListClickWindowPreStateReadyRequestCountMedian"] == 2
     assert summary["accountListClickWindowPostStateReadyRequestCountMedian"] == 1
     assert summary["topCallbacksByFrequency"][0]["callback"] == "at-state-ready-store.data"
+    assert summary["preStateReadyTopCallbacksByFrequency"][0]["callback"] == "dashmat-raw-data-meta-store.data"
+    assert summary["postStateReadyTopCallbacksByFrequency"][0]["callback"] == "at-statistics-grid.rowData"

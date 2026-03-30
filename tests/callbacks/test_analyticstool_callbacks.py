@@ -744,14 +744,14 @@ def test_analytics_rolling_uses_shared_benchmark_stamp_and_merged_render_callbac
 
     trigger_block = page_text.split('Output("at-rolling-tab-trigger-store", "data")', 1)[-1]
     trigger_block = trigger_block.split('Output("at-calendar-tab-trigger-store", "data")', 1)[0]
-    assert 'Input("at-shared-benchmark-stamp-store", "data")' in trigger_block
+    assert 'Input("dashmat-saved-series-stamp-store", "data")' in trigger_block
 
     render_block = page_text.split('Output("at-rolling-chart-wrapper", "children")', 1)[-1]
     render_block = render_block.split('ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSyncCalendarControls")', 1)[0]
     assert 'Output("at-rolling-grid", "columnDefs")' in render_block
     assert 'Output("at-rolling-grid", "rowData")' in render_block
-    assert 'State("at-shared-benchmark-stamp-store", "data")' in render_block
-    assert 'State("dashmat-saved-series-cache-store", "data")' not in render_block
+    assert 'State("dashmat-saved-series-stamp-store", "data")' in render_block
+    assert 'State("at-shared-benchmark-stamp-store", "data")' not in render_block
 
 
 def test_analytics_secondary_restore_and_loading_helpers_are_clientside():
@@ -2102,12 +2102,12 @@ def test_statistics_render_schedules_from_statistics_trigger_store():
     assert 'State("at-dataset-key-store", "data")' in page_text
     trigger_callback = page_text.split('Output("at-statistics-tab-trigger-store", "data")', 1)[-1]
     trigger_callback = trigger_callback.split('Output("at-returns-tab-trigger-store", "data")', 1)[0]
-    assert 'Input("at-shared-benchmark-stamp-store", "data")' in trigger_callback
-    assert 'Input("dashmat-saved-series-stamp-store", "data")' not in trigger_callback
+    assert 'Input("dashmat-saved-series-stamp-store", "data")' in trigger_callback
+    assert 'Input("at-shared-benchmark-stamp-store", "data")' not in trigger_callback
     render_callback = page_text.split('Output("at-statistics-grid", "columnDefs")', 1)[-1]
     render_callback = render_callback.split('Output("at-correlation-loaded-store", "data"', 1)[0]
-    assert 'State("at-shared-benchmark-stamp-store", "data")' in render_callback
-    assert 'State("dashmat-saved-series-stamp-store", "data")' not in render_callback
+    assert 'State("dashmat-saved-series-stamp-store", "data")' in render_callback
+    assert 'State("at-shared-benchmark-stamp-store", "data")' not in render_callback
     assert 'State("at-range-candidates-store", "data")' in render_callback
     assert 'State("at-common-daily-candidates-store", "data")' not in render_callback
     assert 'Output("at-range-candidates-store", "data", allow_duplicate=True)' not in render_callback
@@ -2155,8 +2155,8 @@ def test_download_excel_uses_shared_benchmark_cache_store():
     page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
     download_callback = page_text.split('Output("at-download-excel", "data")', 1)[-1]
     download_callback = download_callback.split('def download_excel(', 1)[0]
-    assert 'State("at-shared-benchmark-stamp-store", "data")' in download_callback
-    assert 'State("dashmat-saved-series-stamp-store", "data")' not in download_callback
+    assert 'State("dashmat-saved-series-stamp-store", "data")' in download_callback
+    assert 'State("at-shared-benchmark-stamp-store", "data")' not in download_callback
 
 
 

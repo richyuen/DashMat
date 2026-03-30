@@ -172,7 +172,7 @@ def test_regression_visible_stats_and_rolling_use_shared_saved_series_stamp_stor
     assert 'Input("dashmat-saved-series-cache-store", "data")' not in rolling_trigger_block
     assert 'State("dashmat-saved-series-cache-store", "data")' not in rolling_render_block
     assert 'State("dashmat-saved-series-cache-store", "data")' not in statistics_render_block
-    assert 'State("dashmat-saved-series-cache-store", "data")' in page_text
+    assert 'State("dashmat-saved-series-cache-store", "data")' not in page_text
     assert 'dashmat-saved-series-stamp-store' in page_text
 
 
