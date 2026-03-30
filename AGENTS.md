@@ -59,6 +59,7 @@
 - Do not keep a perf change just because one sub-phase median improves; a fresh clean-`HEAD` A/B must still show an end-to-end median win.
 - If a broad payload-reduction batch is ambiguous, keep useful harness-only scenario additions but roll back the page-code changes.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
+- For same-page live-apply flows, do not assume a large request-byte drop is a win if request count stays flat; if the bytes come off a callback that was overlapping the real restore/bootstrap critical path, the end-to-end median can still regress.
 - When a payload-reduction phase is ambiguous on localhost but the target users are WAN-like, rerun the same browser A/B under a realistic throttled network profile before deciding; lower request bytes can become a real end-to-end win once RTT and throughput matter.
 - Do not assume removing one closed-modal callback family will improve startup timing by itself; if the targeted family disappears from attribution but reset request count stays flat, retarget instead of widening the same approach.
 - For AnalyticsTool reset perf, do not spend another phase on closed sheet-select upload-reset writes unless the callback mix changes materially; removing that family without reducing total reset fan-out regressed end-to-end medians.
