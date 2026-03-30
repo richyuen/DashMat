@@ -4,7 +4,7 @@ import json
 
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
-from dash import Input, Output, State, clientside_callback, dcc, html, no_update
+from dash import ClientsideFunction, Input, Output, State, clientside_callback, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 from sqlalchemy.engine import Engine
 from utils.ag_grid import literal_field_dash_grid_options
@@ -231,6 +231,7 @@ def build_account_list_components() -> list:
         dcc.Store(id="dashmat-account-list-session-apply-store", data=None),
         dcc.Store(id="dashmat-account-list-load-state-store", data={"status": "idle"}),
         dcc.Store(id="dashmat-account-list-modal-view-trigger-store", data=None),
+        dcc.Store(id="dashmat-account-list-rows-refresh-trigger-store", data=None),
         dcc.Store(id="dashmat-account-list-load-timing-dummy", data=None),
         dcc.Store(id="dashmat-account-list-enter-submit-dummy", data=None),
         dcc.Store(id="dashmat-account-list-focus-dummy", data=None),
@@ -1073,11 +1074,14 @@ def register_account_list_callbacks(
                 selected_id: selectedId != null ? selectedId : null,
                 row_sig: rowSig
             };
+            const triggered = window.dash_clientside.callback_context.triggered[0].prop_id.split(".")[0];
+            const forceUpdate = triggered === "dashmat-account-list-modal" || triggered === "dashmat-account-list-modal-mode-store";
             if (
                 currentTrigger
                 && currentTrigger.mode === nextTrigger.mode
                 && currentTrigger.selected_id === nextTrigger.selected_id
                 && currentTrigger.row_sig === nextTrigger.row_sig
+                && !forceUpdate
             ) {
                 return window.dash_clientside.no_update;
             }
@@ -1090,6 +1094,17 @@ def register_account_list_callbacks(
         Input("dashmat-account-list-rows-store", "data"),
         Input("dashmat-account-list-selected-id-store", "data"),
         State("dashmat-account-list-modal-view-trigger-store", "data"),
+        prevent_initial_call=False,
+    )
+
+    app.clientside_callback(
+        ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListRowsRefreshTrigger"),
+        Output("dashmat-account-list-rows-refresh-trigger-store", "data"),
+        Input("dashmat-account-list-modal", "opened"),
+        Input("dashmat-account-list-modal-mode-store", "data"),
+        Input("dashmat-account-list-refresh-store", "data"),
+        Input("dashmat-account-list-load-state-store", "data"),
+        State("dashmat-account-list-rows-refresh-trigger-store", "data"),
         prevent_initial_call=False,
     )
 
@@ -1326,14 +1341,12 @@ def register_account_list_callbacks(
 
     @app.callback(
         Output("dashmat-account-list-rows-store", "data"),
-        Input("dashmat-account-list-modal", "opened"),
-        Input("dashmat-account-list-refresh-store", "data"),
+        Input("dashmat-account-list-rows-refresh-trigger-store", "data"),
         State("userinfo", "data"),
-        State("dashmat-account-list-load-state-store", "data"),
         prevent_initial_call=True,
     )
-    def _refresh_account_list_rows(opened, refresh_count, userinfo, load_state):
-        if not opened or account_list_load_state_status(load_state) != "idle":
+    def _refresh_account_list_rows(trigger_payload, userinfo):
+        if not isinstance(trigger_payload, dict):
             raise PreventUpdate
         if not account_list_tables_available(db_engine):
             return []
@@ -1426,7 +1439,8 @@ def register_account_list_callbacks(
             *render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail),
         )
 
-    @app.callback(
+    app.clientside_callback(
+        ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListSaveState"),
         Output("dashmat-account-list-duplicate-text", "children"),
         Output("dashmat-account-list-save-button", "disabled"),
         Input("dashmat-account-list-modal-mode-store", "data"),
@@ -1435,8 +1449,6 @@ def register_account_list_callbacks(
         Input("dashmat-db-import-provenance-store", "data"),
         prevent_initial_call=False,
     )
-    def _sync_account_list_save_state(mode, name_value, rows, provenance_store):
-        return sync_account_list_save_state(mode, name_value, rows, provenance_store)
 
     @app.callback(
         Output("dashmat-account-list-modal", "opened", allow_duplicate=True),

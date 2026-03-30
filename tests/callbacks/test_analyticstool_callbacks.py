@@ -985,6 +985,7 @@ def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(monkeypatch, 
         lambda *_args, **_kwargs: pytest.fail("should not fetch full dataset when metadata already has columns"),
     )
     children, _order, blocker = analyticstool.update_series_selectors(
+        {"dataset_key": "seed"},
         _raw_meta(raw_json),
         ["Asset_A"],
         ["Asset_A", "Asset_B"],
@@ -996,6 +997,19 @@ def test_at_series_selection_grid_keeps_blocker_until_virtual_rows(monkeypatch, 
 
     assert blocker is no_update
     assert getattr(children[0], "id", None) == "at-series-selection-grid"
+
+
+def test_at_series_selection_render_uses_open_only_trigger_store():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
+    callback_block = _callback_block(page_text, "update_series_selectors")
+
+    assert 'dcc.Store(id="at-series-selection-render-trigger-store", data=None, storage_type="memory")' in page_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSeriesSelectionRenderTrigger")' in page_text
+    assert 'Input("at-series-selection-render-trigger-store", "data")' in callback_block
+    assert 'State("dashmat-raw-data-meta-store", "data")' in callback_block
+    assert 'Input("dashmat-raw-data-meta-store", "data")' not in callback_block
+    assert "function analyticsSeriesSelectionRenderTrigger(" in js_text
 
 
 def test_at_series_selection_blocker_release_uses_virtual_rows():
@@ -2340,6 +2354,48 @@ def test_sync_at_returns_type_mirrors_only_updates_mismatched(page_modules):
     assert result[4] == "excess"
     assert result[5] == "excess"
     assert result[6] is no_update
+
+
+def test_sync_at_returns_type_mirrors_is_clientside():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSyncReturnsTypeMirrors")' in page_text
+    callback_prefix = page_text.split("def sync_at_returns_type_mirrors(", 1)[0]
+    assert "@callback(" not in callback_prefix.rsplit("\n\n", 1)[-1]
+
+
+def test_analytics_sync_returns_type_mirrors_clientside_parity():
+    result = _run_dashmat_callbacks_js(
+        'ns.analyticsSyncReturnsTypeMirrors("excess", "excess", "total", "excess", "total", "total", "total", "excess")'
+    )
+
+    assert result == [
+        "__NO_UPDATE__",
+        "excess",
+        "__NO_UPDATE__",
+        "excess",
+        "excess",
+        "excess",
+        "__NO_UPDATE__",
+    ]
+
+
+def test_reset_statistics_loaded_on_hydration_is_clientside():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsResetStatisticsLoadedOnHydration")' in page_text
+    callback_prefix = page_text.split("def reset_statistics_loaded_on_hydration(", 1)[0]
+    assert 'State("at-statistics-loaded-store", "data")' in callback_prefix.rsplit("\n\n", 1)[-1]
+    assert 'State("at-statistics-rendered-key-store", "data")' in callback_prefix.rsplit("\n\n", 1)[-1]
+
+
+def test_analytics_reset_statistics_loaded_on_hydration_clientside_parity():
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsResetStatisticsLoadedOnHydration(true, false, null)'
+    ) == ["__NO_UPDATE__", "__NO_UPDATE__"]
+    assert _run_dashmat_callbacks_js(
+        'ns.analyticsResetStatisticsLoadedOnHydration(false, true, "rendered-key")'
+    ) == [False, None]
 
 
 def test_update_correlogram_target_key_changes_on_exp_weight_inputs(page_modules):

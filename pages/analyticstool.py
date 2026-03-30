@@ -4872,6 +4872,7 @@ layout = dmc.Container(
         dcc.Store(id="at-temp-vol-scaling-assignments-store", data={}),
         dcc.Store(id="at-temp-series-order-store", data=[]),
         dcc.Store(id="at-temp-deleted-series-store", data=[]),
+        dcc.Store(id="at-series-selection-render-trigger-store", data=None, storage_type="memory"),
         dcc.Store(id="at-portfolio-add-mode-store", data=None),
         dcc.Store(id="at-portfolio-add-rows-store", data=[]),
         dcc.Store(id="at-underlying-add-rows-store", data=[]),
@@ -5224,7 +5225,8 @@ def sync_at_returns_type_from_mirrors(
     return normalized
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSyncReturnsTypeMirrors"),
     Output("at-returns-type-select-returns", "value"),
     Output("at-returns-type-select-calendar", "value"),
     Output("at-returns-type-select-drawdown", "value"),
@@ -5266,6 +5268,22 @@ def sync_at_returns_type_mirrors(
         _sync(conditional_value),
         _sync(regime_value),
     )
+
+
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsSeriesSelectionRenderTrigger"),
+    Output("at-series-selection-render-trigger-store", "data"),
+    Input("at-series-selection-modal", "opened"),
+    Input("dashmat-raw-data-meta-store", "data"),
+    Input("at-temp-series-select", "data"),
+    Input("at-temp-series-order-store", "data"),
+    Input("at-temp-deleted-series-store", "data"),
+    Input("at-temp-benchmark-assignments-store", "data"),
+    Input("at-temp-long-short-store", "data"),
+    Input("at-temp-vol-scaling-assignments-store", "data"),
+    State("at-series-selection-render-trigger-store", "data"),
+    prevent_initial_call=False,
+)
 
 
 clientside_callback(
@@ -8392,16 +8410,18 @@ clientside_callback(
     Output("at-series-selection-container", "children"),
     Output("at-temp-series-order-store", "data", allow_duplicate=True),
     Output("at-ui-blocker-store", "data", allow_duplicate=True),
-    Input("dashmat-raw-data-meta-store", "data"),
-    Input("at-temp-series-select", "data"),
-    Input("at-temp-series-order-store", "data"),
-    Input("at-temp-deleted-series-store", "data"),
-    Input("at-temp-benchmark-assignments-store", "data"),
-    Input("at-temp-long-short-store", "data"),
-    Input("at-temp-vol-scaling-assignments-store", "data"),
+    Input("at-series-selection-render-trigger-store", "data"),
+    State("dashmat-raw-data-meta-store", "data"),
+    State("at-temp-series-select", "data"),
+    State("at-temp-series-order-store", "data"),
+    State("at-temp-deleted-series-store", "data"),
+    State("at-temp-benchmark-assignments-store", "data"),
+    State("at-temp-long-short-store", "data"),
+    State("at-temp-vol-scaling-assignments-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def update_series_selectors(
+    render_trigger,
     raw_meta,
     selected_series,
     series_order,
@@ -8411,6 +8431,8 @@ def update_series_selectors(
     vol_scaling_assignments,
 ):
     """Render Select Series as a single AG Grid with in-grid controls."""
+    if not isinstance(render_trigger, dict):
+        raise PreventUpdate
     if not isinstance(raw_meta, dict) or not raw_meta.get("has_data"):
         return [dmc.Text("Upload data to select series", size="sm", c="dimmed")], [], False
 
@@ -9042,10 +9064,13 @@ def update_download_excel_disabled(raw_data, selected_series, date_range, state_
     return next_disabled
 
 
-@callback(
+clientside_callback(
+    ClientsideFunction(namespace="dashmat_callbacks", function_name="analyticsResetStatisticsLoadedOnHydration"),
     Output("at-statistics-loaded-store", "data"),
     Output("at-statistics-rendered-key-store", "data", allow_duplicate=True),
     Input("at-state-ready-store", "data"),
+    State("at-statistics-loaded-store", "data"),
+    State("at-statistics-rendered-key-store", "data"),
     prevent_initial_call=True,
 )
 def reset_statistics_loaded_on_hydration(state_ready):

@@ -148,6 +148,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dcc.Store(id="dashmat-account-list-prefetch-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-prefetch-trigger-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-modal-view-trigger-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-rows-refresh-trigger-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-load-timing-dummy"' in account_list_text
     assert 'id="dashmat-account-list-modal"' in account_list_text
     assert 'id="dashmat-account-list-load-overlay"' in account_list_text
@@ -162,14 +163,18 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'Output("dashmat-account-list-prefetch-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-prefetch-trigger-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-modal-view-trigger-store", "data")' in account_list_text
+    assert 'Output("dashmat-account-list-rows-refresh-trigger-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-snapshot-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-state-store", "data", allow_duplicate=True)' in account_list_text
     assert 'Output("dashmat-account-list-load-timing-dummy", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-overlay", "visible")' in account_list_text
     assert 'Output("dashmat-account-list-load-overlay-shell", "style")' in account_list_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListRowsRefreshTrigger")' in account_list_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListSaveState")' in account_list_text
     assert 'Input("dashmat-account-list-load-button", "n_clicks")' in account_list_text
     assert 'Input("dashmat-account-list-modal", "opened")' in account_list_text
     assert 'Input("dashmat-account-list-selected-id-store", "data")' in account_list_text
+    assert 'Input("dashmat-account-list-rows-refresh-trigger-store", "data")' in account_list_text
     assert 'Input("dashmat-raw-data-store", "data")' in app_text
     assert 'Output("dashmat-raw-data-meta-refresh-trigger-store", "data")' in app_text
     assert 'State("dashmat-raw-data-identity-store", "data")' in app_text

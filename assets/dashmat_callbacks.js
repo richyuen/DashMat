@@ -373,6 +373,79 @@
     }
   }
 
+  function accountListNormalizeProvenance(provenanceStore) {
+    if (!provenanceStore || typeof provenanceStore !== "object" || Array.isArray(provenanceStore)) {
+      return {};
+    }
+    const normalized = {};
+    Object.keys(provenanceStore).forEach(function (rawKey) {
+      const rawValue = provenanceStore[rawKey];
+      if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+        return;
+      }
+      const loaderType = String(rawValue.loader_type || "").trim().toLowerCase();
+      if (!loaderType) {
+        return;
+      }
+      const emittedSeries = Array.isArray(rawValue.emitted_series)
+        ? rawValue.emitted_series.map(function (series) {
+            return String(series || "").trim();
+          }).filter(function (series, index, values) {
+            return !!series && values.indexOf(series) === index;
+          })
+        : [];
+      if (!emittedSeries.length) {
+        return;
+      }
+      const entryId = String(rawValue.entry_id || rawKey || "").trim();
+      if (!entryId) {
+        return;
+      }
+      normalized[entryId] = {
+        entry_id: entryId,
+        loader_type: loaderType,
+        emitted_series: emittedSeries
+      };
+    });
+    return normalized;
+  }
+
+  function accountListSaveState(mode, nameValue, rows, provenanceStore) {
+    if (String(mode || "load") !== "save") {
+      return ["", true];
+    }
+    const cleanName = String(nameValue || "").trim();
+    const normalizedRows = Array.isArray(rows) ? rows : [];
+    const duplicateCount = cleanName
+      ? normalizedRows.filter(function (row) {
+          return String((row && row.ListName) || "").trim().toLowerCase() === cleanName.toLowerCase();
+        }).length
+      : 0;
+    const helper = duplicateCount
+      ? duplicateCount + " existing list(s) already use this name."
+      : "Duplicate names are allowed.";
+    const disabled = !cleanName || !Object.keys(accountListNormalizeProvenance(provenanceStore)).length;
+    return [helper, disabled];
+  }
+
+  function accountListRowsRefreshTrigger(opened, mode, refreshCount, loadState, currentTrigger) {
+    if (!opened || String(mode || "load") !== "load") {
+      return noUpdate();
+    }
+    const status = (loadState && loadState.status) ? String(loadState.status).toLowerCase() : "idle";
+    if (status !== "idle") {
+      return noUpdate();
+    }
+    const nextTrigger = { refresh: Number(refreshCount || 0) };
+    const trigger = triggeredId() || "";
+    const forceUpdate = trigger === "dashmat-account-list-modal"
+      || (trigger === "dashmat-account-list-modal-mode-store" && String(mode || "load") === "load");
+    if (sameClientsideValue(currentTrigger, nextTrigger) && !forceUpdate) {
+      return noUpdate();
+    }
+    return nextTrigger;
+  }
+
   function analyticsResolveInitialRange(candidates, storedRange) {
     const source = candidates && typeof candidates === "object" ? candidates : {};
     const maxStart = source.max_start;
@@ -1102,6 +1175,37 @@
       virtualRows,
       "/analyticstool"
     );
+  }
+
+  function analyticsSeriesSelectionRenderTrigger(
+    opened,
+    rawMeta,
+    selectedSeries,
+    seriesOrder,
+    deletedSeries,
+    benchmarkAssignments,
+    longShortAssignments,
+    volScalingAssignments,
+    currentTrigger
+  ) {
+    if (!opened) {
+      return noUpdate();
+    }
+    const nextTrigger = {
+      dataset_key: rawMeta && rawMeta.dataset_key ? rawMeta.dataset_key : null,
+      has_data: !!(rawMeta && rawMeta.has_data),
+      columns_sig: rawMetaColumns(rawMeta).join("|"),
+      selected_sig: JSON.stringify(Array.isArray(selectedSeries) ? selectedSeries : []),
+      order_sig: JSON.stringify(Array.isArray(seriesOrder) ? seriesOrder : []),
+      deleted_sig: JSON.stringify(Array.isArray(deletedSeries) ? deletedSeries : []),
+      benchmark_sig: JSON.stringify(benchmarkAssignments && typeof benchmarkAssignments === "object" ? benchmarkAssignments : {}),
+      long_short_sig: JSON.stringify(longShortAssignments && typeof longShortAssignments === "object" ? longShortAssignments : {}),
+      vol_scaling_sig: JSON.stringify(volScalingAssignments && typeof volScalingAssignments === "object" ? volScalingAssignments : {})
+    };
+    if (sameValue(currentTrigger, nextTrigger) && triggeredId() !== "at-series-selection-modal") {
+      return noUpdate();
+    }
+    return nextTrigger;
   }
 
   function portoptInitialSeriesModalPending(rawMeta, currentSelect, currentOrder, poOriginSeries, pageVisited) {
@@ -2596,6 +2700,31 @@
     ];
   }
 
+  function analyticsSyncReturnsTypeMirrors(
+    currentValue,
+    returnsValue,
+    calendarValue,
+    drawdownValue,
+    correlogramValue,
+    factorValue,
+    conditionalValue,
+    regimeValue
+  ) {
+    const normalized = currentValue === "excess" ? "excess" : "total";
+    function sync(value) {
+      return value === normalized ? noUpdate() : normalized;
+    }
+    return [
+      sync(returnsValue),
+      sync(calendarValue),
+      sync(drawdownValue),
+      sync(correlogramValue),
+      sync(factorValue),
+      sync(conditionalValue),
+      sync(regimeValue)
+    ];
+  }
+
   function analyticsViewSync(rollingView, drawdownView, growthView) {
     const rolling = rollingView !== null && rollingView !== undefined ? rollingView : "chart";
     const drawdown = drawdownView !== null && drawdownView !== undefined ? drawdownView : "chart";
@@ -3657,6 +3786,15 @@
     return outputs;
   }
 
+  function analyticsResetStatisticsLoadedOnHydration(stateReady, currentLoaded, currentRenderedKey) {
+    if (stateReady) {
+      return [noUpdate(), noUpdate()];
+    }
+    const nextLoaded = currentLoaded === false ? noUpdate() : false;
+    const nextRenderedKey = currentRenderedKey == null ? noUpdate() : null;
+    return [nextLoaded, nextRenderedKey];
+  }
+
   function analyticsFactorDefinitionLoadTrigger(activeTab, initialTabReady, stateReady, loaded) {
     if (loaded) {
       return noUpdate();
@@ -3853,6 +3991,7 @@
       enforceRegressionSingleY: enforceRegressionSingleY,
       openAnalyticsSeriesModal: openAnalyticsSeriesModal,
       analyticsInitialSeriesBlocker: analyticsInitialSeriesBlocker,
+      analyticsSeriesSelectionRenderTrigger: analyticsSeriesSelectionRenderTrigger,
       analyticsFactorRegimeSync: analyticsFactorRegimeSync,
       analyticsTabTrigger: analyticsTabTrigger,
       analyticsBootstrapCandidateTrigger: analyticsBootstrapCandidateTrigger,
@@ -3866,12 +4005,16 @@
       analyticsDateRangeStoreUpdate: analyticsDateRangeStoreUpdate,
       analyticsResolveInitialRange: analyticsResolveInitialRange,
       analyticsRestoreSecondaryControls: analyticsRestoreSecondaryControls,
+      analyticsSyncReturnsTypeMirrors: analyticsSyncReturnsTypeMirrors,
+      analyticsResetStatisticsLoadedOnHydration: analyticsResetStatisticsLoadedOnHydration,
       analyticsRollingReturnTypeState: analyticsRollingReturnTypeState,
       analyticsSyncCalendarControls: analyticsSyncCalendarControls,
       analyticsFactorDefinitionLoadTrigger: analyticsFactorDefinitionLoadTrigger,
       analyticsRegimeDefinitionLoadTrigger: analyticsRegimeDefinitionLoadTrigger,
       analyticsCorrelogramLoadingDisplay: analyticsCorrelogramLoadingDisplay,
       analyticsConditionalReturnsLoadingDisplay: analyticsConditionalReturnsLoadingDisplay,
+      accountListRowsRefreshTrigger: accountListRowsRefreshTrigger,
+      accountListSaveState: accountListSaveState,
       validateAnalyticsDbAddSelection: validateAnalyticsDbAddSelection,
       clearWorkspaceSession: clearWorkspaceSession,
       commonDailyButtonDisabled: commonDailyButtonDisabled,

@@ -1,10 +1,49 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import subprocess
+
 import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
 
 import utils.account_list_modal as modal_module
+
+
+def _run_dashmat_callbacks_js(expression: str):
+    repo_root = Path(__file__).resolve().parents[2]
+    script = f"""
+const path = require("path");
+global.window = {{ dash_clientside: {{ no_update: {{ __dash_no_update__: true }} }} }};
+require(path.resolve("assets/dashmat_callbacks.js"));
+const ns = window.dash_clientside.dashmat_callbacks;
+function normalize(value) {{
+  if (value && value.__dash_no_update__) {{
+    return "__NO_UPDATE__";
+  }}
+  if (Array.isArray(value)) {{
+    return value.map(normalize);
+  }}
+  if (value && typeof value === "object") {{
+    const out = {{}};
+    for (const [key, nextValue] of Object.entries(value)) {{
+      out[key] = normalize(nextValue);
+    }}
+    return out;
+  }}
+  return value;
+}}
+process.stdout.write(JSON.stringify(normalize({expression})));
+"""
+    completed = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def test_account_list_loader_visible_only_for_loading_status():
@@ -251,6 +290,18 @@ def test_account_list_send_user_options_and_control_state():
     assert hidden_state[0] == {"display": "none"}
     assert empty_state == ({}, True, True, "No other users available")
     assert ready_state == ({}, False, False, "Select a user")
+
+
+def test_account_list_save_state_clientside_parity():
+    assert _run_dashmat_callbacks_js(
+        'ns.accountListSaveState("save", "Existing", [{"ListName":"Existing"}], {"entry-1":{"entry_id":"entry-1","loader_type":"db","emitted_series":["Asset_A"]}})'
+    ) == ["1 existing list(s) already use this name.", False]
+    assert _run_dashmat_callbacks_js(
+        'ns.accountListSaveState("save", "", [], {})'
+    ) == ["Duplicate names are allowed.", True]
+    assert _run_dashmat_callbacks_js(
+        'ns.accountListSaveState("load", "Ignored", [], {"entry-1":{"entry_id":"entry-1","loader_type":"db","emitted_series":["Asset_A"]}})'
+    ) == ["", True]
 
 
 def test_resolve_selected_account_list_detail_reuses_matching_detail(monkeypatch):
