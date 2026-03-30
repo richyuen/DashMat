@@ -224,7 +224,6 @@ def build_account_list_components() -> list:
         dcc.Store(id="dashmat-account-list-selected-id-store", data=None),
         dcc.Store(id="dashmat-account-list-selected-detail-store", data=None),
         dcc.Store(id="dashmat-account-list-prefetch-store", data={"account_list_id": None, "update_date": None, "status": "idle"}),
-        dcc.Store(id="dashmat-account-list-prefetch-trigger-store", data=None),
         dcc.Store(id="dashmat-account-list-session-snapshot-store", data={}),
         dcc.Store(id="dashmat-account-list-load-snapshot-store", data=None),
         dcc.Store(id="dashmat-account-list-refresh-store", data=0),
@@ -1027,37 +1026,6 @@ def register_account_list_callbacks(
 
     app.clientside_callback(
         """
-        function(opened, mode, selectedDetail, currentTrigger) {
-            const detail = (selectedDetail && typeof selectedDetail === "object") ? selectedDetail : null;
-            const accountListId = detail && detail.AccountListID != null ? detail.AccountListID : null;
-            const updateDate = detail && detail.UPDATE_DATE != null ? detail.UPDATE_DATE : null;
-            if (!(opened && mode === "load" && accountListId !== null)) {
-                return window.dash_clientside.no_update;
-            }
-            const nextTrigger = {
-                account_list_id: accountListId,
-                update_date: updateDate
-            };
-            if (
-                currentTrigger
-                && currentTrigger.account_list_id === nextTrigger.account_list_id
-                && currentTrigger.update_date === nextTrigger.update_date
-            ) {
-                return window.dash_clientside.no_update;
-            }
-            return nextTrigger;
-        }
-        """,
-        Output("dashmat-account-list-prefetch-trigger-store", "data"),
-        Input("dashmat-account-list-modal", "opened"),
-        Input("dashmat-account-list-modal-mode-store", "data"),
-        Input("dashmat-account-list-selected-detail-store", "data"),
-        State("dashmat-account-list-prefetch-trigger-store", "data"),
-        prevent_initial_call=False,
-    )
-
-    app.clientside_callback(
-        """
         function(opened, mode, rows, selectedId, currentTrigger) {
             if (!opened) {
                 return window.dash_clientside.no_update;
@@ -1266,14 +1234,13 @@ def register_account_list_callbacks(
         prevent_initial_call=False,
     )
 
-    @app.callback(
+    app.clientside_callback(
+        ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListPruneDbImportProvenance"),
         Output("dashmat-db-import-provenance-store", "data"),
         Input("dashmat-raw-data-meta-store", "data"),
         State("dashmat-db-import-provenance-store", "data"),
         prevent_initial_call=False,
     )
-    def _refresh_db_import_provenance(raw_meta, provenance_store):
-        return refresh_db_import_provenance(raw_meta, provenance_store)
 
     @app.callback(
         Output("dashmat-account-list-notice-container", "children"),
@@ -1283,15 +1250,12 @@ def register_account_list_callbacks(
     def _render_account_list_notice(notice):
         return render_account_list_notice(notice)
 
-    @app.callback(
+    app.clientside_callback(
+        ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListDismissNotice"),
         Output("dashmat-account-list-notice-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-notice-close-button", "n_clicks", allow_optional=True),
         prevent_initial_call=True,
     )
-    def _dismiss_account_list_notice(n_clicks):
-        if not n_clicks:
-            raise PreventUpdate
-        return None
 
     @app.callback(
         Output("dashmat-account-list-modal", "opened"),
@@ -1353,28 +1317,6 @@ def register_account_list_callbacks(
         return list_account_lists(db_engine, _account_list_username(userinfo))
 
     @app.callback(
-        Output("dashmat-account-list-prefetch-store", "data"),
-        Input("dashmat-account-list-prefetch-trigger-store", "data"),
-        State("dashmat-account-list-modal", "opened"),
-        State("dashmat-account-list-modal-mode-store", "data"),
-        State("dashmat-account-list-selected-detail-store", "data"),
-        State("dashmat-account-list-prefetch-store", "data"),
-        prevent_initial_call=True,
-    )
-    def _prefetch_account_list_entries(trigger_payload, opened, mode, selected_detail, current_prefetch):
-        if not isinstance(trigger_payload, dict):
-            raise PreventUpdate
-        return prefetch_selected_account_list_entries(
-            opened=opened,
-            mode=mode,
-            selected_detail=selected_detail,
-            current_prefetch=current_prefetch,
-            db_engine=db_engine,
-            mrd_engine=mrd_engine,
-            perf_engine=perf_engine,
-        )
-
-    @app.callback(
         Output("dashmat-account-list-selected-id-store", "data", allow_duplicate=True),
         Input("dashmat-account-list-grid", "selectedRows"),
         prevent_initial_call=True,
@@ -1385,6 +1327,7 @@ def register_account_list_callbacks(
     @app.callback(
         Output("dashmat-account-list-selected-detail-store", "data"),
         Output("dashmat-account-list-send-user-select", "data"),
+        Output("dashmat-account-list-prefetch-store", "data"),
         Output("dashmat-account-list-modal", "title"),
         Output("dashmat-account-list-modal", "className"),
         Output("dashmat-account-list-save-section", "style"),
@@ -1404,6 +1347,7 @@ def register_account_list_callbacks(
         State("dashmat-account-list-selected-id-store", "data"),
         State("userinfo", "data"),
         State("dashmat-account-list-load-state-store", "data"),
+        State("dashmat-account-list-prefetch-store", "data"),
         prevent_initial_call=True,
     )
     def _render_account_list_modal_view(
@@ -1414,11 +1358,13 @@ def register_account_list_callbacks(
         selected_id,
         userinfo,
         load_state,
+        current_prefetch,
     ):
         if not isinstance(trigger_payload, dict):
             raise PreventUpdate
         selected_detail = None
         send_user_options = []
+        next_prefetch = no_update
         if (
             opened
             and str(mode or "load") == "load"
@@ -1433,9 +1379,19 @@ def register_account_list_callbacks(
             if users_table_available(db_engine):
                 users = list_account_list_users(db_engine, _account_list_username(userinfo))
                 send_user_options = account_list_send_user_options(users)
+            next_prefetch = prefetch_selected_account_list_entries(
+                opened=opened,
+                mode=mode,
+                selected_detail=selected_detail,
+                current_prefetch=current_prefetch,
+                db_engine=db_engine,
+                mrd_engine=mrd_engine,
+                perf_engine=perf_engine,
+            )
         return (
             selected_detail,
             send_user_options,
+            next_prefetch,
             *render_account_list_modal_view(opened, mode, rows, selected_id, selected_detail),
         )
 

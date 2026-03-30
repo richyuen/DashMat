@@ -373,6 +373,24 @@
     }
   }
 
+  function accountListDedupeStrings(values) {
+    const out = [];
+    const seen = new Set();
+    (Array.isArray(values) ? values : []).forEach(function (value) {
+      const textValue = String(value || "").trim();
+      if (!textValue) {
+        return;
+      }
+      const key = textValue.toLowerCase();
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      out.push(textValue);
+    });
+    return out;
+  }
+
   function accountListNormalizeProvenance(provenanceStore) {
     if (!provenanceStore || typeof provenanceStore !== "object" || Array.isArray(provenanceStore)) {
       return {};
@@ -387,13 +405,7 @@
       if (!loaderType) {
         return;
       }
-      const emittedSeries = Array.isArray(rawValue.emitted_series)
-        ? rawValue.emitted_series.map(function (series) {
-            return String(series || "").trim();
-          }).filter(function (series, index, values) {
-            return !!series && values.indexOf(series) === index;
-          })
-        : [];
+      const emittedSeries = accountListDedupeStrings(rawValue.emitted_series);
       if (!emittedSeries.length) {
         return;
       }
@@ -401,13 +413,58 @@
       if (!entryId) {
         return;
       }
+      const loaderArgs = rawValue.loader_args && typeof rawValue.loader_args === "object" && !Array.isArray(rawValue.loader_args)
+        ? rawValue.loader_args
+        : {};
+      const primarySeries = String(rawValue.primary_series || "").trim() || emittedSeries[0];
       normalized[entryId] = {
         entry_id: entryId,
         loader_type: loaderType,
-        emitted_series: emittedSeries
+        loader_args: loaderArgs,
+        emitted_series: emittedSeries,
+        primary_series: primarySeries
       };
     });
     return normalized;
+  }
+
+  function accountListPruneDbImportProvenance(rawMeta, provenanceStore) {
+    const normalized = accountListNormalizeProvenance(provenanceStore);
+    const allowed = new Set(
+      (((rawMeta && rawMeta.columns) || []).map(function (name) {
+        return String(name || "").trim();
+      })).filter(function (name) {
+        return !!name;
+      })
+    );
+    const pruned = {};
+    Object.keys(normalized).forEach(function (entryId) {
+      const entry = normalized[entryId];
+      const remaining = (entry.emitted_series || []).filter(function (series) {
+        return allowed.has(series);
+      });
+      if (!remaining.length) {
+        return;
+      }
+      const primarySeries = String(entry.primary_series || "").trim();
+      pruned[entryId] = {
+        entry_id: entry.entry_id,
+        loader_type: entry.loader_type,
+        loader_args: entry.loader_args && typeof entry.loader_args === "object" && !Array.isArray(entry.loader_args)
+          ? entry.loader_args
+          : {},
+        emitted_series: remaining,
+        primary_series: remaining.indexOf(primarySeries) !== -1 ? primarySeries : remaining[0]
+      };
+    });
+    return sameValue(pruned, provenanceStore) ? noUpdate() : pruned;
+  }
+
+  function accountListDismissNotice(nClicks) {
+    if (!nClicks) {
+      return noUpdate();
+    }
+    return null;
   }
 
   function accountListSaveState(mode, nameValue, rows, provenanceStore) {
@@ -4013,6 +4070,8 @@
       analyticsRegimeDefinitionLoadTrigger: analyticsRegimeDefinitionLoadTrigger,
       analyticsCorrelogramLoadingDisplay: analyticsCorrelogramLoadingDisplay,
       analyticsConditionalReturnsLoadingDisplay: analyticsConditionalReturnsLoadingDisplay,
+      accountListDismissNotice: accountListDismissNotice,
+      accountListPruneDbImportProvenance: accountListPruneDbImportProvenance,
       accountListRowsRefreshTrigger: accountListRowsRefreshTrigger,
       accountListSaveState: accountListSaveState,
       validateAnalyticsDbAddSelection: validateAnalyticsDbAddSelection,

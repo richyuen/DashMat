@@ -146,7 +146,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'dcc.Store(id="dashmat-account-list-selected-detail-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-load-snapshot-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-prefetch-store"' in account_list_text
-    assert 'dcc.Store(id="dashmat-account-list-prefetch-trigger-store"' in account_list_text
+    assert 'dcc.Store(id="dashmat-account-list-prefetch-trigger-store"' not in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-modal-view-trigger-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-rows-refresh-trigger-store"' in account_list_text
     assert 'dcc.Store(id="dashmat-account-list-load-timing-dummy"' in account_list_text
@@ -161,7 +161,6 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'ACCOUNT_LIST_MODAL_LOAD_CLASS' in account_list_text
     assert 'Output("dashmat-account-list-selected-detail-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-prefetch-store", "data")' in account_list_text
-    assert 'Output("dashmat-account-list-prefetch-trigger-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-modal-view-trigger-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-rows-refresh-trigger-store", "data")' in account_list_text
     assert 'Output("dashmat-account-list-load-snapshot-store", "data")' in account_list_text
@@ -171,10 +170,17 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'Output("dashmat-account-list-load-overlay-shell", "style")' in account_list_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListRowsRefreshTrigger")' in account_list_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListSaveState")' in account_list_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListPruneDbImportProvenance")' in account_list_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListDismissNotice")' in account_list_text
     assert 'Input("dashmat-account-list-load-button", "n_clicks")' in account_list_text
     assert 'Input("dashmat-account-list-modal", "opened")' in account_list_text
+    assert 'Input("dashmat-account-list-load-state-store", "data")' in account_list_text
     assert 'Input("dashmat-account-list-selected-id-store", "data")' in account_list_text
     assert 'Input("dashmat-account-list-rows-refresh-trigger-store", "data")' in account_list_text
+    assert 'Input("dashmat-account-list-prefetch-trigger-store", "data")' not in account_list_text
+    assert 'Input("dashmat-account-list-notice-close-button", "n_clicks", allow_optional=True)' in account_list_text
+    assert 'def _refresh_db_import_provenance(' not in account_list_text
+    assert 'def _dismiss_account_list_notice(' not in account_list_text
     assert 'Input("dashmat-raw-data-store", "data")' in app_text
     assert 'Output("dashmat-raw-data-meta-refresh-trigger-store", "data")' in app_text
     assert 'State("dashmat-raw-data-identity-store", "data")' in app_text
@@ -205,6 +211,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'window.dash_clientside.set_props("at-state-ready-store", {data: false});' in account_list_text
     assert '"dashmat-raw-data-identity-store"' in account_list_text
     assert '"dashmat-raw-data-meta-store"' in account_list_text
+    assert 'State("dashmat-account-list-prefetch-store", "data")' in account_list_text
     assert account_list_text.index('"dashmat-original-periodicity-store"') < account_list_text.index('"dashmat-raw-data-identity-store"')
     assert account_list_text.index('"dashmat-raw-data-identity-store"') < account_list_text.index('"dashmat-raw-data-meta-store"')
     assert account_list_text.index('"dashmat-raw-data-meta-store"') < account_list_text.index('"dashmat-raw-data-store"')

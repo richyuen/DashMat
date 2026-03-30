@@ -304,6 +304,44 @@ def test_account_list_save_state_clientside_parity():
     ) == ["", True]
 
 
+def test_account_list_prune_db_import_provenance_clientside_parity():
+    raw_meta = {"columns": ["Asset_A", "Asset_B"]}
+    provenance_store = {
+        "entry-1": {
+            "entry_id": "entry-1",
+            "loader_type": " DB ",
+            "loader_args": {"source": "seed"},
+            "emitted_series": ["Asset_A", "asset_a", "Asset_B", "", None],
+            "primary_series": "Asset_A",
+        },
+        "entry-2": {
+            "entry_id": "entry-2",
+            "loader_type": "csv",
+            "emitted_series": ["Stale"],
+            "primary_series": "Stale",
+        },
+        "entry-3": {
+            "entry_id": "entry-3",
+            "loader_type": "csv",
+            "emitted_series": [],
+        },
+        "bad": "ignore",
+    }
+    expected = modal_module.refresh_db_import_provenance(raw_meta, provenance_store)
+
+    assert _run_dashmat_callbacks_js(
+        f'ns.accountListPruneDbImportProvenance({json.dumps(raw_meta)}, {json.dumps(provenance_store)})'
+    ) == expected
+    assert _run_dashmat_callbacks_js(
+        f'ns.accountListPruneDbImportProvenance({json.dumps(raw_meta)}, {json.dumps(expected)})'
+    ) == "__NO_UPDATE__"
+
+
+def test_account_list_notice_dismiss_clientside_parity():
+    assert _run_dashmat_callbacks_js("ns.accountListDismissNotice(null)") == "__NO_UPDATE__"
+    assert _run_dashmat_callbacks_js("ns.accountListDismissNotice(1)") is None
+
+
 def test_resolve_selected_account_list_detail_reuses_matching_detail(monkeypatch):
     reused_detail = {
         "AccountListID": 7,
