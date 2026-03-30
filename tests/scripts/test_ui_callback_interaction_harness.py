@@ -205,9 +205,34 @@ def test_run_regression_scenarios_includes_visible_result_select_guards(monkeypa
 
     assert len(scenarios) == len(captured)
     assert (
+        "regression_anova_visible",
+        "visible_result_tab",
+        ["reg-anova-content.children"],
+    ) in captured
+    assert (
         "regression_result_select_visible_anova",
         "visible_result_tab",
         ["reg-anova-content.children"],
+    ) in captured
+    assert (
+        "regression_rolling_visible",
+        "visible_result_tab",
+        ["reg-rolling-content.children"],
+    ) in captured
+    assert (
+        "regression_result_select_visible_rolling",
+        "visible_result_tab",
+        ["reg-rolling-content.children"],
+    ) in captured
+    assert (
+        "regression_weights_visible",
+        "visible_result_tab",
+        ["reg-weights-content.children"],
+    ) in captured
+    assert (
+        "regression_result_select_visible_weights",
+        "visible_result_tab",
+        ["reg-weights-content.children"],
     ) in captured
     assert (
         "regression_result_select_visible_scatter",

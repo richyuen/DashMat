@@ -1552,6 +1552,19 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="regression_anova_visible",
+            targeted_outputs=["reg-anova-content.children"],
+            prepare=lambda: _seed_regression_result_state(page, db_series, "statistics", "Harness Result 1"),
+            action=lambda: warm.set_component_value(page, "reg-tabs", "anova"),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-anova-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="regression_result_select_visible_anova",
             targeted_outputs=["reg-anova-content.children"],
             prepare=lambda: _seed_regression_result_state(page, db_series, "anova", "Harness Result 1"),
@@ -1568,6 +1581,35 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
         measure_scenario(
             page=page,
             tracker=tracker,
+            scenario_name="regression_rolling_visible",
+            targeted_outputs=["reg-rolling-content.children"],
+            prepare=lambda: _seed_regression_result_state(page, db_series, "statistics", "Harness Result 1"),
+            action=lambda: warm.set_component_value(page, "reg-tabs", "rolling"),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-rolling-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="regression_result_select_visible_rolling",
+            targeted_outputs=["reg-rolling-content.children"],
+            prepare=lambda: _seed_regression_result_state(page, db_series, "rolling", "Harness Result 1"),
+            action=lambda: warm.set_component_value(page, "reg-result-select", "Harness Result 2"),
+            wait_for_ready=lambda: (
+                wait_for_input_value(page, "#reg-result-select", "Harness Result 2"),
+                wait_content_ready(page, "#reg-rolling-content", timeout=10000),
+            ),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
             scenario_name="regression_result_select_visible_statistics",
             targeted_outputs=["reg-statistics-content.children"],
             prepare=lambda: _seed_regression_result_state(page, db_series, "statistics", "Harness Result 1"),
@@ -1575,6 +1617,35 @@ def run_regression_scenarios(page, tracker: warm.DashUpdateRequestTracker, db_se
             wait_for_ready=lambda: (
                 wait_for_input_value(page, "#reg-result-select", "Harness Result 2"),
                 wait_content_ready(page, "#reg-statistics-content", timeout=10000),
+            ),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="regression_weights_visible",
+            targeted_outputs=["reg-weights-content.children"],
+            prepare=lambda: _seed_regression_result_state(page, db_series, "statistics", "Harness Result 1"),
+            action=lambda: warm.set_component_value(page, "reg-tabs", "weights"),
+            wait_for_ready=lambda: wait_content_ready(page, "#reg-weights-content", timeout=10000),
+            scenario_class="visible_result_tab",
+        )
+    )
+
+    results.append(
+        measure_scenario(
+            page=page,
+            tracker=tracker,
+            scenario_name="regression_result_select_visible_weights",
+            targeted_outputs=["reg-weights-content.children"],
+            prepare=lambda: _seed_regression_result_state(page, db_series, "weights", "Harness Result 1"),
+            action=lambda: warm.set_component_value(page, "reg-result-select", "Harness Result 2"),
+            wait_for_ready=lambda: (
+                wait_for_input_value(page, "#reg-result-select", "Harness Result 2"),
+                wait_content_ready(page, "#reg-weights-content", timeout=10000),
             ),
             scenario_class="visible_result_tab",
         )
