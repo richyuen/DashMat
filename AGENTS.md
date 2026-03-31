@@ -30,6 +30,7 @@
 - For reload-based flows, measure `click -> reload start` separately from `reload start -> controls ready`; pre-reload wins do not prove the post-reload wait improved.
 - For same-page live-apply flows, measure `click -> live-apply commit` separately from `live-apply commit -> controls ready`; skipping a reload does not guarantee the post-apply ready path is fast.
 - For same-page live-apply perf paths, internal-only payload retention is not free; if a retained client payload/store makes end-to-end medians worse, roll it back even when Dash request count stays flat.
+- Do not assume moving work out of `live_apply_commit -> ready` into a new post-ready callback is a win; if the change adds a late request or shifts work into a second callback, the end-to-end median can still regress.
 - When a page already has an active-entry projection store, migrate remaining hot render families onto that store before inventing another projection layer.
 - Before bypassing a page's generic restore/bootstrap path, prove the retained same-page payload is complete and durable enough to reproduce that page's restore inputs; if the payload contract is incomplete or too short-lived, harden it first instead of forcing the bypass.
 - When a perf phase intentionally changes the ready outcome to an empty/cleared state, update the harness ready criteria first; do not judge timing with stale "content must render" assumptions from the old flow.
@@ -60,6 +61,7 @@
 - If a broad payload-reduction batch is ambiguous, keep useful harness-only scenario additions but roll back the page-code changes.
 - Track request bytes as well as request count; payload size can dominate the remaining cost.
 - For same-page live-apply flows, do not assume a large request-byte drop is a win if request count stays flat; if the bytes come off a callback that was overlapping the real restore/bootstrap critical path, the end-to-end median can still regress.
+- Once a same-page live-apply click window is already down to a small fixed request set, prefer shrinking work inside the existing restore/render callbacks over adding another deferred hydration request; removing one pre-ready slice is not a win if a new post-ready callback replaces it.
 - When a payload-reduction phase is ambiguous on localhost but the target users are WAN-like, rerun the same browser A/B under a realistic throttled network profile before deciding; lower request bytes can become a real end-to-end win once RTT and throughput matter.
 - Do not assume removing one closed-modal callback family will improve startup timing by itself; if the targeted family disappears from attribution but reset request count stays flat, retarget instead of widening the same approach.
 - For AnalyticsTool reset perf, do not spend another phase on closed sheet-select upload-reset writes unless the callback mix changes materially; removing that family without reducing total reset fan-out regressed end-to-end medians.
