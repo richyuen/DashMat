@@ -1023,23 +1023,23 @@ def prefetch_account_list_entry_frames(
     }
 
 
-def _merge_selected_list(current: Any, saved: Any, loaded_series: set[str]) -> list[str]:
+def _merge_selected_list(current: Any, saved: Any, restorable_series: set[str]) -> list[str]:
     current_list = _dedupe_strings(current)
     out = list(current_list)
     for series in _dedupe_strings(saved):
-        if series in loaded_series and series not in out:
+        if series in restorable_series and series not in out:
             out.append(series)
     return out
 
 
-def _merge_order_list(current: Any, saved: Any, merged_columns: list[str], loaded_series: set[str]) -> list[str]:
+def _merge_order_list(current: Any, saved: Any, merged_columns: list[str], restorable_series: set[str]) -> list[str]:
     merged_set = set(merged_columns)
     out: list[str] = []
     for series in _dedupe_strings(current):
         if series in merged_set and series not in out:
             out.append(series)
     for series in _dedupe_strings(saved):
-        if series in loaded_series and series in merged_set and series not in out:
+        if series in restorable_series and series in merged_set and series not in out:
             out.append(series)
     for series in merged_columns:
         if series not in out:
@@ -1047,23 +1047,23 @@ def _merge_order_list(current: Any, saved: Any, merged_columns: list[str], loade
     return out
 
 
-def _merge_boolean_map(current: Any, saved: Any, loaded_series: set[str]) -> dict[str, Any]:
+def _merge_boolean_map(current: Any, saved: Any, restorable_series: set[str]) -> dict[str, Any]:
     out = dict(current or {}) if isinstance(current, dict) else {}
     if isinstance(saved, dict):
         for key, value in saved.items():
             clean_key = str(key or "").strip()
-            if clean_key and clean_key in loaded_series:
+            if clean_key and clean_key in restorable_series:
                 out[clean_key] = value
     return out
 
 
-def _normalize_benchmark_map(current: Any, saved: Any, loaded_series: set[str], available_series: set[str]) -> dict[str, str]:
+def _normalize_benchmark_map(current: Any, saved: Any, restorable_series: set[str], available_series: set[str]) -> dict[str, str]:
     out = dict(current or {}) if isinstance(current, dict) else {}
     if not isinstance(saved, dict):
         return out
     for key, value in saved.items():
         clean_key = str(key or "").strip()
-        if clean_key not in loaded_series:
+        if clean_key not in restorable_series:
             continue
         benchmark = str(value or "None").strip() or "None"
         if benchmark != "None" and benchmark not in available_series:
@@ -1193,48 +1193,47 @@ def build_account_list_session_payload(
             apply_settings=bool(apply_settings),
         ):
             updated_provenance = prune_db_import_provenance(updated_provenance, list(merged_df.columns))
-            loaded_set = set(added_series)
             available_series = set(merged_df.columns)
             merged_columns = list(merged_df.columns)
             current_snapshot = current_session_snapshot if isinstance(current_session_snapshot, dict) else {}
 
             control_values = normalized_payload.get("control_values") if isinstance(normalized_payload.get("control_values"), dict) else {}
 
-            at_selected = _merge_selected_list(current_snapshot.get(AT_STORE_IDS["selected"]), control_values.get(AT_STORE_IDS["selected"]), loaded_set)
-            at_order = _merge_order_list(current_snapshot.get(AT_STORE_IDS["order"]), control_values.get(AT_STORE_IDS["order"]), merged_columns, loaded_set)
-            at_bench = _normalize_benchmark_map(current_snapshot.get(AT_STORE_IDS["bench"]), control_values.get(AT_STORE_IDS["bench"]), loaded_set, available_series)
-            at_ls = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["long_short"]), control_values.get(AT_STORE_IDS["long_short"]), loaded_set)
-            at_vol = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["vol"]), control_values.get(AT_STORE_IDS["vol"]), loaded_set)
+            at_selected = _merge_selected_list(current_snapshot.get(AT_STORE_IDS["selected"]), control_values.get(AT_STORE_IDS["selected"]), available_series)
+            at_order = _merge_order_list(current_snapshot.get(AT_STORE_IDS["order"]), control_values.get(AT_STORE_IDS["order"]), merged_columns, available_series)
+            at_bench = _normalize_benchmark_map(current_snapshot.get(AT_STORE_IDS["bench"]), control_values.get(AT_STORE_IDS["bench"]), available_series, available_series)
+            at_ls = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["long_short"]), control_values.get(AT_STORE_IDS["long_short"]), available_series)
+            at_vol = _merge_boolean_map(current_snapshot.get(AT_STORE_IDS["vol"]), control_values.get(AT_STORE_IDS["vol"]), available_series)
 
-            po_selected = _merge_selected_list(current_snapshot.get(PO_STORE_IDS["selected"]), control_values.get(PO_STORE_IDS["selected"]), loaded_set)
-            po_order = _merge_order_list(current_snapshot.get(PO_STORE_IDS["order"]), control_values.get(PO_STORE_IDS["order"]), merged_columns, loaded_set)
-            po_bench = _normalize_benchmark_map(current_snapshot.get(PO_STORE_IDS["bench"]), control_values.get(PO_STORE_IDS["bench"]), loaded_set, available_series)
+            po_selected = _merge_selected_list(current_snapshot.get(PO_STORE_IDS["selected"]), control_values.get(PO_STORE_IDS["selected"]), available_series)
+            po_order = _merge_order_list(current_snapshot.get(PO_STORE_IDS["order"]), control_values.get(PO_STORE_IDS["order"]), merged_columns, available_series)
+            po_bench = _normalize_benchmark_map(current_snapshot.get(PO_STORE_IDS["bench"]), control_values.get(PO_STORE_IDS["bench"]), available_series, available_series)
             po_cmabench = dict(current_snapshot.get(PO_STORE_IDS["cmabench"]) or {})
             for key, value in dict(control_values.get(PO_STORE_IDS["cmabench"]) or {}).items():
                 clean_key = str(key or "").strip()
-                if clean_key in loaded_set:
+                if clean_key in available_series:
                     po_cmabench[clean_key] = str(value or "").strip()
-            po_ls = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["long_short"]), control_values.get(PO_STORE_IDS["long_short"]), loaded_set)
-            po_vol = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["vol"]), control_values.get(PO_STORE_IDS["vol"]), loaded_set)
-            po_min = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["min_wt"]), control_values.get(PO_STORE_IDS["min_wt"]), loaded_set)
-            po_max = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["max_wt"]), control_values.get(PO_STORE_IDS["max_wt"]), loaded_set)
-            po_force = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["force_max"]), control_values.get(PO_STORE_IDS["force_max"]), loaded_set)
+            po_ls = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["long_short"]), control_values.get(PO_STORE_IDS["long_short"]), available_series)
+            po_vol = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["vol"]), control_values.get(PO_STORE_IDS["vol"]), available_series)
+            po_min = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["min_wt"]), control_values.get(PO_STORE_IDS["min_wt"]), available_series)
+            po_max = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["max_wt"]), control_values.get(PO_STORE_IDS["max_wt"]), available_series)
+            po_force = _merge_boolean_map(current_snapshot.get(PO_STORE_IDS["force_max"]), control_values.get(PO_STORE_IDS["force_max"]), available_series)
 
-            reg_selected = _merge_selected_list(current_snapshot.get(REG_STORE_IDS["selected"]), control_values.get(REG_STORE_IDS["selected"]), loaded_set)
-            reg_order = _merge_order_list(current_snapshot.get(REG_STORE_IDS["order"]), control_values.get(REG_STORE_IDS["order"]), merged_columns, loaded_set)
-            reg_bench = _normalize_benchmark_map(current_snapshot.get(REG_STORE_IDS["bench"]), control_values.get(REG_STORE_IDS["bench"]), loaded_set, available_series)
-            reg_ls = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["long_short"]), control_values.get(REG_STORE_IDS["long_short"]), loaded_set)
-            reg_vol = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["vol"]), control_values.get(REG_STORE_IDS["vol"]), loaded_set)
-            reg_lag = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["lag"]), control_values.get(REG_STORE_IDS["lag"]), loaded_set)
-            reg_min = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["min_beta"]), control_values.get(REG_STORE_IDS["min_beta"]), loaded_set)
-            reg_max = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["max_beta"]), control_values.get(REG_STORE_IDS["max_beta"]), loaded_set)
-            reg_enable = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["enable"]), control_values.get(REG_STORE_IDS["enable"]), loaded_set)
+            reg_selected = _merge_selected_list(current_snapshot.get(REG_STORE_IDS["selected"]), control_values.get(REG_STORE_IDS["selected"]), available_series)
+            reg_order = _merge_order_list(current_snapshot.get(REG_STORE_IDS["order"]), control_values.get(REG_STORE_IDS["order"]), merged_columns, available_series)
+            reg_bench = _normalize_benchmark_map(current_snapshot.get(REG_STORE_IDS["bench"]), control_values.get(REG_STORE_IDS["bench"]), available_series, available_series)
+            reg_ls = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["long_short"]), control_values.get(REG_STORE_IDS["long_short"]), available_series)
+            reg_vol = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["vol"]), control_values.get(REG_STORE_IDS["vol"]), available_series)
+            reg_lag = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["lag"]), control_values.get(REG_STORE_IDS["lag"]), available_series)
+            reg_min = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["min_beta"]), control_values.get(REG_STORE_IDS["min_beta"]), available_series)
+            reg_max = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["max_beta"]), control_values.get(REG_STORE_IDS["max_beta"]), available_series)
+            reg_enable = _merge_boolean_map(current_snapshot.get(REG_STORE_IDS["enable"]), control_values.get(REG_STORE_IDS["enable"]), available_series)
             current_dep = str(current_snapshot.get(REG_STORE_IDS["dep"]) or "").strip()
             saved_dep = str(control_values.get(REG_STORE_IDS["dep"]) or "").strip()
-            if current_dep and current_dep in available_series:
-                reg_dep = current_dep
-            elif saved_dep and saved_dep in available_series and saved_dep in loaded_set:
+            if saved_dep and saved_dep in available_series:
                 reg_dep = saved_dep
+            elif current_dep and current_dep in available_series:
+                reg_dep = current_dep
             else:
                 reg_dep = None
 

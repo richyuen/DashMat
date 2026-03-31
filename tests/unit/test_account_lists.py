@@ -8,6 +8,7 @@ from tools.db.migrate_account_lists import ensure_account_list_tables
 from tools.db.migrate_users import ensure_users_table
 from utils.account_lists import (
     AT_STORE_IDS,
+    PO_STORE_IDS,
     REG_STORE_IDS,
     add_db_import_provenance_entry,
     build_account_list_payload,
@@ -302,7 +303,7 @@ def test_send_account_list_rejects_self_and_unknown_recipient():
     assert missing_message == "Selected user no longer exists."
 
 
-def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_benchmark(monkeypatch):
+def test_build_account_list_session_payload_skips_conflicts_and_restores_saved_controls(monkeypatch):
     current_df = pd.DataFrame(
         {
             "A": [0.01, 0.02],
@@ -366,7 +367,7 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
     assert stats["skipped_conflicts"] == ["B"]
     assert session_payload[AT_STORE_IDS["selected"]] == ["A", "C"]
     assert session_payload[AT_STORE_IDS["bench"]]["C"] == "B"
-    assert session_payload[REG_STORE_IDS["dep"]] == "A"
+    assert session_payload[REG_STORE_IDS["dep"]] == "C"
     assert session_payload["dashmat-raw-data-identity-store"]["dataset_key"] == session_payload["dashmat-raw-data-store"]["dataset_key"]
     assert session_payload["dashmat-raw-data-identity-store"]["has_data"] is True
     assert session_payload["dashmat-raw-data-meta-store"]["dataset_key"] == session_payload["dashmat-raw-data-store"]["dataset_key"]
@@ -375,6 +376,73 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
     assert session_payload["at-partial-period-store"] == "full"
     normalized_provenance = normalize_db_import_provenance_store(session_payload["dashmat-db-import-provenance-store"])
     assert any("C" in entry["emitted_series"] for entry in normalized_provenance.values())
+
+
+def test_build_account_list_session_payload_restores_overlap_only_saved_controls(monkeypatch):
+    current_df = pd.DataFrame(
+        {
+            "A": [0.01, 0.02],
+            "B": [0.03, 0.04],
+        },
+        index=pd.to_datetime(["2025-01-31", "2025-02-28"]),
+    )
+    payload = {
+        "schema_version": 2,
+        "series_entries": [
+            {
+                "entry_id": "entry-1",
+                "loader_type": "cma_bench",
+                "loader_args": {"selected_benches": ["B"]},
+                "emitted_series": ["B"],
+                "primary_series": "B",
+            }
+        ],
+        "control_values": {
+            AT_STORE_IDS["selected"]: ["B"],
+            AT_STORE_IDS["order"]: ["B", "A"],
+            AT_STORE_IDS["bench"]: {"B": "A"},
+            PO_STORE_IDS["selected"]: ["B"],
+            PO_STORE_IDS["order"]: ["B", "A"],
+            PO_STORE_IDS["cmabench"]: {"B": "Building Blocks"},
+            REG_STORE_IDS["selected"]: ["B"],
+            REG_STORE_IDS["order"]: ["B", "A"],
+            REG_STORE_IDS["dep"]: "B",
+        },
+    }
+
+    monkeypatch.setattr(account_lists, "_load_entry_frame", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("conflict-only entries should not reload")))
+
+    session_payload, stats = build_account_list_session_payload(
+        payload=payload,
+        current_raw_data=df_to_json(current_df),
+        current_original_periodicity="daily",
+        current_provenance={},
+        current_session_snapshot={
+            AT_STORE_IDS["selected"]: [],
+            AT_STORE_IDS["order"]: ["A", "B"],
+            AT_STORE_IDS["bench"]: {"A": "None", "B": "None"},
+            PO_STORE_IDS["selected"]: [],
+            PO_STORE_IDS["order"]: ["A", "B"],
+            PO_STORE_IDS["cmabench"]: {"A": "Current", "B": "Current"},
+            REG_STORE_IDS["selected"]: [],
+            REG_STORE_IDS["order"]: ["A", "B"],
+            REG_STORE_IDS["dep"]: "A",
+        },
+        apply_settings=True,
+        db_engine=None,
+        mrd_engine=None,
+        perf_engine=None,
+    )
+
+    assert stats["added_series"] == []
+    assert stats["skipped_conflicts"] == ["B"]
+    assert session_payload[AT_STORE_IDS["selected"]] == ["B"]
+    assert session_payload[AT_STORE_IDS["order"]][:2] == ["A", "B"]
+    assert session_payload[AT_STORE_IDS["bench"]]["B"] == "A"
+    assert session_payload[PO_STORE_IDS["selected"]] == ["B"]
+    assert session_payload[PO_STORE_IDS["cmabench"]]["B"] == "Building Blocks"
+    assert session_payload[REG_STORE_IDS["selected"]] == ["B"]
+    assert session_payload[REG_STORE_IDS["dep"]] == "B"
 
 
 def test_build_account_list_session_payload_skips_extra_controls_when_apply_settings_is_off(monkeypatch):
