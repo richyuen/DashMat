@@ -1242,13 +1242,12 @@ def register_account_list_callbacks(
         prevent_initial_call=False,
     )
 
-    @app.callback(
+    app.clientside_callback(
+        ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListRenderNotice"),
         Output("dashmat-account-list-notice-container", "children"),
         Input("dashmat-account-list-notice-store", "data"),
         prevent_initial_call=False,
     )
-    def _render_account_list_notice(notice):
-        return render_account_list_notice(notice)
 
     app.clientside_callback(
         ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListDismissNotice"),

@@ -5047,6 +5047,15 @@ def _at_resolve_restore_state(
     )
     return resolved
 
+
+def _at_dedupe_restore_output(current_value, next_value):
+    try:
+        if current_value == next_value:
+            return no_update
+    except Exception:
+        pass
+    return next_value
+
 @callback(
     Output("at-periodicity-select", "data", allow_duplicate=True),
     Output("at-periodicity-select", "value", allow_duplicate=True),
@@ -5086,6 +5095,12 @@ def _at_resolve_restore_state(
     State("at-series-order-store", "data"),
     State("dashmat-pending-new-series-store", "data"),
     State("at-page-visited-store", "data"),
+    State("at-periodicity-select", "value"),
+    State("at-main-tabs", "value"),
+    State("at-series-select", "data"),
+    State("at-dataset-key-store", "data"),
+    State("at-range-candidates-store", "data"),
+    State("at-common-daily-candidates-store", "data"),
     prevent_initial_call="initial_duplicate",
 )
 def restore_application_state(
@@ -5107,6 +5122,12 @@ def restore_application_state(
     stored_order,
     po_origin_series,
     page_visited,
+    current_periodicity_value=None,
+    current_main_tab=None,
+    current_series_select=None,
+    current_dataset_key=None,
+    current_candidates=None,
+    current_common_daily_candidates=None,
 ):
     try:
         resolved = _at_resolve_restore_state(
@@ -5153,20 +5174,20 @@ def restore_application_state(
 
         return (
             resolved["periodicity_options"],
-            resolved["valid_periodicity"],
+            _at_dedupe_restore_output(current_periodicity_value, resolved["valid_periodicity"]),
             resolved["valid_returns"],
             resolved["valid_vol"],
-            active_tab,
+            _at_dedupe_restore_output(current_main_tab, active_tab),
             *roll_outputs,
             drawdown_output,
             growth_output,
             monthly_output,
-            resolved["valid_selection"],
-            resolved["updated_order"],
+            _at_dedupe_restore_output(current_series_select, resolved["valid_selection"]),
+            _at_dedupe_restore_output(stored_order, resolved["updated_order"]),
             False,
-            dataset_key,
-            next_candidates,
-            next_common_daily,
+            _at_dedupe_restore_output(current_dataset_key, dataset_key),
+            _at_dedupe_restore_output(current_candidates, next_candidates),
+            _at_dedupe_restore_output(current_common_daily_candidates, next_common_daily),
         )
     except Exception:
         resolved = _at_restore_defaults()
@@ -5176,12 +5197,19 @@ def restore_application_state(
             resolved["valid_selection"],
         )
         return (
-            resolved["periodicity_options"], resolved["valid_periodicity"],
-            resolved["valid_returns"], resolved["valid_vol"], resolved["active_tab"],
+            resolved["periodicity_options"],
+            _at_dedupe_restore_output(current_periodicity_value, resolved["valid_periodicity"]),
+            resolved["valid_returns"],
+            resolved["valid_vol"],
+            _at_dedupe_restore_output(current_main_tab, resolved["active_tab"]),
             no_update, no_update, no_update, no_update, no_update, no_update,
             no_update, no_update, no_update,
-            resolved["valid_selection"], resolved["updated_order"], False,
-            None, next_candidates, next_common_daily,
+            _at_dedupe_restore_output(current_series_select, resolved["valid_selection"]),
+            _at_dedupe_restore_output(stored_order, resolved["updated_order"]),
+            False,
+            _at_dedupe_restore_output(current_dataset_key, None),
+            _at_dedupe_restore_output(current_candidates, next_candidates),
+            _at_dedupe_restore_output(current_common_daily_candidates, next_common_daily),
         )
 
 

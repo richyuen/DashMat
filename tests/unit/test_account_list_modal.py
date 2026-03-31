@@ -7,6 +7,7 @@ import subprocess
 import pytest
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from plotly.utils import PlotlyJSONEncoder
 
 import utils.account_list_modal as modal_module
 
@@ -340,6 +341,14 @@ def test_account_list_prune_db_import_provenance_clientside_parity():
 def test_account_list_notice_dismiss_clientside_parity():
     assert _run_dashmat_callbacks_js("ns.accountListDismissNotice(null)") == "__NO_UPDATE__"
     assert _run_dashmat_callbacks_js("ns.accountListDismissNotice(1)") is None
+
+
+def test_account_list_notice_render_clientside_parity():
+    notice = {"message": "Loaded account list.", "color": "green"}
+    expected = json.loads(json.dumps(modal_module.render_account_list_notice(notice), cls=PlotlyJSONEncoder))
+
+    assert _run_dashmat_callbacks_js(f"ns.accountListRenderNotice({json.dumps(notice)})") == expected
+    assert _run_dashmat_callbacks_js("ns.accountListRenderNotice(null)") == []
 
 
 def test_resolve_selected_account_list_detail_reuses_matching_detail(monkeypatch):

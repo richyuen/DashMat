@@ -428,6 +428,12 @@ def test_restore_application_state_owns_dataset_key_and_candidate_outputs():
     assert 'Output("at-range-candidates-store", "data", allow_duplicate=True)' in callback_text
     assert 'Output("at-common-daily-candidates-store", "data", allow_duplicate=True)' in callback_text
     assert 'Input("dashmat-raw-data-meta-store", "data")' in callback_text
+    assert 'State("at-periodicity-select", "value")' in callback_text
+    assert 'State("at-main-tabs", "value")' in callback_text
+    assert 'State("at-series-select", "data")' in callback_text
+    assert 'State("at-dataset-key-store", "data")' in callback_text
+    assert 'State("at-range-candidates-store", "data")' in callback_text
+    assert 'State("at-common-daily-candidates-store", "data")' in callback_text
 
 
 def test_at_bootstrap_date_candidate_callback_uses_narrow_fallback_trigger():
@@ -1099,7 +1105,7 @@ def test_restore_application_state_keeps_empty_selection_when_nothing_is_stored(
     )
 
     assert restored[14] == []
-    assert restored[15] == []
+    assert restored[15] is no_update
     assert restored[16] is False
     assert restored[17] == analyticstool._dataset_key_from_meta(_raw_meta(raw_json))
     assert isinstance(restored[18], dict)
@@ -1173,6 +1179,52 @@ def test_restore_application_state_defers_non_active_tab_controls(page_modules, 
     assert restored[14] == ["Asset_A"]
     assert restored[16] is False
     assert restored[17] == analyticstool._dataset_key_from_meta(_raw_meta(raw_json))
+
+
+def test_restore_application_state_dedupes_unchanged_live_apply_outputs(monkeypatch, page_modules, raw_json):
+    analyticstool, _ = page_modules
+    candidates = {"available_series": ["Asset_A"], "max_start": "2020-01-31", "max_end": "2025-12-31"}
+    common_daily = {"common_daily_start": "2020-01-31", "common_daily_end": "2025-12-31"}
+    monkeypatch.setattr(analyticstool, "update_at_candidate_bundle", lambda *_args: (candidates, common_daily))
+
+    raw_meta = _raw_meta(raw_json)
+    dataset_key = analyticstool._dataset_key_from_meta(raw_meta)
+
+    restored = analyticstool.restore_application_state(
+        1,
+        raw_meta,
+        stored_periodicity="daily_trading",
+        stored_series=["Asset_A"],
+        stored_returns="total",
+        stored_vol=0,
+        stored_tab="statistics",
+        stored_roll_win=None,
+        stored_roll_metric=None,
+        stored_roll_type=None,
+        stored_roll_chart=None,
+        stored_dd_chart=None,
+        stored_gr_chart=None,
+        stored_monthly_view=None,
+        stored_monthly_series=[],
+        stored_order=["Asset_A"],
+        po_origin_series=[],
+        page_visited=True,
+        current_periodicity_value="daily_trading",
+        current_main_tab="statistics",
+        current_series_select=["Asset_A"],
+        current_dataset_key=dataset_key,
+        current_candidates=candidates,
+        current_common_daily_candidates=common_daily,
+    )
+
+    assert restored[1] is no_update
+    assert restored[4] is no_update
+    assert restored[14] is no_update
+    assert restored[15] is no_update
+    assert restored[17] is no_update
+    assert restored[18] is no_update
+    assert restored[19] is no_update
+    assert restored[16] is False
 
 
 def test_at_restore_secondary_controls_restores_only_active_tab_family(page_modules, raw_json):

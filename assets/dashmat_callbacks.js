@@ -460,6 +460,56 @@
     return sameValue(pruned, provenanceStore) ? noUpdate() : pruned;
   }
 
+  function accountListRenderNotice(notice) {
+    const message = String((notice && notice.message) || "").trim();
+    if (!message) {
+      return [];
+    }
+    const color = String((notice && notice.color) || "blue");
+    return {
+      props: {
+        children: {
+          props: {
+            children: [
+              {
+                props: {
+                  children: message,
+                  style: { flex: "1 1 auto" }
+                },
+                type: "Text",
+                namespace: "dash_mantine_components"
+              },
+              {
+                props: {
+                  children: "x",
+                  id: "dashmat-account-list-notice-close-button",
+                  color: color,
+                  size: "sm",
+                  variant: "subtle",
+                  "aria-label": "Dismiss account list notice"
+                },
+                type: "ActionIcon",
+                namespace: "dash_mantine_components"
+              }
+            ],
+            align: "flex-start",
+            justify: "space-between",
+            wrap: "nowrap"
+          },
+          type: "Group",
+          namespace: "dash_mantine_components"
+        },
+        color: color,
+        mb: "sm",
+        title: "Account Lists",
+        variant: "light",
+        withCloseButton: false
+      },
+      type: "Alert",
+      namespace: "dash_mantine_components"
+    };
+  }
+
   function accountListDismissNotice(nClicks) {
     if (!nClicks) {
       return noUpdate();
@@ -4072,6 +4122,7 @@
       analyticsConditionalReturnsLoadingDisplay: analyticsConditionalReturnsLoadingDisplay,
       accountListDismissNotice: accountListDismissNotice,
       accountListPruneDbImportProvenance: accountListPruneDbImportProvenance,
+      accountListRenderNotice: accountListRenderNotice,
       accountListRowsRefreshTrigger: accountListRowsRefreshTrigger,
       accountListSaveState: accountListSaveState,
       validateAnalyticsDbAddSelection: validateAnalyticsDbAddSelection,

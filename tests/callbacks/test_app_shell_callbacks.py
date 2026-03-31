@@ -171,6 +171,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListRowsRefreshTrigger")' in account_list_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListSaveState")' in account_list_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListPruneDbImportProvenance")' in account_list_text
+    assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListRenderNotice")' in account_list_text
     assert 'ClientsideFunction(namespace="dashmat_callbacks", function_name="accountListDismissNotice")' in account_list_text
     assert 'Input("dashmat-account-list-load-button", "n_clicks")' in account_list_text
     assert 'Input("dashmat-account-list-modal", "opened")' in account_list_text
@@ -180,6 +181,7 @@ def test_app_shell_hosts_shared_account_list_modal_and_store():
     assert 'Input("dashmat-account-list-prefetch-trigger-store", "data")' not in account_list_text
     assert 'Input("dashmat-account-list-notice-close-button", "n_clicks", allow_optional=True)' in account_list_text
     assert 'def _refresh_db_import_provenance(' not in account_list_text
+    assert 'def _render_account_list_notice(' not in account_list_text
     assert 'def _dismiss_account_list_notice(' not in account_list_text
     assert 'Input("dashmat-raw-data-store", "data")' in app_text
     assert 'Output("dashmat-raw-data-meta-refresh-trigger-store", "data")' in app_text
