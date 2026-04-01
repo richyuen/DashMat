@@ -227,10 +227,32 @@ app.clientside_callback(
     """
     function(rawData, originalPeriodicity, pathname, loadState, currentIdentity, currentMeta, currentTrigger) {
         const noUpdate = window.dash_clientside.no_update;
+        let effectiveRawData = rawData;
+        if ((!effectiveRawData || typeof effectiveRawData !== "object" || Array.isArray(effectiveRawData)) && window.sessionStorage) {
+            try {
+                const storedRaw = window.sessionStorage.getItem("dashmat-raw-data-store");
+                const parsedRaw = storedRaw ? JSON.parse(storedRaw) : null;
+                if (parsedRaw && typeof parsedRaw === "object" && !Array.isArray(parsedRaw)) {
+                    effectiveRawData = parsedRaw;
+                }
+            } catch (_err) {
+            }
+        }
+        let effectiveOriginalPeriodicity = originalPeriodicity;
+        if (((effectiveOriginalPeriodicity || "").toString().trim()) === "" && window.sessionStorage) {
+            try {
+                const storedPeriodicity = window.sessionStorage.getItem("dashmat-original-periodicity-store");
+                const parsedPeriodicity = storedPeriodicity ? JSON.parse(storedPeriodicity) : null;
+                if (typeof parsedPeriodicity === "string" && parsedPeriodicity.trim()) {
+                    effectiveOriginalPeriodicity = parsedPeriodicity;
+                }
+            } catch (_err) {
+            }
+        }
         let datasetKey = null;
         let hasData = false;
-        if (rawData && typeof rawData === "object" && !Array.isArray(rawData)) {
-            datasetKey = (rawData.dataset_key || "").toString().trim() || null;
+        if (effectiveRawData && typeof effectiveRawData === "object" && !Array.isArray(effectiveRawData)) {
+            datasetKey = (effectiveRawData.dataset_key || "").toString().trim() || null;
             hasData = !!datasetKey;
         }
         const nextIdentity = {dataset_key: datasetKey, has_data: hasData};
@@ -242,7 +264,7 @@ app.clientside_callback(
                 nextIdentityResult = noUpdate;
             }
         }
-        const resolvedPeriodicity = ((originalPeriodicity || "").toString().trim()) || "daily";
+        const resolvedPeriodicity = ((effectiveOriginalPeriodicity || "").toString().trim()) || "daily";
         const currentMetaDatasetKey = currentMeta && typeof currentMeta === "object"
             ? (((currentMeta.dataset_key || "").toString().trim()) || null)
             : null;
@@ -260,18 +282,10 @@ app.clientside_callback(
         if (metaIsCurrent) {
             return [nextIdentityResult, noUpdate];
         }
-        const nextTrigger = {
+        return [nextIdentityResult, {
             dataset_key: datasetKey,
             original_periodicity: resolvedPeriodicity
-        };
-        if (currentTrigger && typeof currentTrigger === "object") {
-            const currentTriggerDatasetKey = ((currentTrigger.dataset_key || "").toString().trim()) || null;
-            const currentTriggerPeriodicity = ((currentTrigger.original_periodicity || "").toString().trim()) || "daily";
-            if (currentTriggerDatasetKey === datasetKey && currentTriggerPeriodicity === resolvedPeriodicity) {
-                return [nextIdentityResult, noUpdate];
-            }
-        }
-        return [nextIdentityResult, nextTrigger];
+        }];
     }
     """,
     Output("dashmat-raw-data-identity-store", "data"),

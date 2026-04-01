@@ -105,6 +105,18 @@ def test_raw_data_meta_store_is_memory_backed():
     assert 'dcc.Store(id="dashmat-raw-data-meta-refresh-trigger-store", data=None, storage_type="memory")' in app_text
 
 
+def test_raw_data_meta_refresh_is_only_suppressed_when_meta_is_current():
+    from pathlib import Path
+
+    app_text = Path("app.py").read_text(encoding="utf-8")
+
+    assert "if (metaIsCurrent) {" in app_text
+    assert "currentTriggerDatasetKey" not in app_text
+    assert "currentTriggerPeriodicity" not in app_text
+    assert 'window.sessionStorage.getItem("dashmat-raw-data-store")' in app_text
+    assert 'window.sessionStorage.getItem("dashmat-original-periodicity-store")' in app_text
+
+
 def test_shared_saved_series_stamp_store_is_memory_backed():
     from pathlib import Path
 

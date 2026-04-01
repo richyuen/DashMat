@@ -2214,21 +2214,22 @@
     let shouldOpen = false;
     let tempSelect = noUpdate();
     if (trigger === "dashmat-raw-data-meta-store") {
-      if (!resolveStoredBool(pageVisited, "po-page-visited-store")) {
-        return [
-          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(),
-          noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate(), noUpdate()
-        ];
-      }
-      shouldOpen = genericNew.length > 0;
-      if (shouldOpen) {
-        const selectedSet = new Set(selectedValid);
-        genericNew.forEach(function (series) {
-          selectedSet.add(series);
-        });
+      if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {
         tempSelect = columns.filter(function (series) {
-          return selectedSet.has(series);
+          return !poOriginSet.has(series);
         });
+        shouldOpen = tempSelect.length > 0;
+      } else {
+        shouldOpen = genericNew.length > 0;
+        if (shouldOpen) {
+          const selectedSet = new Set(selectedValid);
+          genericNew.forEach(function (series) {
+            selectedSet.add(series);
+          });
+          tempSelect = columns.filter(function (series) {
+            return selectedSet.has(series);
+          });
+        }
       }
     } else {
       if (!resolveStoredBool(pageVisited, "po-page-visited-store") && !selectedValid.length) {

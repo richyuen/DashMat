@@ -442,6 +442,96 @@ def test_po_open_modal_js_keeps_manual_open_and_blocker_seed():
     assert "true" in js_text
 
 
+def test_po_open_modal_opens_on_late_raw_meta_first_visit():
+    result = _run_dashmat_callbacks_js(
+        """
+(() => {
+  window.dash_clientside.callback_context = {
+    triggered: [{prop_id: "dashmat-raw-data-meta-store.data"}],
+  };
+  return ns.openPortoptSeriesModal(
+    null,
+    "/portopt",
+    1,
+    {columns: ["Asset_A", "Asset_B"]},
+    [],
+    {},
+    {},
+    {},
+    [],
+    {},
+    {},
+    {},
+    {},
+    {},
+    false
+  );
+})()
+"""
+    )
+
+    assert result == [
+        True,
+        ["Asset_A", "Asset_B"],
+        {},
+        {},
+        {},
+        [],
+        [],
+        {},
+        {},
+        {},
+        {},
+        True,
+        True,
+    ]
+
+
+def test_po_open_modal_late_raw_meta_keeps_pending_saved_series_unselected_on_first_visit():
+    result = _run_dashmat_callbacks_js(
+        """
+(() => {
+  window.dash_clientside.callback_context = {
+    triggered: [{prop_id: "dashmat-raw-data-meta-store.data"}],
+  };
+  return ns.openPortoptSeriesModal(
+    null,
+    "/portopt",
+    1,
+    {columns: ["Saved_PO", "Asset_A"]},
+    [],
+    {},
+    {},
+    {},
+    [],
+    {},
+    {},
+    {},
+    {},
+    {Saved_PO: {origin_page: "portopt", origin_result: "Saved_PO", series_type: "portfolio"}},
+    false
+  );
+})()
+"""
+    )
+
+    assert result == [
+        True,
+        ["Asset_A"],
+        {},
+        {},
+        {},
+        [],
+        [],
+        {},
+        {},
+        {},
+        {},
+        True,
+        True,
+    ]
+
+
 def test_po_series_modal_bulk_actions_use_shared_clientside_helper():
     page_text = Path("pages/portopt.py").read_text(encoding="utf-8")
     js_text = Path("assets/dashmat_callbacks.js").read_text(encoding="utf-8")
