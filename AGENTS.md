@@ -30,6 +30,7 @@
 - For reload-based flows, measure `click -> reload start` separately from `reload start -> controls ready`; pre-reload wins do not prove the post-reload wait improved.
 - For same-page live-apply flows, measure `click -> live-apply commit` separately from `live-apply commit -> controls ready`; skipping a reload does not guarantee the post-apply ready path is fast.
 - For same-page live-apply perf paths, internal-only payload retention is not free; if a retained client payload/store makes end-to-end medians worse, roll it back even when Dash request count stays flat.
+- For risky same-page live-apply/account-list perf lines, do not stack multiple follow-on phases on `main` after local harness wins alone; checkpoint them on a branch and validate production-like behavior early before building more phases on top.
 - When a page already has an active-entry projection store, migrate remaining hot render families onto that store before inventing another projection layer.
 - Before bypassing a page's generic restore/bootstrap path, prove the retained same-page payload is complete and durable enough to reproduce that page's restore inputs; if the payload contract is incomplete or too short-lived, harden it first instead of forcing the bypass.
 - When a perf phase intentionally changes the ready outcome to an empty/cleared state, update the harness ready criteria first; do not judge timing with stale "content must render" assumptions from the old flow.
