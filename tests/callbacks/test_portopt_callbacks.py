@@ -1449,6 +1449,8 @@ def test_portopt_import_harness_tracks_phase_windows_and_request_attribution():
     assert '"dbImportWindow"' in harness_text
     assert '"peerPortfolioImportWindow"' in harness_text
     assert '"indexPortfolioImportWindow"' in harness_text
+    assert "def _wait_for_dash_quiet(" in harness_text
+    assert "_wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)" in harness_text
     assert "def build_run_specs(page) -> list[PortoptImportRunSpec]:" in harness_text
 
 

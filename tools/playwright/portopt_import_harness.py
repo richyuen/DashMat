@@ -375,6 +375,36 @@ def _wait_for_portopt_data_ready(
         _wait_for_store_keys(page, "po-cmabench-defaults-store", expect_db_defaults, timeout=30000)
 
 
+def _wait_for_dash_quiet(
+    page,
+    request_tracker: warm.DashUpdateRequestTracker,
+    *,
+    timeout_ms: int = 5000,
+    quiet_ms: int = 350,
+) -> None:
+    """Wait for active and shortly-queued Dash requests to settle.
+
+    The shared request tracker only waits for requests that have already
+    started.  PortOpt import phases have tight UI boundaries, so follow-up
+    callbacks can start just after the modal-ready condition and leak into the
+    next timing window.  A short quiet period makes phase attribution stable.
+    """
+    deadline = time.perf_counter() + (timeout_ms / 1000)
+    quiet_started_at: float | None = None
+    quiet_seconds = quiet_ms / 1000
+
+    while time.perf_counter() < deadline:
+        if request_tracker.active_requests:
+            quiet_started_at = None
+            request_tracker.wait_for_settle(timeout_ms=min(timeout_ms, 500))
+            continue
+        if quiet_started_at is None:
+            quiet_started_at = time.perf_counter()
+        if time.perf_counter() - quiet_started_at >= quiet_seconds:
+            return
+        page.wait_for_timeout(50)
+
+
 def _stage_portfolio_row(page, fixture: PortfolioImportFixture) -> list[dict]:
     warm.set_component_props(page, "po-portfolio-add-series-select", {"value": fixture.portfolio})
     page.wait_for_timeout(200)
@@ -405,24 +435,25 @@ def _measure_db_add_flow(page, spec: PortoptImportRunSpec, request_tracker: warm
     page.wait_for_timeout(200)
     warm.wait_ready(page, "#po-db-add-ok-button", timeout=30000)
 
-    request_tracker.wait_for_settle(timeout_ms=5000)
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     request_tracker.start_window()
     import_start = time.perf_counter()
     page.locator("#po-db-add-ok-button").click(force=True)
     _wait_for_series_selection_modal(page, timeout=60000)
     db_import_to_modal_ms = round((time.perf_counter() - import_start) * 1000)
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     request_tracker.stop_window()
-    request_tracker.wait_for_settle(timeout_ms=5000)
     import_window = request_tracker.summary()
 
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     request_tracker.start_window()
     confirm_start = time.perf_counter()
     page.locator("#po-modal-ok-button").click(force=True)
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
     _wait_for_portopt_data_ready(page, list(spec.db_series), expect_db_defaults=list(spec.db_series))
     db_confirm_to_ready_ms = round((time.perf_counter() - confirm_start) * 1000)
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     request_tracker.stop_window()
-    request_tracker.wait_for_settle(timeout_ms=5000)
     confirm_window = request_tracker.summary()
 
     return {
@@ -444,16 +475,17 @@ def _measure_portfolio_add_flow(page, fixture: PortfolioImportFixture, current_s
     _stage_portfolio_row(page, fixture)
     warm.wait_ready(page, "#po-portfolio-add-ok-button", timeout=30000)
 
-    request_tracker.wait_for_settle(timeout_ms=5000)
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     request_tracker.start_window()
     import_start = time.perf_counter()
     page.locator("#po-portfolio-add-ok-button").click(force=True)
     _wait_for_series_selection_modal(page, timeout=60000)
     import_to_modal_ms = round((time.perf_counter() - import_start) * 1000)
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     request_tracker.stop_window()
-    request_tracker.wait_for_settle(timeout_ms=5000)
     import_window = request_tracker.summary()
 
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     expected_count = len(current_series) + 1
     request_tracker.start_window()
     confirm_start = time.perf_counter()
@@ -461,8 +493,8 @@ def _measure_portfolio_add_flow(page, fixture: PortfolioImportFixture, current_s
     page.wait_for_selector("#po-modal-ok-button", state="hidden", timeout=30000)
     _wait_for_portopt_data_ready(page, min_series_count=expected_count)
     confirm_to_ready_ms = round((time.perf_counter() - confirm_start) * 1000)
+    _wait_for_dash_quiet(page, request_tracker, timeout_ms=5000)
     request_tracker.stop_window()
-    request_tracker.wait_for_settle(timeout_ms=5000)
     confirm_window = request_tracker.summary()
     selected_after = warm.get_persisted_store_value(page, "po-series-select") or []
     imported_series = [
