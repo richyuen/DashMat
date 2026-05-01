@@ -6,6 +6,7 @@ from io import BytesIO
 from io import StringIO
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -2522,6 +2523,232 @@ def test_update_correlogram_target_key_ignores_shrinkage_for_scatter_view(page_m
     )
 
 
+def test_correlation_tab_includes_pca_controls(page_modules):
+    analyticstool, _ = page_modules
+    view_switch = _find_component_by_id(analyticstool.layout, "at-correlation-view-switch")
+    controls_store = _find_component_by_id(analyticstool.layout, "at-correlation-controls-store")
+
+    assert any(item["value"] == "pca_correlation" for item in view_switch.data)
+    assert any(item["value"] == "pca_covariance" for item in view_switch.data)
+    assert _find_component_by_id(analyticstool.layout, "at-pca-basis-select") is None
+    assert controls_store.data["pca_basis"] == "correlation"
+    assert set(controls_store.data) == {
+        "view",
+        "exp_weighted",
+        "halflife",
+        "shrinkage",
+        "shrinkage_target",
+        "block_width",
+        "pca_basis",
+    }
+
+
+def test_update_correlogram_target_key_uses_pca_specific_basis_key(page_modules):
+    analyticstool, _ = page_modules
+    date_range = {"start": "2024-01-01", "end": "2024-12-31"}
+
+    key_corr = analyticstool.update_correlogram_target_key(
+        {"tab": "correlogram"},
+        100,
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        {},
+        "pca_correlation",
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        None,
+        "correlation",
+    )
+    key_cov = analyticstool.update_correlogram_target_key(
+        {"tab": "correlogram"},
+        100,
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        {},
+        "pca_covariance",
+        True,
+        0.94,
+        "ledoit_wolf",
+        "constant_correlation",
+        None,
+        "correlation",
+    )
+    key_corr_ignored_matrix_controls = analyticstool.update_correlogram_target_key(
+        {"tab": "correlogram"},
+        250,
+        None,
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        date_range,
+        True,
+        0,
+        {},
+        {},
+        "pca_correlation",
+        True,
+        0.94,
+        "oas",
+        "constant_correlation",
+        None,
+        "correlation",
+    )
+
+    assert key_corr != key_cov
+    assert key_corr == key_corr_ignored_matrix_controls
+
+
+def test_pca_basis_is_not_candidate_refresh_dependency():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    callback_text = page_text.split('Output("at-candidate-refresh-trigger-store", "data")', 1)[1]
+    callback_text = callback_text.split("prevent_initial_call=True", 1)[0]
+    assert "at-pca-basis-select" not in callback_text
+    assert "at-correlation-view-switch" not in callback_text
+
+
+def test_pca_restore_is_deferred_to_protect_startup():
+    page_text = Path("pages/analyticstool.py").read_text(encoding="utf-8")
+    assert 'Output("at-correlation-controls-restore-dummy", "data")' not in page_text
+    sync_callback = page_text.split('Output("at-correlation-controls-store", "data")', 1)[0]
+    sync_callback = sync_callback.rsplit("clientside_callback(", 1)[-1]
+    assert "window.setTimeout" in sync_callback
+    assert 'window.sessionStorage.getItem("at-correlation-controls-store")' in sync_callback
+    assert 'dash_clientside.set_props("at-correlation-view-switch"' in sync_callback
+
+
+def test_update_correlogram_does_not_call_pca_for_inactive_or_non_pca(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    calls = {"pca": 0}
+
+    def fake_pca(*_args, **_kwargs):
+        calls["pca"] += 1
+        raise AssertionError("PCA should not be called")
+
+    monkeypatch.setattr(analyticstool, "generate_pca_cached", fake_pca)
+    with pytest.raises(PreventUpdate):
+        analyticstool.update_correlogram(
+            "req-key",
+            "statistics",
+            "raw-json",
+            "daily",
+            ["Asset_A", "Asset_B"],
+            "total",
+            {},
+            {},
+            {"start": "2024-01-01", "end": "2024-12-31"},
+            True,
+            0,
+            {},
+            False,
+            63,
+            "none",
+            "scaled_identity",
+            "pca",
+            120,
+            "light",
+        )
+
+    result = {
+        "display_df": pd.DataFrame({"Asset_A": [0.01, 0.02], "Asset_B": [0.00, 0.03]}),
+        "corr_matrix": pd.DataFrame([[1.0, 0.5], [0.5, 1.0]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+        "cov_matrix": pd.DataFrame([[0.04, 0.01], [0.01, 0.09]], index=["Asset_A", "Asset_B"], columns=["Asset_A", "Asset_B"]),
+        "available_series": ["Asset_A", "Asset_B"],
+        "n": 2,
+    }
+    monkeypatch.setattr(analyticstool, "generate_correlogram_cached", lambda *_args, **_kwargs: result)
+    analyticstool.update_correlogram(
+        "req-key",
+        "correlogram",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        "correlation",
+        120,
+        "light",
+    )
+
+    assert calls["pca"] == 0
+
+
+def test_update_correlogram_renders_pca(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    pca_result = {
+        "basis": "correlation",
+        "explained_variance": pd.DataFrame(
+            {
+                "Component": ["PC1", "PC2"],
+                "Explained Variance": [1.5, 0.5],
+                "Explained Variance Ratio": [0.75, 0.25],
+                "Cumulative Variance Ratio": [0.75, 1.0],
+            }
+        ),
+        "loadings": pd.DataFrame(
+            {"PC1": [0.7, 0.7], "PC2": [0.7, -0.7]},
+            index=pd.Index(["Asset_A", "Asset_B"], name="Series"),
+        ),
+        "available_series": ["Asset_A", "Asset_B"],
+        "n": 2,
+    }
+    monkeypatch.setattr(analyticstool, "generate_pca_cached", lambda *_args, **_kwargs: pca_result)
+
+    content, rendered_key = analyticstool.update_correlogram(
+        "req-key",
+        "correlogram",
+        "raw-json",
+        "daily",
+        ["Asset_A", "Asset_B"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+        False,
+        63,
+        "none",
+        "scaled_identity",
+        "pca_correlation",
+        120,
+        "light",
+        "correlation",
+    )
+
+    assert rendered_key == "req-key"
+    assert _find_component_by_id(content, "at-pca-loadings-grid") is not None
+
+
 def test_update_correlogram_heatmap_title_includes_shrinkage(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     result = {
@@ -2795,6 +3022,141 @@ def test_add_series_from_database_monthly_only_normalizes_to_month_end(monkeypat
     assert out_df.index.is_month_end.all()
     assert pd.Timestamp("1976-07-30") not in out_df.index
     assert pd.Timestamp("1976-07-31") in out_df.index
+
+
+def test_at_add_raw_series_from_database_updates_selection_and_benchmarks(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    imported_df = pd.DataFrame({"Imported": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    imported_df.index.name = "Date"
+
+    monkeypatch.setattr(
+        analyticstool,
+        "load_factor_series",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returns_df=imported_df,
+            benchmark_assignments={"Imported": "Bench_1"},
+            periodicity="daily",
+        ),
+    )
+    monkeypatch.setattr(analyticstool, "add_db_import_provenance_entry", lambda current, **_kwargs: {"updated": True})
+
+    result = analyticstool.at_add_raw_series_from_database(
+        1,
+        "factor",
+        [{"series_key": "X"}],
+        None,
+        None,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {},
+        ["Asset_A"],
+        False,
+        {"Asset_A": True},
+        {},
+    )
+
+    assert result[1] == "daily"
+    assert result[3] == "daily_trading"
+    assert result[5] == ["Asset_A", "Imported"]
+    assert result[11] == {"Asset_A": "None", "Imported": "Bench_1"}
+    assert result[14] is True
+    assert result[17] is False
+    assert result[18] == []
+    assert result[20] is no_update
+    assert result[23] == {"updated": True}
+
+
+def test_at_add_portfolios_from_database_updates_selection_and_benchmarks(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    imported_df = pd.DataFrame({"Port_1": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    imported_df.index.name = "Date"
+
+    monkeypatch.setattr(
+        analyticstool,
+        "load_portfolio_series",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returns_df=imported_df,
+            benchmark_assignments={"Port_1": "PortBench"},
+            periodicity="daily",
+        ),
+    )
+    monkeypatch.setattr(analyticstool, "add_db_import_provenance_entry", lambda current, **_kwargs: {"updated": True})
+
+    result = analyticstool.at_add_portfolios_from_database(
+        1,
+        "peer",
+        [{"portfolio": "Peer A"}],
+        None,
+        None,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        False,
+        {"Asset_A": True},
+        {},
+    )
+
+    assert result[1] == "daily"
+    assert result[3] == "daily_trading"
+    assert result[5] == ["Asset_A", "Port_1"]
+    assert result[11] == {"Asset_A": "None", "Port_1": "PortBench"}
+    assert result[17] is False
+    assert result[18] == []
+    assert result[20] is no_update
+    assert result[22] == {"updated": True}
+
+
+def test_at_add_underlying_categories_from_database_updates_selection_and_provenance(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    imported_df = pd.DataFrame(
+        {"Underlying_A": [0.03, 0.04]},
+        index=pd.date_range("2024-02-01", periods=2, freq="B"),
+    )
+    imported_df.index.name = "Date"
+
+    monkeypatch.setattr(
+        analyticstool,
+        "load_underlying_category_series",
+        lambda *_args, **_kwargs: type("LoadResult", (), {"returns_df": imported_df, "periodicity": "daily"})(),
+    )
+    monkeypatch.setattr(
+        analyticstool,
+        "add_db_import_provenance_entry",
+        lambda current, **_kwargs: {"loader": "underlying", "previous": current},
+    )
+
+    result = analyticstool.at_add_underlying_categories_from_database(
+        1,
+        [{"portfolio": "P1", "desc": "Desc1"}],
+        None,
+        None,
+        ["Existing_A"],
+        {"Existing_A": "BMK_0"},
+        {"Existing_A": False},
+        ["Existing_A"],
+        False,
+        {"Existing_A": True},
+        {"old": True},
+    )
+
+    out_df = pd.read_json(StringIO(_raw_json_value(result[0])), orient="split")
+    out_df.index = pd.to_datetime(out_df.index)
+
+    assert list(out_df.columns) == ["Underlying_A"]
+    assert result[1] == "daily"
+    assert result[3] == "daily_trading"
+    assert result[5] == ["Existing_A", "Underlying_A"]
+    assert result[6] == "Loaded 1 series with 2 rows from underlying categories."
+    assert result[7] == "green"
+    assert result[10] is True
+    assert result[11] == {"Existing_A": "BMK_0"}
+    assert result[14] is True
+    assert result[17] is False
+    assert result[18] == []
+    assert result[19] == []
+    assert result[21] is True
+    assert result[22] == {"loader": "underlying", "previous": {"old": True}}
 
 
 def test_update_factor_series_select_includes_unselected_series(page_modules, raw_json):
@@ -3707,6 +4069,25 @@ def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeyp
             ValueError("Insufficient overlapping observations for shrinkage covariance estimate.")
         ),
     )
+    monkeypatch.setattr(
+        analyticstool,
+        "generate_pca_cached",
+        lambda *_args, **_kwargs: {
+            "basis": "covariance",
+            "explained_variance": pd.DataFrame(
+                {
+                    "Component": ["PC1", "PC2"],
+                    "Explained Variance": [0.02, 0.01],
+                    "Explained Variance Ratio": [0.67, 0.33],
+                    "Cumulative Variance Ratio": [0.67, 1.0],
+                }
+            ),
+            "loadings": pd.DataFrame(
+                {"PC1": [0.8, 0.6], "PC2": [0.6, -0.8]},
+                index=pd.Index(["Asset_A", "Asset_B"], name="Series"),
+            ),
+        },
+    )
     monkeypatch.setattr(analyticstool.dcc, "send_bytes", lambda b, filename: {"content": b, "filename": filename})
 
     payload = analyticstool.download_excel(
@@ -3740,6 +4121,15 @@ def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeyp
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        "stamp",
+        "partial",
+        {"pca_basis": "covariance"},
     )
 
     xl = pd.ExcelFile(BytesIO(payload["content"]))
@@ -3748,6 +4138,11 @@ def test_download_excel_falls_back_to_sample_matrices_on_shrinkage_error(monkeyp
 
     assert corr_df.loc["Asset_A", "Asset_A"] == pytest.approx(1.0)
     assert cov_df.loc["Asset_A", "Asset_A"] == pytest.approx(returns_df.cov().loc["Asset_A", "Asset_A"])
+    assert "PCA Explained Variance" in xl.sheet_names
+    assert "PCA Loadings" in xl.sheet_names
+    assert xl.sheet_names.index("Covariance") < xl.sheet_names.index("PCA Explained Variance")
+    assert xl.sheet_names.index("PCA Explained Variance") < xl.sheet_names.index("PCA Loadings")
+    assert "PCA Scores" not in xl.sheet_names
 
 
 def test_update_regime_definition_select_includes_saved_and_session(page_modules):

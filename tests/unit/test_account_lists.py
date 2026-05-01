@@ -52,6 +52,7 @@ def test_build_account_list_payload_filters_to_db_backed_series():
         AT_STORE_IDS["selected"]: ["SPX_TRIndex", "UploadedOnly"],
         AT_STORE_IDS["order"]: ["UploadedOnly", "SPX_TRIndex"],
         AT_STORE_IDS["bench"]: {"SPX_TRIndex": "None", "UploadedOnly": "None"},
+        "at-correlation-controls-store": {"view": "pca", "pca_basis": "covariance"},
         REG_STORE_IDS["dep"]: "UploadedOnly",
     }
 
@@ -60,6 +61,10 @@ def test_build_account_list_payload_filters_to_db_backed_series():
 
     assert normalized["control_values"][AT_STORE_IDS["selected"]] == ["SPX_TRIndex", "UploadedOnly"]
     assert normalized["control_values"][AT_STORE_IDS["order"]] == ["UploadedOnly", "SPX_TRIndex"]
+    assert normalized["control_values"]["at-correlation-controls-store"] == {
+        "view": "pca",
+        "pca_basis": "covariance",
+    }
     assert normalized["control_values"][REG_STORE_IDS["dep"]] == "UploadedOnly"
 
 
@@ -329,6 +334,7 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
             AT_STORE_IDS["vol"]: {"C": True},
             "at-periodicity-value-store": "monthly",
             "at-partial-period-store": "full",
+            "at-correlation-controls-store": {"view": "pca", "pca_basis": "correlation"},
             REG_STORE_IDS["dep"]: "C",
         },
     }
@@ -369,6 +375,7 @@ def test_build_account_list_session_payload_skips_conflicts_and_keeps_existing_b
     assert session_payload[REG_STORE_IDS["dep"]] == "A"
     assert session_payload["at-periodicity-value-store"] == "monthly"
     assert session_payload["at-partial-period-store"] == "full"
+    assert session_payload["at-correlation-controls-store"] == {"view": "pca", "pca_basis": "correlation"}
     normalized_provenance = normalize_db_import_provenance_store(session_payload["dashmat-db-import-provenance-store"])
     assert any("C" in entry["emitted_series"] for entry in normalized_provenance.values())
 

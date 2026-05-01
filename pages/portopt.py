@@ -21,6 +21,14 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
+from utils.import_flow import (
+    build_cma_import_summary,
+    extend_selection,
+    find_import_duplicates,
+    merge_assignments,
+    merge_imported_dataset,
+    resolve_cma_default_periodicity,
+)
 from utils.date_range_flow import (
     compute_common_daily_candidates,
     compute_date_range_candidates,
@@ -7000,10 +7008,11 @@ def po_add_series_from_database(
                 )
 
     try:
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
-            duplicates = [s for s in selected_benches if s in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            selected_benches,
+            existing_data=existing_data,
+        )
+        if duplicates:
                 return (
                     n_no, n_no, n_no, n_no, n_no, n_no,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
@@ -7019,62 +7028,27 @@ def po_add_series_from_database(
         )
         if new_df.empty:
             raise ValueError("No rows returned for selected FOFBench values.")
+        cma_summary = build_cma_import_summary(new_df, db_meta)
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_data=existing_data,
+            new_periodicity=cma_summary.new_periodicity,
+        )
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = resolve_cma_default_periodicity(
+            combined_periodicity,
+            cma_summary,
+            daily_default_periodicity="daily_trading",
+        )
 
-        # Treat imports as daily when any selected series has a daily phase.
-        # This mirrors raw factor/fund/performance import behavior.
-        new_periodicity = "daily"
-        any_daily_phase = False
-        all_start_daily = True
-        daily_transition_notes: list[str] = []
-        for series_name in new_df.columns:
-            meta = db_meta.get(series_name, {}) if isinstance(db_meta, dict) else {}
-            starts_daily = bool(meta.get("starts_daily", True))
-            daily_start_date = meta.get("daily_start_date")
-            has_daily_phase = bool(daily_start_date) or starts_daily
-            any_daily_phase = any_daily_phase or has_daily_phase
-            if not starts_daily:
-                all_start_daily = False
-                if daily_start_date:
-                    daily_transition_notes.append(f"{series_name}: {daily_start_date}")
-                elif not has_daily_phase:
-                    daily_transition_notes.append(f"{series_name}: no daily phase detected")
-                else:
-                    daily_transition_notes.append(f"{series_name}: daily phase starts after initial history")
-        if not any_daily_phase:
-            new_periodicity = "monthly"
-
-        if existing_data is not None:
-            existing_df = _raw_df(existing_data)
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = new_df
-            combined_periodicity = new_periodicity
-            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
-
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        if combined_periodicity == "daily":
-            # Keep data in daily-capable form, but default selection to monthly
-            # when any imported series starts in monthly history.
-            default_periodicity = "daily_trading" if all_start_daily else "monthly"
-        else:
-            default_periodicity = combined_periodicity
-
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        updated_selection = extend_selection(current_selection, new_df.columns)
 
         alert_msg = f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
-        if daily_transition_notes:
-            alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(daily_transition_notes)}"
+        if cma_summary.daily_transition_notes:
+            alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(cma_summary.daily_transition_notes)}"
 
         updated_provenance = add_db_import_provenance_entry(
             current_provenance,
@@ -7106,7 +7080,7 @@ def po_add_series_from_database(
             False,
             updated_selection,
             alert_msg,
-            "orange" if daily_transition_notes else "green",
+            "orange" if cma_summary.daily_transition_notes else "green",
             False,
             default_periodicity,
             True,
@@ -7230,10 +7204,11 @@ def po_add_raw_series_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged raw-data requests.")
 
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
-            duplicates = [s for s in new_df.columns if s in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            new_df.columns,
+            existing_data=existing_data,
+        )
+        if duplicates:
                 return (
                     n_no, n_no, n_no, n_no, n_no, n_no,
                     n_no, n_no, n_no,
@@ -7247,34 +7222,20 @@ def po_add_raw_series_from_database(
                     n_no,
                     n_no,
                 )
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_data=existing_data,
+            new_periodicity=load_result.periodicity,
+        )
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = merge_result.default_periodicity
 
-        new_periodicity = load_result.periodicity
-        if existing_data is not None:
-            existing_df = _raw_df(existing_data)
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = new_df
-            combined_periodicity = new_periodicity
-            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
+        updated_selection = extend_selection(current_selection, merge_result.imported_df.columns)
 
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
-
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
-
-        updated_bench = dict(current_bench or {})
-        updated_bench.update(load_result.benchmark_assignments or {})
+        updated_bench = merge_assignments(current_bench, load_result.benchmark_assignments)
 
         updated_provenance = add_db_import_provenance_entry(
             current_provenance,
@@ -7412,10 +7373,11 @@ def po_add_underlying_categories_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged underlying category requests.")
 
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
-            duplicates = [series_name for series_name in new_df.columns if series_name in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            new_df.columns,
+            existing_data=existing_data,
+        )
+        if duplicates:
                 duplicate_text = f"Cannot add duplicate series: {', '.join(duplicates)}"
                 return (
                     n_no, n_no, n_no, n_no, n_no, n_no,
@@ -7429,16 +7391,19 @@ def po_add_underlying_categories_from_database(
                     False,
                     n_no,
                 )
-
-        merge_result = _shared_merge_uploaded_with_existing(existing_data, existing_periodicity, new_df)
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_data=existing_data,
+            new_periodicity=load_result.periodicity,
+        )
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
         periodicity_options = merge_result.periodicity_options
         default_periodicity = merge_result.default_periodicity
         imported_df = merge_result.imported_df
 
-        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        updated_selection = extend_selection(current_selection, imported_df.columns)
 
         updated_provenance = add_db_import_provenance_entry(
             current_provenance,
@@ -7584,10 +7549,11 @@ def po_add_portfolios_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged portfolio requests.")
 
-        if existing_data:
-            existing_cols = set(_raw_df(existing_data).columns)
-            duplicates = [s for s in new_df.columns if s in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            new_df.columns,
+            existing_data=existing_data,
+        )
+        if duplicates:
                 return (
                     n_no, n_no, n_no, n_no, n_no, n_no,
                     f"Cannot add duplicate series: {', '.join(duplicates)}",
@@ -7602,32 +7568,19 @@ def po_add_portfolios_from_database(
                     False,
                     n_no,
                 )
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_data=existing_data,
+            new_periodicity=load_result.periodicity or "monthly",
+        )
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = merge_result.default_periodicity
+        updated_selection = extend_selection(current_selection, merge_result.imported_df.columns)
 
-        new_periodicity = load_result.periodicity or "monthly"
-        if existing_data is not None:
-            existing_df = _raw_df(existing_data)
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = _normalize_monthly_df_if_needed(new_df, new_periodicity)
-            combined_periodicity = new_periodicity
-
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
-
-        updated_bench = dict(current_bench or {})
-        updated_bench.update(load_result.benchmark_assignments or {})
+        updated_bench = merge_assignments(current_bench, load_result.benchmark_assignments)
 
         updated_provenance = add_db_import_provenance_entry(
             current_provenance,

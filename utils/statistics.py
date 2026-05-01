@@ -855,3 +855,94 @@ def generate_correlogram_cached(dataset_key: str, periodicity: str, selected_ser
         'available_series': available_series,
         'n': len(available_series)
     }
+
+
+def _pca_sign_normalized_loadings(eigenvectors: np.ndarray) -> np.ndarray:
+    """Normalize PCA loading signs deterministically for stable display/tests."""
+    loadings = np.array(eigenvectors, dtype=float, copy=True)
+    for col_idx in range(loadings.shape[1]):
+        column = loadings[:, col_idx]
+        if column.size == 0 or not np.isfinite(column).any():
+            continue
+        anchor_idx = int(np.nanargmax(np.abs(column)))
+        if column[anchor_idx] < 0:
+            loadings[:, col_idx] = -column
+    return loadings
+
+
+def _build_pca_payload(clean_df: pd.DataFrame, basis: str = "correlation"):
+    basis_value = "covariance" if str(basis or "").lower() == "covariance" else "correlation"
+    clean_df = clean_df.dropna(axis=1, how="all").dropna(axis=0, how="any")
+    if clean_df.shape[0] < 2 or clean_df.shape[1] < 2:
+        return None
+
+    matrix_df = clean_df.cov() if basis_value == "covariance" else clean_df.corr()
+    matrix_df = matrix_df.replace([np.inf, -np.inf], np.nan)
+    finite_mask = np.isfinite(matrix_df.to_numpy(dtype=float)).all(axis=0)
+    if finite_mask.sum() < 2:
+        return None
+    matrix_df = matrix_df.loc[finite_mask, finite_mask]
+    if matrix_df.shape[0] < 2:
+        return None
+
+    matrix = (matrix_df.to_numpy(dtype=float) + matrix_df.to_numpy(dtype=float).T) / 2.0
+    if not np.isfinite(matrix).all():
+        return None
+
+    eigenvalues, eigenvectors = np.linalg.eigh(matrix)
+    order = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[order]
+    eigenvectors = eigenvectors[:, order]
+
+    # Numerical roundoff can produce tiny negative values for positive semi-definite
+    # matrices. Clamp only display values used for explained-variance ratios.
+    display_eigenvalues = np.where(eigenvalues < 0, np.where(eigenvalues > -1e-12, 0.0, eigenvalues), eigenvalues)
+    total = float(np.nansum(display_eigenvalues))
+    if not np.isfinite(total) or total <= 0:
+        return None
+    ratios = display_eigenvalues / total
+    cumulative = np.cumsum(ratios)
+
+    components = [f"PC{i + 1}" for i in range(len(display_eigenvalues))]
+    explained_variance_df = pd.DataFrame(
+        {
+            "Component": components,
+            "Explained Variance": display_eigenvalues,
+            "Explained Variance Ratio": ratios,
+            "Cumulative Variance Ratio": cumulative,
+        }
+    )
+
+    loadings = _pca_sign_normalized_loadings(eigenvectors)
+    loadings_df = pd.DataFrame(loadings, index=list(matrix_df.index), columns=components)
+    loadings_df.index.name = "Series"
+
+    return {
+        "basis": basis_value,
+        "clean_df": clean_df.loc[:, list(matrix_df.index)],
+        "matrix": matrix_df,
+        "explained_variance": explained_variance_df,
+        "loadings": loadings_df,
+        "available_series": list(matrix_df.index),
+        "n": int(matrix_df.shape[0]),
+    }
+
+
+@cache_config.cache.memoize(timeout=0)
+def generate_pca_cached(dataset_key: str, periodicity: str, selected_series: tuple,
+                        returns_type: str, benchmark_assignments: str, long_short_assignments: str,
+                        date_range_str: str, vol_scaler: float = 0, vol_scaling_assignments: str = "",
+                        basis: str = "correlation"):
+    """Generate PCA outputs from the transformed AnalyticsTool return dataset."""
+    display_df = calculate_excess_returns(
+        dataset_key, periodicity, selected_series, benchmark_assignments, returns_type, long_short_assignments,
+        date_range_str, vol_scaler, vol_scaling_assignments
+    )
+    if display_df.empty:
+        return None
+
+    result = _build_pca_payload(display_df, basis=basis)
+    if result is None:
+        return None
+    result["display_df"] = display_df
+    return result

@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 import cache_config
 from utils.returns import calculate_excess_returns, calculate_rolling_returns, df_to_json
 from utils.serialization import date_range_payload_for_cache, mapping_payload_for_cache
-from utils.statistics import calculate_statistics_cached, generate_correlogram_cached
+from utils.statistics import calculate_statistics_cached, generate_correlogram_cached, generate_pca_cached
 
 
 def _build_raw_data(n_days: int = 2800, n_assets: int = 20) -> str:
@@ -127,6 +127,21 @@ def main() -> None:
                 date_payload,
                 10.0,
                 vol_scaling_payload,
+            ),
+        ),
+        (
+            "pca_correlation",
+            lambda: generate_pca_cached(
+                raw_json,
+                "daily_trading",
+                selected,
+                "total",
+                bench_payload,
+                ls_payload,
+                date_payload,
+                10.0,
+                vol_scaling_payload,
+                "correlation",
             ),
         ),
     ]

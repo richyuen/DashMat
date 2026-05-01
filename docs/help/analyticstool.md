@@ -240,6 +240,15 @@ The scatter-matrix view helps identify:
 - clusters of similar behavior
 - pairs that look more or less related than the headline correlation suggests
 
+### Principal Component Analysis
+
+The PCA view options summarize common return drivers across the selected series.
+
+- **PCA (scaled)** uses the correlation matrix so each series has equal scale before decomposition.
+- **PCA (unscaled)** uses the covariance matrix so higher-volatility series contribute more to the components.
+- The view shows explained variance and component loadings for the transformed dataset.
+- PCA score time series and biplots are not part of the Analytics Tool PCA view.
+
 ## Factor Analysis
 
 The **Factor Analysis** tab is for asking how selected series behave relative to another imported series used as a factor.
@@ -297,7 +306,7 @@ When a regime result is hard to interpret, first confirm that the chosen driver 
 
 ## Export and session workflow
 
-Use **File > Download Excel** to export the current analytics outputs to a multi-sheet workbook. The export includes the tabular outputs for statistics, returns, rolling views, calendar year, growth, drawdown, correlation and covariance, factor analysis, and regime analysis.
+Use **File > Download Excel** to export the current analytics outputs to a multi-sheet workbook. The export includes the tabular outputs for statistics, returns, rolling views, calendar year, growth, drawdown, correlation and covariance, PCA explained variance and loadings, factor analysis, and regime analysis.
 
 A good export workflow is:
 

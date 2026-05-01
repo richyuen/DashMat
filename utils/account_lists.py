@@ -107,6 +107,7 @@ AT_EXTRA_CONTROL_STORE_IDS = [
     "at-regime-definition-store",
     "at-date-range-store",
     "at-vol-scaler-value-store",
+    "at-correlation-controls-store",
 ]
 
 PO_EXTRA_CONTROL_STORE_IDS = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from pathlib import Path
 
 import pandas as pd
 
@@ -17,4 +18,10 @@ def test_time_ms_returns_float():
     elapsed = bench._time_ms(lambda: 1, repeats=2, warmups=1, clear_cache=False)
     assert isinstance(elapsed, float)
     assert elapsed >= 0.0
+
+
+def test_benchmark_includes_pca_scenario():
+    source = Path(bench.__file__).read_text(encoding="utf-8")
+    assert "pca_correlation" in source
+    assert "generate_pca_cached" in source
 

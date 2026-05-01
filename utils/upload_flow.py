@@ -92,9 +92,17 @@ class UploadMergeResult:
     imported_df: pd.DataFrame
 
 
-def merge_uploaded_with_existing(existing_data, existing_periodicity, new_df, *, dataset_key=None) -> UploadMergeResult:
+def merge_uploaded_with_existing(
+    existing_data,
+    existing_periodicity,
+    new_df,
+    *,
+    dataset_key=None,
+    new_periodicity: str | None = None,
+    daily_default_periodicity: str = "daily_trading",
+) -> UploadMergeResult:
     """Apply periodicity compatibility and merge new upload data."""
-    new_periodicity = detect_periodicity(new_df)
+    new_periodicity = new_periodicity or detect_periodicity(new_df)
     effective_new_df = new_df
 
     if existing_data is not None or dataset_key is not None:
@@ -119,7 +127,9 @@ def merge_uploaded_with_existing(existing_data, existing_periodicity, new_df, *,
         merged_df = effective_new_df
 
     periodicity_options = get_available_periodicities(combined_periodicity)
-    default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
+    default_periodicity = (
+        daily_default_periodicity if combined_periodicity == "daily" else combined_periodicity
+    )
     return UploadMergeResult(
         merged_df=merged_df,
         combined_periodicity=combined_periodicity,

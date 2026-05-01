@@ -10,6 +10,7 @@ from utils.statistics import (
     calculate_growth_of_dollar,
     calculate_statistics_cached,
     generate_correlogram_cached,
+    generate_pca_cached,
     maximum_drawdown,
 )
 
@@ -212,3 +213,108 @@ def test_generate_correlogram_cached_supports_oas_matrices(raw_json):
     assert result is not None
     assert result["corr_matrix"].shape == (2, 2)
     assert result["cov_matrix"].shape == (2, 2)
+
+
+def test_generate_pca_cached_correlation_basis_returns_variance_and_loadings(raw_json):
+    result = generate_pca_cached(
+        raw_json,
+        "daily",
+        ("Asset_A", "Asset_B", "Asset_C"),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        0,
+        mapping_payload_for_cache({}),
+        "correlation",
+    )
+
+    assert result is not None
+    explained = result["explained_variance"]
+    loadings = result["loadings"]
+    assert list(explained.columns) == [
+        "Component",
+        "Explained Variance",
+        "Explained Variance Ratio",
+        "Cumulative Variance Ratio",
+    ]
+    assert loadings.shape == (3, 3)
+    assert explained["Explained Variance Ratio"].sum() == pytest.approx(1.0)
+
+
+def test_generate_pca_cached_covariance_basis_differs_with_unequal_vol(sample_returns_df):
+    scaled_df = sample_returns_df[["Asset_A", "Asset_B", "Asset_C"]].copy()
+    scaled_df["Asset_C"] = scaled_df["Asset_C"] * 10
+    raw_json = df_to_json(scaled_df)
+
+    corr_result = generate_pca_cached(
+        raw_json,
+        "daily",
+        tuple(scaled_df.columns),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        0,
+        mapping_payload_for_cache({}),
+        "correlation",
+    )
+    cov_result = generate_pca_cached(
+        raw_json,
+        "daily",
+        tuple(scaled_df.columns),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        0,
+        mapping_payload_for_cache({}),
+        "covariance",
+    )
+
+    assert corr_result is not None
+    assert cov_result is not None
+    assert corr_result["explained_variance"]["Explained Variance Ratio"].iloc[0] != pytest.approx(
+        cov_result["explained_variance"]["Explained Variance Ratio"].iloc[0]
+    )
+
+
+def test_generate_pca_cached_handles_insufficient_overlap(sample_returns_df):
+    sparse = sample_returns_df[["Asset_A", "Asset_B"]].copy()
+    sparse.loc[sparse.index[1:], "Asset_A"] = pd.NA
+    sparse.loc[sparse.index[:-1], "Asset_B"] = pd.NA
+
+    result = generate_pca_cached(
+        df_to_json(sparse),
+        "daily",
+        ("Asset_A", "Asset_B"),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        0,
+        mapping_payload_for_cache({}),
+        "correlation",
+    )
+
+    assert result is None
+
+
+def test_generate_pca_cached_sign_normalization_is_stable(raw_json):
+    result = generate_pca_cached(
+        raw_json,
+        "daily",
+        ("Asset_A", "Asset_B", "Asset_C"),
+        "total",
+        mapping_payload_for_cache({}),
+        mapping_payload_for_cache({}),
+        date_range_payload_for_cache(None),
+        0,
+        mapping_payload_for_cache({}),
+        "correlation",
+    )
+
+    loadings = result["loadings"]
+    for component in loadings.columns:
+        anchor = loadings[component].abs().idxmax()
+        assert loadings.loc[anchor, component] >= 0

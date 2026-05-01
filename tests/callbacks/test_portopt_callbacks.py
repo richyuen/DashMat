@@ -1432,6 +1432,38 @@ def test_portopt_modal_harness_supports_active_tab():
     assert "'--active-tab', $ActiveTab" in wrapper_text
 
 
+def test_portopt_import_harness_tracks_phase_windows_and_request_attribution():
+    harness_text = Path("tools/playwright/portopt_import_harness.py").read_text(encoding="utf-8")
+
+    assert "request_tracker.summary()" in harness_text
+    assert '"dashUpdateRequestCountMedian"' in harness_text
+    assert '"dashUpdateRequestBytesMedian"' in harness_text
+    assert '"dashUpdateResponseBytesMedian"' in harness_text
+    assert '"topCallbacksByFrequency"' in harness_text
+    assert '"dbImportToSeriesModalMs"' in harness_text
+    assert '"dbSeriesConfirmToReadyMs"' in harness_text
+    assert '"peerPortfolioImportToSeriesModalMs"' in harness_text
+    assert '"peerPortfolioSeriesConfirmToReadyMs"' in harness_text
+    assert '"indexPortfolioImportToSeriesModalMs"' in harness_text
+    assert '"indexPortfolioSeriesConfirmToReadyMs"' in harness_text
+    assert '"dbImportWindow"' in harness_text
+    assert '"peerPortfolioImportWindow"' in harness_text
+    assert '"indexPortfolioImportWindow"' in harness_text
+    assert "def build_run_specs(page) -> list[PortoptImportRunSpec]:" in harness_text
+
+
+def test_portopt_import_harness_wrapper_targets_new_script():
+    harness_text = Path("tools/playwright/portopt_import_harness.py").read_text(encoding="utf-8")
+    wrapper_text = Path("tools/playwright/portopt_import_harness.ps1").read_text(encoding="utf-8")
+
+    assert 'argparse.ArgumentParser(description="PortOpt import-flow harness")' in harness_text
+    assert '"label": args.label or "portopt-import-harness"' in harness_text
+    assert "(Join-Path $root 'tools\\playwright\\portopt_import_harness.py')" in wrapper_text
+    assert "'--base-url', $BaseUrl" in wrapper_text
+    assert "'--runs', $Runs.ToString()" in wrapper_text
+    assert "'--server-log'" in wrapper_text
+
+
 def test_po_init_date_range_is_idempotent_when_range_is_current(monkeypatch, page_modules):
     _, portopt = page_modules
 
@@ -4110,6 +4142,163 @@ def test_po_add_series_from_database_persists_imported_cmabench_defaults(monkeyp
 
     assert result[-2] == {"updated": True}
     assert result[-1] == {"Asset_A": "Bench_A", "Asset_B": "Bench_B"}
+
+
+def test_po_add_raw_series_from_database_updates_selection_and_preserves_extra_stores(monkeypatch, page_modules):
+    _, portopt = page_modules
+    imported_df = pd.DataFrame({"Imported": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    imported_df.index.name = "Date"
+
+    monkeypatch.setattr(
+        portopt,
+        "load_factor_series",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returns_df=imported_df,
+            benchmark_assignments={"Imported": "Bench_1"},
+            periodicity="daily",
+        ),
+    )
+    monkeypatch.setattr(portopt, "add_db_import_provenance_entry", lambda current, **_kwargs: {"updated": True})
+
+    result = portopt.po_add_raw_series_from_database(
+        1,
+        "factor",
+        [{"series_key": "X"}],
+        None,
+        None,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": "Bench_A"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        {"Asset_A": True},
+        {"Asset_A": 0.0},
+        {"Asset_A": 1.0},
+        {"Asset_A": False},
+        {},
+    )
+
+    assert result[1] == "daily"
+    assert result[3] == "daily_trading"
+    assert result[5] == ["Asset_A", "Imported"]
+    assert result[11] == {"Asset_A": "None", "Imported": "Bench_1"}
+    assert result[12] == {"Asset_A": "Bench_A"}
+    assert result[17] == {"Asset_A": 0.0}
+    assert result[18] == {"Asset_A": 1.0}
+    assert result[19] == {"Asset_A": False}
+    assert result[20] is False
+    assert result[21] == []
+    assert result[23] is no_update
+    assert result[26] == {"updated": True}
+
+
+def test_po_add_underlying_categories_from_database_updates_selection_and_preserves_extra_stores(monkeypatch, page_modules):
+    _, portopt = page_modules
+    imported_df = pd.DataFrame({"Underlying": [0.01, 0.02]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    imported_df.index.name = "Date"
+
+    monkeypatch.setattr(
+        portopt,
+        "load_underlying_category_series",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returns_df=imported_df,
+            periodicity="daily",
+        ),
+    )
+    monkeypatch.setattr(portopt, "add_db_import_provenance_entry", lambda current, **_kwargs: {"updated": True})
+
+    result = portopt.po_add_underlying_categories_from_database(
+        1,
+        [{"portfolio": "CoreTD", "desc": "Growth"}],
+        None,
+        None,
+        ["Asset_A"],
+        {"Asset_A": "None"},
+        {"Asset_A": "Bench_A"},
+        {"Asset_A": False},
+        ["Asset_A"],
+        {"Asset_A": True},
+        {"Asset_A": 0.0},
+        {"Asset_A": 1.0},
+        {"Asset_A": False},
+        {},
+    )
+
+    assert result[1] == "daily"
+    assert result[3] == "daily_trading"
+    assert result[5] == ["Asset_A", "Underlying"]
+    assert result[11] == {"Asset_A": "None"}
+    assert result[12] == {"Asset_A": "Bench_A"}
+    assert result[17] == {"Asset_A": 0.0}
+    assert result[18] == {"Asset_A": 1.0}
+    assert result[19] == {"Asset_A": False}
+    assert result[20] is False
+    assert result[21] == []
+    assert result[23] is no_update
+    assert result[25] == {"updated": True}
+
+
+def test_po_add_portfolios_from_database_preserves_portopt_specific_state(monkeypatch, page_modules):
+    _, portopt = page_modules
+    imported_df = pd.DataFrame(
+        {"Portfolio_A": [0.05, 0.01]},
+        index=pd.date_range("2024-03-01", periods=2, freq="B"),
+    )
+    imported_df.index.name = "Date"
+
+    monkeypatch.setattr(
+        portopt,
+        "load_portfolio_series",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returns_df=imported_df,
+            periodicity="daily",
+            benchmark_assignments={"Portfolio_A": "BMK_P"},
+        ),
+    )
+    monkeypatch.setattr(
+        portopt,
+        "add_db_import_provenance_entry",
+        lambda current, **_kwargs: {"loader": "portfolio", "previous": current},
+    )
+
+    result = portopt.po_add_portfolios_from_database(
+        1,
+        "peer",
+        [{"portfolio": "P1"}],
+        None,
+        None,
+        ["Existing_A"],
+        {"Existing_A": "BMK_0"},
+        {"Existing_A": "CMA_0"},
+        {"Existing_A": False},
+        ["Existing_A"],
+        {"Existing_A": True},
+        {"Existing_A": 0.0},
+        {"Existing_A": 1.0},
+        {"Existing_A": False},
+        {"old": True},
+    )
+
+    out_df = pd.read_json(StringIO(_raw_json_value(result[0])), orient="split")
+    out_df.index = pd.to_datetime(out_df.index)
+
+    assert list(out_df.columns) == ["Portfolio_A"]
+    assert result[1] == "daily"
+    assert result[3] == "daily_trading"
+    assert result[5] == ["Existing_A", "Portfolio_A"]
+    assert result[6] == "Loaded 1 series with 2 rows from peer portfolios."
+    assert result[7] == "green"
+    assert result[10] is True
+    assert result[11] == {"Existing_A": "BMK_0", "Portfolio_A": "BMK_P"}
+    assert result[12] == {"Existing_A": "CMA_0"}
+    assert result[17] == {"Existing_A": 0.0}
+    assert result[18] == {"Existing_A": 1.0}
+    assert result[19] == {"Existing_A": False}
+    assert result[20] is False
+    assert result[21] == []
+    assert result[22] == []
+    assert result[24] is True
+    assert result[25] == {"loader": "portfolio", "previous": {"old": True}}
 
 
 def test_po_load_cmabench_option_values_is_lazy(monkeypatch, page_modules):

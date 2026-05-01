@@ -19,6 +19,14 @@ from dash.exceptions import PreventUpdate
 import cache_config
 from utils.parsing import get_sheet_names
 from utils.add_series_flow import import_selected_disabled
+from utils.import_flow import (
+    build_cma_import_summary,
+    extend_selection,
+    find_import_duplicates,
+    merge_assignments,
+    merge_imported_dataset,
+    resolve_cma_default_periodicity,
+)
 from utils.date_range_flow import (
     compute_date_candidate_bundle,
     compute_common_daily_candidates,
@@ -53,6 +61,7 @@ from utils.statistics import (
     calculate_growth_of_dollar,
     calculate_statistics_cached,
     generate_correlogram_cached,
+    generate_pca_cached,
 )
 from utils.covariance import (
     format_cov_shrinkage_spec_label,
@@ -350,6 +359,98 @@ def _correlogram_request_key(
             str(normalize_decay_input(decay_value, 63.0)),
             str(shrinkage or "none"),
             str(shrinkage_target or "scaled_identity"),
+        ]
+    )
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+
+CORRELATION_CONTROL_DEFAULTS = {
+    "view": "correlogram",
+    "exp_weighted": False,
+    "halflife": 63,
+    "shrinkage": "none",
+    "shrinkage_target": "scaled_identity",
+    "block_width": None,
+    "pca_basis": "correlation",
+}
+
+
+def _normalize_pca_basis(value) -> str:
+    return "covariance" if str(value or "").strip().lower() == "covariance" else "correlation"
+
+
+def _is_pca_view(value) -> bool:
+    return str(value or "").strip().lower() in {"pca", "pca_correlation", "pca_covariance"}
+
+
+def _pca_basis_from_view(view, fallback="correlation") -> str:
+    normalized_view = str(view or "").strip().lower()
+    if normalized_view == "pca_covariance":
+        return "covariance"
+    if normalized_view == "pca_correlation":
+        return "correlation"
+    return _normalize_pca_basis(fallback)
+
+
+def _normalize_correlation_view(value, pca_basis="correlation") -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"correlation", "covariance", "correlogram", "pca_correlation", "pca_covariance"}:
+        return normalized
+    if normalized == "pca":
+        return f"pca_{_normalize_pca_basis(pca_basis)}"
+    return "correlogram"
+
+
+def _normalize_correlation_controls(value) -> dict:
+    if not isinstance(value, dict):
+        value = {}
+    controls = dict(CORRELATION_CONTROL_DEFAULTS)
+    controls.update({k: value.get(k) for k in controls.keys() if k in value})
+    controls["view"] = _normalize_correlation_view(controls.get("view"), controls.get("pca_basis"))
+    controls["exp_weighted"] = bool(controls["exp_weighted"])
+    controls["halflife"] = normalize_decay_input(controls["halflife"], 63.0)
+    controls["shrinkage"] = controls["shrinkage"] if controls["shrinkage"] in {"none", "ledoit_wolf", "oas"} else "none"
+    controls["shrinkage_target"] = (
+        controls["shrinkage_target"]
+        if controls["shrinkage_target"] in {"scaled_identity", "constant_correlation"}
+        else "scaled_identity"
+    )
+    controls["pca_basis"] = _normalize_pca_basis(controls.get("pca_basis"))
+    return controls
+
+
+def _export_pca_basis(correlation_controls, live_pca_basis) -> str:
+    if isinstance(correlation_controls, dict) and correlation_controls.get("view") is not None:
+        return _pca_basis_from_view(correlation_controls.get("view"), correlation_controls.get("pca_basis"))
+    if isinstance(correlation_controls, dict) and correlation_controls.get("pca_basis") is not None:
+        return _normalize_pca_basis(correlation_controls.get("pca_basis"))
+    return _normalize_pca_basis(live_pca_basis)
+
+
+def _pca_request_key(
+    dataset_key,
+    periodicity,
+    selected_series,
+    returns_type,
+    benchmark_assignments,
+    long_short_assignments,
+    date_range,
+    vol_scaler,
+    vol_scaling_assignments,
+    pca_basis,
+):
+    payload = "|".join(
+        [
+            str(dataset_key or ""),
+            str(periodicity or "daily"),
+            ",".join(selected_series or ()),
+            str(returns_type or "total"),
+            _mapping_payload(benchmark_assignments),
+            _mapping_payload(long_short_assignments),
+            _date_range_payload(date_range),
+            str(vol_scaler or 0),
+            _mapping_payload(vol_scaling_assignments),
+            _normalize_pca_basis(pca_basis),
         ]
     )
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
@@ -3584,6 +3685,8 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                                 {"value": "correlation", "label": "Correlation"},
                                                 {"value": "covariance", "label": "Covariance"},
                                                 {"value": "correlogram", "label": "Correlogram"},
+                                                {"value": "pca_correlation", "label": "PCA (scaled)"},
+                                                {"value": "pca_covariance", "label": "PCA (unscaled)"},
                                             ],
                                             value="correlogram",
                                             size="sm",
@@ -3591,7 +3694,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         style={"height": "36px", "display": "flex", "alignItems": "center"},
                                     ),
                                 ]),
-                                html.Div([
+                                html.Div(id="at-correlation-exp-wt-wrapper", children=[
                                     dmc.Text("Exp Wt", size="sm", fw=500, mb=3),
                                     html.Div(
                                         dmc.Switch(
@@ -3602,7 +3705,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         style={"height": "36px", "display": "flex", "alignItems": "center"},
                                     ),
                                 ]),
-                                html.Div([
+                                html.Div(id="at-correlation-halflife-wrapper", children=[
                                     dmc.Text("Half-Life", size="sm", fw=500, mb=3),
                                     html.Div(
                                         dmc.Tooltip(
@@ -3624,7 +3727,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         style={"height": "36px", "display": "flex", "alignItems": "center"},
                                     ),
                                 ]),
-                                html.Div([
+                                html.Div(id="at-correlation-shrinkage-wrapper", children=[
                                     dmc.Text("Cov Shrinkage", size="sm", fw=500, mb=3),
                                     html.Div(
                                         dmc.Select(
@@ -3643,7 +3746,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         style={"height": "36px", "display": "flex", "alignItems": "center"},
                                     ),
                                 ]),
-                                html.Div([
+                                html.Div(id="at-correlation-shrinkage-target-wrapper", children=[
                                     dmc.Text("Target", size="sm", fw=500, mb=3),
                                     html.Div(
                                         dmc.Select(
@@ -3662,7 +3765,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                         style={"height": "36px", "display": "flex", "alignItems": "center"},
                                     ),
                                 ]),
-                                html.Div([
+                                html.Div(id="at-correlogram-block-width-wrapper", children=[
                                     dmc.Text("Block Size", size="sm", fw=500, mb=3),
                                     dmc.NumberInput(
                                         id="at-correlogram-block-width",
@@ -4814,6 +4917,7 @@ layout = dmc.Container(
         dcc.Store(id="at-factor-transform-store", data="raw", storage_type="session"),
         dcc.Store(id="at-factor-series-store", data=None, storage_type="session"),
         dcc.Store(id="at-factor-qq-reference-store", data="normal", storage_type="session"),
+        dcc.Store(id="at-correlation-controls-store", data=CORRELATION_CONTROL_DEFAULTS),
         dcc.Store(id="at-conditional-view-store", data="forward", storage_type="session"),
         dcc.Store(id="at-conditional-comparator-store", data="le", storage_type="session"),
         dcc.Store(id="at-conditional-threshold-store", data=0, storage_type="session"),
@@ -5657,6 +5761,64 @@ clientside_callback(
     prevent_initial_call=True,
 )
 
+
+clientside_callback(
+    """
+    function(view, expWeighted, halflife, shrinkage, shrinkageTarget, blockWidth) {
+        const normalizedView = view || "correlogram";
+        try {
+            const savedRaw = window.sessionStorage.getItem("at-correlation-controls-store");
+            const saved = savedRaw == null ? null : JSON.parse(savedRaw);
+            const savedView = saved && typeof saved.view === "string" ? saved.view : "";
+            const savedIsPca = savedView === "pca" || savedView === "pca_correlation" || savedView === "pca_covariance";
+            if (savedIsPca && normalizedView === "correlogram" && !window.__dashmatCorrelationControlsRestoreApplied) {
+                if (!window.__dashmatCorrelationControlsRestoreScheduled) {
+                    window.__dashmatCorrelationControlsRestoreScheduled = true;
+                    window.setTimeout(function() {
+                        if (!document.getElementById("at-correlation-view-switch")) {
+                            return;
+                        }
+                        const pcaView = savedView === "pca_covariance" || saved.pca_basis === "covariance"
+                            ? "pca_covariance"
+                            : "pca_correlation";
+                        window.__dashmatCorrelationControlsRestoreApplied = true;
+                        dash_clientside.set_props("at-correlation-exp-wt-switch", {checked: !!saved.exp_weighted});
+                        dash_clientside.set_props("at-correlation-halflife-input", {value: saved.halflife == null ? 63 : saved.halflife});
+                        dash_clientside.set_props("at-correlation-shrinkage-select", {value: saved.shrinkage || "none"});
+                        dash_clientside.set_props("at-correlation-shrinkage-target-select", {value: saved.shrinkage_target || "scaled_identity"});
+                        dash_clientside.set_props("at-correlogram-block-width", {value: saved.block_width == null ? null : saved.block_width});
+                        dash_clientside.set_props("at-correlation-view-switch", {value: pcaView});
+                    }, 5000);
+                }
+                return saved;
+            }
+        } catch (_err) {}
+        const payload = {
+            view: normalizedView,
+            exp_weighted: !!expWeighted,
+            halflife: halflife == null ? 63 : halflife,
+            shrinkage: shrinkage || "none",
+            shrinkage_target: shrinkageTarget || "scaled_identity",
+            block_width: blockWidth == null ? null : blockWidth,
+            pca_basis: normalizedView === "pca_covariance" ? "covariance" : "correlation"
+        };
+        try {
+            window.sessionStorage.setItem("at-correlation-controls-store", JSON.stringify(payload));
+        } catch (_err) {}
+        return payload;
+    }
+    """,
+    Output("at-correlation-controls-store", "data"),
+    Input("at-correlation-view-switch", "value"),
+    Input("at-correlation-exp-wt-switch", "checked"),
+    Input("at-correlation-halflife-input", "value"),
+    Input("at-correlation-shrinkage-select", "value"),
+    Input("at-correlation-shrinkage-target-select", "value"),
+    Input("at-correlogram-block-width", "value"),
+    prevent_initial_call=True,
+)
+
+
 clientside_callback(
     """
     function(value) {
@@ -5710,11 +5872,6 @@ clientside_callback(
     Input("at-date-range-store", "data"),
     Input("at-vol-scaler-value-store", "data"),
     Input("at-vol-scaling-assignments-store", "data"),
-    Input("at-correlation-view-switch", "value"),
-    Input("at-correlation-exp-wt-switch", "checked"),
-    Input("at-correlation-halflife-input", "value"),
-    Input("at-correlation-shrinkage-select", "value"),
-    Input("at-correlation-shrinkage-target-select", "value"),
     prevent_initial_call=True,
 )
 
@@ -7396,10 +7553,11 @@ def add_series_from_database(
         )
 
     try:
-        if existing_dataset_key:
-            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
-            duplicates = [s for s in selected_benches if s in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            selected_benches,
+            existing_dataset_key=existing_dataset_key,
+        )
+        if duplicates:
                 return (
                     n_no, n_no, n_no, n_no, n_no,
                     n_no,
@@ -7417,64 +7575,30 @@ def add_series_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for selected FOFBench values.")
 
-        # Treat imports as daily when any selected series has a daily phase.
-        # This mirrors raw factor/fund/performance import behavior.
-        new_periodicity = "daily"
-        any_daily_phase = False
-        all_start_daily = True
-        daily_transition_notes: list[str] = []
-        for series_name in new_df.columns:
-            meta = db_meta.get(series_name, {}) if isinstance(db_meta, dict) else {}
-            starts_daily = bool(meta.get("starts_daily", True))
-            daily_start_date = meta.get("daily_start_date")
-            has_daily_phase = bool(daily_start_date) or starts_daily
-            any_daily_phase = any_daily_phase or has_daily_phase
-            if not starts_daily:
-                all_start_daily = False
-                if daily_start_date:
-                    daily_transition_notes.append(f"{series_name}: {daily_start_date}")
-                elif not has_daily_phase:
-                    daily_transition_notes.append(f"{series_name}: no daily phase detected")
-                else:
-                    daily_transition_notes.append(f"{series_name}: daily phase starts after initial history")
-        if not any_daily_phase:
-            new_periodicity = "monthly"
+        cma_summary = build_cma_import_summary(new_df, db_meta)
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_dataset_key=existing_dataset_key,
+            new_periodicity=cma_summary.new_periodicity,
+        )
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = resolve_cma_default_periodicity(
+            combined_periodicity,
+            cma_summary,
+            daily_default_periodicity="daily_trading",
+        )
 
-        if existing_dataset_key is not None:
-            existing_df = _raw_df_by_key(existing_dataset_key)
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = new_df
-            combined_periodicity = new_periodicity
-            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
-
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        if combined_periodicity == "daily":
-            # Keep data in daily-capable form, but default selection to monthly
-            # when any imported series starts in monthly history.
-            default_periodicity = "daily_trading" if all_start_daily else "monthly"
-        else:
-            default_periodicity = combined_periodicity
-
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        updated_selection = extend_selection(current_selection, new_df.columns)
 
         alert_msg = (
             f"Loaded {len(new_df.columns)} series with {len(new_df)} rows from database"
         )
-        if daily_transition_notes:
-            alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(daily_transition_notes)}"
-        alert_color = "orange" if daily_transition_notes else "green"
+        if cma_summary.daily_transition_notes:
+            alert_msg = f"{alert_msg}. Series become daily on: {'; '.join(cma_summary.daily_transition_notes)}"
+        alert_color = "orange" if cma_summary.daily_transition_notes else "green"
         alert_hide = False
         new_first_load = True
 
@@ -7605,10 +7729,11 @@ def at_add_raw_series_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged raw-data requests.")
 
-        if existing_dataset_key:
-            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
-            duplicates = [s for s in new_df.columns if s in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            new_df.columns,
+            existing_dataset_key=existing_dataset_key,
+        )
+        if duplicates:
                 return (
                     n_no, n_no, n_no, n_no, n_no,
                     n_no, n_no, n_no, n_no,
@@ -7622,34 +7747,20 @@ def at_add_raw_series_from_database(
                     n_no,
                     n_no,
                 )
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_dataset_key=existing_dataset_key,
+            new_periodicity=load_result.periodicity,
+        )
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = merge_result.default_periodicity
 
-        new_periodicity = load_result.periodicity
-        if existing_dataset_key is not None:
-            existing_df = _raw_df_by_key(existing_dataset_key)
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = new_df
-            combined_periodicity = new_periodicity
-            merged_df = _normalize_monthly_df_if_needed(merged_df, combined_periodicity)
+        updated_selection = extend_selection(current_selection, merge_result.imported_df.columns)
 
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
-
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
-
-        updated_bench = dict(current_bench or {})
-        updated_bench.update(load_result.benchmark_assignments or {})
+        updated_bench = merge_assignments(current_bench, load_result.benchmark_assignments)
 
         updated_provenance = add_db_import_provenance_entry(
             current_provenance,
@@ -7778,10 +7889,11 @@ def at_add_underlying_categories_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged underlying category requests.")
 
-        if existing_dataset_key:
-            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
-            duplicates = [series_name for series_name in new_df.columns if series_name in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            new_df.columns,
+            existing_dataset_key=existing_dataset_key,
+        )
+        if duplicates:
                 duplicate_text = f"Cannot add duplicate series: {', '.join(duplicates)}"
                 return (
                     n_no, n_no, n_no, n_no, n_no,
@@ -7798,16 +7910,19 @@ def at_add_underlying_categories_from_database(
                     False,
                     n_no,
                 )
-
-        merge_result = _shared_merge_uploaded_with_existing(None, existing_periodicity, new_df, dataset_key=existing_dataset_key)
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_dataset_key=existing_dataset_key,
+            new_periodicity=load_result.periodicity,
+        )
         merged_df = merge_result.merged_df
         combined_periodicity = merge_result.combined_periodicity
         periodicity_options = merge_result.periodicity_options
         default_periodicity = merge_result.default_periodicity
         imported_df = merge_result.imported_df
 
-        new_series = [col for col in imported_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
+        updated_selection = extend_selection(current_selection, imported_df.columns)
 
         updated_provenance = add_db_import_provenance_entry(
             current_provenance,
@@ -7945,10 +8060,11 @@ def at_add_portfolios_from_database(
         if new_df.empty:
             raise ValueError("No rows returned for staged portfolio requests.")
 
-        if existing_dataset_key:
-            existing_cols = set(_raw_df_by_key(existing_dataset_key).columns)
-            duplicates = [s for s in new_df.columns if s in existing_cols]
-            if duplicates:
+        duplicates = find_import_duplicates(
+            new_df.columns,
+            existing_dataset_key=existing_dataset_key,
+        )
+        if duplicates:
                 return (
                     n_no, n_no, n_no, n_no, n_no,
                     n_no,
@@ -7964,32 +8080,19 @@ def at_add_portfolios_from_database(
                     False,
                     n_no,
                 )
+        merge_result = merge_imported_dataset(
+            existing_periodicity,
+            new_df,
+            existing_dataset_key=existing_dataset_key,
+            new_periodicity=load_result.periodicity or "monthly",
+        )
+        merged_df = merge_result.merged_df
+        combined_periodicity = merge_result.combined_periodicity
+        periodicity_options = merge_result.periodicity_options
+        default_periodicity = merge_result.default_periodicity
+        updated_selection = extend_selection(current_selection, merge_result.imported_df.columns)
 
-        new_periodicity = load_result.periodicity or "monthly"
-        if existing_dataset_key is not None:
-            existing_df = _raw_df_by_key(existing_dataset_key)
-            if existing_periodicity == "monthly" and new_periodicity == "daily":
-                new_df = resample_returns(new_df, "monthly")
-                combined_periodicity = "monthly"
-            elif new_periodicity == "monthly" and existing_periodicity == "daily":
-                existing_df = resample_returns(existing_df, "monthly")
-                combined_periodicity = "monthly"
-            else:
-                combined_periodicity = existing_periodicity
-            existing_df = _normalize_monthly_df_if_needed(existing_df, combined_periodicity)
-            new_df = _normalize_monthly_df_if_needed(new_df, combined_periodicity)
-            merged_df = merge_returns(existing_df, new_df)
-        else:
-            merged_df = _normalize_monthly_df_if_needed(new_df, new_periodicity)
-            combined_periodicity = new_periodicity
-
-        periodicity_options = get_available_periodicities(combined_periodicity)
-        default_periodicity = "daily_trading" if combined_periodicity == "daily" else combined_periodicity
-        new_series = [col for col in new_df.columns if col not in (current_selection or [])]
-        updated_selection = (current_selection or []) + new_series
-
-        updated_bench = dict(current_bench or {})
-        updated_bench.update(load_result.benchmark_assignments or {})
+        updated_bench = merge_assignments(current_bench, load_result.benchmark_assignments)
 
         updated_provenance = add_db_import_provenance_entry(
             current_provenance,
@@ -9566,15 +9669,33 @@ def update_statistics(trigger_payload, active_tab="statistics", dataset_key=None
 
 clientside_callback(
     """
-    function(checked, shrinkage) {
+    function(view, checked, shrinkage) {
+        var matrixView = view === "correlation" || view === "covariance";
         var expWeighted = !!checked;
-        var useTarget = !expWeighted && (shrinkage === "ledoit_wolf");
-        return [!expWeighted, expWeighted, !useTarget];
+        var useTarget = matrixView && !expWeighted && (shrinkage === "ledoit_wolf");
+        var hidden = {"display": "none"};
+        var visible = {};
+        return [
+            !matrixView || !expWeighted,
+            !matrixView || expWeighted,
+            !useTarget,
+            matrixView ? visible : hidden,
+            matrixView ? visible : hidden,
+            matrixView ? visible : hidden,
+            matrixView ? visible : hidden,
+            view === "correlogram" ? visible : hidden
+        ];
     }
     """,
     Output("at-correlation-halflife-input", "disabled"),
     Output("at-correlation-shrinkage-select", "disabled"),
     Output("at-correlation-shrinkage-target-select", "disabled"),
+    Output("at-correlation-exp-wt-wrapper", "style"),
+    Output("at-correlation-halflife-wrapper", "style"),
+    Output("at-correlation-shrinkage-wrapper", "style"),
+    Output("at-correlation-shrinkage-target-wrapper", "style"),
+    Output("at-correlogram-block-width-wrapper", "style"),
+    Input("at-correlation-view-switch", "value"),
     Input("at-correlation-exp-wt-switch", "checked"),
     Input("at-correlation-shrinkage-select", "value"),
     prevent_initial_call=False,
@@ -9645,6 +9766,7 @@ def update_correlogram_target_key(
     shrinkage,
     shrinkage_target,
     current_target_key,
+    pca_basis="correlation",
 ):
     _at_require_tab_trigger(trigger_payload, "correlogram")
     if not state_ready:
@@ -9661,10 +9783,30 @@ def update_correlogram_target_key(
     if not _has_complete_date_range(effective_date_range):
         return no_update
 
+    normalized_correlation_view = _normalize_correlation_view(correlation_view, pca_basis)
+
+    if _is_pca_view(normalized_correlation_view):
+        resolved_pca_basis = _pca_basis_from_view(normalized_correlation_view, pca_basis)
+        next_key = _pca_request_key(
+            dataset_key,
+            periodicity,
+            tuple(selected_series or ()),
+            returns_type,
+            benchmark_assignments,
+            long_short_assignments,
+            effective_date_range,
+            vol_scaler,
+            vol_scaling_assignments,
+            resolved_pca_basis,
+        )
+        if next_key == current_target_key:
+            return no_update
+        return next_key
+
     use_weighted_matrix = bool(
-        exp_weighted and correlation_view in {"correlation", "covariance"}
+        exp_weighted and normalized_correlation_view in {"correlation", "covariance"}
     )
-    if correlation_view in {"correlation", "covariance"}:
+    if normalized_correlation_view in {"correlation", "covariance"}:
         effective_shrinkage, effective_target = resolve_cov_shrinkage_spec(
             shrinkage,
             shrinkage_target,
@@ -9682,7 +9824,7 @@ def update_correlogram_target_key(
         effective_date_range,
         vol_scaler,
         vol_scaling_assignments,
-        correlation_view,
+        normalized_correlation_view,
         block_width,
         use_weighted_matrix,
         decay_value if use_weighted_matrix else 63.0,
@@ -9770,7 +9912,7 @@ clientside_callback(
     State("global-color-scheme-toggle", "computedColorScheme"),
     prevent_initial_call=True,
 )
-def update_correlogram(target_key, active_tab, dataset_key, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, shrinkage_target, correlation_view, block_width, theme):
+def update_correlogram(target_key, active_tab, dataset_key, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments, exp_weighted, decay_value, shrinkage, shrinkage_target, correlation_view, block_width, theme, pca_basis="correlation"):
     """Update the Correlogram with custom pairs plot (lazy loaded, size-limited, cached)."""
     # Define empty figure
     empty_fig = go.Figure()
@@ -9801,10 +9943,11 @@ def update_correlogram(target_key, active_tab, dataset_key, periodicity, selecte
     if dataset_key is None or not selected_series or len(selected_series) < 2:
         return empty_graph, request_key
 
+    normalized_correlation_view = _normalize_correlation_view(correlation_view, pca_basis)
     use_weighted_matrix = bool(
-        exp_weighted and correlation_view in {"correlation", "covariance"}
+        exp_weighted and normalized_correlation_view in {"correlation", "covariance"}
     )
-    if correlation_view in {"correlation", "covariance"}:
+    if normalized_correlation_view in {"correlation", "covariance"}:
         effective_shrinkage, effective_target = resolve_cov_shrinkage_spec(
             shrinkage,
             shrinkage_target,
@@ -9813,6 +9956,107 @@ def update_correlogram(target_key, active_tab, dataset_key, periodicity, selecte
     else:
         effective_shrinkage, effective_target = "none", "scaled_identity"
     try:
+        if _is_pca_view(normalized_correlation_view):
+            resolved_pca_basis = _pca_basis_from_view(normalized_correlation_view, pca_basis)
+            pca_result = generate_pca_cached(
+                dataset_key,
+                periodicity or "daily",
+                tuple(selected_series),
+                returns_type,
+                _mapping_payload(benchmark_assignments),
+                _mapping_payload(long_short_assignments),
+                _date_range_payload(date_range),
+                vol_scaler or 0,
+                _mapping_payload(vol_scaling_assignments),
+                resolved_pca_basis,
+            )
+            if pca_result is None:
+                return dmc.Alert(
+                    "PCA requires at least two series with at least two overlapping observations.",
+                    color="yellow",
+                    variant="light",
+                ), request_key
+
+            explained_df = pca_result["explained_variance"].copy()
+            loadings_df = pca_result["loadings"].reset_index()
+            basis_label = "Correlation (scaled)" if pca_result["basis"] == "correlation" else "Covariance (unscaled)"
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Bar(
+                    x=explained_df["Component"],
+                    y=explained_df["Explained Variance Ratio"],
+                    name="Explained variance",
+                    marker_color="#228be6",
+                    hovertemplate="%{x}<br>Explained variance: %{y:.2%}<extra></extra>",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=explained_df["Component"],
+                    y=explained_df["Cumulative Variance Ratio"],
+                    mode="lines+markers",
+                    name="Cumulative",
+                    yaxis="y2",
+                    hovertemplate="%{x}<br>Cumulative: %{y:.2%}<extra></extra>",
+                )
+            )
+            fig.update_layout(
+                title=f"PCA Explained Variance - {basis_label}",
+                template="plotly_white",
+                yaxis=dict(title="Explained variance", tickformat=".0%"),
+                yaxis2=dict(title="Cumulative", tickformat=".0%", overlaying="y", side="right", range=[0, 1]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=60, r=60, t=70, b=50),
+            )
+            apply_chart_theme(fig, theme)
+
+            loadings_columns = []
+            for col in loadings_df.columns:
+                col_def = {
+                    "field": col,
+                    "headerName": col,
+                    "sortable": True,
+                    "resizable": True,
+                    "headerClass": "dashmat-center-header",
+                    "cellStyle": {"textAlign": "center"},
+                }
+                if col != "Series":
+                    col_def["valueFormatter"] = {"function": "params.value != null ? d3.format('.4f')(params.value) : ''"}
+                else:
+                    col_def["pinned"] = "left"
+                loadings_columns.append(col_def)
+
+            return html.Div(
+                style={"display": "flex", "flexDirection": "column", "gap": "1rem", "height": "100%"},
+                children=[
+                    dcc.Graph(figure=fig, style={"height": "360px", "width": "100%"}),
+                    dag.AgGrid(
+                        enableEnterpriseModules=True,
+                        licenseKey=AG_GRID_LICENSE_KEY,
+                        id="at-pca-loadings-grid",
+                        className="ag-theme-alpine",
+                        columnDefs=loadings_columns,
+                        rowData=loadings_df.to_dict("records"),
+                        defaultColDef={
+                            "sortable": True,
+                            "resizable": True,
+                            "suppressHeaderMenuButton": True,
+                            "cellStyle": {"textAlign": "center"},
+                            "headerClass": "dashmat-center-header",
+                        },
+                        style={"height": "360px", "width": "100%"},
+                        dashGridOptions=literal_field_dash_grid_options({
+                            "animateRows": False,
+                            "pagination": False,
+                            "suppressExcelExport": True,
+                            "enableRangeSelection": True,
+                            "suppressCsvExport": True,
+                        }),
+                    ),
+                ],
+            ), request_key
+
         result = generate_correlogram_cached(
             dataset_key,
             periodicity or "daily",
@@ -9837,8 +10081,8 @@ def update_correlogram(target_key, active_tab, dataset_key, periodicity, selecte
         cov_matrix = result['cov_matrix']
 
         # 1. Correlation/Covariance Matrix (Heatmap)
-        if correlation_view in {"correlation", "covariance"}:
-            is_covariance = correlation_view == "covariance"
+        if normalized_correlation_view in {"correlation", "covariance"}:
+            is_covariance = normalized_correlation_view == "covariance"
             matrix_df = cov_matrix if is_covariance else corr_matrix
             matrix_label = "Covariance" if is_covariance else "Correlation"
             weighted_suffix = ""
@@ -10964,6 +11208,34 @@ def _build_drawdown_export_sheet(bundle: _AnalyticsComputeBundle, returns_type) 
         return None
 
 
+def _build_pca_export_sheets(bundle: _AnalyticsComputeBundle, returns_type, pca_basis) -> list[_ExcelSheetSpec]:
+    try:
+        with timed_block("analyticstool.download_excel.pca"):
+            result = generate_pca_cached(
+                bundle.dataset_key,
+                bundle.periodicity,
+                bundle.selected_series,
+                returns_type or "total",
+                bundle.benchmark_payload,
+                bundle.long_short_payload,
+                bundle.date_range_payload,
+                bundle.vol_scaler,
+                bundle.vol_scaling_payload,
+                _normalize_pca_basis(pca_basis),
+            )
+        if result is None:
+            return []
+        explained = result["explained_variance"].copy()
+        loadings = result["loadings"].copy()
+        loadings.index.name = "Series"
+        return [
+            _ExcelSheetSpec(name="PCA Explained Variance", frame=explained, write_index=False, format_index=False),
+            _ExcelSheetSpec(name="PCA Loadings", frame=loadings, write_index=True, format_index=True),
+        ]
+    except Exception:
+        return []
+
+
 def _build_core_export_sheets(
     bundle: _AnalyticsComputeBundle,
     original_periodicity,
@@ -10977,6 +11249,7 @@ def _build_core_export_sheets(
     correlation_halflife,
     correlation_shrinkage,
     correlation_shrinkage_target,
+    pca_basis,
     shared_benchmark_stamp,
     keep_partial: bool = False,
 ) -> list[_ExcelSheetSpec]:
@@ -11013,6 +11286,7 @@ def _build_core_export_sheets(
             _ExcelSheetSpec(name="Covariance", frame=artifacts.cov_df, write_index=True, format_index=True),
         ]
     )
+    sheets.extend(_build_pca_export_sheets(bundle, returns_type, pca_basis))
     return sheets
 
 
@@ -11259,6 +11533,8 @@ def _resolve_export_sheet_specs(
     correlation_halflife,
     correlation_shrinkage,
     correlation_shrinkage_target,
+    correlation_controls,
+    pca_basis,
     factor_series,
     factor_quantiles,
     factor_transform,
@@ -11290,6 +11566,7 @@ def _resolve_export_sheet_specs(
         correlation_halflife,
         correlation_shrinkage,
         correlation_shrinkage_target,
+        _export_pca_basis(correlation_controls, pca_basis),
         shared_benchmark_stamp,
         keep_partial=keep_partial,
     )
@@ -12459,6 +12736,7 @@ def update_drawdown_grid(trigger_payload, active_tab, chart_checked, dataset_key
     State("at-regime-series-store", "data"),
     State("dashmat-saved-series-stamp-store", "data"),
     State("at-partial-period-store", "data"),
+    State("at-correlation-controls-store", "data"),
     prevent_initial_call=True,
 )
 def download_excel(
@@ -12499,6 +12777,8 @@ def download_excel(
     regime_series_store=None,
     shared_benchmark_stamp=None,
     partial_mode=None,
+    correlation_controls=None,
+    pca_basis="correlation",
 ):
     """Generate Excel file with core analytics sheets plus correlation/covariance matrices."""
     if n_clicks is None or dataset_key is None or not selected_series:
@@ -12536,6 +12816,8 @@ def download_excel(
             correlation_halflife,
             correlation_shrinkage,
             correlation_shrinkage_target,
+            correlation_controls,
+            pca_basis,
             factor_series,
             factor_quantiles,
             factor_transform,
