@@ -1,5 +1,6 @@
 """Statistics calculations for returns analysis."""
 
+from dataclasses import dataclass
 from functools import lru_cache
 import logging
 from typing import Optional
@@ -24,6 +25,19 @@ from utils.serialization import (
 SPX_DAILY_INCEPTION_DATE = pd.Timestamp("1988-01-04")
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DrawdownEvent:
+    """Domain-pure facts for one contiguous negative drawdown episode."""
+
+    series_name: str
+    peak_date: pd.Timestamp
+    trough_date: pd.Timestamp
+    recovery_date: Optional[pd.Timestamp]
+    peak_to_trough_days: int
+    trough_to_recovery_days: Optional[int]
+    trough_drawdown_value: float
 
 
 @lru_cache(maxsize=1)
@@ -814,6 +828,76 @@ def calculate_drawdown(dataset_key, periodicity, selected_series, returns_type, 
     except Exception:
         logger.exception("Drawdown calculation failed.")
         return pd.DataFrame()
+
+
+def calculate_drawdown_events(drawdown_df: pd.DataFrame) -> list[DrawdownEvent]:
+    """Extract contiguous negative drawdown episodes from a drawdown matrix.
+
+    The returned events intentionally contain only raw domain facts. UI and
+    export layers own labels, blank-string placeholders, and display formatting.
+    """
+    if drawdown_df is None or drawdown_df.empty:
+        return []
+
+    events: list[DrawdownEvent] = []
+    for series_name in drawdown_df.columns:
+        drawdown = pd.to_numeric(drawdown_df[series_name], errors="coerce").dropna()
+        if drawdown.empty:
+            continue
+
+        in_event = False
+        peak_date: pd.Timestamp | None = None
+        trough_date: pd.Timestamp | None = None
+        trough_value: float | None = None
+        previous_date: pd.Timestamp | None = None
+
+        for raw_date, raw_value in drawdown.items():
+            current_date = pd.Timestamp(raw_date)
+            current_value = float(raw_value)
+            is_drawdown = current_value < 0
+
+            if is_drawdown and not in_event:
+                in_event = True
+                peak_date = previous_date if previous_date is not None else current_date
+                trough_date = current_date
+                trough_value = current_value
+            elif is_drawdown and trough_value is not None and current_value < trough_value:
+                trough_date = current_date
+                trough_value = current_value
+            elif not is_drawdown and in_event:
+                recovery_date = current_date
+                events.append(
+                    DrawdownEvent(
+                        series_name=str(series_name),
+                        peak_date=peak_date,
+                        trough_date=trough_date,
+                        recovery_date=recovery_date,
+                        peak_to_trough_days=(trough_date - peak_date).days,
+                        trough_to_recovery_days=(recovery_date - trough_date).days,
+                        trough_drawdown_value=trough_value,
+                    )
+                )
+                in_event = False
+                peak_date = None
+                trough_date = None
+                trough_value = None
+
+            previous_date = current_date
+
+        if in_event and peak_date is not None and trough_date is not None and trough_value is not None:
+            events.append(
+                DrawdownEvent(
+                    series_name=str(series_name),
+                    peak_date=peak_date,
+                    trough_date=trough_date,
+                    recovery_date=None,
+                    peak_to_trough_days=(trough_date - peak_date).days,
+                    trough_to_recovery_days=None,
+                    trough_drawdown_value=trough_value,
+                )
+            )
+
+    return events
 
 
 @cache_config.cache.memoize(timeout=0)

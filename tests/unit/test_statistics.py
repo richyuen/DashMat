@@ -7,6 +7,7 @@ from utils.serialization import date_range_payload_for_cache, mapping_payload_fo
 from utils.returns import df_to_json
 from utils.statistics import (
     calculate_drawdown,
+    calculate_drawdown_events,
     calculate_growth_of_dollar,
     calculate_statistics_cached,
     generate_correlogram_cached,
@@ -55,6 +56,76 @@ def test_calculate_drawdown_starts_at_zero_and_is_non_positive(raw_json):
     assert drawdown.iloc[0]["Asset_A"] == pytest.approx(0.0)
     assert drawdown.iloc[0]["Asset_B"] == pytest.approx(0.0)
     assert (drawdown[["Asset_A", "Asset_B"]].dropna() <= 1e-12).all().all()
+
+
+def test_calculate_drawdown_events_returns_recovered_event_boundaries():
+    drawdown = pd.DataFrame(
+        {"Asset_A": [0.0, -0.02, -0.05, -0.01, 0.0]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-04", "2024-01-05", "2024-01-08"]),
+    )
+
+    events = calculate_drawdown_events(drawdown)
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.series_name == "Asset_A"
+    assert event.peak_date == pd.Timestamp("2024-01-01")
+    assert event.trough_date == pd.Timestamp("2024-01-04")
+    assert event.recovery_date == pd.Timestamp("2024-01-08")
+    assert event.peak_to_trough_days == 3
+    assert event.trough_to_recovery_days == 4
+    assert event.trough_drawdown_value == pytest.approx(-0.05)
+
+
+def test_calculate_drawdown_events_includes_unrecovered_active_drawdown():
+    drawdown = pd.DataFrame(
+        {"Asset_A": [0.0, -0.03, -0.01]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+    )
+
+    events = calculate_drawdown_events(drawdown)
+
+    assert len(events) == 1
+    assert events[0].recovery_date is None
+    assert events[0].trough_to_recovery_days is None
+    assert events[0].trough_date == pd.Timestamp("2024-01-02")
+
+
+def test_calculate_drawdown_events_segments_contiguous_negative_runs():
+    drawdown = pd.DataFrame(
+        {"Asset_A": [0.0, -0.02, 0.0, -0.01, -0.04, 0.0]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08"]),
+    )
+
+    events = calculate_drawdown_events(drawdown)
+
+    assert [(event.peak_date, event.trough_date, event.recovery_date) for event in events] == [
+        (pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-03")),
+        (pd.Timestamp("2024-01-03"), pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")),
+    ]
+
+
+def test_calculate_drawdown_events_skips_zero_only_series():
+    drawdown = pd.DataFrame(
+        {"Asset_A": [0.0, 0.0, 0.0]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+    )
+
+    assert calculate_drawdown_events(drawdown) == []
+
+
+def test_calculate_drawdown_events_preserves_multi_series_order_and_names():
+    drawdown = pd.DataFrame(
+        {
+            "Asset.A": [0.0, -0.02, 0.0],
+            "Client Series": [0.0, -0.01, 0.0],
+        },
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+    )
+
+    events = calculate_drawdown_events(drawdown)
+
+    assert [event.series_name for event in events] == ["Asset.A", "Client Series"]
 
 
 def test_calculate_statistics_cached_returns_one_result_per_series(raw_json):

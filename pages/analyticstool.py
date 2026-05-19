@@ -58,6 +58,7 @@ from utils.returns import (
 from utils.help_links import ANALYTICSTOOL_HELP_URL
 from utils.statistics import (
     calculate_drawdown,
+    calculate_drawdown_events,
     calculate_growth_of_dollar,
     calculate_statistics_cached,
     generate_correlogram_cached,
@@ -539,6 +540,43 @@ class _AnalyticsExportArtifacts:
     stats_df: pd.DataFrame
     corr_df: pd.DataFrame
     cov_df: pd.DataFrame
+
+
+_DRAWDOWN_EVENT_COLUMNS = [
+    "Series Name",
+    "Peak Date",
+    "Trough Date",
+    "Recovery Date",
+    "Peak to Trough Days",
+    "Trough to Recovery Days",
+    "Drawdown % (Return)",
+]
+
+
+def _format_drawdown_event_date(value) -> str:
+    return "" if value is None else pd.Timestamp(value).strftime("%Y-%m-%d")
+
+
+def _build_drawdown_events_frame(drawdown_df: pd.DataFrame) -> pd.DataFrame:
+    """Build the presentation frame for drawdown events from a drawdown matrix."""
+    rows = []
+    for event in calculate_drawdown_events(drawdown_df):
+        rows.append(
+            {
+                "Series Name": event.series_name,
+                "Peak Date": _format_drawdown_event_date(event.peak_date),
+                "Trough Date": _format_drawdown_event_date(event.trough_date),
+                "Recovery Date": _format_drawdown_event_date(event.recovery_date),
+                "Peak to Trough Days": event.peak_to_trough_days,
+                "Trough to Recovery Days": event.trough_to_recovery_days,
+                "Drawdown % (Return)": event.trough_drawdown_value,
+            }
+        )
+    frame = pd.DataFrame(rows, columns=_DRAWDOWN_EVENT_COLUMNS)
+    if not frame.empty:
+        frame["Trough to Recovery Days"] = frame["Trough to Recovery Days"].astype(object)
+        frame.loc[frame["Trough to Recovery Days"].isna(), "Trough to Recovery Days"] = None
+    return frame
 
 
 def _build_analytics_compute_bundle(
@@ -3246,7 +3284,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
     rolling_grid_style = flex_style if rolling_chart_switch == "table" else none_style
     rolling_chart_style = flex_style if rolling_chart_switch == "chart" else none_style
     
-    drawdown_grid_style = flex_style if drawdown_chart_switch == "table" else none_style
+    drawdown_grid_style = flex_style if drawdown_chart_switch != "chart" else none_style
     drawdown_chart_style = flex_scroll_style if drawdown_chart_switch == "chart" else none_style
     
     growth_grid_style = flex_style if growth_chart_switch == "table" else none_style
@@ -4209,6 +4247,7 @@ def build_main_layout(periodicity_options, periodicity_value, returns_type, vol_
                                     data=[
                                         {"value": "table", "label": "Table"},
                                         {"value": "chart", "label": "Chart"},
+                                        {"value": "events", "label": "Events"},
                                     ],
                                     value=drawdown_chart_switch,
                                     size="sm",
@@ -11182,7 +11221,7 @@ def _build_growth_export_sheet(bundle: _AnalyticsComputeBundle) -> _ExcelSheetSp
         return None
 
 
-def _build_drawdown_export_sheet(bundle: _AnalyticsComputeBundle, returns_type) -> _ExcelSheetSpec | None:
+def _build_drawdown_export_sheets(bundle: _AnalyticsComputeBundle, returns_type) -> list[_ExcelSheetSpec]:
     try:
         with timed_block("analyticstool.download_excel.drawdown"):
             drawdown_df = calculate_drawdown(
@@ -11197,15 +11236,27 @@ def _build_drawdown_export_sheet(bundle: _AnalyticsComputeBundle, returns_type) 
                 bundle.vol_scaling_payload,
             )
             if drawdown_df.empty:
-                return None
-            return _ExcelSheetSpec(
-                name="Drawdown",
-                frame=drawdown_df,
-                write_index=True,
-                format_index=True,
+                return []
+            sheets = [
+                _ExcelSheetSpec(
+                    name="Drawdown",
+                    frame=drawdown_df,
+                    write_index=True,
+                    format_index=True,
+                )
+            ]
+            events_df = _build_drawdown_events_frame(drawdown_df)
+            sheets.append(
+                _ExcelSheetSpec(
+                    name="Drawdown Events",
+                    frame=events_df,
+                    write_index=False,
+                    format_index=False,
+                )
             )
+            return sheets
     except Exception:
-        return None
+        return []
 
 
 def _build_pca_export_sheets(bundle: _AnalyticsComputeBundle, returns_type, pca_basis) -> list[_ExcelSheetSpec]:
@@ -11275,10 +11326,11 @@ def _build_core_export_sheets(
         _build_rolling_export_sheet(bundle, returns_type, rolling_window, rolling_return_type),
         _build_calendar_export_sheet(bundle, original_periodicity, returns_type, monthly_view, monthly_series, keep_partial=keep_partial),
         _build_growth_export_sheet(bundle),
-        _build_drawdown_export_sheet(bundle, returns_type),
     ):
         if optional_sheet is not None:
             sheets.append(optional_sheet)
+
+    sheets.extend(_build_drawdown_export_sheets(bundle, returns_type))
 
     sheets.extend(
         [
@@ -12637,10 +12689,10 @@ def update_drawdown_charts(trigger_payload, active_tab, chart_checked, dataset_k
 def update_drawdown_grid(trigger_payload, active_tab, chart_checked, dataset_key, periodicity, selected_series, returns_type, benchmark_assignments, long_short_assignments, date_range, state_ready, vol_scaler, vol_scaling_assignments):
     """Update Drawdown grid (lazy loaded)."""
     _at_require_tab_trigger(trigger_payload, "drawdown")
-    # Lazy loading: only generate when drawdown tab is active and table view is selected
+    # Lazy loading: only generate when drawdown tab is active and a grid view is selected
     if (
         active_tab != "drawdown"
-        or chart_checked != "table"
+        or chart_checked not in {"table", "events"}
         or not state_ready
         or not _has_complete_date_range(date_range)
     ):
@@ -12665,6 +12717,27 @@ def update_drawdown_grid(trigger_payload, active_tab, chart_checked, dataset_key
 
         if drawdown_df.empty:
             return [], []
+
+        if chart_checked == "events":
+            events_df = _build_drawdown_events_frame(drawdown_df)
+            column_defs = [
+                {"field": "Series Name", "pinned": "left", "width": 180},
+                {"field": "Peak Date", "width": 130},
+                {"field": "Trough Date", "width": 130},
+                {"field": "Recovery Date", "width": 140},
+                {"field": "Peak to Trough Days", "width": 165},
+                {
+                    "field": "Trough to Recovery Days",
+                    "valueFormatter": {"function": "params.value == null ? '' : params.value"},
+                    "width": 185,
+                },
+                {
+                    "field": "Drawdown % (Return)",
+                    "valueFormatter": {"function": "params.value != null && params.value !== '' ? d3.format('.2%')(params.value) : ''"},
+                    "width": 165,
+                },
+            ]
+            return column_defs, events_df.to_dict("records")
 
         # Reset index to include Date as a column
         drawdown_df = drawdown_df.reset_index()

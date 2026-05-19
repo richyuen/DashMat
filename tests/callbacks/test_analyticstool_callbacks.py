@@ -852,6 +852,68 @@ def test_analytics_restore_secondary_controls_clientside_matches_reference(page_
     assert result[:20] == ["__NO_UPDATE__"] * 20
     assert result[20] == "monthly"
 
+    expected_drawdown = analyticstool.at_restore_secondary_controls(
+        "drawdown",
+        True,
+        "1y",
+        "total_return",
+        "annualized",
+        "chart",
+        "events",
+        "chart",
+        "box",
+        5,
+        "raw",
+        "normal",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
+        "summary",
+        "summary",
+        "monthly",
+        "1y",
+        "total_return",
+        "annualized",
+        False,
+        {},
+        "chart",
+        "chart",
+        "chart",
+        "box",
+        5,
+        "raw",
+        "normal",
+        "forward",
+        "le",
+        0,
+        "compound",
+        1,
+        "months",
+        "summary",
+        "summary",
+        "annual",
+    )
+    result_drawdown = _run_dashmat_callbacks_js(
+        'ns.analyticsRestoreSecondaryControls('
+        '"drawdown", true, '
+        '"1y", "total_return", "annualized", "chart", "events", "chart", '
+        '"box", 5, "raw", "normal", '
+        '"forward", "le", 0, "compound", 1, "months", "summary", "summary", "monthly", '
+        '"1y", "total_return", "annualized", false, {}, "chart", "chart", "chart", '
+        '"box", 5, "raw", "normal", "forward", "le", 0, "compound", 1, "months", "summary", "summary", "annual"'
+        ')'
+    )
+
+    assert list(expected_drawdown)[:6] == [no_update] * 6
+    assert expected_drawdown[6] == "events"
+    assert list(expected_drawdown)[7:] == [no_update] * 14
+    assert result_drawdown[:6] == ["__NO_UPDATE__"] * 6
+    assert result_drawdown[6] == "events"
+    assert result_drawdown[7:] == ["__NO_UPDATE__"] * 14
+
 
 def test_analytics_lazy_load_trigger_helpers_and_loading_display_clientside():
     assert _run_dashmat_callbacks_js(
@@ -1230,6 +1292,54 @@ def test_at_restore_secondary_controls_restores_only_active_tab_family(page_modu
     assert restored[19] is no_update
     assert restored[20] is no_update
 
+    restored_drawdown = analyticstool.at_restore_secondary_controls(
+        "drawdown",
+        True,
+        "3y",
+        "volatility",
+        "cumulative",
+        "table",
+        "events",
+        "table",
+        "scatter",
+        7,
+        "zscore",
+        "reference",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        "detail",
+        "monthly",
+        None,
+        None,
+        None,
+        None,
+        None,
+        "chart",
+        "table",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+    assert restored_drawdown[6] == "events"
+    assert all(value is no_update for i, value in enumerate(restored_drawdown) if i != 6)
+
 
 def test_at_restore_secondary_controls_skips_when_active_family_is_already_hydrated(page_modules, raw_json):
     analyticstool, _ = page_modules
@@ -1601,6 +1711,14 @@ def test_at_result_grids_treat_series_fields_as_literal_keys(page_modules):
         assert getattr(grid, "dashGridOptions", {})["processCellForClipboard"] == {
             "function": "dashmatProcessCellForClipboard(params)"
         }
+
+
+def test_drawdown_view_switch_exposes_chart_table_and_events(page_modules):
+    analyticstool, _ = page_modules
+
+    switch = _find_component_by_id(analyticstool.layout, "at-drawdown-chart-switch")
+
+    assert [option["value"] for option in getattr(switch, "data", [])] == ["table", "chart", "events"]
 
 
 def test_conditional_factor_window_uses_tooltip_help_target(page_modules):
@@ -2249,6 +2367,84 @@ def test_update_drawdown_grid_builds_columns_and_rows(monkeypatch, page_modules)
     assert column_defs[0]["field"] == "Date"
     assert column_defs[1]["field"] == "Asset_A"
     assert row_data[1]["Asset_A"] == pytest.approx(-0.03)
+
+
+def test_update_drawdown_grid_builds_event_columns_and_rows(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    drawdown_df = pd.DataFrame(
+        {"Asset_A": [0.0, -0.03, -0.01, 0.0]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]),
+    )
+    drawdown_df.index.name = "Date"
+    monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *args, **kwargs: drawdown_df)
+
+    column_defs, row_data = analyticstool.update_drawdown_grid(
+        {"tab": "drawdown"},
+        "drawdown",
+        "events",
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+    )
+
+    assert [column["field"] for column in column_defs] == [
+        "Series Name",
+        "Peak Date",
+        "Trough Date",
+        "Recovery Date",
+        "Peak to Trough Days",
+        "Trough to Recovery Days",
+        "Drawdown % (Return)",
+    ]
+    assert row_data == [
+        {
+            "Series Name": "Asset_A",
+            "Peak Date": "2024-01-01",
+            "Trough Date": "2024-01-02",
+            "Recovery Date": "2024-01-04",
+            "Peak to Trough Days": 1,
+            "Trough to Recovery Days": 2,
+            "Drawdown % (Return)": pytest.approx(-0.03),
+        }
+    ]
+
+
+def test_update_drawdown_grid_blanks_unrecovered_event_recovery_days(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    drawdown_df = pd.DataFrame(
+        {"Asset_A": [0.0, -0.03, -0.05]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+    )
+    drawdown_df.index.name = "Date"
+    monkeypatch.setattr(analyticstool, "calculate_drawdown", lambda *args, **kwargs: drawdown_df)
+
+    column_defs, row_data = analyticstool.update_drawdown_grid(
+        {"tab": "drawdown"},
+        "drawdown",
+        "events",
+        "raw-json",
+        "daily",
+        ["Asset_A"],
+        "total",
+        {},
+        {},
+        {"start": "2024-01-01", "end": "2024-12-31"},
+        True,
+        0,
+        {},
+    )
+
+    recovery_days_column = next(column for column in column_defs if column["field"] == "Trough to Recovery Days")
+    assert recovery_days_column["valueFormatter"]["function"] == "params.value == null ? '' : params.value"
+    assert row_data[0]["Recovery Date"] == ""
+    assert row_data[0]["Trough to Recovery Days"] is None
 
 
 def test_update_drawdown_charts_matches_portopt_style(monkeypatch, page_modules):
@@ -3907,6 +4103,56 @@ def test_control_conditional_returns_loading_display(page_modules):
     assert analyticstool.control_conditional_returns_loading_display("statistics", True, True, "sig", None) == "hide"
 
 
+def test_build_drawdown_export_sheets_adds_events_after_drawdown(monkeypatch, page_modules):
+    analyticstool, _ = page_modules
+    drawdown_df = pd.DataFrame(
+        {"Asset_A": [0.0, -0.04, -0.02, 0.0]},
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]),
+    )
+    drawdown_df.index.name = "Date"
+    calls = []
+
+    def fake_calculate_drawdown(*args, **kwargs):
+        calls.append((args, kwargs))
+        return drawdown_df
+
+    monkeypatch.setattr(analyticstool, "calculate_drawdown", fake_calculate_drawdown)
+    bundle = analyticstool._AnalyticsComputeBundle(
+        dataset_key="raw-json",
+        periodicity="daily",
+        selected_series=("Asset_A",),
+        benchmark_payload={},
+        long_short_payload={},
+        date_range_payload={},
+        vol_scaler=0,
+        vol_scaling_payload={},
+    )
+
+    sheets = analyticstool._build_drawdown_export_sheets(bundle, "total")
+
+    assert [sheet.name for sheet in sheets] == ["Drawdown", "Drawdown Events"]
+    assert len(calls) == 1
+    events = sheets[1].frame
+    assert list(events.columns) == [
+        "Series Name",
+        "Peak Date",
+        "Trough Date",
+        "Recovery Date",
+        "Peak to Trough Days",
+        "Trough to Recovery Days",
+        "Drawdown % (Return)",
+    ]
+    assert events.iloc[0].to_dict() == {
+        "Series Name": "Asset_A",
+        "Peak Date": "2024-01-01",
+        "Trough Date": "2024-01-02",
+        "Recovery Date": "2024-01-04",
+        "Peak to Trough Days": 1,
+        "Trough to Recovery Days": 2,
+        "Drawdown % (Return)": pytest.approx(-0.04),
+    }
+
+
 def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_modules):
     analyticstool, _ = page_modules
     idx = pd.date_range("2024-01-01", periods=5, freq="D")
@@ -4014,6 +4260,9 @@ def test_download_excel_includes_factor_analysis_sheets(monkeypatch, page_module
     )
 
     xl = pd.ExcelFile(BytesIO(payload["content"]))
+    assert "Drawdown" in xl.sheet_names
+    assert "Drawdown Events" in xl.sheet_names
+    assert xl.sheet_names.index("Drawdown") < xl.sheet_names.index("Drawdown Events")
     assert "Factor Analysis - Box" in xl.sheet_names
     assert "Factor Analysis - Scatter" in xl.sheet_names
     assert "Factor Analysis - Detail" in xl.sheet_names
